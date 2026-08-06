@@ -8,7 +8,7 @@ REPORT=/tmp/ytmusic-e2e-mobile.txt
 : >"$REPORT"
 log() { echo "$*" | tee -a "$REPORT"; }
 
-DEVICE="$($ADB devices | awk '/\tdevice$/{print $1; exit}')"
+DEVICE="${DEVICE:-${ANDROID_SERIAL:-$($ADB devices | awk '/\tdevice$/{print $1; exit}')}}"
 if [[ -z "${DEVICE:-}" ]]; then
   log "FAIL aucun device ADB"
   exit 1
