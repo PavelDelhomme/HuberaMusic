@@ -43,7 +43,7 @@ export default defineConfig(({ mode }) => {
       manifest: {
         name: 'Pue La Merde',
         short_name: 'PLM',
-        description: 'PLM — Pue La Merde. Musique sans pubs, web & mobile',
+        description: 'PLM — Pue La Merde. Musique, web & mobile',
         theme_color: '#030303',
         background_color: '#030303',
         display: 'standalone',

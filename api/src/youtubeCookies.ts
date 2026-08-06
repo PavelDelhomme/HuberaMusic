@@ -214,10 +214,10 @@ export function youtubeCookiesStatus(): YoutubeCookiesStatus {
     headerPath: YT_COOKIE_HEADER_PATH,
     netscapePath: YT_COOKIE_NETSCAPE_PATH,
     hint: header || netscape
-      ? 'Cookies YouTube présents (compte gratuit OK — Premium non requis) — stream anti-bot OK'
+      ? 'Session navigateur présente — stream anti-bot OK'
       : appEnv === 'local' || appEnv === 'development'
-        ? 'Optionnel : bash scripts/push-youtube-cookies.sh local (compte Google gratuit connecté à youtube.com — PAS besoin de Premium). PLM stream sans pubs de toute façon.'
-        : 'VPS : préfère link-home-stream.sh ; cookies = compte Google gratuit (pas Premium)',
+        ? 'Optionnel : bash scripts/push-youtube-cookies.sh local (stabiliser anti-bot). Souvent inutile en local.'
+        : 'VPS : préfère bash scripts/link-home-stream.sh ; session navigateur optionnelle',
   };
 }
 
@@ -227,7 +227,7 @@ export function saveYoutubeCookieHeader(raw: string) {
   if (looksLikeNetscape(text)) {
     const header = netscapeToCookieHeader(text);
     if (header.length < 40) {
-      throw new Error('Fichier Netscape sans cookies YouTube utiles');
+      throw new Error('Fichier Netscape sans cookies utiles');
     }
     writeFileSync(YT_COOKIE_NETSCAPE_PATH, text.endsWith('\n') ? text : `${text}\n`, 'utf8');
     writeFileSync(YT_COOKIE_HEADER_PATH, `${header}\n`, 'utf8');

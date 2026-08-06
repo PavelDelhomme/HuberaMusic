@@ -195,13 +195,6 @@ fun AccountSheet(
                     onOpenDebugLogs?.invoke()
                 },
             )
-            Text(
-                "Lecture sans pubs · YouTube Premium non requis",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-            )
-
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             AccountRow(
                 icon = {

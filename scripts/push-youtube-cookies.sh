@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Exporte les cookies YouTube depuis ton navigateur (Chrome/Firefox) et les
-# pousse vers l’API (prod ou local) — SANS DevTools / Network.
-#
-# Compte Google GRATUIT suffit (connecté à youtube.com). YouTube Premium
-# n’est PAS requis — PLM stream en direct sans pubs de l’app officielle.
+# Exporte une session navigateur (Chrome/Firefox) et la pousse vers l’API
+# (prod ou local) — outil ops optionnel pour anti-bot.
 #
 # Prérequis : être connecté à youtube.com dans Chrome (ou Firefox).
 #
@@ -97,7 +94,7 @@ for line in raw.splitlines():
     seen[name] = f"{name}={value}"
 header = "; ".join(seen.values())
 if len(header) < 40:
-    raise SystemExit("Aucun cookie YouTube utile — connecte-toi sur youtube.com dans le navigateur")
+    raise SystemExit("Aucune session navigateur utile — connecte-toi sur youtube.com puis réessaie")
 Path("$HEADER").write_text(header)
 print(f"    {len(seen)} cookies · {len(header)} octets")
 PY

@@ -1907,9 +1907,9 @@ export async function getAudioFormat(videoId: string): Promise<AudioFormat> {
   if (pending) return pending;
 
   const job = (async (): Promise<AudioFormat> => {
-    // Mode gratuit (pas de YouTube Premium) :
-    // - sans cookies fichier → yt-dlp d’abord (fiable, ~128–160 kbps, sans pubs côté PLM)
-    // - Innertube ANDROID/IOS ensuite (WEB souvent plus fragile / cookies)
+    // Priorité stream :
+    // - sans fichier cookies → yt-dlp d’abord (fiable, ~128–160 kbps)
+    // - Innertube ANDROID/IOS ensuite (WEB souvent plus fragile)
     const hasCookies = Boolean(resolveYoutubeCookieHeader());
     const tryInnertube = async (): Promise<AudioFormat | null> => {
       const innertube = await getYT();

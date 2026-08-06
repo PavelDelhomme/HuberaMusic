@@ -180,7 +180,7 @@ export function InstallBanner() {
               {isPhone ? 'Installer l’app mobile' : 'Installer sur cet ordinateur'}
             </div>
             <p className="mt-0.5 text-xs text-yt-muted">
-              {guide.title} · {location.host} — gratuit, sans pubs, ton compte.
+              {guide.title} · {location.host} — gratuit, ton compte.
             </p>
 
             {showGuide && (

@@ -198,7 +198,7 @@ export function SearchIdentifySheet({
           </button>
         </div>
         <p className="text-center text-xs text-yt-muted">
-          {recording ? 'Appuie pour arrêter (max 10 s)' : 'Appuie pour enregistrer · sans pubs · sans Premium'}
+          {recording ? 'Appuie pour arrêter (max 10 s)' : 'Appuie pour enregistrer (~10 s max)'}
         </p>
       </div>
     </div>

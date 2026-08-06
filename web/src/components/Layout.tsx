@@ -39,13 +39,14 @@ import { installMediaKeys } from '../lib/mediaKeys';
 import { wireEqualizer, resumeEqContext } from '../lib/equalizer';
 import { EqualizerPanel } from './EqualizerPanel';
 import { ProxyHealthBanner } from './ProxyHealthBanner';
+import { OfflineBanner } from './OfflineBanner';
 
 const links = [
   { to: '/', label: 'Accueil', icon: Home },
   { to: '/explore', label: 'Explorer', icon: Compass },
   { to: '/library', label: 'Bibliothèque', icon: Library },
   { to: '/import', label: 'Importer', icon: Upload },
-  { to: '/offline', label: 'Offline', icon: Download },
+  { to: '/offline', label: 'Hors ligne', icon: Download },
 ];
 
 export function Layout() {
@@ -332,7 +333,7 @@ export function Layout() {
           <BrandLogo className="h-8 w-8 shrink-0" />
           <span
             className="font-display text-lg font-semibold tracking-tight"
-            title="Pue La Merde · sans pubs · YouTube Premium non requis"
+            title="Pue La Merde"
           >
             PLM
           </span>
@@ -498,6 +499,7 @@ export function Layout() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-yt-bg">
       <ProxyHealthBanner />
+      <OfflineBanner />
       <div className="flex min-h-0 flex-1">
         {/* Overlay drawer (mobile + quand on ouvre par-dessus) */}
         {navOpen && (

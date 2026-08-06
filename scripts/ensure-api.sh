@@ -90,9 +90,8 @@ warn_cookies() {
   if [[ -s "$header" || -s "$netscape" ]]; then
     return 0
   fi
-  echo "ℹ️  Pas de fichier cookies YouTube (optionnel)"
-  echo "   PLM = sans pubs, sans YouTube Premium. Les streams marchent souvent sans cookies."
-  echo "   Stabiliser / VPS : bash scripts/push-youtube-cookies.sh local  (compte Google gratuit)"
+  echo "ℹ️  Pas de session navigateur locale (optionnel)"
+  echo "   Les streams marchent souvent sans. Stabiliser / VPS : bash scripts/push-youtube-cookies.sh local"
   # Auto-export seulement au démarrage (pas à chaque ensure-api si déjà UP)
   # Défaut OFF : Chrome ouvert verrouille souvent la DB → hang. Force avec AUTO_YT_COOKIES=1
   if [[ "$try_auto" == "1" && "${AUTO_YT_COOKIES:-0}" == "1" ]]; then

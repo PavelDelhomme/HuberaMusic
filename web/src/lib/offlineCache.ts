@@ -35,10 +35,50 @@ export async function listCachedIds(): Promise<string[]> {
   return database.getAllKeys(STORE) as Promise<string[]>;
 }
 
+/** Tous les titres réellement jouables hors ligne sur cet appareil. */
+export async function listCachedTracks(): Promise<Track[]> {
+  const database = await db();
+  const ids = (await database.getAllKeys(STORE)) as string[];
+  const out: Track[] = [];
+  for (const id of ids) {
+    const meta = (await database.get(META, id)) as Track | undefined;
+    if (meta?.id) out.push(meta);
+    else out.push({ id, title: id, artists: [], thumbnails: [], type: 'song' });
+  }
+  return out;
+}
+
 export async function removeCached(trackId: string) {
   const database = await db();
   await database.delete(STORE, trackId);
   await database.delete(META, trackId);
+}
+
+export async function clearAllCached() {
+  const database = await db();
+  await database.clear(STORE);
+  await database.clear(META);
+}
+
+/** Demande au navigateur de ne pas évincer le cache (Chrome/Android). */
+export async function requestPersistentStorage(): Promise<boolean> {
+  try {
+    if (!navigator.storage?.persist) return false;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
+export async function getStorageEstimate(): Promise<{ usage: number; quota: number } | null> {
+  try {
+    const est = await navigator.storage?.estimate?.();
+    if (!est?.quota) return null;
+    return { usage: est.usage || 0, quota: est.quota };
+  } catch {
+    return null;
+  }
 }
 
 export async function downloadAndCache(track: Track) {
@@ -60,6 +100,26 @@ export async function downloadAndCache(track: Track) {
   return blob;
 }
 
+/** Télécharge une liste sur l’appareil (IndexedDB) — vrai hors-ligne navigateur. */
+export async function downloadTracksToDevice(
+  tracks: Track[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<number> {
+  const playable = tracks.filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(t.id));
+  let ok = 0;
+  const total = playable.length;
+  for (const t of playable) {
+    try {
+      await downloadAndCache(t);
+      ok++;
+    } catch {
+      /* continue */
+    }
+    onProgress?.(ok, total);
+  }
+  return ok;
+}
+
 /** Stream proxy same-origin (sync) — pour lancer play() sans await (geste utilisateur). */
 export function streamProxyUrl(trackId: string): string {
   const token = getToken();
@@ -71,4 +131,9 @@ export async function resolvePlayUrl(trackId: string): Promise<string> {
   const cached = await getCachedAudio(trackId);
   if (cached) return URL.createObjectURL(cached);
   return streamProxyUrl(trackId);
+}
+
+export async function hasCachedAudio(trackId: string): Promise<boolean> {
+  const blob = await getCachedAudio(trackId);
+  return Boolean(blob && blob.size > 0);
 }

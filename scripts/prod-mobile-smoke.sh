@@ -71,7 +71,7 @@ log "stream lines:"
 log "$stream_codes"
 
 if echo "$LOG" | grep -qE '←-- 502 https://ytmusic.delhomme.ovh/api/stream|Sign in to confirm|PlaybackException'; then
-  log "FAIL lecture — stream 502 / anti-bot / ExoPlayer error (cookies YouTube + image récente requis)"
+  log "FAIL lecture — stream 502 / anti-bot / ExoPlayer error (relais maison ou image récente)"
 else
   if echo "$LOG" | grep -qE '←-- 200 https://ytmusic.delhomme.ovh/api/stream|isPlaying|STATE_READY'; then
     log "OK  indices de lecture OK"
