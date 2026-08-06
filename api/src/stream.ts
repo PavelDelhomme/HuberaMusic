@@ -479,8 +479,8 @@ export async function handleStream(req: Request, res: Response) {
         error: 'Impossible de streamer audio',
         detail: String(err),
         hint: cookies
-          ? 'Réessaie dans quelques secondes — ou rafraîchis les cookies (compte Google gratuit)'
-          : 'Sans pubs / sans Premium. Optionnel : bash scripts/push-youtube-cookies.sh local (Google gratuit)',
+          ? 'Réessaie dans quelques secondes — ou rafraîchis la session navigateur (ops)'
+          : 'Vérifie le réseau / relais maison (link-home-stream.sh). Session navigateur optionnelle.',
       });
     }
   }

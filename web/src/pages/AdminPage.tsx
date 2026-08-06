@@ -291,31 +291,24 @@ export function AdminPage() {
       <section className="mb-6 rounded-2xl border border-amber-500/40 bg-yt-surface p-5">
         <div className="mb-3 flex items-center gap-2">
           <Radar className="h-5 w-5 text-amber-400" />
-          <h3 className="font-display text-lg font-semibold">Stream YouTube (sans Premium)</h3>
+          <h3 className="font-display text-lg font-semibold">Relais stream (VPS)</h3>
         </div>
         <p className="mb-3 text-sm text-yt-muted">
-          PLM n’utilise <strong className="text-white">pas</strong> le player YouTube officiel →{' '}
-          <strong className="text-white">pas de pubs</strong>, et{' '}
-          <strong className="text-white">YouTube Premium n’est pas requis</strong>. Un compte Google
-          gratuit connecté à youtube.com suffit si tu pousses des cookies (optionnel en local).
-        </p>
-        <p className="mb-3 text-sm text-yt-muted">
-          Sur un VPS, YouTube bloque souvent l’IP datacenter. Solution fiable : relayer le stream par
-          ton PC (IP maison).
+          Sur un VPS, certaines IP datacenter sont bloquées. Solution fiable : relayer le stream
+          via ton PC (IP maison).
         </p>
         <pre className="mb-2 overflow-x-auto rounded-xl border border-yt-border bg-black/40 px-3 py-2 text-xs text-emerald-300">
 bash scripts/link-home-stream.sh
         </pre>
         <p className="mb-3 text-xs text-yt-muted">
-          Laisse le PC allumé. Stop : <code className="text-white">bash scripts/link-home-stream.sh stop</code>.
-          Cookies (compte gratuit, pas Premium) :
-          <code className="text-white"> bash scripts/push-youtube-cookies.sh</code>
+          Laisse le PC allumé. Stop :{' '}
+          <code className="text-white">bash scripts/link-home-stream.sh stop</code>.
         </p>
         <dl className="mb-3 grid gap-2 text-sm sm:grid-cols-2">
           <div>
-            <dt className="text-xs text-yt-muted">État cookies</dt>
+            <dt className="text-xs text-yt-muted">Session navigateur (ops)</dt>
             <dd className="font-medium">
-              {status?.youtubeCookies?.configured ? 'Configuré ✓' : 'Absent (OK en local)'}
+              {status?.youtubeCookies?.configured ? 'Configuré ✓' : 'Absent (souvent OK)'}
               {status?.youtubeCookies?.source ? ` · ${status.youtubeCookies.source}` : ''}
             </dd>
           </div>
@@ -329,13 +322,13 @@ bash scripts/link-home-stream.sh
           <li>
             <code className="text-white">bash scripts/link-home-stream.sh</code>
           </li>
-          <li>Sinon cookies (Google gratuit) : push-youtube-cookies.sh ou collage ci-dessous</li>
+          <li>Si besoin (anti-bot) : push-youtube-cookies.sh ou collage ci-dessous</li>
         </ol>
         <textarea
           value={ytCookie}
           onChange={(e) => setYtCookie(e.target.value)}
           rows={3}
-          placeholder="Cookie: … ou Netscape cookies.txt (fallback)"
+          placeholder="Header Cookie ou Netscape cookies.txt (ops, optionnel)"
           className="mb-3 w-full rounded-xl border border-yt-border bg-yt-bg px-3 py-2 font-mono text-xs text-white"
         />
         <div className="flex flex-wrap gap-2">
@@ -349,7 +342,7 @@ bash scripts/link-home-stream.sh
               void api
                 .adminYoutubeCookiesSave(ytCookie)
                 .then((r) => {
-                  setYtCookieMsg(r.configured ? 'Cookies enregistrés — reteste la lecture' : 'OK');
+                  setYtCookieMsg(r.configured ? 'Session enregistrée — reteste la lecture' : 'OK');
                   setYtCookie('');
                   refresh();
                 })
@@ -357,7 +350,7 @@ bash scripts/link-home-stream.sh
                 .finally(() => setYtCookieBusy(false));
             }}
           >
-            {ytCookieBusy ? '…' : 'Enregistrer cookies'}
+            {ytCookieBusy ? '…' : 'Enregistrer'}
           </button>
           <button
             type="button"
@@ -368,7 +361,7 @@ bash scripts/link-home-stream.sh
               void api
                 .adminYoutubeCookiesClear()
                 .then(() => {
-                  setYtCookieMsg('Cookies effacés');
+                  setYtCookieMsg('Session effacée');
                   refresh();
                 })
                 .catch((e) => setYtCookieMsg(String(e.message || e)))

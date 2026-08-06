@@ -300,12 +300,10 @@ app.get('/api/health', (_req, res) => {
       source: ytCookies.source,
       hint: ytCookies.hint,
     },
-    /** Contrat produit : pas de pubs YTM, pas de YouTube Premium requis. */
     playback: {
       ads: false,
-      youtubePremiumRequired: false,
       maxBitrateHintKbps: ytCookies.configured ? 256 : 160,
-      note: 'Stream direct googlevideo/yt-dlp — hors player officiel YouTube (donc sans pubs). Premium non requis.',
+      note: 'Stream audio direct (yt-dlp / Innertube).',
     },
     streamUpstream: resolveStreamUpstream(),
   });

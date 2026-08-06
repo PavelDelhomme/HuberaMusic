@@ -7,6 +7,7 @@ import { CoverImage } from '../components/CoverImage';
 import { usePlayer } from '../store/player';
 import { useLibrary } from '../store/library';
 import { usePins } from '../store/pins';
+import { downloadTracksToDevice, listCachedIds } from '../lib/offlineCache';
 import {
   Play,
   Download,
@@ -276,10 +277,18 @@ export function ArtistPage() {
             </button>
             <button
               type="button"
-              onClick={() => void api.offlineStart('artist', data.artist.id)}
+              onClick={() => {
+                void (async () => {
+                  const songs = topSongs.length ? topSongs : data.songs;
+                  if (songs?.length) {
+                    await downloadTracksToDevice(songs);
+                  }
+                  void api.offlineStart('artist', data.artist.id).catch(() => undefined);
+                })();
+              }}
               className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-4 py-2.5 text-sm text-yt-muted hover:text-white"
             >
-              <Download className="h-4 w-4" /> Offline
+              <Download className="h-4 w-4" /> Hors ligne
             </button>
           </div>
           {radioToast && (
@@ -481,37 +490,36 @@ export function AlbumPage() {
   });
 
   const startAlbumOffline = () => {
-    if (offlineDone || offlinePct != null) return;
+    if (offlineDone || offlinePct != null || !data?.tracks?.length) return;
     void (async () => {
       setOfflinePct(0.05);
-      const tick = window.setInterval(() => {
-        setOfflinePct((p) => (p == null ? 0.05 : Math.min(0.92, p + 0.04)));
-      }, 600);
       try {
-        const r = await api.offlineStart('album', id);
-        if (r.jobId) {
-          for (let i = 0; i < 120; i++) {
-            await new Promise((res) => setTimeout(res, 700));
-            const st = await api.offlineJobs();
-            const job = (st.jobs || []).find((j: any) => j.id === r.jobId);
-            if (!job) break;
-            const total = Number(job.total || 0);
-            const progress = Number(job.progress || 0);
-            const pct = total > 0 ? progress / total : 0.5;
-            setOfflinePct(Math.min(0.99, Math.max(0.05, pct)));
-            if (job.status === 'done' || (total > 0 && progress >= total)) break;
-          }
-        }
+        // Vrai hors-ligne navigateur (= mobile) : IndexedDB sur cet appareil
+        await downloadTracksToDevice(data.tracks, (done, total) => {
+          setOfflinePct(total > 0 ? Math.min(0.99, done / total) : 0.5);
+        });
+        // Optionnel : warm serveur (sync compte) — n’empêche pas le hors-ligne local
+        void api.offlineStart('album', id).catch(() => undefined);
         setOfflinePct(1);
         setOfflineDone(true);
       } catch {
         /* ignore */
       } finally {
-        window.clearInterval(tick);
         setTimeout(() => setOfflinePct(null), 400);
       }
     })();
   };
+
+  useEffect(() => {
+    if (!data?.tracks?.length) return;
+    void listCachedIds().then((ids) => {
+      const set = new Set(ids);
+      const allLocal = data.tracks
+        .filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(t.id))
+        .every((t) => set.has(t.id));
+      if (allLocal) setOfflineDone(true);
+    });
+  }, [data?.tracks]);
 
   useEffect(() => {
     if (!id) return;
@@ -1016,7 +1024,10 @@ export function PlaylistPage() {
         });
         applyLibrary(r.library);
       }}
-      onOffline={() => api.offlineStart('playlist', data.playlist.id)}
+      onOffline={async () => {
+        await downloadTracksToDevice(data.tracks);
+        void api.offlineStart('playlist', data.playlist.id).catch(() => undefined);
+      }}
     />
   );
 }

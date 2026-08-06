@@ -241,9 +241,6 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
               {mode === 'login' ? 'Connexion' : 'Créer un compte'}
             </h2>
             <p className="mt-1 text-sm text-yt-muted">
-              PLM · sans pubs · YouTube Premium non requis
-            </p>
-            <p className="mt-1 text-sm text-yt-muted">
               Session longue sécurisée (refresh) — web, mobile PWA et desktop.
             </p>
           </div>
