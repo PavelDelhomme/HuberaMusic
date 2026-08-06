@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type Track } from '../api';
+import { type Track } from '../api';
 import { useLibrary } from '../store/library';
 import { usePlayer } from '../store/player';
 import {
