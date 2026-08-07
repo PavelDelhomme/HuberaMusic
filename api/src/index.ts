@@ -164,6 +164,7 @@ import {
   warmCategoryMixes,
 } from './reco.js';
 import { MIX_TARGET } from './mixCache.js';
+import { sendBatteryOptimizationMail } from './batteryReport.js';
 import {
   createEmailToken,
   insertTelemetry,
@@ -625,7 +626,23 @@ app.post(
   }
 });
 
-app.get('/api/img', rateLimit({ windowMs: 60_000, max: 120 }), (req, res) => void handleImageProxy(req, res));
+/** Rapport batterie détaillé → email (dev@ / BATTERY_REPORT_TO) + PJ zip optionnelle. */
+app.post(
+  '/api/telemetry/battery-report',
+  rateLimit({ windowMs: 60_000, max: 6 }),
+  authRequired,
+  async (req, res) => {
+    try {
+      const result = await sendBatteryOptimizationMail(req.body || {});
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(400).json({ error: String((err as Error).message || err) });
+    }
+  },
+);
+
+// Accueil = 8 mix × 4 covers + shelves → 120/min saturait vite (429 → tuiles vides)
+app.get('/api/img', rateLimit({ windowMs: 60_000, max: 900 }), (req, res) => void handleImageProxy(req, res));
 
 app.patch('/api/auth/profile', authRequired, (req, res) => {
   try {
@@ -1768,8 +1785,8 @@ app.post('/api/library/albums/expand-tracks', accountRequired, async (req, res) 
 });
 
 app.delete('/api/library/albums/:id', accountRequired, (req, res) => {
-  removeAlbum(req.userId!, p(req.params.id));
-  res.json({ ok: true, library: getFullLibrary(req.userId!) });
+  const result = removeAlbum(req.userId!, p(req.params.id));
+  res.json({ ok: true, ...result, library: getFullLibrary(req.userId!) });
 });
 
 app.post('/api/library/artists', accountRequired, (req, res) => {

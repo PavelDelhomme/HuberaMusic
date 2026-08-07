@@ -1524,6 +1524,8 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       related: prev?.id === playTrack.id ? get().related : [],
       relatedSeedId: prev?.id === playTrack.id ? get().relatedSeedId : null,
     });
+    // Notif OS immédiatement (titre cible) — avant le buffer audio
+    refreshMediaSession();
 
     // Annule un ensureAutoRadio en vol pour un autre seed
     if (prev?.id !== playTrack.id) autoRadioSeq += 1;
@@ -1531,6 +1533,8 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     const gen = bumpPlayGeneration();
     // Ne PAS bumpPrefetchGeneration ici : ça tuait le warm/full du titre suivant.
     pauseBothAudio();
+    // Re-pousse les métadonnées après pause (events audio ne doivent pas vider la barre)
+    refreshMediaSession();
     // Invalide les armements standby obsolètes
     standbyArmGen += 1;
 
@@ -1601,9 +1605,16 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     const track = queue[index];
     if (!track) return;
     claimLocalPlayer();
+    // Index cible tout de suite (évite barre média / UI sur l’ancien titre pendant le load)
+    set({ queueIndex: index, current: track, isLoading: true, progress: 0, playError: null });
+    refreshMediaSession();
     await get().play(track, queue, { preserveQueue: true, keepUserBoundary: true });
-    set({ queueIndex: index });
+    // play() recalcule l’index via findIndex — forcer le bon si doublons d’id
+    if (get().queueIndex !== index && get().queue[index]?.id === track.id) {
+      set({ queueIndex: index });
+    }
     publish();
+    refreshMediaSession();
   },
 
   toggle: () => {
@@ -2214,9 +2225,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       if (!pool.length) {
         if (kind === 'track') {
           const trackId = id;
-          // related API = mix précalculé ~200 (cache serveur)
+          // related API — full=false d’abord (évite timeout ~200 titres)
           const rel = await api
-            .related(trackId, { full: true })
+            .related(trackId, { full: false })
             .catch(() => ({ related: [] as Track[], radio: [] as Track[], tracks: [] as Track[] }));
           const raw = [
             ...(rel.related || []),
@@ -2306,37 +2317,17 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       const mix = [seedTrack, ...upcoming];
       set({ related: pool, relatedSeedId: seedTrack.id });
 
-      const cur = get().current;
-      const audio = get().audioEl;
-      const soft =
-        Boolean(cur?.id) &&
-        (cur!.id === seedTrack.id || get().isPlaying) &&
-        Boolean(audio) &&
-        !audio!.paused;
-
       const nextKind =
         kind === 'track' ? ('radio' as const) : kind === 'album' ? ('album' as const) : ('artist' as const);
 
-      if (soft) {
-        // Titre en cours intact — on remplace / alimente seulement la suite
-        get().enqueueAfterCurrent(upcoming, {
-          replaceRest: true,
-          cap: MIX_TARGET,
-          sourceId: kind === 'track' ? seedTrack.id : id,
-          sourceKind: nextKind,
-        });
-        set({ showQueue: true, showLyrics: false, autoplay: false, isLoading: false });
-        return { added: upcoming.length, soft: true as const };
-      }
-
+      // Toujours hard-start (coupe le titre en cours) — comme YTM
       await get().play(seedTrack, mix, {
         preserveQueue: true,
-        noAutoRadio: true,
+        noAutoRadio: upcoming.length >= 12,
         sourceId: kind === 'track' ? seedTrack.id : id,
         sourceKind: nextKind,
       });
-      // File déjà précalculée — pas de top-up autoplay
-      set({ showQueue: true, showLyrics: false, autoplay: false });
+      set({ showQueue: true, showLyrics: false, autoplay: upcoming.length < 12 });
       return { added: upcoming.length, soft: false as const };
     } catch (err) {
       console.error('startRadio', err);
@@ -2352,14 +2343,31 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   loadRelated: async (trackId) => {
     set({ relatedLoading: true, relatedError: null });
     try {
-      const rel = await api
-        .related(trackId)
+      // Progressif : fast puis batch moyen
+      const relFast = await api
+        .related(trackId, { fast: true })
         .catch(() => ({ related: [] as Track[], radio: [] as Track[] }));
       if (usePlayer.getState().current?.id && usePlayer.getState().current?.id !== trackId) {
         set({ relatedLoading: false });
         return;
       }
-      const pool = (rel.related?.length ? rel.related : rel.radio || []).filter(isPlayable);
+      let pool = (relFast.related?.length ? relFast.related : relFast.radio || []).filter(isPlayable);
+      if (pool.length) {
+        set({
+          related: diversifyByArtist(pool, usePlayer.getState().current?.artists?.[0]),
+          relatedSeedId: trackId,
+          relatedLoading: false,
+          relatedError: null,
+        });
+      }
+      const rel = await api
+        .related(trackId, { full: false })
+        .catch(() => ({ related: [] as Track[], radio: [] as Track[] }));
+      if (usePlayer.getState().current?.id && usePlayer.getState().current?.id !== trackId) {
+        set({ relatedLoading: false });
+        return;
+      }
+      pool = (rel.related?.length ? rel.related : rel.radio || []).filter(isPlayable);
       const diversified = diversifyByArtist(
         pool,
         usePlayer.getState().current?.artists?.[0],

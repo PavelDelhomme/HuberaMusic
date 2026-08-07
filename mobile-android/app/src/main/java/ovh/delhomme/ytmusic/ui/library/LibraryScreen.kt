@@ -142,6 +142,11 @@ fun LibraryScreen(
         }
     }
 
+    val libraryEpoch by container.libraryEpoch.collectAsState()
+    LaunchedEffect(libraryEpoch) {
+        if (libraryEpoch > 0L) reloadLibrary(force = true)
+    }
+
     // Sync live des DL locaux → liste / filtre Téléchargés sans pull-to-refresh
     LaunchedEffect(offlineRev) {
         val local = container.offlineStore.listTracks()

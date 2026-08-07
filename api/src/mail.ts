@@ -86,6 +86,11 @@ export async function sendMail(opts: {
   subject: string;
   html: string;
   text?: string;
+  attachments?: Array<{
+    filename: string;
+    content: Buffer | string;
+    contentType?: string;
+  }>;
 }) {
   const cfg = smtpPublicConfig();
   const from = cfg.fromParsed;
@@ -93,7 +98,7 @@ export async function sendMail(opts: {
   const tx = await getTransporter();
   if (!tx) {
     console.log(
-      `\n[mail:${getAppEnv()}] from=${cfg.from} → ${opts.to}\nSubject: ${opts.subject}\n${opts.text || opts.html}\n(outbox id=${id})\n`,
+      `\n[mail:${getAppEnv()}] from=${cfg.from} → ${opts.to}\nSubject: ${opts.subject}\n${opts.text || opts.html}\nattachments=${opts.attachments?.length || 0}\n(outbox id=${id})\n`,
     );
     return { ok: true, mode: 'outbox' as const, id, from: cfg.from };
   }
@@ -107,6 +112,11 @@ export async function sendMail(opts: {
     subject: opts.subject,
     html: opts.html,
     text: opts.text,
+    attachments: opts.attachments?.map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      contentType: a.contentType,
+    })),
     headers: {
       'X-Mailer': 'PLM',
       'X-PLM-Env': getAppEnv(),
@@ -114,7 +124,7 @@ export async function sendMail(opts: {
   });
 
   console.log(
-    `[mail:${getAppEnv()}] sent id=${info.messageId} from="${from.name}" <${from.address}> → ${opts.to}`,
+    `[mail:${getAppEnv()}] sent id=${info.messageId} from="${from.name}" <${from.address}> → ${opts.to} atts=${opts.attachments?.length || 0}`,
   );
   return {
     ok: true,

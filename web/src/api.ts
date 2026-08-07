@@ -176,23 +176,22 @@ export function thumbCandidates(
   };
   const id = (track as Track).id;
 
-  // Thumbs YouTube Music / Google d’abord (qualité + fiabilité)
+  // ID vidéo → ytimg proxy/direct d’abord (fiable pour mosaïques « Mixés pour toi »)
+  if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) {
+    push(apiUrl(`/api/img?v=${encodeURIComponent(id)}&s=${size}`));
+    push(`https://i.ytimg.com/vi/${id}/hqdefault.jpg`);
+    push(`https://i.ytimg.com/vi/${id}/mqdefault.jpg`);
+  }
+
+  // Thumbs API (ggpht / yt3) ensuite — souvent 60–120px et flaky via proxy serveur
   for (const t of list) {
     if (!t?.url) continue;
     if (isFragileYtimg(t.url)) continue;
-    if (/i\.ytimg\.com/i.test(t.url)) continue; // géré via ?v=
+    if (/i\.ytimg\.com/i.test(t.url)) continue; // déjà couvert via ?v= / direct
     push(proxiedThumbUrl(t.url, size));
   }
 
-  // ID vidéo 11 chars → un seul endpoint proxy (essaie hq/mq/default côté serveur)
   if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) {
-    push(apiUrl(`/api/img?v=${encodeURIComponent(id)}&s=${size}`));
-  }
-
-  // Secours : ytimg fiables en direct (si proxy KO)
-  if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) {
-    push(`https://i.ytimg.com/vi/${id}/hqdefault.jpg`);
-    push(`https://i.ytimg.com/vi/${id}/mqdefault.jpg`);
     push(`https://i.ytimg.com/vi/${id}/default.jpg`);
   }
 

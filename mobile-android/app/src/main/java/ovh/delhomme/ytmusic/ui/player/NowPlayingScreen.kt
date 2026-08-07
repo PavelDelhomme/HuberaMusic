@@ -397,19 +397,24 @@ fun NowPlayingScreen(
         mediaSlideX = 0f
     }
 
-    LaunchedEffect(queueOpen, ui.queueIndex, ui.queue.size) {
-        if (!queueOpen || ui.queue.isEmpty()) return@LaunchedEffect
-        val target = ui.queueIndex.coerceIn(0, ui.queue.lastIndex)
-        runCatching { queueListState.animateScrollToItem(target) }
+    // Dès que la file s’ouvre (même partiellement), ancrer sur le titre courant
+    LaunchedEffect(queueInteractive, ui.queueIndex, ui.queue.size, queuePanelTab) {
+        if (!queueInteractive || queuePanelTab != 0 || ui.queue.isEmpty()) return@LaunchedEffect
+        val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
+        val target = when {
+            ui.queueIndex < boundary -> ui.queueIndex
+            else -> ui.queueIndex + 1 // header « À suivre » entre user et auto
+        }.coerceAtLeast(0)
+        // Instant : évite le flash « haut de file (déjà joués) »
+        runCatching { queueListState.scrollToItem(target) }
     }
 
-    // Ne pas auto-scroller vers la file quand on est sur le lecteur (notif / ouverture).
-    // Seulement suivre le titre courant si l’utilisateur a déjà scrollé dans la section file.
+    // Aperçu file dans le lecteur : suivre le courant dès qu’on a scrollé sous la cover
     LaunchedEffect(ui.queueIndex) {
         if (queueInteractive || ui.queue.isEmpty()) return@LaunchedEffect
         if (listState.firstVisibleItemIndex <= 1) return@LaunchedEffect
         val target = (ui.queueIndex + 2).coerceAtLeast(0)
-        runCatching { listState.animateScrollToItem(target) }
+        runCatching { listState.scrollToItem(target) }
     }
 
     // Clic notification / réouverture → zone média (pas la file)
@@ -1006,15 +1011,18 @@ fun NowPlayingScreen(
                     }
 
                     val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
+                    // Aperçu rétracté : titre courant en tête + suivants (pas tout le haut « déjà joué »)
+                    val previewFrom = ui.queueIndex.coerceIn(0, boundary)
                     itemsIndexed(
-                        ui.queue.take(boundary),
-                        key = { i, t -> "iu-${t.id}-$i" },
+                        ui.queue.subList(previewFrom, boundary),
+                        key = { i, t -> "iu-${t.id}-${previewFrom + i}" },
                     ) { index, item ->
+                        val abs = previewFrom + index
                         QueueTrackRow(
                             track = item,
-                            index = index,
-                            highlighted = index == ui.queueIndex,
-                            onClick = { player.playAt(index) },
+                            index = abs,
+                            highlighted = abs == ui.queueIndex,
+                            onClick = { player.playAt(abs) },
                             onLongClick = { onMore?.invoke(item) },
                             onMove = { from, to -> player.moveInQueue(from, to) },
                             onMore = onMore?.let { { it(item) } },
@@ -1459,16 +1467,26 @@ private fun QueueExpandedBody(
     LaunchedEffect(seedId, panelTab) {
         if (panelTab != 1 || seedId.isNullOrBlank()) return@LaunchedEffect
         similarLoading = true
-        // related API = déjà ranked style (évite double similar+related)
-        val pool = runCatching {
-            val rel = container.api.related(seedId)
+        // Phase 1 : fast (rapide) — affiche tout de suite
+        val fast = runCatching {
+            val rel = container.api.related(seedId, fast = 1)
             (rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty())
                 .filter { it.isPlayable() && it.id != seedId }
                 .distinctBy { it.id }
         }.getOrDefault(emptyList())
-        if (ui.track?.id == seedId) {
-            similarTracks = pool
-            similarLoading = false
+        if (ui.track?.id != seedId) return@LaunchedEffect
+        similarTracks = fast
+        similarLoading = false
+        // Phase 2 : batch moyen (full=0) — enrichit sans bloquer
+        val mid = runCatching {
+            val rel = container.api.related(seedId, full = 0)
+            (rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty())
+                .filter { it.isPlayable() && it.id != seedId }
+                .distinctBy { it.id }
+        }.getOrDefault(emptyList())
+        if (ui.track?.id != seedId) return@LaunchedEffect
+        if (mid.size > similarTracks.size) {
+            similarTracks = mid
         }
     }
 

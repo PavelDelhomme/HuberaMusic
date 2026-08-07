@@ -77,22 +77,41 @@ data class TrackDto(
     }
 
     fun coverUrl(sizeHint: Int = 400): String? {
-        val thumbs = thumbnails.orEmpty()
-        if (thumbs.isNotEmpty()) {
-            // Plus petite thumb encore ≥ sizeHint (sinon la plus grande)
-            val sortedAsc = thumbs.sortedBy { it.width ?: 0 }
-            val fit = sortedAsc.firstOrNull { (it.width ?: 0) >= sizeHint }
-            val pick = fit ?: sortedAsc.lastOrNull()
-            if (!pick?.url.isNullOrBlank()) return pick!!.url
-        }
-        return if (id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))) {
+        val ytimg = if (id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))) {
             when {
                 sizeHint <= 200 -> "https://i.ytimg.com/vi/$id/mqdefault.jpg"
-                sizeHint <= 480 -> "https://i.ytimg.com/vi/$id/hqdefault.jpg"
                 else -> "https://i.ytimg.com/vi/$id/hqdefault.jpg"
             }
         } else {
             null
+        }
+        val thumbs = thumbnails.orEmpty()
+        if (thumbs.isNotEmpty()) {
+            val sortedAsc = thumbs.sortedBy { it.width ?: 0 }
+            val maxW = sortedAsc.lastOrNull()?.width ?: 0
+            // ggpht/yt3 à 60–120px : préférer ytimg (mix Accueil sinon tuiles vides)
+            if (ytimg != null && maxW > 0 && maxW < 200) return ytimg
+            val fit = sortedAsc.firstOrNull { (it.width ?: 0) >= sizeHint }
+            val pick = fit ?: sortedAsc.lastOrNull()
+            val url = pick?.url?.takeIf { it.isNotBlank() }
+            if (url != null) {
+                // Upscale paramètres =sNNN / =wNNN-hNNN quand possible
+                val upsized = resizeGoogleThumb(url, sizeHint)
+                return upsized
+            }
+        }
+        return ytimg
+    }
+
+    private fun resizeGoogleThumb(url: String, sizeHint: Int): String {
+        val s = sizeHint.coerceIn(60, 800)
+        return when {
+            Regex("=[sw]\\d+").containsMatchIn(url) ->
+                url.replace(Regex("=[sw]\\d+(-h\\d+)?(-c-k-c0x00ffffff-no-rj)?$"), "=s$s-c-k-c0x00ffffff-no-rj")
+                    .let { if (it == url) url.replace(Regex("=w\\d+-h\\d+"), "=w$s-h$s") else it }
+            Regex("=w\\d+-h\\d+").containsMatchIn(url) ->
+                url.replace(Regex("=w\\d+-h\\d+"), "=w$s-h$s")
+            else -> url
         }
     }
 

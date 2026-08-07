@@ -137,9 +137,12 @@ function mediaArtwork(track: {
 
 export function updateMediaSessionMetadata() {
   if (!('mediaSession' in navigator)) return;
-  const { current, progress, duration } = usePlayer.getState();
+  const { current, progress, duration, isLoading, isPlaying } = usePlayer.getState();
   const audio = audioEl();
-  const playing = audio ? !audio.paused && !audio.ended : usePlayer.getState().isPlaying;
+  const actuallyPlaying = audio ? !audio.paused && !audio.ended : isPlaying;
+  // Pendant le chargement d’un saut lointain : garder métadonnées + état « paused »
+  // (évite barre OS vide jusqu’au prochain expand/collapse).
+  const playing = isLoading ? false : actuallyPlaying;
 
   if (!current) {
     try {
@@ -153,7 +156,7 @@ export function updateMediaSessionMetadata() {
 
   try {
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: current.title,
+      title: current.title || '…',
       artist: current.artists?.map((a) => a.name).filter(Boolean).join(', ') || 'Artiste',
       album: current.album?.name || 'PLM',
       artwork: mediaArtwork(current),
@@ -167,6 +170,17 @@ export function updateMediaSessionMetadata() {
         position: Math.min(Math.max(0, pos), dur),
         playbackRate: audio?.playbackRate || 1,
       });
+    } else {
+      // Durée inconnue pendant buffer : quand même une position 0 pour peupler la barre
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: Math.max(dur, 1),
+          position: 0,
+          playbackRate: 1,
+        });
+      } catch {
+        /* ignore */
+      }
     }
   } catch {
     /* ignore */
@@ -352,6 +366,7 @@ export function installMediaKeys(): () => void {
     if (
       state.current?.id !== prev.current?.id ||
       state.isPlaying !== prev.isPlaying ||
+      state.isLoading !== prev.isLoading ||
       state.audioEl !== prev.audioEl ||
       Math.floor(state.progress) !== Math.floor(prev.progress) ||
       state.duration !== prev.duration
@@ -359,6 +374,7 @@ export function installMediaKeys(): () => void {
       if (
         state.current?.id === prev.current?.id &&
         state.isPlaying === prev.isPlaying &&
+        state.isLoading === prev.isLoading &&
         state.audioEl === prev.audioEl
       ) {
         if (Math.abs(state.progress - prev.progress) < 1 && state.duration === prev.duration) {

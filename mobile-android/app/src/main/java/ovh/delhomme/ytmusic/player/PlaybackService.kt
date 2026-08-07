@@ -65,12 +65,22 @@ class PlaybackService : MediaSessionService() {
                 events.contains(Player.EVENT_REPEAT_MODE_CHANGED) ||
                 events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
                 events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
-                events.contains(Player.EVENT_IS_PLAYING_CHANGED)
+                events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
+                events.contains(Player.EVENT_MEDIA_METADATA_CHANGED)
             ) {
                 refreshMediaButtons()
+                ensureCurrentItemMetadata()
             }
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
                 warmUpcoming(player.currentMediaItemIndex)
+                // OEM (Nothing/Samsung) : notif compacte parfois vide tant que le bitmap n’est pas là
+                scope.launch {
+                    delay(120)
+                    refreshMediaButtons()
+                    ensureCurrentItemMetadata()
+                    delay(400)
+                    refreshMediaButtons()
+                }
             }
             if (
                 events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
@@ -308,6 +318,75 @@ class PlaybackService : MediaSessionService() {
     private fun refreshMediaButtons() {
         val p = sessionPlayer ?: player ?: return
         session?.setMediaButtonPreferences(buildMediaButtons(p))
+    }
+
+    /**
+     * Force le redraw de la notif média (compacte OEM souvent vide après seek lointain
+     * tant qu’on n’expand/collapse pas manuellement).
+     */
+    private fun invalidateMediaNotification() {
+        val s = session ?: return
+        val startFg = player?.playWhenReady == true || player?.isPlaying == true
+        runCatching { onUpdateNotification(s, startFg) }
+    }
+
+    /**
+     * Si le MediaItem courant a des métadonnées vides (saut lointain / placeholder),
+     * les reconstruit depuis [Holder.queue] pour que la notif système affiche titre + boutons.
+     */
+    fun ensureCurrentItemMetadata() {
+        val exo = player ?: return
+        val idx = exo.currentMediaItemIndex
+        if (idx < 0 || idx >= exo.mediaItemCount) return
+        val item = exo.getMediaItemAt(idx)
+        val title = item.mediaMetadata.title?.toString()?.trim().orEmpty()
+        val track = Holder.queue.getOrNull(idx)?.takeIf { it.id == item.mediaId }
+            ?: Holder.queue.firstOrNull { it.id == item.mediaId }
+        if (track == null) {
+            refreshMediaButtons()
+            invalidateMediaNotification()
+            return
+        }
+        val needsRebuild = title.isEmpty() ||
+            title == "…" ||
+            item.mediaMetadata.artworkUri == null ||
+            (track.title.isNotBlank() && !title.equals(track.title, ignoreCase = false) && title.length < 2)
+        if (needsRebuild) {
+            val rebuilt = mediaItemFor(
+                track,
+                { id -> "${Holder.resolvedApiBase()}/api/stream/$id" },
+                Holder.queueTitle,
+            )
+            runCatching {
+                val pos = exo.currentPosition.coerceAtLeast(0L)
+                exo.replaceMediaItem(idx, rebuilt)
+                // replaceMediaItem peut reset la position sur certains builds
+                if (exo.currentMediaItemIndex == idx && exo.currentPosition < 50L && pos > 50L) {
+                    exo.seekTo(idx, pos)
+                }
+            }
+        }
+        refreshMediaButtons()
+        invalidateMediaNotification()
+    }
+
+    fun notifyQueueJump() {
+        refreshMediaButtons()
+        ensureCurrentItemMetadata()
+        invalidateMediaNotification()
+        scope.launch {
+            delay(80)
+            refreshMediaButtons()
+            ensureCurrentItemMetadata()
+            invalidateMediaNotification()
+            delay(350)
+            refreshMediaButtons()
+            invalidateMediaNotification()
+            // Bitmap artwork souvent prêt après ~1s sur saut froid
+            delay(700)
+            refreshMediaButtons()
+            invalidateMediaNotification()
+        }
     }
 
     private fun buildMediaButtons(p: Player): List<CommandButton> {

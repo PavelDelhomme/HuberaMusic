@@ -105,7 +105,15 @@ export function getFullLibrary(userId: string) {
     }
   }).filter(Boolean);
 
-  const playlists = listPlaylists(userId);
+  const playlists = (() => {
+    // Garantit la playlist système « Titres J'aime » (sans resync à chaque GET)
+    try {
+      ensureLikedPlaylistExists(userId);
+    } catch (err) {
+      console.warn('[library] liked playlist', (err as Error).message);
+    }
+    return listPlaylists(userId);
+  })();
 
   const history = getHistory(userId, 500);
   const recentEntities = getEntityHistory(userId, 40);
@@ -140,6 +148,7 @@ export function toggleLikeTrack(userId: string, track: Track) {
     .get(userId, track.id);
   if (existing) {
     db.prepare('DELETE FROM liked_tracks WHERE user_id = ? AND track_id = ?').run(userId, track.id);
+    unlinkLikedPlaylistTrack(userId, track.id);
     return { liked: false };
   }
   db.prepare('INSERT INTO liked_tracks (user_id, track_id, created_at) VALUES (?, ?, ?)').run(
@@ -147,6 +156,8 @@ export function toggleLikeTrack(userId: string, track: Track) {
     track.id,
     Date.now(),
   );
+  // Playlist système « Titres J'aime » — pas de doublon dans library_tracks
+  linkLikedPlaylistTrack(userId, track);
   return { liked: true };
 }
 
@@ -163,29 +174,43 @@ export function toggleLibraryTrack(userId: string, track: Track) {
     .prepare('SELECT 1 FROM library_tracks WHERE user_id = ? AND track_id = ?')
     .get(userId, track.id);
   if (existing) {
+    // Retrait manuel : coupe aussi les liaisons album (l’user retire explicitement le titre)
+    db.prepare('DELETE FROM library_album_tracks WHERE user_id = ? AND track_id = ?').run(
+      userId,
+      track.id,
+    );
     db.prepare('DELETE FROM library_tracks WHERE user_id = ? AND track_id = ?').run(userId, track.id);
     return { saved: false };
   }
-  db.prepare('INSERT INTO library_tracks (user_id, track_id, created_at) VALUES (?, ?, ?)').run(
-    userId,
-    track.id,
-    Date.now(),
-  );
+  db.prepare(
+    'INSERT INTO library_tracks (user_id, track_id, created_at, manual) VALUES (?, ?, ?, 1)',
+  ).run(userId, track.id, Date.now());
   return { saved: true };
 }
 
-/** Ajoute un titre en biblio sans toggle (idempotent). */
-export function ensureLibraryTrack(userId: string, track: Track): boolean {
+/** Ajoute un titre en biblio sans toggle (idempotent). `manual=false` = via album. */
+export function ensureLibraryTrack(
+  userId: string,
+  track: Track,
+  opts: { manual?: boolean } = {},
+): boolean {
   if (!track?.id) return false;
   // Uniquement les vrais IDs vidéo/song YouTube
   if (!/^[a-zA-Z0-9_-]{11}$/.test(track.id)) return false;
   upsertTrack(sanitizeTrack(track));
-  if (isTrackInLibrary(userId, track.id)) return false;
-  db.prepare('INSERT INTO library_tracks (user_id, track_id, created_at) VALUES (?, ?, ?)').run(
-    userId,
-    track.id,
-    Date.now(),
-  );
+  const manual = opts.manual === true ? 1 : 0;
+  if (isTrackInLibrary(userId, track.id)) {
+    // Déjà présent (ex. ajout manuel) : si on force manual, remonte le flag
+    if (manual) {
+      db.prepare(
+        'UPDATE library_tracks SET manual = 1 WHERE user_id = ? AND track_id = ?',
+      ).run(userId, track.id);
+    }
+    return false;
+  }
+  db.prepare(
+    'INSERT INTO library_tracks (user_id, track_id, created_at, manual) VALUES (?, ?, ?, ?)',
+  ).run(userId, track.id, Date.now(), manual);
   return true;
 }
 
@@ -268,6 +293,7 @@ export async function saveAlbumWithTracks(
 
   const saved = saveAlbum(userId, { ...meta, type: 'album', tracks: undefined });
   let tracksAdded = 0;
+  let tracksLinked = 0;
   for (const raw of tracks) {
     const t = sanitizeTrack({
       ...raw,
@@ -277,9 +303,16 @@ export async function saveAlbumWithTracks(
         id,
       },
     });
-    if (ensureLibraryTrack(userId, t)) tracksAdded += 1;
+    const inserted = ensureLibraryTrack(userId, t, { manual: false });
+    if (inserted) tracksAdded += 1;
+    if (linkAlbumTrack(userId, id, t.id)) tracksLinked += 1;
   }
-  return { album: saved, tracksAdded, tracksTotal: tracks.length };
+  return {
+    album: saved,
+    tracksAdded,
+    tracksLinked,
+    tracksTotal: tracks.length,
+  };
 }
 
 /** Ré-injecte les titres de tous les albums déjà en biblio (backfill). */
@@ -297,8 +330,148 @@ export async function expandLibraryAlbumTracks(userId: string) {
   return { albums, tracksAdded, library: getFullLibrary(userId) };
 }
 
+/**
+ * Retire l’album. Les titres ajoutés uniquement via cet album (manual=0,
+ * plus aucune autre liaison album) sont retirés de library_tracks.
+ * Les titres ajoutés manuellement (ou encore liés à un autre album) restent.
+ */
 export function removeAlbum(userId: string, albumId: string) {
+  const linked = db
+    .prepare(
+      `SELECT track_id FROM library_album_tracks WHERE user_id = ? AND album_id = ?`,
+    )
+    .all(userId, albumId) as { track_id: string }[];
+
+  db.prepare('DELETE FROM library_album_tracks WHERE user_id = ? AND album_id = ?').run(
+    userId,
+    albumId,
+  );
   db.prepare('DELETE FROM library_albums WHERE user_id = ? AND album_id = ?').run(userId, albumId);
+
+  let tracksRemoved = 0;
+  for (const { track_id } of linked) {
+    const stillLinked = db
+      .prepare(
+        `SELECT 1 FROM library_album_tracks WHERE user_id = ? AND track_id = ? LIMIT 1`,
+      )
+      .get(userId, track_id);
+    if (stillLinked) continue;
+    const row = db
+      .prepare(
+        `SELECT manual FROM library_tracks WHERE user_id = ? AND track_id = ?`,
+      )
+      .get(userId, track_id) as { manual: number } | undefined;
+    if (!row) continue;
+    if (Number(row.manual) === 1) continue; // ajout manuel : on garde
+    db.prepare('DELETE FROM library_tracks WHERE user_id = ? AND track_id = ?').run(
+      userId,
+      track_id,
+    );
+    tracksRemoved += 1;
+  }
+  return { tracksRemoved };
+}
+
+function linkAlbumTrack(userId: string, albumId: string, trackId: string): boolean {
+  if (!trackId || !albumId) return false;
+  const existing = db
+    .prepare(
+      `SELECT 1 FROM library_album_tracks WHERE user_id = ? AND album_id = ? AND track_id = ?`,
+    )
+    .get(userId, albumId, trackId);
+  if (existing) return false;
+  db.prepare(
+    `INSERT INTO library_album_tracks (user_id, album_id, track_id, created_at) VALUES (?, ?, ?, ?)`,
+  ).run(userId, albumId, trackId, Date.now());
+  return true;
+}
+
+const LIKED_PLAYLIST_DESC = 'system:liked';
+const LIKED_PLAYLIST_NAME = "Titres J'aime";
+
+/** Playlist système dédiée aux J'aime (créée une fois par user). */
+export function ensureLikedPlaylistExists(userId: string) {
+  const row = db
+    .prepare(
+      `SELECT id FROM playlists WHERE user_id = ? AND description = ? ORDER BY created_at ASC LIMIT 1`,
+    )
+    .get(userId, LIKED_PLAYLIST_DESC) as { id: string } | undefined;
+  if (row?.id) return row.id;
+  return getOrCreateLikedPlaylist(userId).id;
+}
+
+export function getOrCreateLikedPlaylist(userId: string): LibraryPlaylist {
+  const row = db
+    .prepare(
+      `SELECT id FROM playlists WHERE user_id = ? AND description = ? ORDER BY created_at ASC LIMIT 1`,
+    )
+    .get(userId, LIKED_PLAYLIST_DESC) as { id: string } | undefined;
+  if (row?.id) {
+    syncLikedPlaylistTracks(userId, row.id);
+    return listPlaylists(userId).find((p) => p.id === row.id)!;
+  }
+  const id = `liked-${userId}`;
+  const now = Date.now();
+  // id stable si libre, sinon UUID
+  const taken = db.prepare('SELECT 1 FROM playlists WHERE id = ?').get(id);
+  const playlistId = taken ? randomUUID() : id;
+  db.prepare(
+    `INSERT INTO playlists (id, user_id, name, description, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(playlistId, userId, LIKED_PLAYLIST_NAME, LIKED_PLAYLIST_DESC, now, now);
+  syncLikedPlaylistTracks(userId, playlistId);
+  return listPlaylists(userId).find((p) => p.id === playlistId)!;
+}
+
+function syncLikedPlaylistTracks(userId: string, playlistId: string) {
+  const liked = db
+    .prepare(`SELECT track_id FROM liked_tracks WHERE user_id = ? ORDER BY created_at ASC`)
+    .all(userId) as { track_id: string }[];
+  db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ?').run(playlistId);
+  const ins = db.prepare(
+    `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)`,
+  );
+  const now = Date.now();
+  liked.forEach((r, i) => ins.run(playlistId, r.track_id, i, now));
+  db.prepare('UPDATE playlists SET updated_at = ?, name = ? WHERE id = ?').run(
+    now,
+    LIKED_PLAYLIST_NAME,
+    playlistId,
+  );
+}
+
+function linkLikedPlaylistTrack(userId: string, track: Track) {
+  const pl = getOrCreateLikedPlaylist(userId);
+  upsertTrack(track);
+  const max = db
+    .prepare('SELECT COALESCE(MAX(position), -1) as m FROM playlist_tracks WHERE playlist_id = ?')
+    .get(pl.id) as { m: number };
+  db.prepare(
+    `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(playlist_id, track_id) DO NOTHING`,
+  ).run(pl.id, track.id, max.m + 1, Date.now());
+  db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').run(Date.now(), pl.id);
+}
+
+function unlinkLikedPlaylistTrack(userId: string, trackId: string) {
+  const row = db
+    .prepare(
+      `SELECT id FROM playlists WHERE user_id = ? AND description = ? LIMIT 1`,
+    )
+    .get(userId, LIKED_PLAYLIST_DESC) as { id: string } | undefined;
+  if (!row?.id) return;
+  db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?').run(
+    row.id,
+    trackId,
+  );
+  db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').run(Date.now(), row.id);
+}
+
+export function isSystemLikedPlaylist(playlistId: string, userId: string): boolean {
+  const row = db
+    .prepare(`SELECT description FROM playlists WHERE id = ? AND user_id = ?`)
+    .get(playlistId, userId) as { description: string } | undefined;
+  return row?.description === LIKED_PLAYLIST_DESC;
 }
 
 export function saveArtist(userId: string, artist: Record<string, unknown>) {
@@ -714,7 +887,10 @@ export function getForgottenFavorites(userId: string, limit = 8): Track[] {
 
 export function listPlaylists(userId: string): LibraryPlaylist[] {
   const rows = db
-    .prepare('SELECT * FROM playlists WHERE user_id = ? ORDER BY updated_at DESC')
+    .prepare(
+      `SELECT * FROM playlists WHERE user_id = ?
+       ORDER BY CASE WHEN description = 'system:liked' THEN 0 ELSE 1 END, updated_at DESC`,
+    )
     .all(userId) as {
     id: string;
     name: string;
@@ -774,6 +950,9 @@ export function updatePlaylist(
 }
 
 export function deletePlaylist(userId: string, playlistId: string) {
+  if (isSystemLikedPlaylist(playlistId, userId)) {
+    throw new Error("La playlist « Titres J'aime » ne peut pas être supprimée");
+  }
   const pl = db
     .prepare('SELECT id FROM playlists WHERE id = ? AND user_id = ?')
     .get(playlistId, userId);

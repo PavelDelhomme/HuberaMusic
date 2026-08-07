@@ -137,6 +137,9 @@ fun AccountSheet(
                     onOpenHistory()
                 },
             )
+            // TODO(stats): page Stats dans ce menu (à côté Reco / déconnexion) —
+            // artistes les + écoutés, heures/jours/mois d’écoute, total titres,
+            // taux de couverture biblio. Ne pas implémenter maintenant.
             AccountRow(
                 icon = { Icon(Icons.Default.Download, contentDescription = null) },
                 title = "Téléchargements",

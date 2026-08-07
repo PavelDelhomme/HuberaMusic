@@ -792,12 +792,19 @@ export function mapListItem(item: any, fallbackThumbs?: Thumb[]): Track | null {
   let thumbnails = extractThumbs(item);
   if (!thumbnails.length && fallbackThumbs?.length) thumbnails = fallbackThumbs;
 
-  // Video id fallback art
-  if (!thumbnails.length && /^[a-zA-Z0-9_-]{11}$/.test(String(id))) {
-    thumbnails = [
-      { url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, width: 1280, height: 720 },
+  // Toujours injecter ytimg pour les vidéos (ggpht 60/120 souvent flaky / trop petit pour les mix)
+  if (/^[a-zA-Z0-9_-]{11}$/.test(String(id))) {
+    const ytimg: Thumb[] = [
       { url: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, width: 480, height: 360 },
+      { url: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`, width: 320, height: 180 },
     ];
+    const seen = new Set(thumbnails.map((t) => t.url));
+    for (const t of ytimg) {
+      if (!seen.has(t.url)) {
+        thumbnails = [...thumbnails, t];
+        seen.add(t.url);
+      }
+    }
   }
 
   return {

@@ -223,10 +223,55 @@ fun DebugLogsScreen(
 
             Spacer(Modifier.height(12.dp))
             Text(
-                "Récupération PC : make android-logs",
+                "Récupération PC : make android-logs · make battery-report-mail",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        runCatching {
+                            val bm = context.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
+                            val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                            val chargeCounter = bm.getLongProperty(android.os.BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
+                            val body = mapOf(
+                                "device" to mapOf(
+                                    "model" to android.os.Build.MODEL,
+                                    "serial" to android.os.Build.MODEL,
+                                    "android" to android.os.Build.VERSION.RELEASE,
+                                    "name" to (android.provider.Settings.Global.getString(context.contentResolver, "device_name") ?: android.os.Build.MODEL),
+                                    "transport" to "app",
+                                ),
+                                "app" to mapOf(
+                                    "versionName" to BuildConfig.VERSION_NAME,
+                                    "package" to context.packageName,
+                                    "apiBase" to BuildConfig.API_BASE_URL,
+                                ),
+                                "session" to mapOf(
+                                    "stamp" to java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date()),
+                                    "durationSec" to 0,
+                                    "unplugged" to true,
+                                ),
+                                "stats" to mapOf(
+                                    "levelStart" to level,
+                                    "levelEnd" to level,
+                                    "levelDelta" to 0,
+                                    "chargeCounterStart" to chargeCounter,
+                                    "chargeCounterEnd" to chargeCounter,
+                                ),
+                                "notes" to "Snapshot manuel Debug → email BATTERY_REPORT_TO / SEED_EMAIL",
+                                "samples" to mapOf(
+                                    "exportBundle" to AppLog.exportBundle().take(10_000),
+                                ),
+                            )
+                            container.api.batteryReport(body)
+                            Toast.makeText(context, "Rapport batterie envoyé par email", Toast.LENGTH_LONG).show()
+                        }.onFailure {
+                            Toast.makeText(context, it.message ?: "Échec envoi", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+            ) { Text("Email rapport batterie") }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (tab == 0) Button(onClick = { tab = 0 }) { Text("Crash") }
