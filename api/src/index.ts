@@ -1852,6 +1852,19 @@ app.post('/api/library/playlists', accountRequired, (req, res) => {
   }
 });
 
+app.get('/api/library/playlists/:id', accountRequired, (req, res) => {
+  try {
+    const pl = listPlaylists(req.userId!).find((x) => x.id === p(req.params.id));
+    if (!pl) {
+      res.status(404).json({ error: 'Playlist introuvable' });
+      return;
+    }
+    res.json(pl);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 app.patch('/api/library/playlists/:id', accountRequired, (req, res) => {
   try {
     res.json(updatePlaylist(req.userId!, p(req.params.id), req.body || {}));

@@ -1001,6 +1001,14 @@ fun AddToPlaylistSheet(
                                                         Toast.LENGTH_SHORT,
                                                     ).show()
                                                 }
+                                                .onFailure {
+                                                    Toast.makeText(
+                                                        context,
+                                                        it.message?.takeIf { m -> m.isNotBlank() }
+                                                            ?: "Impossible d'ajouter à la playlist",
+                                                        Toast.LENGTH_SHORT,
+                                                    ).show()
+                                                }
                                         }
                                     },
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -1098,6 +1106,14 @@ fun AddToPlaylistSheet(
                                                 Toast.makeText(
                                                     context,
                                                     "Ajouté à ${pl.displayName()}",
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
+                                            }
+                                            .onFailure {
+                                                Toast.makeText(
+                                                    context,
+                                                    it.message?.takeIf { m -> m.isNotBlank() }
+                                                        ?: "Impossible d'ajouter à la playlist",
                                                     Toast.LENGTH_SHORT,
                                                 ).show()
                                             }

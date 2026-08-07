@@ -532,14 +532,17 @@ interface YtMusicApi {
     @POST("api/library/playlists")
     suspend fun createPlaylist(@Body body: CreatePlaylistBody): PlaylistDto
 
+    @GET("api/library/playlists/{id}")
+    suspend fun libraryPlaylist(@Path("id") id: String): PlaylistDto
+
     @POST("api/library/playlists/{id}/tracks")
-    suspend fun addToPlaylist(@Path("id") id: String, @Body track: TrackDto): Map<String, Any>
+    suspend fun addToPlaylist(@Path("id") id: String, @Body track: TrackDto): PlaylistDto
 
     @DELETE("api/library/playlists/{id}/tracks/{trackId}")
     suspend fun removeFromPlaylist(
         @Path("id") id: String,
         @Path("trackId") trackId: String,
-    ): Map<String, Any>
+    ): PlaylistDto
 
     @GET("api/playlist/{id}")
     suspend fun playlist(@Path("id") id: String): PlaylistDetailResponse
