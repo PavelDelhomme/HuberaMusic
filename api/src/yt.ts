@@ -31,6 +31,7 @@ import {
   dedupeArtists,
   filterByRelevance,
   foldText,
+  isSpokenWordHit,
   mergeTracks,
   pickTopResult,
   rankByQuery,
@@ -418,10 +419,19 @@ type SearchBuckets = {
   albums: Track[];
   artists: Track[];
   playlists: Track[];
+  podcasts: Track[];
 };
 
 function emptyBuckets(): SearchBuckets {
-  return { topResult: null, songs: [], videos: [], albums: [], artists: [], playlists: [] };
+  return {
+    topResult: null,
+    songs: [],
+    videos: [],
+    albums: [],
+    artists: [],
+    playlists: [],
+    podcasts: [],
+  };
 }
 
 function collectFromResult(result: any): SearchBuckets {
@@ -602,8 +612,30 @@ export async function search(
               ? 'artist'
               : rawFilter === 'playlists' || rawFilter === 'playlist'
                 ? 'playlist'
-                : rawFilter;
+                : rawFilter === 'podcasts' || rawFilter === 'podcast'
+                  ? 'podcast'
+                  : rawFilter === 'audiobooks' ||
+                      rawFilter === 'audiobook' ||
+                      rawFilter === 'livre-audio' ||
+                      rawFilter === 'livre_audio'
+                    ? 'audiobook'
+                    : rawFilter;
   if (!q) return emptyBuckets();
+
+  // Podcast / livre audio : chemin dédié (pas de type Innertube music fiable)
+  if (filterNorm === 'podcast' || filterNorm === 'audiobook') {
+    const personalization = opts?.userId ? buildSearchPersonalization(opts.userId) : undefined;
+    const spoken = await searchSpokenContent(q, filterNorm, personalization);
+    return {
+      topResult: spoken[0] || null,
+      songs: spoken,
+      videos: [],
+      albums: [],
+      artists: [],
+      playlists: [],
+      podcasts: spoken,
+    };
+  }
 
   const personalization = opts?.userId ? buildSearchPersonalization(opts.userId) : undefined;
 
@@ -851,6 +883,74 @@ export async function search(
     albums,
     artists,
     playlists,
+  };
+}
+
+/** Podcasts / livres audio : heuristique YTM (pas de filtre Innertube dédié fiable). */
+async function searchSpokenContent(
+  q: string,
+  kind: 'podcast' | 'audiobook',
+  personalization?: SearchPersonalization,
+): Promise<Track[]> {
+  const suffixes =
+    kind === 'audiobook'
+      ? ['audiobook', 'livre audio', 'full audiobook']
+      : ['podcast', 'podcast episode', 'épisode podcast'];
+  const qFold = foldText(q);
+  const queries = [
+    q,
+    ...suffixes
+      .filter((s) => !qFold.includes(foldText(s)))
+      .map((s) => `${q} ${s}`),
+  ].slice(0, 3);
+
+  const pool: Track[] = [];
+  for (const qq of queries) {
+    const raw = await innertubeSearch(qq).catch(() => null);
+    if (!raw) continue;
+    const b = collectFromResult(raw);
+    pool.push(...(b.songs || []), ...(b.videos || []));
+  }
+
+  const seen = new Set<string>();
+  const playable = pool.filter((t) => {
+    if (!t?.id || seen.has(t.id)) return false;
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
+
+  const spoken = playable.filter((t) => isSpokenWordHit(t));
+  // Si peu de hits « podcast » explicites : garder les longs formats (souvent épisodes)
+  const longForm = playable.filter((t) => (t.durationSeconds || 0) >= 20 * 60);
+  const merged =
+    spoken.length >= 4
+      ? spoken
+      : mergeTracks(spoken, longForm.length ? longForm : playable.slice(0, 24));
+
+  const tagged = merged.map((t) => ({
+    ...t,
+    type: 'song' as const,
+    album: t.album || {
+      name: kind === 'audiobook' ? 'Livre audio' : 'Podcast',
+      id: kind,
+    },
+  }));
+
+  return applyCachedDurations(
+    filterByRelevance(rankByQuery(tagged, q, personalization), q),
+  ).slice(0, 40);
+}
+
+export async function exploreSpoken(kind: 'podcast' | 'audiobook' = 'podcast'): Promise<{
+  title: string;
+  items: Track[];
+}> {
+  const seedQ = kind === 'audiobook' ? 'audiobook' : 'podcast';
+  const items = await searchSpokenContent(seedQ, kind);
+  return {
+    title: kind === 'audiobook' ? 'Livres audio' : 'Podcasts',
+    items,
   };
 }
 
@@ -1496,11 +1596,45 @@ async function fetchLrclibTimed(artist: string, title: string, durationSec?: num
     duration?: number;
   }>;
   if (!Array.isArray(results) || !results.length) return null;
-  const best = results.find((r) => r.syncedLyrics?.trim()) || results.find((r) => r.plainLyrics?.trim());
+
+  const scoreHit = (r: (typeof results)[number]) => {
+    let s = 0;
+    if (r.syncedLyrics?.trim()) s += 20;
+    else if (r.plainLyrics?.trim()) s += 5;
+    if (durationSec && durationSec > 0 && typeof r.duration === 'number' && r.duration > 0) {
+      const d = Math.abs(r.duration - durationSec);
+      if (d <= 2) s += 60;
+      else if (d <= 5) s += 30;
+      else if (d <= 10) s += 10;
+      else if (d > 20) s -= 50;
+    }
+    return s;
+  };
+  const ranked = [...results].sort((a, b) => scoreHit(b) - scoreHit(a));
+  const best =
+    ranked.find((r) => r.syncedLyrics?.trim() && scoreHit(r) >= 20) ||
+    ranked.find((r) => r.plainLyrics?.trim()) ||
+    ranked[0];
   if (!best) return null;
+
+  const timedOk = (timed: { startMs: number; text: string }[]) => {
+    if (timed.length < 2) return false;
+    if (!durationSec || durationSec < 20) return true;
+    const last = timed[timed.length - 1]!.startMs / 1000;
+    // Timings d’une autre version / autre titre → rejeter le sync
+    if (last > durationSec * 1.4 || last < durationSec * 0.35) return false;
+    return true;
+  };
+
   if (best.syncedLyrics?.trim()) {
     const timed = parseLrcBlock(best.syncedLyrics);
-    if (timed.length) return { lyrics: timed.map((l) => l.text).join('\n'), timed };
+    if (timed.length && timedOk(timed)) {
+      return { lyrics: timed.map((l) => l.text).join('\n'), timed };
+    }
+    // Sync incohérent → plain plutôt que faux karaoké
+    if (best.plainLyrics?.trim()) {
+      return { lyrics: best.plainLyrics.trim(), timed: null };
+    }
   }
   if (best.plainLyrics?.trim()) {
     return { lyrics: best.plainLyrics.trim(), timed: null };
@@ -1579,6 +1713,21 @@ export async function getLyrics(videoId: string): Promise<{
   if (!timed?.length && text) {
     const fromText = parseLrcBlock(text);
     if (fromText.length >= 3) timed = fromText;
+  }
+
+  // Dernier filet : timings hors durée du titre → texte seul
+  if (timed?.length) {
+    try {
+      const meta = await getTrack(videoId, { light: true }).catch(() => null);
+      const dur =
+        typeof meta?.track?.durationSeconds === 'number' ? meta.track.durationSeconds : 0;
+      if (dur >= 20) {
+        const last = timed[timed.length - 1]!.startMs / 1000;
+        if (last > dur * 1.4 || last < dur * 0.35) timed = null;
+      }
+    } catch {
+      /* keep */
+    }
   }
 
   const result = { lyrics: text, timed: timed?.length ? timed : null };

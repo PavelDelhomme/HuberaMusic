@@ -261,7 +261,7 @@ export function QueuePanel() {
                   queue={related}
                   hideIndex
                   alwaysActions
-                  onPlay={() => void play(track, related)}
+                  onPlay={() => void play(track, related, { forceRestart: true })}
                 />
               ))
             )}
@@ -380,7 +380,7 @@ export function QueuePanel() {
                       queue={related}
                       hideIndex
                       alwaysActions
-                      onPlay={() => void play(track, related)}
+                      onPlay={() => void play(track, related, { forceRestart: true })}
                     />
                   ))}
                 </div>

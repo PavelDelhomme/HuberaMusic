@@ -13,6 +13,8 @@ const tabs = [
   { id: 'artist', label: 'Artistes' },
   { id: 'playlist', label: 'Playlists' },
   { id: 'video', label: 'Vidéos' },
+  { id: 'podcast', label: 'Podcasts' },
+  { id: 'audiobook', label: 'Livres audio' },
 ] as const;
 
 function SearchListSkeleton({ rows = 8 }: { rows?: number }) {
@@ -242,9 +244,16 @@ export function SearchPage() {
             </section>
           )}
 
-          {data.songs.length > 0 && (filter === 'all' || filter === 'song') && (
+          {data.songs.length > 0 &&
+            (filter === 'all' || filter === 'song' || filter === 'podcast' || filter === 'audiobook') && (
             <section>
-              <h2 className="mb-3 font-display text-xl font-semibold">Titres</h2>
+              <h2 className="mb-3 font-display text-xl font-semibold">
+                {filter === 'podcast'
+                  ? 'Podcasts'
+                  : filter === 'audiobook'
+                    ? 'Livres audio'
+                    : 'Titres'}
+              </h2>
               <div className="space-y-0.5">
                 {data.songs.slice(0, filter === 'all' ? 12 : 40).map((t) => (
                   <div key={t.id} onClick={() => noteClick(t)}>

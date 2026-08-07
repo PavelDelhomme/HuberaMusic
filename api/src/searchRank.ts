@@ -76,21 +76,46 @@ function tokenCoverage(hayTokens: Set<string>, queryTokens: string[]): number {
 }
 
 /** Chaînes / titres bruit : réactions, lyrics, karaoke, podcasts… */
+export function isSpokenWordHit(track: Track): boolean {
+  const title = foldText(track.title);
+  const artists = (track.artists || []).map((a) => String(a.name || '').trim()).filter(Boolean);
+  const artistFold = foldText(artists.join(' '));
+  if (/\b(episode|podcast|audiobook|audio\s*book|livre\s*audio|full\s*audiobook)\b/.test(title)) {
+    return true;
+  }
+  if (/\b(episode|podcast|audiobook|livre\s*audio)\b/.test(artistFold)) return true;
+  // Sous-titres YTM podcast : artiste = date (ex. « Jul 12, 2024 »)
+  if (
+    artists.some(
+      (n) =>
+        /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(n) && /\d{4}/.test(n),
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function isLowQualitySearchHit(track: Track): boolean {
   const title = foldText(track.title);
   const artists = (track.artists || []).map((a) => String(a.name || '').trim()).filter(Boolean);
   const artistFold = foldText(artists.join(' '));
 
   if (artists.some((n) => isJunkArtistName(n))) return true;
-  if (/\b(episode|podcast|reacts?|reaction|first time reaction)\b/.test(title)) return true;
+  if (isSpokenWordHit(track)) return true;
+  if (/\b(reacts?|reaction|first time reaction)\b/.test(title)) return true;
   if (/\b(medley\s+reaction|mv\s+reaction|song\s+reaction)\b/.test(title)) return true;
   if (/\b(lyrics?|karaoke|soundlyrics|lyric\s*video)\b/.test(artistFold)) return true;
   if (/\b(lyrics?\s*(video|channel)|karaoke|sound\s*lyrics)\b/.test(title)) return true;
-  // Artiste = date seule (si non filtrée amont)
-  if (artists.some((n) => /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(n) && /\d{4}/.test(n))) {
-    return true;
-  }
   return false;
+}
+
+/** Titre jouable musique (pas album / artiste / podcast). */
+export function isMusicPlayableHit(track: Track): boolean {
+  if (!track?.id || !/^[a-zA-Z0-9_-]{11}$/.test(track.id)) return false;
+  if (track.type === 'album' || track.type === 'artist' || track.type === 'playlist') return false;
+  if (isSpokenWordHit(track) || isLowQualitySearchHit(track)) return false;
+  return track.type === 'song' || track.type === 'video' || track.type === 'unknown' || !track.type;
 }
 
 function artistMatchesSpan(artistNames: string[], span: string): boolean {

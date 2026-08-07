@@ -25,6 +25,7 @@ class QuickAccessStore(private val context: Context) {
         val raw = prefs[key].orEmpty()
         if (raw.isBlank()) emptyList()
         else runCatching { adapter.fromJson(raw).orEmpty() }.getOrDefault(emptyList())
+            .distinctBy { it.id }
     }
 
     suspend fun isPinned(id: String): Boolean = pins.first().any { it.id == id }
@@ -115,15 +116,18 @@ class QuickAccessStore(private val context: Context) {
                 current.removeAt(idx)
                 nowPinned = false
             } else {
-                current.add(0, track)
+                current.add(0, track.copy(type = when (track.type) {
+                    "video", null, "" -> "song"
+                    else -> track.type
+                }))
                 nowPinned = true
             }
-            prefs[key] = adapter.toJson(current.take(48))
+            prefs[key] = adapter.toJson(current.distinctBy { it.id }.take(48))
         }
         if (api != null) {
             runCatching {
                 if (nowPinned) {
-                    api.addPin(trackToPinBody(track))
+                    api.addPin(trackToPinBody(track.copy(type = track.type?.takeIf { it != "video" } ?: "song")))
                 } else {
                     api.removePin(track.id)
                 }

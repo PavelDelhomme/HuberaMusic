@@ -495,6 +495,10 @@ export const api = {
       needsOnboarding?: boolean;
       radios?: { id: string; title: string }[];
     }>('/api/explore'),
+  exploreSpoken: (kind: 'podcast' | 'audiobook' = 'podcast') =>
+    req<{ title: string; items: Track[] }>(
+      `/api/explore/spoken?kind=${encodeURIComponent(kind)}`,
+    ),
   mood: (id: string, title?: string) => {
     const params = new URLSearchParams();
     if (title) params.set('title', title);
@@ -759,16 +763,19 @@ export const api = {
   deletePlaylist: (id: string) =>
     req<{ ok: boolean; library: LibraryData }>(`/api/library/playlists/${id}`, { method: 'DELETE' }),
   addToPlaylist: (playlistId: string, track: Track) =>
-    req<LibraryPlaylist>(`/api/library/playlists/${playlistId}/tracks`, {
+    req<LibraryPlaylist>(`/api/library/playlists/${encodeURIComponent(playlistId)}/tracks`, {
       method: 'POST',
       body: JSON.stringify(track),
     }),
   removeFromPlaylist: (playlistId: string, trackId: string) =>
-    req<LibraryPlaylist>(`/api/library/playlists/${playlistId}/tracks/${trackId}`, {
-      method: 'DELETE',
-    }),
+    req<LibraryPlaylist>(
+      `/api/library/playlists/${encodeURIComponent(playlistId)}/tracks/${encodeURIComponent(trackId)}`,
+      {
+        method: 'DELETE',
+      },
+    ),
   reorderPlaylist: (playlistId: string, trackIds: string[]) =>
-    req<LibraryPlaylist>(`/api/library/playlists/${playlistId}/reorder`, {
+    req<LibraryPlaylist>(`/api/library/playlists/${encodeURIComponent(playlistId)}/reorder`, {
       method: 'PUT',
       body: JSON.stringify({ trackIds }),
     }),

@@ -1682,7 +1682,10 @@ private fun QueueExpandedBody(
                         }
                     }
                     else -> {
-                        itemsIndexed(similarTracks, key = { _, t -> "s-${t.id}" }) { _, item ->
+                        itemsIndexed(
+                            similarTracks,
+                            key = { index, t -> "s-${t.id}-$index" },
+                        ) { _, item ->
                             QueueTrackRow(
                                 track = item,
                                 index = -1,

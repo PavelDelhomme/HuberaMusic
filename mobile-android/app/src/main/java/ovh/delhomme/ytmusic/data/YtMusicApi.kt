@@ -465,6 +465,11 @@ interface YtMusicApi {
     @GET("api/explore")
     suspend fun explore(): HomeResponse
 
+    @GET("api/explore/spoken")
+    suspend fun exploreSpoken(
+        @Query("kind") kind: String = "podcast",
+    ): SpokenExploreResponse
+
     @GET("api/search")
     suspend fun search(
         @Query("q") q: String,

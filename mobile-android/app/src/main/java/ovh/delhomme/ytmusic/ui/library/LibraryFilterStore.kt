@@ -20,6 +20,7 @@ enum class LibraryFilter(val label: String) {
     Artists("Artistes"),
     Profiles("Profils"),
     Podcasts("Podcasts"),
+    Audiobooks("Livres audio"),
     Additions("Ajouts"),
     DeviceFiles("Fichiers de l'appareil"),
     ;
@@ -28,7 +29,6 @@ enum class LibraryFilter(val label: String) {
         /** Masqués par défaut (stubs « bientôt ») — réaffichables via long-press + Réafficher. */
         val defaultHidden: Set<String> = setOf(
             Profiles.name,
-            Podcasts.name,
             DeviceFiles.name,
         )
         val defaultVisible: Set<String> = entries.map { it.name }.toSet() - defaultHidden

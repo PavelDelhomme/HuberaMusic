@@ -23,6 +23,7 @@ import ovh.delhomme.ytmusic.data.MixCacheStore
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.isPrecomputedMixSource
 import ovh.delhomme.ytmusic.YtMusicApp
+import ovh.delhomme.ytmusic.debug.CrashReporter
 import android.widget.Toast
 
 enum class RepeatMode { Off, All, One }
@@ -86,7 +87,9 @@ class PlayerController(
     private var autoplaySuggestions: Boolean =
         playerPrefs.getBoolean("autoplay_suggestions", true)
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate + CrashReporter.coroutineHandler("PlayerController"),
+    )
     private var fillJob: Job? = null
 
     /**

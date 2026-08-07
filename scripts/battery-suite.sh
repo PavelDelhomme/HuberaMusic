@@ -29,9 +29,12 @@ resolve_device() {
     echo "$DEVICES" | tr ',' '\n' | head -1
     return
   fi
-  # Préfère Wi‑Fi Nothing / Samsung
+  # Préfère Samsung USB (r9q / SM_G990) — ne plus cibler Nothing par défaut
   local t
-  t="$("$ADB" devices -l | awk '/model:A059|Asteroids/{print $1; exit}')"
+  t="$("$ADB" devices -l | awk '/model:SM_G990|device:r9q|R5CT7263YJL/{print $1; exit}')"
+  [[ -n "$t" ]] && { echo "$t"; return; }
+  # USB quelconque (pas Wi‑Fi :host:port)
+  t="$("$ADB" devices -l | awk 'NR>1 && $2=="device" && $1 !~ /:/ {print $1; exit}')"
   [[ -n "$t" ]] && { echo "$t"; return; }
   t="$("$ADB" devices | awk 'NR>1 && $2=="device" && $1 ~ /:/{print $1; exit}')"
   [[ -n "$t" ]] && { echo "$t"; return; }

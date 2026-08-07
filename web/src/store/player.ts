@@ -70,6 +70,8 @@ type PlayerState = {
       preserveQueue?: boolean;
       noAutoRadio?: boolean;
       keepUserBoundary?: boolean;
+      /** Nouvelle playlist / titre depuis l’UI : remplace la file et repart de 0. */
+      forceRestart?: boolean;
       sourceId?: string | null;
       sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | null;
     },
@@ -1412,8 +1414,12 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       opts?.sourceKind === 'radio' ||
       opts?.sourceKind === 'album' ||
       opts?.sourceKind === 'artist';
+    // Nouvelle file explicite → annule radio auto / file précédente, repart de zéro
+    autoRadioSeq += 1;
+    autoRadioInflight = null;
     await get().play(playable[idx], playable, {
       preserveQueue: true,
+      forceRestart: true,
       sourceId: opts?.sourceId,
       sourceKind: opts?.sourceKind,
       noAutoRadio: precomputed && playable.length >= 20,
@@ -1453,28 +1459,18 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       audio!.dataset.trackId === playTrack.id &&
       !audio!.paused &&
       !audio!.ended;
-    // Même titre déjà en cours → met à jour la file sans couper / sans progress 0
-    if (sameStillPlaying) {
-      const keepBoundary = Boolean(opts?.keepUserBoundary);
+    // Soft-continue UNIQUEMENT dans la même file (playAt). Lecture playlist/titre → repart de 0.
+    if (sameStillPlaying && opts?.keepUserBoundary && !opts?.forceRestart) {
       set({
         current: playTrack,
         queue: nextQueue,
         queueIndex: idx >= 0 ? idx : 0,
-        userQueueEnd: keepBoundary
-          ? Math.min(Math.max(get().userQueueEnd || 0, (idx >= 0 ? idx : 0) + 1), nextQueue.length)
-          : nextQueue.length,
-        sourceId:
-          opts?.sourceId !== undefined
-            ? opts.sourceId
-            : keepBoundary
-              ? get().sourceId
-              : get().sourceId,
-        sourceKind:
-          opts?.sourceKind !== undefined
-            ? opts.sourceKind
-            : keepBoundary
-              ? get().sourceKind
-              : get().sourceKind,
+        userQueueEnd: Math.min(
+          Math.max(get().userQueueEnd || 0, (idx >= 0 ? idx : 0) + 1),
+          nextQueue.length,
+        ),
+        sourceId: opts?.sourceId !== undefined ? opts.sourceId : get().sourceId,
+        sourceKind: opts?.sourceKind !== undefined ? opts.sourceKind : get().sourceKind,
         isLoading: false,
         playError: null,
       });
@@ -1485,7 +1481,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       end('soft-continue');
       return;
     }
-    const keepBoundary = Boolean(opts?.keepUserBoundary);
+    const keepBoundary = Boolean(opts?.keepUserBoundary) && !opts?.forceRestart;
     const inferredAlbum =
       opts?.sourceId === undefined && playTrack.album?.id
         ? { sourceId: playTrack.album.id, sourceKind: 'album' as const }
@@ -1520,15 +1516,15 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       lyrics: null,
       lyricsTimed: null,
       playError: null,
-      // Nouveau seed → oublier les suggestions de l’ancien titre (sinon même « À suivre »)
-      related: prev?.id === playTrack.id ? get().related : [],
-      relatedSeedId: prev?.id === playTrack.id ? get().relatedSeedId : null,
+      // Nouvelle lecture → oublier « À suivre » / suggestions de l’ancienne file
+      related: [],
+      relatedSeedId: null,
     });
     // Notif OS immédiatement (titre cible) — avant le buffer audio
     refreshMediaSession();
 
-    // Annule un ensureAutoRadio en vol pour un autre seed
-    if (prev?.id !== playTrack.id) autoRadioSeq += 1;
+    // Annule un ensureAutoRadio en vol (nouvelle file / nouveau seed)
+    autoRadioSeq += 1;
 
     const gen = bumpPlayGeneration();
     // Ne PAS bumpPrefetchGeneration ici : ça tuait le warm/full du titre suivant.

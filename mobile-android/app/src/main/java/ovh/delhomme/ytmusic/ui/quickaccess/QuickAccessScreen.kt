@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -70,7 +70,7 @@ fun QuickAccessScreen(
             }
         } else {
             LazyColumn(contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
-                items(pins, key = { it.id }) { track ->
+                itemsIndexed(pins, key = { index, track -> "${track.id}-$index" }) { _, track ->
                     TrackRow(
                         track = track,
                         onClick = {

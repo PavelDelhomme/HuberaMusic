@@ -92,6 +92,9 @@ fun LibraryScreen(
     var selected by remember { mutableStateOf(LibraryFilter.defaultSelected) }
     var lastFetchAt by remember { mutableStateOf(0L) }
     var downloadMeta by remember { mutableStateOf<Map<String, TrackDto>>(emptyMap()) }
+    var spokenItems by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
+    var spokenLoading by remember { mutableStateOf(false) }
+    var spokenError by remember { mutableStateOf<String?>(null) }
 
     suspend fun reloadLibrary(force: Boolean = false, showSpinner: Boolean = false) {
         val now = System.currentTimeMillis()
@@ -160,6 +163,30 @@ fun LibraryScreen(
             error = null
             loading = false
         }
+    }
+
+    LaunchedEffect(selected) {
+        if (selected != LibraryFilter.Podcasts && selected != LibraryFilter.Audiobooks) {
+            spokenItems = emptyList()
+            spokenError = null
+            spokenLoading = false
+            return@LaunchedEffect
+        }
+        spokenLoading = true
+        spokenError = null
+        spokenItems = emptyList()
+        val kind = if (selected == LibraryFilter.Audiobooks) "audiobook" else "podcast"
+        runCatching {
+            container.ensureFreshToken()
+            container.api.exploreSpoken(kind).items
+        }.onSuccess {
+            spokenItems = it
+            spokenError = null
+        }.onFailure {
+            spokenError = it.message ?: "Impossible de charger"
+            spokenItems = emptyList()
+        }
+        spokenLoading = false
     }
 
     // Enrichit les téléchargements dont on n’a que l’id
@@ -287,8 +314,28 @@ fun LibraryScreen(
                     }
                 }
 
-                val content = remember(data, selected, downloadMeta, offlineRev) {
-                    buildLibraryContent(data, selected, downloadMeta)
+                val content = remember(data, selected, downloadMeta, offlineRev, spokenItems, spokenLoading, spokenError) {
+                    when (selected) {
+                        LibraryFilter.Podcasts, LibraryFilter.Audiobooks -> {
+                            val title = if (selected == LibraryFilter.Audiobooks) "Livres audio" else "Podcasts"
+                            val playable = spokenItems.filter { it.isPlayable() }
+                            LibraryContent(
+                                headline = title,
+                                rows = spokenItems,
+                                playableQueue = playable,
+                                emptyMessage = when {
+                                    spokenLoading -> "Chargement…"
+                                    spokenError != null -> spokenError!!
+                                    else -> "Aucun résultat. Cherche aussi via Recherche → $title."
+                                },
+                                showPlayAll = playable.isNotEmpty(),
+                                playLabel = "Tout lire",
+                                shuffleLabel = "Aléatoire",
+                                collectionHint = "Lecture en flux audio (YouTube).",
+                            )
+                        }
+                        else -> buildLibraryContent(data, selected, downloadMeta)
+                    }
                 }
                 when {
                     content.comingSoon != null -> EmptyHint(content.comingSoon!!)
@@ -610,12 +657,11 @@ private fun buildLibraryContent(
             emptyMessage = "",
             comingSoon = "Profils — bientôt disponible.",
         )
-        LibraryFilter.Podcasts -> LibraryContent(
-            headline = "Podcasts",
+        LibraryFilter.Podcasts, LibraryFilter.Audiobooks -> LibraryContent(
+            headline = filter.label,
             rows = emptyList(),
             playableQueue = emptyList(),
-            emptyMessage = "",
-            comingSoon = "Podcasts — bientôt disponible.",
+            emptyMessage = "Chargement…",
         )
         LibraryFilter.DeviceFiles -> LibraryContent(
             headline = "Fichiers de l'appareil",

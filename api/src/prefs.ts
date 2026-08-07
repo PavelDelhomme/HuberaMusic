@@ -293,10 +293,43 @@ export function listSearchHistory(userId: string, limit = 30) {
     .all(userId, limit) as any[];
 }
 
+/** Même videoId en song+video → un seul kind pour éviter les doublons UNIQUE(kind,target). */
+function normalizePinKind(kind: string, targetId: string): string {
+  const k = String(kind || 'song').trim().toLowerCase() || 'song';
+  if (/^[a-zA-Z0-9_-]{11}$/.test(targetId) && (k === 'song' || k === 'video' || k === 'unknown')) {
+    return 'song';
+  }
+  return k;
+}
+
+/** Garde le premier pin par target_id (position puis created_at), purge les doublons. */
+function purgeDuplicatePins(userId: string) {
+  const dups = db
+    .prepare(
+      `SELECT target_id AS tid FROM pins WHERE user_id = ? GROUP BY target_id HAVING COUNT(*) > 1`,
+    )
+    .all(userId) as { tid: string }[];
+  for (const { tid } of dups) {
+    const keep = db
+      .prepare(
+        `SELECT id FROM pins WHERE user_id = ? AND target_id = ?
+         ORDER BY position ASC, created_at ASC LIMIT 1`,
+      )
+      .get(userId, tid) as { id: string } | undefined;
+    if (!keep?.id) continue;
+    db.prepare(`DELETE FROM pins WHERE user_id = ? AND target_id = ? AND id != ?`).run(
+      userId,
+      tid,
+      keep.id,
+    );
+  }
+}
+
 export function listPins(userId: string) {
-  return (
+  purgeDuplicatePins(userId);
+  const rows = (
     db
-      .prepare('SELECT * FROM pins WHERE user_id = ? ORDER BY position ASC, created_at DESC')
+      .prepare('SELECT * FROM pins WHERE user_id = ? ORDER BY position ASC, created_at ASC')
       .all(userId) as any[]
   ).map((p) => {
     const raw = JSON.parse(p.payload) as Record<string, unknown>;
@@ -321,6 +354,14 @@ export function listPins(userId: string) {
       position: p.position,
       createdAt: p.created_at,
     };
+  });
+  // Filet : un seul pin par targetId (le premier épinglé)
+  const seen = new Set<string>();
+  return rows.filter((p) => {
+    const tid = String(p.targetId || '');
+    if (!tid || seen.has(tid)) return false;
+    seen.add(tid);
+    return true;
   });
 }
 
@@ -404,23 +445,51 @@ export function addPin(
   targetId: string,
   payload: unknown,
 ) {
+  const tid = String(targetId || '').trim();
+  if (!tid) return listPins(userId);
+  const kindNorm = normalizePinKind(kind, tid);
+  const enriched = enrichPinPayload(
+    userId,
+    kindNorm,
+    tid,
+    (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>,
+  );
+
+  // Déjà épinglé (n’importe quel kind) → garder le premier, enrichir payload, purger doublons
+  const existing = db
+    .prepare(
+      `SELECT id, kind FROM pins WHERE user_id = ? AND target_id = ?
+       ORDER BY position ASC, created_at ASC`,
+    )
+    .all(userId, tid) as { id: string; kind: string }[];
+  if (existing.length) {
+    const keep = existing[0]!;
+    db.prepare(`UPDATE pins SET payload = ? WHERE id = ? AND user_id = ?`).run(
+      JSON.stringify(enriched),
+      keep.id,
+      userId,
+    );
+    if (existing.length > 1) {
+      db.prepare(`DELETE FROM pins WHERE user_id = ? AND target_id = ? AND id != ?`).run(
+        userId,
+        tid,
+        keep.id,
+      );
+    }
+    return listPins(userId);
+  }
+
   const id = randomUUID();
   const max = (
     db.prepare('SELECT COALESCE(MAX(position), -1) as m FROM pins WHERE user_id = ?').get(userId) as {
       m: number;
     }
   ).m;
-  const enriched = enrichPinPayload(
-    userId,
-    kind,
-    targetId,
-    (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>,
-  );
   db.prepare(
     `INSERT INTO pins (id, user_id, kind, target_id, payload, position, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id, kind, target_id) DO UPDATE SET payload = excluded.payload`,
-  ).run(id, userId, kind, targetId, JSON.stringify(enriched), max + 1, Date.now());
+  ).run(id, userId, kindNorm, tid, JSON.stringify(enriched), max + 1, Date.now());
   return listPins(userId);
 }
 

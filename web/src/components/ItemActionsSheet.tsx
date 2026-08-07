@@ -77,7 +77,7 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const startMix = usePlayer((s) => s.startMix);
   const queue = usePlayer((s) => s.queue);
   const queueIndex = usePlayer((s) => s.queueIndex);
-  const { isLiked, isInLibrary, toggleLike, toggleLibrarySong, playlists, addToPlaylist, hasAlbum, hasArtist, hasMix, saveMix, removeMix, isPlaylistLiked, applyLibrary, downloaded, refresh } =
+  const { isLiked, isInLibrary, toggleLike, toggleLibrarySong, playlists, addToPlaylist, createPlaylist, hasAlbum, hasArtist, hasMix, saveMix, removeMix, isPlaylistLiked, applyLibrary, downloaded, refresh } =
     useLibrary();
   const pinId = usePins((s) => (item ? s.pinIdFor(item.id) : null));
   const togglePin = usePins((s) => s.togglePin);
@@ -91,11 +91,17 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const [showSleep, setShowSleep] = useState(false);
   const [onDevice, setOnDevice] = useState(false);
   const [dlProgress, setDlProgress] = useState<number | null>(null);
+  const [playlistMsg, setPlaylistMsg] = useState('');
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [creatingPlaylist, setCreatingPlaylist] = useState(false);
 
   useEffect(() => {
     if (!item) return;
     setShowPlaylists(false);
     setShowSleep(false);
+    setPlaylistMsg('');
+    setNewPlaylistName('');
+    setCreatingPlaylist(false);
     void refresh().catch(() => undefined);
     void refreshPins();
     void listCachedIds()
@@ -146,9 +152,47 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
 
   const after = (fn: () => void | Promise<void>) => {
     void (async () => {
-      await fn();
-      close();
+      try {
+        await fn();
+        close();
+      } catch (e) {
+        console.error(e);
+        setPlaylistMsg(String((e as Error)?.message || e || 'Échec'));
+      }
     })();
+  };
+
+  const addTrackToPlaylist = async (playlistId: string) => {
+    setBusy(true);
+    setPlaylistMsg('');
+    try {
+      await addToPlaylist(playlistId, item);
+      setPlaylistMsg('Ajouté à la playlist');
+      window.setTimeout(() => close(), 500);
+    } catch (e) {
+      console.error(e);
+      setPlaylistMsg(String((e as Error)?.message || e || 'Impossible d’ajouter'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createAndAddPlaylist = async () => {
+    const name = newPlaylistName.trim() || item.title || 'Ma playlist';
+    setBusy(true);
+    setPlaylistMsg('');
+    try {
+      const pl = await createPlaylist(name);
+      if (!pl?.id) throw new Error('Playlist non créée');
+      await addToPlaylist(pl.id, item);
+      setPlaylistMsg(`Créée « ${pl.name} » + titre ajouté`);
+      window.setTimeout(() => close(), 600);
+    } catch (e) {
+      console.error(e);
+      setPlaylistMsg(String((e as Error)?.message || e || 'Impossible de créer'));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const goArtist = async (a: { name: string; id?: string }) => {
@@ -297,8 +341,67 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
             <div className="px-2 py-1 text-[11px] uppercase tracking-wide text-yt-muted">
               Enregistrer dans une playlist
             </div>
-            {playlists.length === 0 && (
-              <p className="px-3 py-2 text-sm text-yt-muted">Aucune playlist locale.</p>
+            {playlistMsg && (
+              <p
+                className={`px-3 py-1.5 text-sm ${
+                  /impossible|échec|erreur|introuvable/i.test(playlistMsg)
+                    ? 'text-red-300'
+                    : 'text-emerald-300'
+                }`}
+              >
+                {playlistMsg}
+              </p>
+            )}
+            {!creatingPlaylist ? (
+              <Row
+                icon={<ListPlus className="h-4 w-4" />}
+                label="Nouvelle playlist…"
+                onClick={() => {
+                  setCreatingPlaylist(true);
+                  setNewPlaylistName(item.title ? `${item.title}` : 'Ma playlist');
+                  setPlaylistMsg('');
+                }}
+              />
+            ) : (
+              <div className="flex flex-col gap-2 px-2 py-2">
+                <input
+                  type="text"
+                  value={newPlaylistName}
+                  onChange={(e) => setNewPlaylistName(e.target.value)}
+                  placeholder="Nom de la playlist"
+                  className="w-full rounded-lg border border-white/15 bg-black/40 px-3 py-2 text-sm text-white outline-none focus:border-white/40"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void createAndAddPlaylist();
+                    }
+                  }}
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void createAndAddPlaylist()}
+                    className="flex-1 rounded-full bg-yt-red px-3 py-2 text-sm font-medium disabled:opacity-50"
+                  >
+                    Créer et ajouter
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setCreatingPlaylist(false)}
+                    className="rounded-full bg-white/10 px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    Annuler
+                  </button>
+                </div>
+              </div>
+            )}
+            {playlists.length === 0 && !creatingPlaylist && (
+              <p className="px-3 py-2 text-sm text-yt-muted">
+                Aucune playlist locale — crée-en une ci-dessus.
+              </p>
             )}
             {playlists.map((p) => {
               const already = (p.tracks || []).some((t) => t.id === item.id);
@@ -314,9 +417,10 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
                   }
                   label={p.name}
                   sub={already ? 'Déjà dans cette playlist' : undefined}
+                  disabled={busy || already}
                   onClick={() => {
-                    if (already) return;
-                    after(() => void addToPlaylist(p.id, item));
+                    if (already || busy) return;
+                    void addTrackToPlaylist(p.id);
                   }}
                 />
               );

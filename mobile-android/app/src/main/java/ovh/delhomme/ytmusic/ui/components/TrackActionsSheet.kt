@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1073,7 +1074,10 @@ fun AddToPlaylistSheet(
                     contentPadding = PaddingValues(bottom = 16.dp),
                     modifier = Modifier.height(320.dp),
                 ) {
-                    items(playlists, key = { it.id }) { pl ->
+                    itemsIndexed(
+                        playlists,
+                        key = { index, pl -> "${pl.id}-$index" },
+                    ) { _, pl ->
                         val already = pl.id in containedIds
                         Row(
                             Modifier

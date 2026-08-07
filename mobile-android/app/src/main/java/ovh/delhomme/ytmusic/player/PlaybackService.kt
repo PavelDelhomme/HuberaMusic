@@ -37,6 +37,7 @@ import ovh.delhomme.ytmusic.R
 import ovh.delhomme.ytmusic.YtMusicApp
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.debug.AppLog
+import ovh.delhomme.ytmusic.debug.CrashReporter
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -49,7 +50,9 @@ class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
     private var sessionPlayer: Player? = null
     private var session: MediaSession? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate + CrashReporter.coroutineHandler("PlaybackService"),
+    )
 
     private val cmdLike = SessionCommand(ACTION_TOGGLE_LIKE, Bundle.EMPTY)
     private val cmdCycleRepeat = SessionCommand(ACTION_CYCLE_REPEAT, Bundle.EMPTY)
@@ -127,28 +130,61 @@ class PlaybackService : MediaSessionService() {
                 return
             }
 
-            // Serveur / réseau KO : stop immédiat, pas de reprepare ni skip cascade
-            if (networkish || streak >= 2) {
+            // Réseau / serveur : d’abord retry soft (handover Wi‑Fi↔4G), stop seulement après plusieurs échecs
+            if (networkish) {
+                val offline = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+                if (offline) {
+                    StreamPrefetcher.markStreamDown()
+                    StreamPrefetcher.cancelIdle()
+                    recoverGen.incrementAndGet()
+                    exo.playWhenReady = false
+                    runCatching { exo.stop() }
+                    streamFailStreak.set(0)
+                    ovh.delhomme.ytmusic.data.NetworkMonitor.markPausedForNetwork()
+                    android.os.Handler(mainLooper).post {
+                        android.widget.Toast.makeText(
+                            this@PlaybackService,
+                            "Hors ligne — titres téléchargés disponibles",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    return
+                }
+                // Encore « online » mais glitch / handover : 1–2 reprepare avant d’abandonner
+                if (streak <= 2) {
+                    val attempt = recoverGen.incrementAndGet()
+                    scope.launch {
+                        runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
+                        delay(350L * streak)
+                        if (attempt != recoverGen.get()) return@launch
+                        if (exo.currentMediaItem?.mediaId != id) return@launch
+                        runCatching {
+                            val pos = exo.currentPosition.coerceAtLeast(0L)
+                            exo.setMediaItem(item, pos)
+                            exo.prepare()
+                            exo.playWhenReady = true
+                        }
+                    }
+                    if (streak == 1) {
+                        android.os.Handler(mainLooper).post {
+                            android.widget.Toast.makeText(
+                                this@PlaybackService,
+                                "Réseau instable — reprise…",
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                    return
+                }
+                // Échecs réseau répétés alors que le device se dit en ligne → API / stream KO
                 StreamPrefetcher.markStreamDown()
                 StreamPrefetcher.cancelIdle()
                 recoverGen.incrementAndGet()
                 exo.playWhenReady = false
                 runCatching { exo.stop() }
                 streamFailStreak.set(0)
-                val offline = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
-                if (offline) {
-                    ovh.delhomme.ytmusic.data.NetworkMonitor.markPausedForNetwork()
-                }
+                ovh.delhomme.ytmusic.data.NetworkMonitor.markPausedForNetwork()
                 android.os.Handler(mainLooper).post {
-                    // Hors ligne : toast discret (pas d’alarme « serveur » / cookies)
-                    if (offline) {
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "Hors ligne — titres téléchargés disponibles",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                        return@post
-                    }
                     val localApi = BuildConfig.API_BASE_URL.contains("127.0.0.1") ||
                         BuildConfig.API_BASE_URL.contains("192.168.") ||
                         BuildConfig.API_BASE_URL.contains("10.") ||
@@ -156,9 +192,33 @@ class PlaybackService : MediaSessionService() {
                     android.widget.Toast.makeText(
                         this@PlaybackService,
                         when {
-                            networkish -> "Serveur injoignable — lecture stoppée"
-                            localApi -> "Lecture impossible — vérifie que l’API locale tourne (port 8787)"
-                            else -> "Lecture impossible — Admin web → Cookies YouTube (VPS bloqué)"
+                            localApi -> "API locale injoignable (port 8787 ?) — ou change de réseau"
+                            else -> "Connexion perdue — vérifie le réseau (Wi‑Fi / données)"
+                        },
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
+                return
+            }
+
+            if (streak >= 2) {
+                StreamPrefetcher.markStreamDown()
+                StreamPrefetcher.cancelIdle()
+                recoverGen.incrementAndGet()
+                exo.playWhenReady = false
+                runCatching { exo.stop() }
+                streamFailStreak.set(0)
+                android.os.Handler(mainLooper).post {
+                    val localApi = BuildConfig.API_BASE_URL.contains("127.0.0.1") ||
+                        BuildConfig.API_BASE_URL.contains("192.168.") ||
+                        BuildConfig.API_BASE_URL.contains("10.") ||
+                        BuildConfig.API_BASE_URL.startsWith("http://")
+                    android.widget.Toast.makeText(
+                        this@PlaybackService,
+                        if (localApi) {
+                            "Lecture impossible — vérifie que l’API locale tourne (port 8787)"
+                        } else {
+                            "Lecture impossible — Admin web → Cookies YouTube (VPS bloqué)"
                         },
                         android.widget.Toast.LENGTH_LONG,
                     ).show()

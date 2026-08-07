@@ -18,6 +18,7 @@ import {
 } from './library.js';
 import { upsertTrack } from './db.js';
 import { isWeakTitle } from './mappers.js';
+import { isMusicPlayableHit } from './searchRank.js';
 import {
   MIX_PREVIEW,
   MIX_TARGET,
@@ -531,6 +532,13 @@ export async function hybridRank(opts: {
     .filter((t) => !seed || t.id !== seed.id)
     .filter((t) => !seed || !isRemixSpamOfSeed(t, seed))
     .filter((t) => !(excludePlayed && recentlyPlayedHard.has(t.id)))
+    // Style / radio : uniquement musique jouable (pas podcasts, albums, fiches)
+    .filter((t) => {
+      if (mode === 'style' || mode === 'radio' || mode === 'album-style' || mode === 'artist-radio') {
+        return isMusicPlayableHit(t);
+      }
+      return true;
+    })
     .map((track) => {
       const s1 = scoreContent(track, seed, prefs.genres, uniqueTargetTags);
       const s2 = scoreSeq(track, seed);
@@ -725,11 +733,11 @@ export async function similarForUser(
     }
   }
   const { related, radio } = await getRelated(trackId);
-  let pool = [...radio, ...related];
+  let pool = [...radio, ...related].filter(isMusicPlayableHit);
 
   // Goûts biblio : injecter des titres aimés / playlists proches du seed
   const taste = getLibraryTasteTracks(userId, 120);
-  const fromLibrary = pickLibraryNearSeed(seed, taste, 20);
+  const fromLibrary = pickLibraryNearSeed(seed, taste, 20).filter(isMusicPlayableHit);
   if (fromLibrary.length) pool = [...pool, ...fromLibrary];
 
   // Élargit hors upNext YouTube : search « même vibe » pour plus d’artistes
@@ -737,8 +745,9 @@ export async function similarForUser(
     if (seed.title || seed.artists?.length) {
       const q = styleSearchQuery(seed);
       const res = await search(q, 'song');
-      const extra = [...(res.songs || []), ...(res.videos || [])].filter(
-        (t) => t?.id && t.id !== trackId,
+      // Titres seulement — pas les vidéos (réactions / clips hors registre)
+      const extra = [...(res.songs || [])].filter(
+        (t) => t?.id && t.id !== trackId && isMusicPlayableHit(t),
       );
       pool = [...pool, ...extra.slice(0, 24)];
     }
@@ -753,8 +762,8 @@ export async function similarForUser(
     for (const name of artists) {
       const q = `${name} ${tags[0] || 'songs'}`.trim();
       const res = await search(q, 'song');
-      const extra = [...(res.songs || []), ...(res.videos || [])].filter(
-        (t) => t?.id && t.id !== trackId,
+      const extra = [...(res.songs || [])].filter(
+        (t) => t?.id && t.id !== trackId && isMusicPlayableHit(t),
       );
       pool = [...pool, ...extra.slice(0, 10)];
     }
@@ -836,7 +845,7 @@ export async function similarForUserFast(userId: string, trackId: string, seedTr
     histIds = new Set();
   }
   const tracks = dedupeTracks(
-    up.filter((t) => t.id !== trackId && !histIds.has(t.id)),
+    up.filter((t) => t.id !== trackId && !histIds.has(t.id) && isMusicPlayableHit(t)),
   ).slice(0, 40);
   return { tracks, related: [] as Track[], radio: tracks };
 }
@@ -1307,21 +1316,32 @@ export async function homeReco(userId: string) {
   const shelves: { title: string; items: Track[] }[] = [];
 
   if (pins.length) {
-    shelves.push({
-      title: 'Épinglé',
-      items: pins.map((p) => {
+    const seenPin = new Set<string>();
+    const pinItems = pins
+      .map((p) => {
         const payload = (p.payload || {}) as Track & { name?: string };
         const title = String(payload.title || payload.name || '').trim();
+        const id = String(payload.id || p.targetId || '').trim();
         return {
           ...payload,
-          id: payload.id || p.targetId,
+          id,
           title: title || p.targetId,
           artists: Array.isArray(payload.artists) ? payload.artists : [],
           thumbnails: Array.isArray(payload.thumbnails) ? payload.thumbnails : [],
           type: (payload.type || p.kind) as Track['type'],
         };
-      }),
-    });
+      })
+      .filter((t) => {
+        if (!t.id || seenPin.has(t.id)) return false;
+        seenPin.add(t.id);
+        return true;
+      });
+    if (pinItems.length) {
+      shelves.push({
+        title: 'Épinglé',
+        items: pinItems,
+      });
+    }
   }
 
   if (history.length) {

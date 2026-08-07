@@ -86,6 +86,8 @@ private val FILTERS = listOf(
     "album" to "Albums",
     "playlist" to "Playlists",
     "video" to "Vidéos",
+    "podcast" to "Podcasts",
+    "audiobook" to "Livres audio",
 )
 
 class SearchViewModel(private val container: AppContainer) : ViewModel() {
@@ -259,14 +261,20 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                     val songs = res.songs.filter { it.id != topId && it.id !in offlineIds }
                     val artists = res.artists.filter { it.id != topId }
                     val albums = res.albums.filter { it.id != topId }
-                    if (songs.isNotEmpty()) add(SearchSection("Titres", songs.take(20)))
-                    if (artists.isNotEmpty()) add(SearchSection("Artistes", artists.take(12)))
-                    if (albums.isNotEmpty()) add(SearchSection("Albums", albums.take(12)))
-                    if (res.playlists.isNotEmpty()) {
-                        add(SearchSection("Playlists", res.playlists.filter { it.id != topId }.take(12)))
-                    }
-                    if (res.videos.isNotEmpty()) {
-                        add(SearchSection("Vidéos", res.videos.filter { it.id != topId }.take(12)))
+                    if (currentFilter == "podcast" && songs.isNotEmpty()) {
+                        add(SearchSection("Podcasts", songs.take(40)))
+                    } else if (currentFilter == "audiobook" && songs.isNotEmpty()) {
+                        add(SearchSection("Livres audio", songs.take(40)))
+                    } else {
+                        if (songs.isNotEmpty()) add(SearchSection("Titres", songs.take(20)))
+                        if (artists.isNotEmpty()) add(SearchSection("Artistes", artists.take(12)))
+                        if (albums.isNotEmpty()) add(SearchSection("Albums", albums.take(12)))
+                        if (res.playlists.isNotEmpty()) {
+                            add(SearchSection("Playlists", res.playlists.filter { it.id != topId }.take(12)))
+                        }
+                        if (res.videos.isNotEmpty()) {
+                            add(SearchSection("Vidéos", res.videos.filter { it.id != topId }.take(12)))
+                        }
                     }
                 }
                 _state.value = _state.value.copy(loading = false, sections = sections, error = null)

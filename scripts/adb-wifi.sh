@@ -327,19 +327,29 @@ cmd_disconnect() {
 cmd_status() { cmd_doctor || true; }
 
 cmd_ensure() {
-  log "==> ensure (≥${MIN_DEVICES} appareil Wi‑Fi parmi S21 FE DD / Nothing)"
+  log "==> ensure (≥${MIN_DEVICES} appareil — préfère Samsung USB/Wi‑Fi ; Nothing opt-in)"
   if [[ -f "$STATE_DIR/endpoints.txt" ]]; then
     cmd_connect || true
   fi
-  "$ADB" connect 192.168.1.44:5555 >/dev/null 2>&1 || true
+  # Samsung LAN d’abord
   "$ADB" connect 192.168.1.184:5555 >/dev/null 2>&1 || true
+  # Nothing seulement si INCLUDE_NOTHING=1 (évite de bloquer le téléphone à sortir)
+  if [[ "${INCLUDE_NOTHING:-0}" == "1" ]]; then
+    "$ADB" connect 192.168.1.44:5555 >/dev/null 2>&1 || true
+  else
+    "$ADB" disconnect 192.168.1.44:5555 >/dev/null 2>&1 || true
+  fi
 
-  # Bascule USB→Wi‑Fi pour tout attendu déjà branché
+  # Bascule USB→Wi‑Fi pour Samsung (et Nothing si INCLUDE_NOTHING)
   local s hw entry t
   for s in $(usb_serials); do
     hw="$(hw_serial_of "$s")"
     for entry in "${EXPECTED_SERIALS[@]}"; do
       if [[ "$hw" == "${entry%%:*}" ]]; then
+        if [[ "$hw" == "00145153K001434" && "${INCLUDE_NOTHING:-0}" != "1" ]]; then
+          log "==> skip Nothing USB (INCLUDE_NOTHING=0)"
+          continue
+        fi
         log "==> USB $hw → Wi‑Fi"
         cmd_enable_one "$s" || true
       fi

@@ -63,7 +63,7 @@ export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
       navigate(href);
       return;
     }
-    void play(item, queue);
+    void play(item, queue, { forceRestart: true });
   };
 
   /** Bouton Play : lance vraiment l’album/playlist (pas seulement naviguer). */
@@ -121,7 +121,7 @@ export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
       navigate(href);
       return;
     }
-    void play(item, queue);
+    void play(item, queue, { forceRestart: true });
   };
 
   const openMenu = (e: MouseEvent) => {
@@ -312,7 +312,7 @@ export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
             <button
               type="button"
               className="block w-full truncate text-left text-sm font-medium"
-              onClick={() => void play(item, queue)}
+              onClick={() => void play(item, queue, { forceRestart: true })}
             >
               {item.title}
             </button>

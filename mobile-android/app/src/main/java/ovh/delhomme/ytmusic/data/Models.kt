@@ -194,6 +194,13 @@ data class SearchResponse(
     val albums: List<TrackDto> = emptyList(),
     val artists: List<TrackDto> = emptyList(),
     val playlists: List<TrackDto> = emptyList(),
+    val podcasts: List<TrackDto> = emptyList(),
+)
+
+@JsonClass(generateAdapter = false)
+data class SpokenExploreResponse(
+    val title: String? = null,
+    val items: List<TrackDto> = emptyList(),
 )
 
 @JsonClass(generateAdapter = false)

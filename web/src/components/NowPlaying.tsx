@@ -46,17 +46,31 @@ export function SyncedLyrics({
 }) {
   const audioEl = usePlayer((s) => s.audioEl);
   const isPlaying = usePlayer((s) => s.isPlaying);
+  const duration = usePlayer((s) => s.duration);
   const seek = usePlayer((s) => s.seek);
   const [clock, setClock] = useState(0);
+  const activeRef = useRef<HTMLParagraphElement | null>(null);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const prevIdxRef = useRef(-1);
+  const userScrollUntilRef = useRef(0);
+  const lastActiveRef = useRef(-1);
 
   const lines = useMemo(() => {
     if (timed?.length) {
-      return timed.map((l) => ({ t: l.startMs / 1000, text: l.text }));
+      // Heuristique : certaines sources envoient déjà des secondes sous un champ « ms »
+      const maxRaw = Math.max(...timed.map((l) => Number(l.startMs) || 0));
+      const dur = duration > 0 ? duration : 0;
+      const looksLikeSeconds =
+        maxRaw > 0 && maxRaw < 600 && (dur <= 0 || maxRaw <= dur * 1.5);
+      return timed.map((l) => ({
+        t: looksLikeSeconds ? Number(l.startMs) || 0 : (Number(l.startMs) || 0) / 1000,
+        text: l.text,
+      }));
     }
     return parseLrcLines(text);
-  }, [text, timed]);
+  }, [text, timed, duration]);
 
-  // Horloge = audio réel ; en pause on fige (pas de setInterval qui avance)
+  // Horloge = audio réel ; ne re-render que si l’index actif change
   useEffect(() => {
     if (!lines.length) return;
     let raf = 0;
@@ -65,21 +79,43 @@ export function SyncedLyrics({
       if (cancelled) return;
       const el = usePlayer.getState().audioEl;
       if (el && Number.isFinite(el.currentTime)) {
-        setClock(el.currentTime);
+        const t = el.currentTime + LYRIC_LEAD_SEC;
+        let idx = 0;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].t <= t) idx = i;
+          else break;
+        }
+        if (idx !== lastActiveRef.current) {
+          lastActiveRef.current = idx;
+          setClock(el.currentTime);
+        }
       }
-      if (!el?.paused && !el?.ended) {
+      if (el && !el.paused && !el.ended) {
         raf = requestAnimationFrame(tick);
       }
     };
-    // Sync immédiat (seek / ouverture)
     const el = audioEl;
-    if (el && Number.isFinite(el.currentTime)) setClock(el.currentTime);
+    if (el && Number.isFinite(el.currentTime)) {
+      lastActiveRef.current = -1;
+      setClock(el.currentTime);
+    }
     if (isPlaying) raf = requestAnimationFrame(tick);
+    const onSeeked = () => {
+      const a = usePlayer.getState().audioEl;
+      if (a && Number.isFinite(a.currentTime)) {
+        lastActiveRef.current = -1;
+        setClock(a.currentTime);
+      }
+    };
+    el?.addEventListener('seeked', onSeeked);
+    el?.addEventListener('timeupdate', onSeeked);
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      el?.removeEventListener('seeked', onSeeked);
+      el?.removeEventListener('timeupdate', onSeeked);
     };
-  }, [lines.length, isPlaying, audioEl, timed, text]);
+  }, [lines, isPlaying, audioEl]);
 
   const activeIdx = useMemo(() => {
     if (!lines.length) return -1;
@@ -92,10 +128,38 @@ export function SyncedLyrics({
     return idx;
   }, [lines, clock]);
 
-  const activeRef = useRef<HTMLParagraphElement | null>(null);
-
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const lineEl = activeRef.current;
+    if (!lineEl || activeIdx < 0) return;
+    if (Date.now() < userScrollUntilRef.current) {
+      prevIdxRef.current = activeIdx;
+      return;
+    }
+    let scroller: HTMLElement | null = scrollerRef.current;
+    if (scroller) {
+      let n: HTMLElement | null = lineEl.parentElement;
+      while (n) {
+        const oy = getComputedStyle(n).overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 8) {
+          scroller = n;
+          break;
+        }
+        n = n.parentElement;
+      }
+    }
+    if (!scroller) return;
+    const prev = prevIdxRef.current;
+    prevIdxRef.current = activeIdx;
+    const lineTop =
+      lineEl.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop;
+    const top = lineTop - scroller.clientHeight / 2 + lineEl.clientHeight / 2;
+    const jump = prev < 0 || Math.abs(activeIdx - prev) > 1;
+    scroller.scrollTo({
+      top: Math.max(0, top),
+      behavior: jump ? 'smooth' : 'auto',
+    });
   }, [activeIdx]);
 
   // Texte brut sans timings → scroll libre, pas de faux karaoké
@@ -108,7 +172,17 @@ export function SyncedLyrics({
   }
 
   return (
-    <div className="space-y-4 px-3 py-10 sm:px-6">
+    <div
+      ref={scrollerRef}
+      data-lyrics-scroll
+      className="space-y-4 px-3 py-10 sm:px-6"
+      onWheel={() => {
+        userScrollUntilRef.current = Date.now() + 4000;
+      }}
+      onTouchMove={() => {
+        userScrollUntilRef.current = Date.now() + 4000;
+      }}
+    >
       {lines.map((line, i) => {
         const active = i === activeIdx;
         const past = i < activeIdx;
@@ -125,9 +199,9 @@ export function SyncedLyrics({
                 seek(Math.max(0, line.t));
               }
             }}
-            className={`origin-left cursor-pointer transition-all duration-300 hover:text-white ${
+            className={`origin-left cursor-pointer transition-colors duration-200 hover:text-white ${
               active
-                ? 'scale-[1.02] py-1.5 text-3xl font-extrabold leading-tight text-white underline decoration-yt-red decoration-2 underline-offset-4 sm:text-4xl'
+                ? 'py-1.5 text-3xl font-extrabold leading-tight text-white underline decoration-yt-red decoration-2 underline-offset-4 sm:text-4xl'
                 : past
                   ? 'text-base leading-7 text-white/25 sm:text-lg'
                   : 'text-lg leading-8 text-[#9a9a9a] sm:text-xl sm:leading-9'

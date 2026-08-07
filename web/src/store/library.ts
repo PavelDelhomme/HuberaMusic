@@ -194,18 +194,33 @@ export const useLibrary = create<LibraryState>((set, get) => ({
   },
 
   addToPlaylist: async (playlistId, track) => {
-    await api.addToPlaylist(playlistId, track);
-    await get().refresh();
+    const updated = await api.addToPlaylist(playlistId, track);
+    if (updated?.id) {
+      set((s) => ({
+        playlists: s.playlists.some((p) => p.id === updated.id)
+          ? s.playlists.map((p) => (p.id === updated.id ? updated : p))
+          : [updated, ...s.playlists],
+      }));
+    } else {
+      await get().refresh();
+    }
   },
 
   addTracksToPlaylist: async (playlistId, tracks) => {
     const seen = new Set<string>();
+    let updated = null as Awaited<ReturnType<typeof api.addToPlaylist>> | null;
     for (const t of tracks) {
       if (!t?.id || seen.has(t.id)) continue;
       seen.add(t.id);
-      await api.addToPlaylist(playlistId, t);
+      updated = await api.addToPlaylist(playlistId, t);
     }
-    await get().refresh();
+    if (updated?.id) {
+      set((s) => ({
+        playlists: s.playlists.map((p) => (p.id === updated!.id ? updated! : p)),
+      }));
+    } else {
+      await get().refresh();
+    }
   },
 
   recordPlay: async (track: Track) => {

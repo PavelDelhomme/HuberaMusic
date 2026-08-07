@@ -119,8 +119,11 @@ function mediaArtwork(track: {
 }): MediaImage[] {
   const out: MediaImage[] = [];
   const seen = new Set<string>();
+  // Chrome Media Session limite le nombre d’images artwork (~10) ;
+  // au-delà : « The number of MediaImage sizes exceeds the upper limit ».
+  const MAX_ARTWORK = 4;
   const push = (src: string, w: number, h: number) => {
-    if (!src || seen.has(src)) return;
+    if (!src || seen.has(src) || out.length >= MAX_ARTWORK) return;
     seen.add(src);
     out.push({ src, sizes: `${w}x${h}`, type: 'image/jpeg' });
   };

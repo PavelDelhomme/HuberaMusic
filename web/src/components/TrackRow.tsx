@@ -77,7 +77,7 @@ export function TrackRow({
     if (track.type === 'artist') navigate(`/artist/${track.id}`);
     else if (track.type === 'album') navigate(`/album/${track.id}`);
     else if (track.type === 'playlist') navigate(`/playlist/${track.id}`);
-    else void play(track, queue);
+    else void play(track, queue, { forceRestart: true });
   };
 
   const openMenu = (e?: { stopPropagation?: () => void; preventDefault?: () => void }) => {

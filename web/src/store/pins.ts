@@ -72,42 +72,55 @@ export const usePins = create<PinsState>((set, get) => ({
         await api.syncPins(cached.map(pinSyncPayload)).catch(() => null);
       }
       const r = await api.pins();
-      const pins = (r.pins || []) as PinRow[];
+      const pins = dedupePinRows((r.pins || []) as PinRow[]);
       writePinsCache(pins);
       set({ pins, loaded: true });
     } catch {
-      const cached = readPinsCache();
+      const cached = dedupePinRows(readPinsCache());
       set({ pins: cached, loaded: true });
     }
   },
-  isPinned: (targetId) => get().pins.some((p) => p.targetId === targetId),
-  pinIdFor: (targetId) => get().pins.find((p) => p.targetId === targetId)?.id || null,
+  isPinned: (targetId) => get().pins.some((p) => p.targetId === targetId || p.id === targetId),
+  pinIdFor: (targetId) =>
+    get().pins.find((p) => p.targetId === targetId || p.id === targetId)?.id || null,
   togglePin: async (item) => {
-    const existing = get().pinIdFor(item.id);
-    if (existing) {
-      const r = await api.removePin(existing);
-      const pins = (r.pins || []) as PinRow[];
+    // Unpin par targetId (pas UUID) → purge song+video du même id côté API
+    if (get().isPinned(item.id)) {
+      const r = await api.removePin(item.id);
+      const pins = dedupePinRows((r.pins || []) as PinRow[]);
       writePinsCache(pins);
       set({ pins, loaded: true });
       return 'unpinned';
     }
+    const pinType =
+      item.type === 'video' || item.type === 'song' || !item.type ? 'song' : item.type;
     const payload = {
       ...item,
       id: item.id,
-      type: item.type || 'song',
+      type: pinType,
       title: item.title || (item as { name?: string }).name || item.id,
       artists: Array.isArray(item.artists) ? item.artists : [],
       thumbnails: Array.isArray(item.thumbnails) ? item.thumbnails : [],
     };
     const r = await api.addPin({
-      kind: payload.type,
+      kind: pinType,
       targetId: item.id,
       payload,
       id: item.id,
     });
-    const pins = (r.pins || []) as PinRow[];
+    const pins = dedupePinRows((r.pins || []) as PinRow[]);
     writePinsCache(pins);
     set({ pins, loaded: true });
     return 'pinned';
   },
 }));
+
+function dedupePinRows(pins: PinRow[]): PinRow[] {
+  const seen = new Set<string>();
+  return pins.filter((p) => {
+    const tid = String(p.targetId || p.id || '');
+    if (!tid || seen.has(tid)) return false;
+    seen.add(tid);
+    return true;
+  });
+}

@@ -13,8 +13,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Surveille la connectivité :
- * - hors ligne → coupe le prefetch (économie batterie)
- * - retour en ligne → clear circuit-breaker stream + reprend la lecture si on était en pause réseau
+ * - hors ligne (debounce) → coupe le prefetch
+ * - retour en ligne → clear circuit-breaker + reprend si pause réseau
+ *
+ * Important Wi‑Fi ↔ mobile : `onLost` ne doit pas déclarer offline immédiatement
+ * (fenêtre sans réseau valide pendant le handover).
  */
 object NetworkMonitor {
     private val started = AtomicBoolean(false)
@@ -23,6 +26,10 @@ object NetworkMonitor {
     @Volatile
     private var pausedForNetwork = false
     private val main = Handler(Looper.getMainLooper())
+    private var offlineConfirm: Runnable? = null
+
+    /** Délai avant de confirmer « vraiment hors ligne » (handover 4G/Wi‑Fi). */
+    private const val OFFLINE_DEBOUNCE_MS = 1_800L
 
     fun isOnline(): Boolean = online
 
@@ -35,9 +42,7 @@ object NetworkMonitor {
         val app = context.applicationContext
         val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return
-        online = cm.activeNetwork?.let { net ->
-            cm.getNetworkCapabilities(net)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-        } == true
+        online = hasUsableInternet(cm)
 
         val req = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -47,25 +52,58 @@ object NetworkMonitor {
                 req,
                 object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
+                        cancelOfflineConfirm()
                         val wasOffline = !online
                         online = true
                         if (wasOffline) onBackOnline()
                     }
 
-                    override fun onLost(network: Network) {
-                        // Vérifie qu’il ne reste pas un autre réseau
-                        val still = cm.activeNetwork?.let { n ->
-                            cm.getNetworkCapabilities(n)
-                                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
-                        } == true
-                        if (!still) {
-                            online = false
-                            onGoneOffline()
+                    override fun onCapabilitiesChanged(
+                        network: Network,
+                        networkCapabilities: NetworkCapabilities,
+                    ) {
+                        val ok = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        if (ok) {
+                            cancelOfflineConfirm()
+                            val wasOffline = !online
+                            online = true
+                            if (wasOffline) onBackOnline()
                         }
+                    }
+
+                    override fun onLost(network: Network) {
+                        // Handover : un autre réseau peut arriver dans la seconde
+                        scheduleOfflineConfirm(cm)
                     }
                 },
             )
         }
+    }
+
+    private fun hasUsableInternet(cm: ConnectivityManager): Boolean {
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun scheduleOfflineConfirm(cm: ConnectivityManager) {
+        cancelOfflineConfirm()
+        val r = Runnable {
+            val still = hasUsableInternet(cm)
+            if (!still) {
+                online = false
+                onGoneOffline()
+            } else {
+                online = true
+            }
+        }
+        offlineConfirm = r
+        main.postDelayed(r, OFFLINE_DEBOUNCE_MS)
+    }
+
+    private fun cancelOfflineConfirm() {
+        offlineConfirm?.let { main.removeCallbacks(it) }
+        offlineConfirm = null
     }
 
     private fun onGoneOffline() {

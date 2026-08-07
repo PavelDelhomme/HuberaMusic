@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -199,7 +200,10 @@ fun HomeScreen(
                             contentPadding = PaddingValues(horizontal = 12.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            items(state.radios, key = { it.id }) { radio ->
+                            itemsIndexed(
+                                state.radios,
+                                key = { index, radio -> "${radio.id}-$index" },
+                            ) { _, radio ->
                                 val loading = state.radioLoadingId == radio.id
                                 val preview = state.radioPreviews[radio.id].orEmpty()
                                 val saved = state.savedMixIds.contains(radio.id)
@@ -383,7 +387,10 @@ fun HomeScreen(
                             contentPadding = PaddingValues(horizontal = 12.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
-                            items(items.take(16), key = { it.id }) { track ->
+                            itemsIndexed(
+                                items.take(16),
+                                key = { index, track -> "${track.id}-$index" },
+                            ) { _, track ->
                                 val isPinned = track.id in pinIds
                                 Column(
                                     Modifier

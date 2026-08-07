@@ -26,6 +26,7 @@ import {
   getHome,
   getHomeMore,
   getExplore,
+  exploreSpoken,
   search,
   searchSuggestions,
   getTrack,
@@ -1179,6 +1180,19 @@ app.get('/api/explore', accountRequired, async (req, res) => {
       needsOnboarding: !prefs.onboardingDone,
       radios: RADIO_CATEGORIES.map((c) => ({ id: c.id, title: c.title })),
     });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+/** Rayon Podcasts / livres audio (écoute via flux audio comme un titre). */
+app.get('/api/explore/spoken', accountRequired, async (req, res) => {
+  try {
+    const raw = String(req.query.kind || 'podcast').toLowerCase();
+    const kind = raw === 'audiobook' || raw === 'livre-audio' || raw === 'livre_audio'
+      ? 'audiobook'
+      : 'podcast';
+    res.json(await exploreSpoken(kind));
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
