@@ -601,8 +601,14 @@ class PlayerController(
         if (index >= userQueueEnd) {
             userQueueEnd = (index + 1).coerceAtMost(queue.size)
         }
+        // Chauffe avant le seek (évite notif vide + long silence sur saut lointain)
+        warmAround(queue, index)
+        userWantsPlaying = true
+        pendingAutoplay = true
         p.seekTo(index, 0L)
+        p.prepare()
         p.play()
+        PlaybackService.Holder.service?.notifyQueueJump()
         syncFrom(p)
     }
 
@@ -869,31 +875,29 @@ class PlayerController(
         syncFrom(c)
     }
 
-    /** Radio / Mix : si un titre tourne déjà, n’ajoute que la suite (sans reset). */
+    /**
+     * Radio / Mix : coupe toujours le titre en cours et démarre le mix depuis l’index 0
+     * (comportement YTM). La file « À suivre » = le reste du mix.
+     */
     fun playRadioOrEnqueue(mix: List<TrackDto>, title: String, sourceKind: String = "mix") {
         val playable = mix.filter { it.isPlayable() }.take(MixCacheStore.MIX_TARGET)
         if (playable.isEmpty()) return
-        val st = _state.value
-        if (st.playing && st.track != null) {
-            enqueueAfterCurrent(
-                playable,
-                replaceRest = true,
-                cap = MixCacheStore.MIX_TARGET,
-                title = title,
-                sourceKind = sourceKind,
-            )
-            // File précalculée — coupe l’autoplay incrémental
-            setAutoplaySuggestions(false)
-        } else {
-            play(
-                playable,
-                0,
-                title = title,
-                userQueueEnd = playable.size,
-                sourceKind = sourceKind,
-            )
-            setAutoplaySuggestions(false)
-        }
+        // Toujours hard-start : soft-enqueue laissait l’ancien titre + souvent 0 « À suivre »
+        play(
+            playable,
+            0,
+            title = title,
+            userQueueEnd = playable.size,
+            sourceKind = sourceKind,
+        )
+        // Garder l’autoplay si le mix est encore court (top-up progressif)
+        setAutoplaySuggestions(playable.size < 12)
+    }
+
+    /** Ajoute des titres après la file sans remplacer le courant (top-up radio progressif). */
+    fun appendRadioContinuation(tracks: List<TrackDto>, forSeedId: String? = null) {
+        if (tracks.isEmpty()) return
+        appendAutoTracks(tracks, forSeedId = forSeedId)
     }
 
     private fun mediaItem(t: TrackDto): MediaItem =

@@ -14,6 +14,10 @@ C_BOLD  := \033[1m
 C_RESET := \033[0m
 
 DEVICE ?= R5CT7263YJL
+# Multi-appareils ADB Wi‑Fi / batterie (séparés par virgule). Ex: DEVICES=R5CT7263YJL,00145153K001434
+DEVICES ?=
+DURATION ?= 1800
+SAMPLE_SECS ?= 15
 
 .PHONY: help install seed-users test-verify-email env-check \
 	dev up up-full down down-clean restart restart-api ensure-api \
@@ -23,6 +27,9 @@ DEVICE ?= R5CT7263YJL
 	android-sync android-build android-install android-logs android-publish android-upload-apk android-prod android \
 	android-capacitor android-capacitor-prod adb-fix \
 	adb-fix-keys \
+	adb-wifi adb-wifi-connect adb-wifi-status adb-wifi-wait-unplug adb-wifi-disconnect \
+	adb-wifi-doctor adb-wifi-ensure adb-wifi-pair battery-go battery-go-calm battery-suite \
+	battery-test battery-test-short battery-report battery-report-mail \
 	update-apps status status-watch \
 	logs logs-tail logs-watch logs-history logs-archive \
 	db-status db-backup \
@@ -45,10 +52,9 @@ help: ## Affiche cette aide colorée
 	@printf "  $(C_GREEN)▶ Base de données$(C_RESET)\n"
 	@grep -E '^(db-status|db-backup|seed-users):.*?##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-20s$(C_RESET) %s\n", $$1, $$2}'
-	@echo ""
 	@printf "  $(C_GREEN)▶ Mobile Android$(C_RESET)\n"
-	@grep -E '^(android|android-prod|android-install|android-build|android-logs|android-publish|android-upload-apk|mobile-):.*?##' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-20s$(C_RESET) %s\n", $$1, $$2}'
+	@grep -E '^(android|android-prod|android-install|android-build|android-logs|android-publish|android-upload-apk|mobile-[^:]+:|adb-[^:]+:|battery-[^:]+:).*?##' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-28s$(C_RESET) %s\n", $$1, $$2}'
 	@echo ""
 	@printf "  $(C_GREEN)▶ Build / Docker / Git$(C_RESET)\n"
 	@grep -E '^(install|build|start|deploy-local|docker-|icons|clean-vite|env-check|push-|deploy-hint|update-apps|test-|bump-|version):.*?##' $(MAKEFILE_LIST) | \
@@ -56,6 +62,7 @@ help: ## Affiche cette aide colorée
 	@echo ""
 	@printf "  $(C_DIM)Domaine prod : https://ytmusic.delhomme.ovh$(C_RESET)\n"
 	@printf "  $(C_DIM)Dev local    : make up-full  ·  make logs  ·  make android$(C_RESET)\n"
+	@printf "  $(C_DIM)Batterie     : make battery-go  (ensure 2 Wi‑Fi → 30 min → rapport)$(C_RESET)\n"
 	@printf "  $(C_DIM)Branches     : feat/* depuis dev → merge prod$(C_RESET)\n"
 	@printf "  $(C_DIM)Version      : d+X.Y.Z (local/dev) · p+X.Y.Z (prod) — make bump-patch|minor|major$(C_RESET)\n"
 	@echo ""
@@ -248,6 +255,108 @@ adb-fix: ## Répare ADB unauthorized (diagnostic + reset USB)
 adb-fix-keys: ## Régénère clés ADB (après révocation USB sur le téléphone)
 	@chmod +x $(ROOT)/scripts/adb-fix-auth.sh
 	@bash $(ROOT)/scripts/adb-fix-auth.sh --new-keys
+
+# ---------------------------------------------------------------------------
+# ADB Wi‑Fi + batterie réelle (Samsung + Nothing, hors charge USB)
+# ---------------------------------------------------------------------------
+# Une seule commande (recommandé) :
+#   make battery-go
+#     → vérifie/attend les 2 physiques en Wi‑Fi
+#     → attend débranchement
+#     → 30 min de mesure + logs serveur
+#     → affiche le rapport
+#
+# Si Samsung manque :
+#   A) Branche-le 2 s en USB pendant make adb-wifi-ensure
+#   B) Ou : make adb-wifi-pair  (Débogage sans fil + code)
+
+adb-wifi-doctor: ## Vérifie Samsung + Nothing (ignore le reste / virtuel)
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb-wifi.sh doctor || true
+
+adb-wifi-ensure: ## Attend/connecte les 2 physiques en ADB Wi‑Fi (USB ou déjà connus)
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb-wifi.sh ensure
+
+adb-wifi-pair: ## Associe un téléphone via Débogage sans fil (IP:port + code)
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb-wifi.sh pair
+
+adb-wifi: ## USB → active ADB tcpip + enregistre IPs Wi‑Fi (1+ téléphones)
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@if [ -n "$(DEVICES)" ]; then \
+	  bash $(ROOT)/scripts/adb-wifi.sh enable $$(echo "$(DEVICES)" | tr ',' ' '); \
+	else \
+	  bash $(ROOT)/scripts/adb-wifi.sh enable; \
+	fi
+
+adb-wifi-connect: ## Connecte ADB en Wi‑Fi (après make adb-wifi)
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb-wifi.sh connect
+
+adb-wifi-status: ## Alias doctor (Samsung + Nothing)
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb-wifi.sh doctor || true
+
+adb-wifi-wait-unplug: ## Attend que Samsung + Nothing soient hors charge USB/AC
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb-wifi.sh wait-unplug
+
+adb-wifi-disconnect: ## Coupe les sessions ADB Wi‑Fi
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb-wifi.sh disconnect
+
+battery-go: ## ALL-IN-ONE : ≥1 Wi‑Fi → test → rapport (USAGE=0 recommandé pour mesure calme)
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh $(ROOT)/scripts/battery-session.sh
+	@DURATION="$(DURATION)" SAMPLE_SECS="$(SAMPLE_SECS)" MIN_DEVICES="$(or $(MIN_DEVICES),1)" \
+	  USAGE="$(or $(USAGE),0)" \
+	  bash $(ROOT)/scripts/adb-wifi.sh go
+
+battery-go-calm: ## Test batterie calme : USAGE=0 + écran OFF + mail auto
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh $(ROOT)/scripts/battery-session.sh $(ROOT)/scripts/battery-mail-report.mjs
+	@echo ""
+	@echo "  Lecture calme 30 min — écran OFF, pas de stim ADB, puis email rapport"
+	@echo "  Prérequis : make adb-wifi-doctor (Nothing Wi‑Fi OK)"
+	@echo ""
+	@DURATION="$(or $(DURATION),1800)" SAMPLE_SECS="$(or $(SAMPLE_SECS),15)" MIN_DEVICES="$(or $(MIN_DEVICES),1)" \
+	  USAGE=0 bash $(ROOT)/scripts/adb-wifi.sh go
+	@cd $(ROOT) && node --env-file=.env scripts/battery-mail-report.mjs || true
+	@$(MAKE) battery-report
+
+battery-suite: ## 3 phases (~45 min) : écran OFF / ON / mixte + lecture vérifiée + rapport
+	@chmod +x $(ROOT)/scripts/battery-suite.sh $(ROOT)/scripts/battery-mail-report.mjs
+	@echo ""
+	@echo "  Suite batterie : screen_off → screen_on → mixed (DURATION_PHASE=$(or $(DURATION_PHASE),900)s chacune)"
+	@echo "  Débranche le téléphone. Lance une lecture si possible."
+	@echo ""
+	@DURATION_PHASE="$(or $(DURATION_PHASE),900)" SAMPLE_SECS="$(or $(SAMPLE_SECS),15)" MAIL="$(or $(MAIL),1)" \
+	  bash $(ROOT)/scripts/battery-suite.sh
+
+battery-test: ## Session batterie 30 min (Wi‑Fi ADB, débranché) + logs serveur DEV
+	@chmod +x $(ROOT)/scripts/battery-session.sh $(ROOT)/scripts/adb-wifi.sh
+	@echo ""
+	@echo "  Astuce : préfère « make battery-go » (vérifie les 2 appareils avant)."
+	@echo "  Durée=$(DURATION)s  sample=$(SAMPLE_SECS)s  sortie=logs/battery-session/"
+	@echo ""
+	@DURATION="$(DURATION)" SAMPLE_SECS="$(SAMPLE_SECS)" DEVICES="$(DEVICES)" \
+	  REQUIRE_UNPLUGGED="$(or $(REQUIRE_UNPLUGGED),1)" USAGE="$(or $(USAGE),1)" \
+	  bash $(ROOT)/scripts/battery-session.sh
+
+battery-test-short: ## Idem battery-test mais 3 min (smoke)
+	@$(MAKE) battery-test DURATION=180 SAMPLE_SECS=10 DEVICES="$(DEVICES)" REQUIRE_UNPLUGGED="$(or $(REQUIRE_UNPLUGGED),1)"
+
+battery-report: ## Affiche le dernier rapport batterie
+	@latest="$(ROOT)/logs/battery-session/latest/REPORT.md"; \
+	if [ -f "$$latest" ]; then \
+	  echo "==> $$latest"; cat "$$latest"; \
+	else \
+	  echo "Aucun rapport. Lance : make battery-go"; \
+	  ls -1dt $(ROOT)/logs/battery-session/*/REPORT.md 2>/dev/null | head -3 || true; \
+	fi
+
+battery-report-mail: ## Email le dernier rapport batterie → BATTERY_REPORT_TO / SEED_EMAIL (+ zip)
+	@chmod +x $(ROOT)/scripts/battery-mail-report.mjs
+	@cd $(ROOT) && node --env-file=.env scripts/battery-mail-report.mjs
 
 android-prod: ## APK → API prod (APP_URL / ANDROID_API_BASE_URL / ytmusic.delhomme.ovh) + ADB + publish
 	@chmod +x $(ROOT)/scripts/kotlin-android-install.sh $(ROOT)/scripts/android-publish-apk.sh

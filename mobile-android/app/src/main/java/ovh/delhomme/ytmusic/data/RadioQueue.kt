@@ -1,6 +1,10 @@
 package ovh.delhomme.ytmusic.data
 
-/** Construit une file « radio » précalculée (~200 titres côté serveur). */
+/**
+ * Construit une file « radio ».
+ * @param progressive si true : related?fast=1 d’abord (~8–15 titres) — l’appelant peut
+ *   ensuite top-up avec [buildRadioQueueContinuation].
+ */
 suspend fun buildRadioQueue(
     api: YtMusicApi,
     kind: String,
@@ -8,6 +12,7 @@ suspend fun buildRadioQueue(
     seed: TrackDto? = null,
     stayClose: Boolean = false,
     mixCache: MixCacheStore? = null,
+    progressive: Boolean = true,
 ): List<TrackDto> {
     val cacheKey = when (kind) {
         "album" -> mixCache?.keyRadio("album", id)
@@ -57,7 +62,14 @@ suspend fun buildRadioQueue(
         }
         else -> {
             val trackId = id
-            val related = runCatching { api.related(trackId, full = 1) }.getOrNull()
+            // Progressif : fast d’abord (évite timeout 45s / file à 1 titre)
+            val related = if (progressive) {
+                runCatching { api.related(trackId, fast = 1) }.getOrNull()
+                    ?: runCatching { api.related(trackId, full = 0) }.getOrNull()
+            } else {
+                runCatching { api.related(trackId, full = 1) }.getOrNull()
+                    ?: runCatching { api.related(trackId, full = 0) }.getOrNull()
+            }
             var candidates = (
                 (related?.tracks.orEmpty()) +
                     (related?.related.orEmpty()) +
@@ -82,7 +94,6 @@ suspend fun buildRadioQueue(
                 }
                 candidates = close.take(20) + far
             }
-            // Ranking serveur déjà diversifié — pas de diversify client
             pool += candidates
             start = start ?: TrackDto(
                 id = trackId,
@@ -91,7 +102,8 @@ suspend fun buildRadioQueue(
                 thumbnails = seed?.thumbnails,
                 type = "song",
             ).takeIf { it.isPlayable() }
-            if (mixCache != null && cacheKey != null && pool.isNotEmpty()) {
+            // Ne cache que les mixes « complets » (pas le fast)
+            if (!progressive && mixCache != null && cacheKey != null && pool.isNotEmpty()) {
                 mixCache.put(cacheKey, pool, related?.generatedAt ?: System.currentTimeMillis())
             }
         }
@@ -107,5 +119,37 @@ suspend fun buildRadioQueue(
     }
 
     val head = start?.takeIf { it.isPlayable() } ?: uniq.firstOrNull() ?: return emptyList()
-    return listOf(head) + uniq.filter { it.id != head.id }
+    val restCap = if (progressive && kind == "track") 24 else MixCacheStore.MIX_TARGET
+    return listOf(head) + uniq.filter { it.id != head.id }.take(restCap)
+}
+
+/** Top-up après un démarrage progressif (full=0 puis éventuellement cache). */
+suspend fun buildRadioQueueContinuation(
+    api: YtMusicApi,
+    trackId: String,
+    alreadyIds: Set<String>,
+    mixCache: MixCacheStore? = null,
+): List<TrackDto> {
+    val mid = runCatching { api.related(trackId, full = 0) }.getOrNull()
+    var pool = (
+        (mid?.tracks.orEmpty()) + (mid?.related.orEmpty()) + (mid?.radio.orEmpty())
+        )
+        .filter { it.isPlayable() && it.id !in alreadyIds && it.id != trackId }
+        .distinctBy { it.id }
+    if (pool.size < 20) {
+        val full = runCatching { api.related(trackId, full = 1) }.getOrNull()
+        val extra = (
+            (full?.tracks.orEmpty()) + (full?.related.orEmpty()) + (full?.radio.orEmpty())
+            )
+            .filter { it.isPlayable() && it.id !in alreadyIds && it.id != trackId }
+        pool = (pool + extra).distinctBy { it.id }
+        if (mixCache != null && pool.isNotEmpty()) {
+            mixCache.put(
+                mixCache.keyRadio("track", trackId),
+                pool,
+                full?.generatedAt ?: System.currentTimeMillis(),
+            )
+        }
+    }
+    return pool.take(MixCacheStore.MIX_TARGET)
 }

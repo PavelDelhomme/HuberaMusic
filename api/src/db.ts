@@ -147,6 +147,14 @@ db.exec(`
     updated_at INTEGER NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS library_album_tracks (
+    user_id TEXT NOT NULL,
+    album_id TEXT NOT NULL,
+    track_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, album_id, track_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 `);
 
 // Indexes pour biblio (idempotents)
@@ -157,13 +165,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_history_user_played ON history(user_id, played_at DESC);
   CREATE INDEX IF NOT EXISTS idx_entity_history_user ON entity_history(user_id, played_at DESC);
   CREATE INDEX IF NOT EXISTS idx_playlist_tracks_pl ON playlist_tracks(playlist_id, position);
+  CREATE INDEX IF NOT EXISTS idx_library_album_tracks_user_track ON library_album_tracks(user_id, track_id);
 `);
+
+// Colonne provenance : titre ajouté manuellement (1) vs uniquement via album (0)
+try {
+  db.exec(`ALTER TABLE library_tracks ADD COLUMN manual INTEGER NOT NULL DEFAULT 1`);
+} catch {
+  /* déjà migrée */
+}
 
 // Migration one-shot : anciens « titres biblio » = likes → aussi en library_tracks
 try {
   db.exec(`
-    INSERT OR IGNORE INTO library_tracks (user_id, track_id, created_at)
-    SELECT user_id, track_id, created_at FROM liked_tracks
+    INSERT OR IGNORE INTO library_tracks (user_id, track_id, created_at, manual)
+    SELECT user_id, track_id, created_at, 1 FROM liked_tracks
   `);
 } catch {
   /* ok */

@@ -92,6 +92,7 @@ import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.RecoFeedbackBody
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.buildRadioQueue
+import ovh.delhomme.ytmusic.data.buildRadioQueueContinuation
 import ovh.delhomme.ytmusic.data.resolveArtistId
 import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.player.PlayerController
@@ -134,12 +135,17 @@ fun TrackActionsSheet(
         (enriched.album?.id != null && albumInLibrary && !enriched.isPlayable())
 
     LaunchedEffect(track.id, likedIds) {
+        // Sync cœur uniquement — ne pas re-fetch library (écrasait l’optimiste)
         liked = track.id in likedIds
+    }
+
+    LaunchedEffect(track.id) {
         enriched = track
         pinned = container.quickAccess.isPinned(track.id)
+        songInLibrary = false
+        albumInLibrary = false
         runCatching {
             container.ensureFreshToken()
-            // Enrichit artistes / album (ids) pour « Accéder à… »
             if (track.isPlayable()) {
                 runCatching { container.api.track(track.id).track }.getOrNull()?.let { meta ->
                     enriched = track.copy(
@@ -158,21 +164,21 @@ fun TrackActionsSheet(
                 (lib?.downloaded?.contains(track.id) == true)
             if (lib != null) {
                 val serverLiked = lib.liked.any { it.id == track.id }
-                liked = serverLiked
-                songInLibrary = lib.songs.any { it.id == track.id } ||
-                    (lib.songs.isEmpty() && lib.liked.any { it.id == track.id })
+                // Ne réécrit liked que si désync (évite flash)
                 if (serverLiked != (track.id in likedIds)) {
+                    liked = serverLiked
                     onLikedChanged(
                         if (serverLiked) likedIds + track.id else likedIds - track.id,
                     )
                 }
+                songInLibrary = lib.songs.any { it.id == track.id } ||
+                    (lib.songs.isEmpty() && lib.liked.any { it.id == track.id })
                 val albumId = enriched.album?.id ?: enriched.id.takeIf { enriched.isAlbum() }
                 albumInLibrary = albumId != null && lib.albums.any { it.id == albumId }
                 if (track.type?.equals("mix", ignoreCase = true) == true) {
                     songInLibrary = lib.mixes.any { it.id == track.id }
                 }
             } else {
-                // Hors-ligne : au moins le statut DL local
                 downloaded = container.offlineStore.has(track.id)
             }
         }
@@ -275,6 +281,10 @@ fun TrackActionsSheet(
                                 onLikedChanged(
                                     if (r.liked) likedIds + enriched.id else likedIds - enriched.id,
                                 )
+                                r.library?.let { lib ->
+                                    songInLibrary = lib.songs.any { it.id == enriched.id } ||
+                                        (lib.songs.isEmpty() && lib.liked.any { it.id == enriched.id })
+                                }
                                 container.api.recoFeedback(
                                     RecoFeedbackBody(
                                         enriched.id,
@@ -401,15 +411,30 @@ fun TrackActionsSheet(
             ) {
                 scope.launch {
                     runCatching {
+                        container.ensureFreshToken()
+                        // Optimistic immédiat
+                        val next = !songInLibrary
+                        songInLibrary = next
                         val r = container.api.toggleLibrarySong(enriched)
                         songInLibrary = r.saved
+                        r.library?.let { lib ->
+                            songInLibrary = lib.songs.any { it.id == enriched.id } || r.saved
+                        }
+                        container.bumpLibraryEpoch()
                         Toast.makeText(
                             context,
                             if (r.saved) "Dans la bibliothèque" else "Retiré de la bibliothèque",
                             Toast.LENGTH_SHORT,
                         ).show()
+                        // Garde la sheet ouverte pour voir le libellé mis à jour
+                    }.onFailure {
+                        songInLibrary = !songInLibrary // rollback
+                        Toast.makeText(
+                            context,
+                            it.message ?: "Impossible de modifier la bibliothèque",
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
-                    onDismiss()
                 }
             }
             SheetAction(
@@ -456,15 +481,33 @@ fun TrackActionsSheet(
                 }
             }
 
-            // Radios
+            // Radios — hard-start + top-up progressif (évite soft-enqueue / file à 1 titre)
             SheetAction(Icons.Default.AutoAwesome, "En rapport", "Mix · similaires + découverte") {
                 scope.launch {
-                    runCatching {
-                        val mix = buildRadioQueue(container.api, "track", enriched.id, enriched, mixCache = container.mixCache)
-                        if (mix.isNotEmpty()) {
-                            player.playRadioOrEnqueue(mix, "En rapport")
-                            Toast.makeText(context, "Mix démarré", Toast.LENGTH_SHORT).show()
+                    val ok = runCatching {
+                        val mix = buildRadioQueue(
+                            container.api, "track", enriched.id, enriched,
+                            mixCache = container.mixCache, progressive = true,
+                        )
+                        if (mix.isEmpty()) {
+                            Toast.makeText(context, "Mix indisponible", Toast.LENGTH_SHORT).show()
+                            return@runCatching
                         }
+                        player.playRadioOrEnqueue(mix, "En rapport")
+                        Toast.makeText(
+                            context,
+                            "Mix démarré · ${mix.size} titres",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        // Top-up en arrière-plan
+                        val more = buildRadioQueueContinuation(
+                            container.api, enriched.id, mix.map { it.id }.toSet(),
+                            mixCache = container.mixCache,
+                        )
+                        if (more.isNotEmpty()) player.appendRadioContinuation(more, forSeedId = enriched.id)
+                    }.isSuccess
+                    if (!ok) {
+                        Toast.makeText(context, "Échec mix", Toast.LENGTH_SHORT).show()
                     }
                     onDismiss()
                 }
@@ -475,20 +518,27 @@ fun TrackActionsSheet(
                         runCatching {
                             val mix = buildRadioQueue(
                                 container.api, "track", enriched.id, enriched, stayClose = true,
-                                mixCache = container.mixCache,
+                                mixCache = container.mixCache, progressive = true,
                             )
                             if (mix.isNotEmpty()) {
                                 player.playRadioOrEnqueue(mix, "Radio")
-                                val added = (mix.size - 1).coerceAtLeast(0)
                                 Toast.makeText(
                                     context,
-                                    if (added > 0) "$added titre${if (added > 1) "s" else ""} ajoutés à la file"
-                                    else "Radio démarrée",
+                                    "Radio démarrée · ${mix.size} titres",
                                     Toast.LENGTH_SHORT,
                                 ).show()
+                                val more = buildRadioQueueContinuation(
+                                    container.api, enriched.id, mix.map { it.id }.toSet(),
+                                    mixCache = container.mixCache,
+                                )
+                                if (more.isNotEmpty()) {
+                                    player.appendRadioContinuation(more, forSeedId = enriched.id)
+                                }
                             } else {
                                 Toast.makeText(context, "Radio indisponible", Toast.LENGTH_SHORT).show()
                             }
+                        }.onFailure {
+                            Toast.makeText(context, "Radio indisponible", Toast.LENGTH_SHORT).show()
                         }
                         onDismiss()
                     }

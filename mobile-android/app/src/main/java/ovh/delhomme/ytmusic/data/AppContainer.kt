@@ -4,6 +4,7 @@ import android.content.Context
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.Authenticator
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
@@ -28,6 +29,11 @@ class AppContainer(context: Context) {
     val quickAccess = QuickAccessStore(appContext)
     val homeCache = HomeCacheStore(appContext)
     val mixCache = MixCacheStore(appContext)
+    /** Invalide le cache LibraryScreen (45s) après add/remove biblio. */
+    val libraryEpoch = MutableStateFlow(0L)
+    fun bumpLibraryEpoch() {
+        libraryEpoch.value = System.currentTimeMillis()
+    }
     val offlineStore by lazy { LocalOfflineStore(appContext, moshi) }
     val localPlayback by lazy { LocalPlaybackStore(appContext, moshi) }
     private val apiPrefs = appContext.getSharedPreferences("ytm_api", Context.MODE_PRIVATE)

@@ -236,20 +236,27 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             val currentFilter = _state.value.filter
             if (currentQ.length < 2) return@launch
             _state.value = _state.value.copy(loading = true, error = null, sections = emptyList())
+
+            // Toujours chercher d’abord dans les téléchargements locaux (offline-capable)
+            val offlineHits = filterOfflineDownloads(currentQ, currentFilter)
+
             try {
                 container.ensureFreshToken()
-                // Live typing : ne pas polluer l’historique (préfixes Keny / Keny Ar…)
                 val noHist = if (recordLive) "1" else null
                 val res = container.api.search(currentQ, currentFilter, noHistory = noHist)
                 if (_state.value.query.trim() != currentQ || _state.value.filter != currentFilter) {
                     return@launch
                 }
+                val offlineIds = offlineHits.map { it.id }.toHashSet()
                 val sections = buildList {
+                    if (offlineHits.isNotEmpty()) {
+                        add(SearchSection("Sur l'appareil", offlineHits.take(30)))
+                    }
                     res.topResult?.let {
-                        add(SearchSection("Meilleur résultat", listOf(it)))
+                        if (it.id !in offlineIds) add(SearchSection("Meilleur résultat", listOf(it)))
                     }
                     val topId = res.topResult?.id
-                    val songs = res.songs.filter { it.id != topId }
+                    val songs = res.songs.filter { it.id != topId && it.id !in offlineIds }
                     val artists = res.artists.filter { it.id != topId }
                     val albums = res.albums.filter { it.id != topId }
                     if (songs.isNotEmpty()) add(SearchSection("Titres", songs.take(20)))
@@ -265,8 +272,28 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                 _state.value = _state.value.copy(loading = false, sections = sections, error = null)
             } catch (e: Exception) {
                 if (_state.value.query.trim() != currentQ) return@launch
-                _state.value = _state.value.copy(loading = false, error = e.message)
+                // Hors-ligne / API KO : on expose quand même les DL locaux
+                if (offlineHits.isNotEmpty()) {
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        sections = listOf(SearchSection("Sur l'appareil", offlineHits.take(40))),
+                        error = null,
+                    )
+                } else {
+                    _state.value = _state.value.copy(loading = false, error = e.message)
+                }
             }
+        }
+    }
+
+    private fun filterOfflineDownloads(query: String, filter: String): List<TrackDto> {
+        if (filter !in setOf("all", "song", "video")) return emptyList()
+        val q = query.lowercase()
+        return container.offlineStore.listTracks().filter { t ->
+            val title = t.title.lowercase()
+            val artists = t.artistLine().lowercase()
+            val album = t.album?.name.orEmpty().lowercase()
+            title.contains(q) || artists.contains(q) || album.contains(q)
         }
     }
 

@@ -4,6 +4,7 @@ import { api, type Track } from '../api';
 import { TrackRow } from '../components/TrackRow';
 import { MediaCard } from '../components/MediaCard';
 import { HomeShelfSkeleton } from '../components/HomeShelfSkeleton';
+import { listCachedTracks } from '../lib/offlineCache';
 
 const tabs = [
   { id: 'all', label: 'Tout' },
@@ -42,6 +43,7 @@ export function SearchPage() {
     artists: Track[];
     playlists: Track[];
   } | null>(null);
+  const [offlineHits, setOfflineHits] = useState<Track[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [history, setHistory] = useState<string[]>([]);
@@ -69,6 +71,7 @@ export function SearchPage() {
   useEffect(() => {
     if (!q) {
       setData(null);
+      setOfflineHits([]);
       setLoading(false);
       setError('');
       return;
@@ -76,7 +79,23 @@ export function SearchPage() {
     const seq = ++searchSeq.current;
     setLoading(true);
     setError('');
-    setData(null); // évite d’afficher l’ancienne recherche (Keny…) pendant le chargement
+    setData(null);
+    const needle = q.trim().toLowerCase();
+    const wantLocal = filter === 'all' || filter === 'song' || filter === 'video';
+    void (wantLocal
+      ? listCachedTracks().then((tracks) =>
+          tracks.filter((t) => {
+            const title = String(t.title || '').toLowerCase();
+            const artists = (t.artists || []).map((a) => a.name || '').join(' ').toLowerCase();
+            const album = String(t.album?.name || '').toLowerCase();
+            return title.includes(needle) || artists.includes(needle) || album.includes(needle);
+          }),
+        )
+      : Promise.resolve([] as Track[])
+    ).then((local) => {
+      if (searchSeq.current !== seq) return;
+      setOfflineHits(local);
+    });
     api
       .search(q, filter)
       .then((res) => {
@@ -179,9 +198,26 @@ export function SearchPage() {
         </div>
       )}
 
+      {offlineHits.length > 0 && (
+        <section className="mb-8">
+          <h2 className="mb-3 font-display text-xl font-semibold">Sur l&apos;appareil</h2>
+          <div className="space-y-1">
+            {offlineHits.slice(0, 40).map((t) => (
+              <TrackRow
+                key={`off-${t.id}`}
+                track={t}
+                queue={offlineHits}
+                showAlbum
+                alwaysActions
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       {data && (
         <div key={`${q}::${filter}`} className="space-y-8">
-          {data.topResult && filter === 'all' && (
+          {data.topResult && filter === 'all' && !offlineHits.some((t) => t.id === data.topResult?.id) && (
             <section>
               <h2 className="mb-3 font-display text-xl font-semibold">Meilleur résultat</h2>
               {data.topResult.type === 'artist' ||

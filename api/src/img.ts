@@ -14,15 +14,6 @@ const ALLOWED =
 /** Tailles ytimg fiables (maxres / hq720 / sddefault 404 souvent). */
 const YTIMG_SAFE = ['hqdefault.jpg', 'mqdefault.jpg', 'default.jpg'] as const;
 
-const PLACEHOLDER_SVG = Buffer.from(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 480 480">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0%" stop-color="#3a3a3a"/><stop offset="100%" stop-color="#1a1a1a"/>
-  </linearGradient></defs>
-  <rect width="480" height="480" fill="url(#g)"/>
-</svg>`,
-);
-
 function ytimgChain(videoId: string): string[] {
   return YTIMG_SAFE.map((f) => `https://i.ytimg.com/vi/${videoId}/${f}`);
 }
@@ -135,10 +126,14 @@ export async function handleImageProxy(req: Request, res: Response) {
       return;
     }
 
-    // Toujours une image (évite 404 console côté client)
-    sendImage(res, PLACEHOLDER_SVG, 'image/svg+xml', 'placeholder');
+    // Pas de SVG 200 « sticky » : CoverImage/Coil doivent avancer au candidat suivant
+    res.setHeader('X-YTM-Img', 'miss');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(404).json({ error: 'image unavailable' });
   } catch (err) {
-    sendImage(res, PLACEHOLDER_SVG, 'image/svg+xml', 'error');
+    res.setHeader('X-YTM-Img', 'error');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(502).json({ error: 'image proxy error' });
     void err;
   }
 }
