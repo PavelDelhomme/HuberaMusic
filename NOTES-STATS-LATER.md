@@ -1,6 +1,14 @@
 # Notes produit / backlog
 
-## Stats d’écoute (paramètres / compte) — plus tard
+## Stream / cookies YouTube (2026-08-10)
+
+- **Pas de YouTube Premium requis** pour écouter (local ni prod).
+- Cookies navigateur = boost anti-bot **optionnel** ; ordre yt-dlp = anonyme d’abord, cookies ensuite.
+- Prod : `STREAM_UPSTREAM` (PC maison) préféré ; fallback VPS sans dépendre d’une session Premium.
+- Override ordre cookies : `YTDLP_COOKIES_FIRST=1` si besoin.
+
+---
+
 
 Emplacement UX : menu compte Android (`AccountSheet`) à côté de Recommandations / Déconnexion ;
 miroir web sur `ProfilePage`.

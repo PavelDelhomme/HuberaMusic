@@ -305,7 +305,8 @@ app.get('/api/health', (_req, res) => {
     playback: {
       ads: false,
       maxBitrateHintKbps: ytCookies.configured ? 256 : 160,
-      note: 'Stream audio direct (yt-dlp / Innertube).',
+      note: 'Stream audio direct (yt-dlp / Innertube). Cookies optionnels — pas de YouTube Premium requis.',
+      premiumRequired: false,
     },
     streamUpstream: resolveStreamUpstream(),
   });

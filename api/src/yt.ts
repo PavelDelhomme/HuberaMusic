@@ -1,7 +1,7 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Innertube, UniversalCache, ClientType, YTNodes, Parser, Log } from 'youtubei.js';
-import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, YTDLP_AUDIO_FORMAT_CANDIDATES } from './youtubeCookies.js';
+import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES } from './youtubeCookies.js';
 
 // youtubei.js loggue massivement des Type mismatch (WatchNext / Message) → pollue make logs
 try {
@@ -2000,9 +2000,8 @@ async function ytDlpGetUrl(
 }
 
 async function audioFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
-  const cookieSets: string[][] = [ytDlpCookieArgs()];
-  // Si un fichier cookies est présent mais pourrit les formats, retenter sans
-  if (cookieSets[0].length) cookieSets.push([]);
+  // Anonyme d’abord — cookies optionnels (jamais Premium requis)
+  const cookieSets = ytDlpCookieArgSets();
 
   let lastErr: Error | null = null;
   for (const cookieArgs of cookieSets) {

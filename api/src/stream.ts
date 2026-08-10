@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import type { Request, Response } from 'express';
 import { getAudioFormat, getAudioFormatViaYtDlpOnly, getVideoFormat, getYT, invalidateAudioFormat } from './yt.js';
 import {
-  ytDlpCookieArgs,
+  ytDlpCookieArgSets,
   resolveYoutubeCookieHeader,
   YTDLP_AUDIO_FORMAT_CANDIDATES,
 } from './youtubeCookies.js';
@@ -293,8 +293,8 @@ function spawnYtDlpAudioPipe(
 }
 
 async function streamViaYtDlp(videoId: string, res: Response) {
-  const cookieSets: string[][] = [ytDlpCookieArgs()];
-  if (cookieSets[0].length) cookieSets.push([]);
+  // Anonyme d’abord — cookies optionnels (jamais Premium requis)
+  const cookieSets = ytDlpCookieArgSets();
 
   let lastErr: Error | null = null;
   for (const cookieArgs of cookieSets) {
@@ -357,7 +357,7 @@ export async function handleStream(req: Request, res: Response) {
     } catch (err) {
       if (endIfHeadersSent(res)) return;
       console.warn('[stream] STREAM_UPSTREAM KO, fallback local VPS:', (err as Error).message);
-      // continue → résolution VPS (cookies / souvent bloqué)
+      // continue → résolution VPS (yt-dlp/Innertube, cookies optionnels)
     }
   }
 
@@ -586,8 +586,7 @@ export async function downloadTrack(videoId: string): Promise<string> {
 
   if (existsSync(YTDLP)) {
     let lastErr: Error | null = null;
-    const cookieSets: string[][] = [ytDlpCookieArgs()];
-    if (cookieSets[0].length) cookieSets.push([]);
+    const cookieSets = ytDlpCookieArgSets();
     for (const cookieArgs of cookieSets) {
       for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
         try {

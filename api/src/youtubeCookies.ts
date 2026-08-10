@@ -173,6 +173,9 @@ export function resolveYoutubeCookiesFileForYtDlp(): string | undefined {
  * Fichier Netscape uniquement par défaut.
  * `--cookies-from-browser` est opt-in (`YTDLP_COOKIES_FROM_BROWSER=1`) :
  * en local Chrome ouvert / cookies partiels → souvent « Requested format is not available ».
+ *
+ * Les cookies ne sont **jamais obligatoires** (pas de compte Premium requis).
+ * Ils restent un boost anti-bot optionnel.
  */
 export function ytDlpCookieArgs(): string[] {
   const file = resolveYoutubeCookiesFileForYtDlp();
@@ -182,6 +185,20 @@ export function ytDlpCookieArgs(): string[] {
     return ['--cookies-from-browser', browser];
   }
   return [];
+}
+
+/**
+ * Ordre d’essai yt-dlp : **anonyme d’abord**, cookies ensuite (optionnel).
+ * Évite de dépendre d’une session Premium / cookies périmés qui cassent les formats.
+ * Override : `YTDLP_COOKIES_FIRST=1` pour l’ancien ordre (cookies → anon).
+ */
+export function ytDlpCookieArgSets(): string[][] {
+  const withCookies = ytDlpCookieArgs();
+  if (!withCookies.length) return [[]];
+  if (process.env.YTDLP_COOKIES_FIRST === '1') {
+    return [withCookies, []];
+  }
+  return [[], withCookies];
 }
 
 /** Sélecteurs audio yt-dlp (meilleur d’abord, puis fallbacks larges). */
@@ -214,10 +231,10 @@ export function youtubeCookiesStatus(): YoutubeCookiesStatus {
     headerPath: YT_COOKIE_HEADER_PATH,
     netscapePath: YT_COOKIE_NETSCAPE_PATH,
     hint: header || netscape
-      ? 'Session navigateur présente — stream anti-bot OK'
+      ? 'Session navigateur optionnelle (anti-bot). Pas de Premium requis — stream OK aussi sans cookies.'
       : appEnv === 'local' || appEnv === 'development'
-        ? 'Optionnel : bash scripts/push-youtube-cookies.sh local (stabiliser anti-bot). Souvent inutile en local.'
-        : 'VPS : préfère bash scripts/link-home-stream.sh ; session navigateur optionnelle',
+        ? 'Aucun cookie YouTube — normal. Stream via yt-dlp/Innertube sans Premium.'
+        : 'Aucun cookie — OK. Préfère STREAM_UPSTREAM (PC maison) ; cookies navigateur optionnels, jamais Premium.',
   };
 }
 
