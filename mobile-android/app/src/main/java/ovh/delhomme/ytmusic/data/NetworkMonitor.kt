@@ -109,6 +109,34 @@ object NetworkMonitor {
     private fun onGoneOffline() {
         StreamPrefetcher.cancelIdle()
         StreamPrefetcher.markStreamDown(pauseMs = 120_000L)
+        // Si le titre courant (ou un suivant) est déjà téléchargé → bascule file:// sans couper
+        main.post {
+            val exo = PlaybackService.Holder.player ?: return@post
+            val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
+                ?: return@post
+            val curId = exo.currentMediaItem?.mediaId
+            if (!curId.isNullOrBlank() && container.offlineStore.has(curId)) {
+                val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                val track = PlaybackService.Holder.queue.getOrNull(idx)
+                    ?: PlaybackService.Holder.queue.firstOrNull { it.id == curId }
+                if (track != null) {
+                    val pos = exo.currentPosition.coerceAtLeast(0L)
+                    val item = ovh.delhomme.ytmusic.player.mediaItemFor(
+                        track,
+                        { id -> container.streamUrl(id) },
+                        PlaybackService.Holder.queueTitle,
+                    )
+                    runCatching {
+                        exo.replaceMediaItem(idx, item)
+                        if (exo.currentPosition < 50L && pos > 50L) exo.seekTo(idx, pos)
+                        if (!exo.isPlaying && exo.playWhenReady) {
+                            exo.prepare()
+                            exo.play()
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun onBackOnline() {

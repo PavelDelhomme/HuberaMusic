@@ -665,30 +665,39 @@ fun CollectionDetailScreen(
             downloaded = offlineDone,
             onDownload = {
                 if (offlineDone || offlineProgress != null) return@AlbumOverflowSheet
+                val playable = tracks.filter { it.isPlayable() }
+                if (playable.isEmpty()) {
+                    Toast.makeText(context, "Aucun titre à télécharger", Toast.LENGTH_SHORT).show()
+                    return@AlbumOverflowSheet
+                }
+                offlineProgress = 0.02f
+                var done = 0
+                playable.forEach { t ->
+                    container.downloadManager.enqueue(t)
+                }
                 scope.launch {
-                    offlineProgress = 0.05f
-                    runCatching {
-                        container.api.offlineStart(
-                            mapOf("kind" to "album", "targetId" to id),
-                        )
-                    }.onSuccess { resp ->
-                        val jobId = (resp["jobId"] as? String).orEmpty()
-                        if (jobId.isBlank()) {
+                    // Suit la progress globale jusqu’à ce que tous soient locaux
+                    container.downloadManager.progress.collect { map ->
+                        val local = playable.count { container.offlineStore.has(it.id) }
+                        done = local
+                        offlineProgress = (local.toFloat() / playable.size).coerceIn(0.02f, 0.99f)
+                        if (local >= playable.size) {
+                            offlineDone = true
                             offlineProgress = null
-                            Toast.makeText(context, "Téléchargement démarré", Toast.LENGTH_SHORT).show()
-                            return@onSuccess
+                            Toast.makeText(context, "Album téléchargé — lisible hors-ligne", Toast.LENGTH_SHORT).show()
+                            return@collect
                         }
-                        val ok = pollOfflineJob(container.api, jobId) { offlineProgress = it }
-                        offlineDone = ok
-                        offlineProgress = null
-                        Toast.makeText(
-                            context,
-                            if (ok) "Album téléchargé" else "Téléchargement en cours…",
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }.onFailure {
-                        offlineProgress = null
-                        Toast.makeText(context, it.message ?: "Échec offline", Toast.LENGTH_SHORT).show()
+                        // Si plus aucun job actif et pas tout local → échec partiel
+                        if (map.isEmpty() && local > 0 && local < playable.size) {
+                            offlineProgress = null
+                            Toast.makeText(
+                                context,
+                                "Téléchargé $local/${playable.size} titres",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            offlineDone = local == playable.size
+                            return@collect
+                        }
                     }
                 }
             },

@@ -76,6 +76,7 @@ class PlaybackService : MediaSessionService() {
             }
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
                 warmUpcoming(player.currentMediaItemIndex)
+                enqueueOfflineAhead(player.currentMediaItemIndex)
                 // OEM (Nothing/Samsung) : notif compacte parfois vide tant que le bitmap n’est pas là
                 scope.launch {
                     delay(120)
@@ -117,9 +118,18 @@ class PlaybackService : MediaSessionService() {
                 "onPlayerError code=${error.errorCode} network=$networkish local=$localFile streak=$streak id=$id",
             )
 
-            // Fichier local : un échec n’est pas un « serveur KO »
+            // Fichier local : un échec n’est pas un « serveur KO » — saute au suivant offline
             if (localFile) {
                 streamFailStreak.set(0)
+                val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
+                val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                val nextOfflineIdx = (curIdx + 1 until Holder.queue.size).firstOrNull { i ->
+                    container?.offlineStore?.has(Holder.queue[i].id) == true
+                }
+                if (nextOfflineIdx != null) {
+                    rematerializeOfflineFrom(exo, nextOfflineIdx, container)
+                    return
+                }
                 android.os.Handler(mainLooper).post {
                     android.widget.Toast.makeText(
                         this@PlaybackService,
@@ -130,9 +140,51 @@ class PlaybackService : MediaSessionService() {
                 return
             }
 
-            // Réseau / serveur : d’abord retry soft (handover Wi‑Fi↔4G), stop seulement après plusieurs échecs
+            // Réseau / serveur : tenter fichier local, sinon skip vers un titre déjà téléchargé
             if (networkish) {
                 val offline = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+                val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
+                val localUri = container?.offlineStore?.playUri(id)
+                if (localUri != null) {
+                    streamFailStreak.set(0)
+                    val attempt = recoverGen.incrementAndGet()
+                    scope.launch {
+                        if (attempt != recoverGen.get()) return@launch
+                        if (exo.currentMediaItem?.mediaId != id) return@launch
+                        val track = Holder.queue.firstOrNull { it.id == id }
+                        val rebuilt = if (track != null) {
+                            mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle)
+                        } else {
+                            item.buildUpon().setUri(localUri).build()
+                        }
+                        runCatching {
+                            val pos = exo.currentPosition.coerceAtLeast(0L)
+                            exo.replaceMediaItem(exo.currentMediaItemIndex, rebuilt)
+                            exo.seekTo(exo.currentMediaItemIndex, pos)
+                            exo.prepare()
+                            exo.playWhenReady = true
+                            exo.play()
+                        }
+                    }
+                    return
+                }
+                // Cherche le prochain titre déjà sur l'appareil
+                val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                val nextOfflineIdx = (curIdx + 1 until Holder.queue.size).firstOrNull { i ->
+                    container?.offlineStore?.has(Holder.queue[i].id) == true
+                }
+                if (nextOfflineIdx != null) {
+                    streamFailStreak.set(0)
+                    rematerializeOfflineFrom(exo, nextOfflineIdx, container)
+                    android.os.Handler(mainLooper).post {
+                        android.widget.Toast.makeText(
+                            this@PlaybackService,
+                            "Hors ligne — suite sur titres téléchargés",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    return
+                }
                 if (offline) {
                     StreamPrefetcher.markStreamDown()
                     StreamPrefetcher.cancelIdle()
@@ -144,7 +196,7 @@ class PlaybackService : MediaSessionService() {
                     android.os.Handler(mainLooper).post {
                         android.widget.Toast.makeText(
                             this@PlaybackService,
-                            "Hors ligne — titres téléchargés disponibles",
+                            "Hors ligne — télécharge des titres (⋮) pour continuer",
                             android.widget.Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -160,7 +212,14 @@ class PlaybackService : MediaSessionService() {
                         if (exo.currentMediaItem?.mediaId != id) return@launch
                         runCatching {
                             val pos = exo.currentPosition.coerceAtLeast(0L)
-                            exo.setMediaItem(item, pos)
+                            // Re-résout l’URL (peut basculer file:// si DL fini entre-temps)
+                            val track = Holder.queue.firstOrNull { it.id == id }
+                            val nextItem = if (track != null && container != null) {
+                                mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle)
+                            } else {
+                                item
+                            }
+                            exo.setMediaItem(nextItem, pos)
                             exo.prepare()
                             exo.playWhenReady = true
                         }
@@ -414,7 +473,10 @@ class PlaybackService : MediaSessionService() {
         if (needsRebuild) {
             val rebuilt = mediaItemFor(
                 track,
-                { id -> "${Holder.resolvedApiBase()}/api/stream/$id" },
+                { id ->
+                    runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container.streamUrl(id) }
+                        .getOrElse { "${Holder.resolvedApiBase()}/api/stream/$id" }
+                },
                 Holder.queueTitle,
             )
             runCatching {
@@ -568,6 +630,42 @@ class PlaybackService : MediaSessionService() {
             behind = 1,
         )
         CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 3, behind = 1)
+        enqueueOfflineAhead(fromIndex)
+    }
+
+    /** Télécharge silencieusement les 2 titres suivants → survivre hors-ligne / mix. */
+    private fun enqueueOfflineAhead(fromIndex: Int) {
+        val queue = Holder.queue
+        if (queue.isEmpty()) return
+        val ahead = queue.drop((fromIndex + 1).coerceAtLeast(0)).take(3)
+        if (ahead.isEmpty()) return
+        runCatching {
+            ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
+        }
+    }
+
+    /**
+     * Reconstruit la file à partir de [startIdx] en priorisant les fichiers locaux,
+     * puis saute à cet index et reprend la lecture.
+     */
+    private fun rematerializeOfflineFrom(
+        exo: ExoPlayer,
+        startIdx: Int,
+        container: ovh.delhomme.ytmusic.data.AppContainer?,
+    ) {
+        if (container == null) return
+        val queue = Holder.queue
+        if (queue.isEmpty() || startIdx !in queue.indices) return
+        val items = queue.map { t ->
+            mediaItemFor(t, { id -> container.streamUrl(id) }, Holder.queueTitle)
+        }
+        runCatching {
+            exo.setMediaItems(items, startIdx, 0L)
+            exo.prepare()
+            exo.playWhenReady = true
+            exo.play()
+            Holder.index = startIdx
+        }
     }
 
     private fun resolvedApiBase(): String = Holder.resolvedApiBase()

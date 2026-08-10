@@ -956,6 +956,11 @@ class PlayerController(
             StreamPrefetcher.warmCurrentBlocking(base, currentId, timeoutMs = 450L)
         }
         warmAround(window, idx) // format + CacheWriter suite (async)
+        // Persist 2 titres suivants sur disque (coupure réseau / mix)
+        runCatching {
+            val ahead = window.drop(idx + 1).take(3)
+            YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
+        }
         ensureAudibleMediaVolume(YtMusicApp.instance)
         player.volume = 1f
         val playingSame =

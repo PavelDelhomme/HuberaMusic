@@ -75,6 +75,23 @@ class OfflineDownloadManager(
         return true
     }
 
+    /**
+     * Pré-télécharge silencieusement les prochains titres (mix / file) pour survivre
+     * à une coupure réseau. Limité pour ne pas saturer la bande.
+     */
+    fun enqueueAhead(tracks: List<TrackDto>, limit: Int = 2) {
+        if (!NetworkMonitor.isOnline()) return
+        var started = 0
+        for (t in tracks) {
+            if (started >= limit) break
+            if (!t.id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))) continue
+            if (offlineStore.has(t.id)) continue
+            if (jobs[t.id]?.isActive == true) continue
+            // Silent : progress visible mais sans toast
+            if (enqueue(t)) started++
+        }
+    }
+
     fun consumeError(trackId: String): String? {
         val msg = _errors.value[trackId] ?: return null
         _errors.update { it - trackId }
