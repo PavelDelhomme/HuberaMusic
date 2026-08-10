@@ -286,7 +286,9 @@ fun ArtistDetailScreen(
                                         scope.launch {
                                             runCatching {
                                                 if (inLib) {
-                                                    Toast.makeText(context, "Déjà dans la bibliothèque", Toast.LENGTH_SHORT).show()
+                                                    container.api.removeArtist(artistId)
+                                                    inLib = false
+                                                    Toast.makeText(context, "Retiré de la bibliothèque", Toast.LENGTH_SHORT).show()
                                                 } else {
                                                     container.api.saveArtist(
                                                         TrackDto(
@@ -309,7 +311,7 @@ fun ArtistDetailScreen(
                                     Icon(Icons.Default.LibraryMusic, null, Modifier.size(18.dp))
                                     Spacer(Modifier.width(4.dp))
                                     Text(
-                                        if (inLib) "Enregistré" else "Biblio",
+                                        if (inLib) "Retirer" else "Biblio",
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )

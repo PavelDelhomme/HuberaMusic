@@ -826,7 +826,7 @@ fun NowPlayingScreen(
                                                 val mix = buildRadioQueue(container.api, "track", track.id, track, mixCache = container.mixCache)
                                                 if (mix.isNotEmpty()) {
                                                     player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                                    Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
                                                 }
                                             }
                                         }
@@ -993,7 +993,7 @@ fun NowPlayingScreen(
                                     val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
                                     if (mix.isNotEmpty()) {
                                         player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                        Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             },
@@ -1003,7 +1003,52 @@ fun NowPlayingScreen(
                     }
 
                     val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
-                    // Aperçu rétracté : titre courant en tête + suivants (pas tout le haut « déjà joué »)
+                    val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
+                    if (playedBefore.isNotEmpty()) {
+                        item {
+                            Text(
+                                "Déjà joués",
+                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = PlayerMuted,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        itemsIndexed(
+                            playedBefore,
+                            key = { i, t -> "played-c-${t.id}-$i" },
+                        ) { index, item ->
+                            QueueTrackRow(
+                                track = item,
+                                index = index,
+                                highlighted = false,
+                                onClick = { player.playAt(index) },
+                                onLongClick = { onMore?.invoke(item) },
+                                onMove = { from, to -> player.moveInQueue(from, to) },
+                                onMore = onMore?.let { { it(item) } },
+                                onMix = {
+                                    scope.launch {
+                                        val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
+                                        if (mix.isNotEmpty()) {
+                                            player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                                            Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                            )
+                        }
+                    }
+                    item {
+                        Text(
+                            "En cours",
+                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = PlayerMuted,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    // Aperçu : titre courant + suite user (pas seulement à partir du courant sans label)
                     val previewFrom = ui.queueIndex.coerceIn(0, boundary)
                     itemsIndexed(
                         ui.queue.subList(previewFrom, boundary),
@@ -1023,10 +1068,11 @@ fun NowPlayingScreen(
                                     val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
                                     if (mix.isNotEmpty()) {
                                         player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                        Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             },
+                            radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
                         )
                     }
                     item {
@@ -1073,7 +1119,7 @@ fun NowPlayingScreen(
                                         val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
                                         if (mix.isNotEmpty()) {
                                             player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                            Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 },
@@ -1106,7 +1152,7 @@ fun NowPlayingScreen(
                                 val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
                                 if (mix.isNotEmpty()) {
                                     player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                    Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         },
@@ -1467,27 +1513,51 @@ private fun QueueExpandedBody(
     LaunchedEffect(seedId) {
         if (seedId.isNullOrBlank()) return@LaunchedEffect
         similarLoading = true
-        // Phase 1 : fast — ~10 titres dès le play (même hors onglet Similaires)
+        fun fingerprint(t: TrackDto): String {
+            val title = t.title.lowercase()
+                .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
+                .replace(Regex("[^a-z0-9àâäéèêëïîôùûüç]+"), " ")
+                .trim()
+            val artist = t.artists?.firstOrNull()?.name.orEmpty().lowercase().trim()
+            return "$title|$artist"
+        }
+        fun dedupe(list: List<TrackDto>): List<TrackDto> {
+            val seenId = HashSet<String>()
+            val seenFp = HashSet<String>()
+            val out = ArrayList<TrackDto>()
+            for (t in list) {
+                if (!t.isPlayable() || t.id == seedId) continue
+                if (!seenId.add(t.id)) continue
+                val fp = fingerprint(t)
+                if (fp.isNotBlank() && !seenFp.add(fp)) continue
+                out += t
+            }
+            return out
+        }
+        // Phase 1 : fast — on la garde
         val fast = runCatching {
             val rel = container.api.related(seedId, fast = 1)
-            (rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty())
-                .filter { it.isPlayable() && it.id != seedId }
-                .distinctBy { it.id }
-                .take(10)
+            dedupe(rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty()).take(10)
         }.getOrDefault(emptyList())
         if (ui.track?.id != seedId) return@LaunchedEffect
         similarTracks = fast
         similarLoading = false
-        // Phase 2 : batch moyen
+        // Phase 2 : append uniquement (ne remplace pas la 1ʳᵉ liste)
         val mid = runCatching {
             val rel = container.api.related(seedId, full = 0)
-            (rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty())
-                .filter { it.isPlayable() && it.id != seedId }
-                .distinctBy { it.id }
+            dedupe(rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty())
         }.getOrDefault(emptyList())
         if (ui.track?.id != seedId) return@LaunchedEffect
-        if (mid.size > similarTracks.size) {
-            similarTracks = mid
+        val seenId = similarTracks.map { it.id }.toHashSet()
+        val seenFp = similarTracks.map { fingerprint(it) }.toHashSet()
+        val extras = mid.filter { t ->
+            if (t.id in seenId) return@filter false
+            val fp = fingerprint(t)
+            if (fp.isNotBlank() && fp in seenFp) return@filter false
+            true
+        }
+        if (extras.isNotEmpty()) {
+            similarTracks = (similarTracks + extras).distinctBy { it.id }
         }
     }
 
@@ -1979,7 +2049,7 @@ private fun InlineSyncedLyrics(
     }
 
     // Lead ~250 ms : ligne allumée juste avant le chant (karaoke)
-    val leadMs = 0L
+    val leadMs = 250L
     val active = if (timed.isEmpty()) -1
     else timed.indexOfLast { it.startMsLong() <= positionMs + leadMs }.coerceAtLeast(0)
     val listState = rememberLazyListState()
@@ -2019,17 +2089,22 @@ private fun InlineSyncedLyrics(
                             },
                             fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Normal,
                             color = when {
-                                isActive -> PlayerFg
+                                isActive -> Color.White
                                 past -> PlayerMuted.copy(alpha = 0.28f)
                                 else -> PlayerMuted.copy(alpha = 0.72f)
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (isActive) SeekRed.copy(alpha = 0.22f) else Color.Transparent,
+                                )
                                 .clickable { onSeek(line.startMsLong()) }
+                                .padding(horizontal = if (isActive) 10.dp else 0.dp)
                                 .padding(vertical = if (isActive) 14.dp else 7.dp)
                                 .graphicsLayer {
-                                    scaleX = if (isActive) 1.06f else 1f
-                                    scaleY = if (isActive) 1.06f else 1f
+                                    scaleX = if (isActive) 1.04f else 1f
+                                    scaleY = if (isActive) 1.04f else 1f
                                 },
                         )
                     }

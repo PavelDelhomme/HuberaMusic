@@ -873,14 +873,19 @@ class PlayerController(
         }
         filtered.take((newQ.size - head.size).coerceAtLeast(0)).forEach { c.addMediaItem(mediaItem(it)) }
         PlaybackService.Holder.queue = newQ
-        userQueueEnd = newQ.size
+        // Mix soft : la portion insérée compte comme file user ; le « kept » reste auto
+        userQueueEnd = if (replaceRest) {
+            newQ.size
+        } else {
+            (idx + 1 + filtered.size).coerceAtMost(newQ.size)
+        }
         warmAround(newQ, idx)
         syncFrom(c)
     }
 
     /**
-     * Radio / Mix : coupe toujours le titre en cours et démarre le mix depuis l’index 0
-     * (comportement YTM). La file « À suivre » = le reste du mix.
+     * Radio / Mix : si un titre joue déjà → insère la suite juste après (sans couper).
+     * Sinon → hard-start classique.
      */
     fun playRadioOrEnqueue(
         mix: List<TrackDto>,
@@ -888,7 +893,7 @@ class PlayerController(
         sourceKind: String = "mix",
         sourceId: String? = null,
     ) {
-        val playable = mix.filter { it.isPlayable() }.take(MixCacheStore.MIX_TARGET)
+        val playable = mix.filter { it.isPlayable() }.distinctBy { it.id }.take(MixCacheStore.MIX_TARGET)
         if (playable.isEmpty()) return
         val seed = playable.first()
         val displayTitle =
@@ -897,7 +902,25 @@ class PlayerController(
             } else {
                 title
             }
-        // Toujours hard-start : soft-enqueue laissait l’ancien titre + souvent 0 « À suivre »
+        val c = player()
+        val currentId = c?.currentMediaItem?.mediaId
+        val hasSession = c != null &&
+            PlaybackService.Holder.queue.isNotEmpty() &&
+            !currentId.isNullOrBlank()
+        if (hasSession) {
+            // Continuité : garde le titre en cours + sa position ; mix juste après
+            val toInsert = playable.filter { it.id != currentId }.take(24)
+            enqueueAfterCurrent(
+                toInsert,
+                replaceRest = false,
+                cap = 24,
+                title = displayTitle,
+                sourceId = sourceId ?: if (sourceKind == "radio") seed.id else currentId,
+                sourceKind = sourceKind,
+            )
+            setAutoplaySuggestions(true)
+            return
+        }
         play(
             playable,
             0,
@@ -906,7 +929,6 @@ class PlayerController(
             sourceId = sourceId ?: if (sourceKind == "radio") seed.id else null,
             sourceKind = sourceKind,
         )
-        // Garder l’autoplay si le mix est encore court (top-up progressif)
         setAutoplaySuggestions(playable.size < 12)
     }
 

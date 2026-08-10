@@ -523,6 +523,9 @@ interface YtMusicApi {
     @POST("api/library/artists")
     suspend fun saveArtist(@Body artist: TrackDto): Map<String, Any>
 
+    @DELETE("api/library/artists/{id}")
+    suspend fun removeArtist(@Path("id") id: String): Map<String, Any>
+
     @POST("api/library/mixes")
     suspend fun saveMix(@Body body: Map<String, @JvmSuppressWildcards Any>): Map<String, Any>
 

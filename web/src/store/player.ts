@@ -172,15 +172,39 @@ function isPlayable(t: Track) {
   return /^[a-zA-Z0-9_-]{11}$/.test(t.id);
 }
 
-/** Interleave par artiste — max ~1/4 du seed, pas de rafales même auteur. */
+/** Clé titre+artiste normalisée — évite doublons « même chanson » avec ids différents. */
+function trackFingerprint(t: Track): string {
+  const title = (t.title || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\(.*?\)|\[.*?\]/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  const artist = (t.artists?.[0]?.name || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  return `${title}|${artist}`;
+}
+
+/** Interleave par artiste — max ~1/4 du seed, pas de rafales même auteur / même titre. */
 function diversifyByArtist(
   tracks: Track[],
   seedArtist?: { id?: string; name?: string } | null,
+  seedTrack?: Track | null,
 ): Track[] {
   const seedKey = (seedArtist?.id || seedArtist?.name || '').toLowerCase();
+  const seedFp = seedTrack ? trackFingerprint(seedTrack) : '';
   const buckets = new Map<string, Track[]>();
+  const seenFp = new Set<string>();
   for (const t of tracks) {
     if (!isPlayable(t)) continue;
+    const fp = trackFingerprint(t);
+    if (!fp.startsWith('|') && (fp === seedFp || seenFp.has(fp))) continue;
+    seenFp.add(fp);
     const key = (t.artists?.[0]?.id || t.artists?.[0]?.name || t.id).toLowerCase();
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(t);
@@ -2404,7 +2428,29 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       const nextKind =
         kind === 'track' ? ('radio' as const) : kind === 'album' ? ('album' as const) : ('artist' as const);
 
-      // Toujours hard-start (coupe le titre en cours) — comme YTM
+      const state = get();
+      const hasSession = Boolean(state.current && state.queue.length > 0);
+      if (hasSession) {
+        // Soft : insert après le courant sans couper la lecture / position
+        const curId = state.current!.id;
+        const toAdd = mix.filter((t) => t.id !== curId).slice(0, 24);
+        // addNext empile après index+1 → reverse pour garder l’ordre
+        for (let i = toAdd.length - 1; i >= 0; i--) {
+          get().addNext(toAdd[i]);
+        }
+        set({
+          showQueue: true,
+          showLyrics: false,
+          autoplay: true,
+          sourceId: kind === 'track' ? seedTrack.id : id,
+          sourceKind: nextKind,
+        });
+        schedulePrefetch(get().queue, get().queueIndex);
+        persistPlayer();
+        publish();
+        return { added: toAdd.length, soft: true as const };
+      }
+
       await get().play(seedTrack, mix, {
         preserveQueue: true,
         noAutoRadio: upcoming.length >= 12,
@@ -2427,7 +2473,8 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   loadRelated: async (trackId) => {
     set({ relatedLoading: true, relatedError: null });
     try {
-      // Progressif : fast (~10) puis batch moyen
+      const seed = usePlayer.getState().current;
+      // Phase 1 : fast — on garde cette liste (ne pas écraser ensuite)
       const relFast = await api
         .related(trackId, { fast: true })
         .catch(() => ({ related: [] as Track[], radio: [] as Track[] }));
@@ -2436,8 +2483,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         return;
       }
       let pool = (relFast.related?.length ? relFast.related : relFast.radio || []).filter(isPlayable);
+      let first: Track[] = [];
       if (pool.length) {
-        const first = diversifyByArtist(pool, usePlayer.getState().current?.artists?.[0]).slice(0, 10);
+        first = diversifyByArtist(pool, seed?.artists?.[0], seed).slice(0, 10);
         set({
           related: first,
           relatedSeedId: trackId,
@@ -2445,6 +2493,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
           relatedError: null,
         });
       }
+      // Phase 2 : enrichir seulement (append), jamais remplacer la 1ʳᵉ liste
       const rel = await api
         .related(trackId, { full: false })
         .catch(() => ({ related: [] as Track[], radio: [] as Track[] }));
@@ -2453,18 +2502,28 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         return;
       }
       pool = (rel.related?.length ? rel.related : rel.radio || []).filter(isPlayable);
-      const diversified = diversifyByArtist(
-        pool,
-        usePlayer.getState().current?.artists?.[0],
-      );
+      const diversified = diversifyByArtist(pool, seed?.artists?.[0], seed);
+      const prev = usePlayer.getState().relatedSeedId === trackId ? usePlayer.getState().related : first;
+      const seenId = new Set(prev.map((t) => t.id));
+      const seenFp = new Set(prev.map(trackFingerprint));
+      if (seed) seenFp.add(trackFingerprint(seed));
+      const extras = diversified.filter((t) => {
+        if (seenId.has(t.id)) return false;
+        const fp = trackFingerprint(t);
+        if (fp && seenFp.has(fp)) return false;
+        seenId.add(t.id);
+        seenFp.add(fp);
+        return true;
+      });
+      const merged = [...prev, ...extras].slice(0, 80);
       set({
-        related: diversified,
+        related: merged,
         relatedSeedId: trackId,
         relatedLoading: false,
-        relatedError: diversified.length ? null : 'Aucune suggestion pour ce titre.',
+        relatedError: merged.length ? null : 'Aucune suggestion pour ce titre.',
       });
-      if (get().autoplay !== false && diversified.length) {
-        mergeAutoTracks(trackId, diversified, diversified);
+      if (get().autoplay !== false && merged.length) {
+        mergeAutoTracks(trackId, merged, merged);
       }
     } catch (e) {
       if (usePlayer.getState().current?.id === trackId) {

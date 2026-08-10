@@ -250,30 +250,39 @@ export function ArtistPage() {
             </button>
             <button
               type="button"
-              disabled={busy || inLib}
+              disabled={busy}
               onClick={() => {
                 void (async () => {
                   setBusy(true);
                   try {
-                    const r = await api.saveArtist({
-                      id: data.artist.id,
-                      name: data.artist.name,
-                      title: data.artist.name,
-                      subscribers: subscribersLabel || undefined,
-                      thumbnails: data.artist.thumbnails,
-                      description: bio || undefined,
-                      type: 'artist',
-                    });
-                    applyLibrary(r.library);
+                    if (inLib) {
+                      const r = await api.removeArtist(data.artist.id);
+                      applyLibrary(r.library);
+                    } else {
+                      const r = await api.saveArtist({
+                        id: data.artist.id,
+                        name: data.artist.name,
+                        title: data.artist.name,
+                        subscribers: subscribersLabel || undefined,
+                        thumbnails: data.artist.thumbnails,
+                        description: bio || undefined,
+                        type: 'artist',
+                      });
+                      applyLibrary(r.library);
+                    }
                   } finally {
                     setBusy(false);
                   }
                 })();
               }}
-              className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-4 py-2.5 text-sm text-yt-muted hover:text-white disabled:opacity-60"
+              className={`inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm ${
+                inLib
+                  ? 'bg-white/10 text-white hover:bg-yt-red/20 hover:text-yt-red'
+                  : 'bg-yt-elevated text-yt-muted hover:text-white'
+              } disabled:opacity-60`}
             >
               <Library className="h-4 w-4" />
-              {inLib ? 'Dans la bibliothèque' : 'Ajouter artiste'}
+              {inLib ? 'Retirer de la bibliothèque' : 'Ajouter artiste'}
             </button>
             <button
               type="button"

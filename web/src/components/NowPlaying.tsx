@@ -19,7 +19,7 @@ let sessionMediaMode: 'cover' | 'video' = 'cover';
 type LyricLine = { t: number; text: string };
 
 /** Avance nulle : paroles en temps réel (sync audio). */
-const LYRIC_LEAD_SEC = 0;
+const LYRIC_LEAD_SEC = 0.25;
 
 /** LRC uniquement — pas de faux timings sur texte brut (ça décale / n’arrête pas). */
 function parseLrcLines(raw: string | null): LyricLine[] {
@@ -199,9 +199,9 @@ export function SyncedLyrics({
                 seek(Math.max(0, line.t));
               }
             }}
-            className={`origin-left cursor-pointer transition-colors duration-200 hover:text-white ${
+            className={`origin-left cursor-pointer rounded-lg px-2 transition-all duration-200 hover:text-white ${
               active
-                ? 'py-1.5 text-3xl font-extrabold leading-tight text-white underline decoration-yt-red decoration-2 underline-offset-4 sm:text-4xl'
+                ? 'bg-[#ff0033]/22 py-2 text-3xl font-extrabold leading-tight text-white underline decoration-yt-red decoration-2 underline-offset-4 sm:text-4xl'
                 : past
                   ? 'text-base leading-7 text-white/25 sm:text-lg'
                   : 'text-lg leading-8 text-[#9a9a9a] sm:text-xl sm:leading-9'
