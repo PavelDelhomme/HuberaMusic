@@ -296,9 +296,9 @@ async function evictFull(cache: Cache) {
 }
 
 function shouldFullCache(durationSeconds?: number | null): boolean {
-  // Durée inconnue → on précharge quand même (la plupart des titres < 10 min)
+  // Durée inconnue → pas de full (évite de pomper la bande d’un titre long en cours)
   if (durationSeconds == null || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    return true;
+    return false;
   }
   return durationSeconds <= FULL_PRELOAD_MAX_SEC;
 }
@@ -388,7 +388,9 @@ export function prefetchAround(
       ids[idx],
       ids[idx - 1],
     ].filter((id): id is string => Boolean(id) && unique.includes(id));
-    return runPool([...new Set(ordered)], HEAD_CONCURRENCY, (id) => {
+    // Pas de Range sur le titre courant : concurrence avec <audio> → démarrage lent / coupes
+    const headTargets = [...new Set(ordered)].filter((id) => id !== currentId);
+    return runPool(headTargets, HEAD_CONCURRENCY, (id) => {
       const n = ids[idx + 1];
       const n2 = ids[idx + 2];
       const n3 = ids[idx + 3];

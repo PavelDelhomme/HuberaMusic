@@ -417,6 +417,8 @@ export async function handleStream(req: Request, res: Response) {
       if (ct) res.setHeader('Content-Type', ct);
       else res.setHeader('Content-Type', wantVideo ? 'video/mp4' : 'audio/mp4');
       if (cr) res.setHeader('Content-Range', cr);
+      const cl = upstream.headers.get('content-length');
+      if (cl) res.setHeader('Content-Length', cl);
       if (ar) res.setHeader('Accept-Ranges', ar);
       else res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Cache-Control', 'public, max-age=1800');

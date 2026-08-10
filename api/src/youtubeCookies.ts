@@ -201,11 +201,11 @@ export function ytDlpCookieArgSets(): string[][] {
   return [[], withCookies];
 }
 
-/** Sélecteurs audio yt-dlp (meilleur d’abord, puis fallbacks larges). */
+/** Sélecteurs audio yt-dlp uniquement (jamais `/best` vidéo — démarre lent / moov en fin). */
 export const YTDLP_AUDIO_FORMAT_CANDIDATES = [
-  'bestaudio/best',
-  '251/140/250/249/139/bestaudio/best',
-  'ba/b',
+  '251/140/250/249/139/bestaudio[acodec!=none]/bestaudio',
+  'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+  '140/139/251/250/249',
 ] as const;
 
 export function youtubeCookiesFingerprint(): string {

@@ -81,7 +81,13 @@ export async function getStorageEstimate(): Promise<{ usage: number; quota: numb
   }
 }
 
-export async function downloadAndCache(track: Track) {
+/**
+ * Télécharge le flux **audio** (`/api/stream/:id`, jamais `?type=video`) avec progress réel.
+ */
+export async function downloadAndCache(
+  track: Track,
+  onProgress?: (pct: number) => void,
+): Promise<Blob> {
   const token = getToken();
   const headers: HeadersInit = {};
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -90,7 +96,38 @@ export async function downloadAndCache(track: Track) {
     credentials: 'include',
   });
   if (!res.ok) throw new Error('Téléchargement impossible');
-  const blob = await res.blob();
+  const total = Number(res.headers.get('content-length') || 0);
+  onProgress?.(0.02);
+  let blob: Blob;
+  if (!res.body) {
+    blob = await res.blob();
+    onProgress?.(1);
+  } else {
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    let lastPct = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value?.byteLength) {
+        chunks.push(value);
+        received += value.byteLength;
+        let pct: number;
+        if (total > 0) pct = Math.min(0.99, received / total);
+        else pct = Math.min(0.9, 0.05 + (received % 8_000_000) / 10_000_000);
+        if (pct - lastPct >= 0.01 || pct >= 0.99) {
+          lastPct = pct;
+          onProgress?.(pct);
+        }
+      }
+    }
+    blob = new Blob(chunks as BlobPart[], {
+      type: res.headers.get('content-type') || 'audio/mp4',
+    });
+    onProgress?.(1);
+  }
+  if (blob.size < 8_000) throw new Error('Fichier trop petit — stream incomplet');
   await cacheAudioBlob(track.id, blob, track);
   await fetch(apiUrl(`/api/download/${track.id}`), {
     method: 'POST',

@@ -1,5 +1,4 @@
 import {
-  AudioLines,
   Check,
   Disc3,
   Download,
@@ -9,14 +8,13 @@ import {
   ListMinus,
   ListMusic,
   ListPlus,
-  Mic2,
   Moon,
   Pin,
   PinOff,
   Play,
+  Radio,
   Share2,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
   Unlink,
   Link2,
@@ -26,9 +24,10 @@ import {
 import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, type Track } from '../api';
-import { downloadAndCache, listCachedIds } from '../lib/offlineCache';
+import { listCachedIds } from '../lib/offlineCache';
 import { applySleepPick, SLEEP_TIMER_OPTIONS } from '../lib/sleepTimer';
 import { formatTrackDuration } from '../lib/time';
+import { useDownloads } from '../store/downloads';
 import { useItemActions } from '../store/itemActions';
 import { useLibrary } from '../store/library';
 import { usePins } from '../store/pins';
@@ -86,14 +85,21 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const setSleepTimer = usePlayer((s) => s.setSleepTimer);
   const receiveRemoteSync = useSession((s) => s.receiveRemoteSync);
   const setReceiveRemoteSync = useSession((s) => s.setReceiveRemoteSync);
+  const dlProgressGlobal = useDownloads((s) => (item ? s.progress[item.id] : undefined));
+  const dlDoneGlobal = useDownloads((s) => (item ? Boolean(s.done[item.id]) : false));
+  const startDownload = useDownloads((s) => s.start);
+  const refreshDownloads = useDownloads((s) => s.refreshDone);
+  const sourceKind = usePlayer((s) => s.sourceKind);
+  const sourceId = usePlayer((s) => s.sourceId);
   const [busy, setBusy] = useState(false);
   const [showPlaylists, setShowPlaylists] = useState(false);
   const [showSleep, setShowSleep] = useState(false);
   const [onDevice, setOnDevice] = useState(false);
-  const [dlProgress, setDlProgress] = useState<number | null>(null);
   const [playlistMsg, setPlaylistMsg] = useState('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [creatingPlaylist, setCreatingPlaylist] = useState(false);
+
+  const dlProgress = typeof dlProgressGlobal === 'number' ? dlProgressGlobal : null;
 
   useEffect(() => {
     if (!item) return;
@@ -104,10 +110,11 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
     setCreatingPlaylist(false);
     void refresh().catch(() => undefined);
     void refreshPins();
+    void refreshDownloads();
     void listCachedIds()
-      .then((ids) => setOnDevice(ids.includes(item.id) || downloaded.includes(item.id)))
-      .catch(() => setOnDevice(downloaded.includes(item.id)));
-  }, [item?.id, downloaded, refresh, refreshPins]);
+      .then((ids) => setOnDevice(ids.includes(item.id) || downloaded.includes(item.id) || dlDoneGlobal))
+      .catch(() => setOnDevice(downloaded.includes(item.id) || dlDoneGlobal));
+  }, [item?.id, downloaded, refresh, refreshPins, refreshDownloads, dlDoneGlobal]);
 
   useEffect(() => {
     if (!item) return;
@@ -465,7 +472,7 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
           {playable && (
             <Row
               icon={
-                onDevice ? (
+                onDevice || dlDoneGlobal ? (
                   <Check className="h-4 w-4 text-yt-red" />
                 ) : dlProgress != null ? (
                   <span className="relative flex h-4 w-4 items-center justify-center">
@@ -486,7 +493,7 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
                 )
               }
               label={
-                onDevice
+                onDevice || dlDoneGlobal
                   ? "Sur l'appareil"
                   : dlProgress != null
                     ? `Téléchargement ${Math.round(dlProgress * 100)} %`
@@ -494,25 +501,17 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
               }
               disabled={busy || dlProgress != null}
               onClick={() => {
-                if (onDevice || dlProgress != null) return;
+                if (onDevice || dlDoneGlobal || dlProgress != null) return;
                 void (async () => {
                   setBusy(true);
-                  setDlProgress(0.05);
-                  const tick = window.setInterval(() => {
-                    setDlProgress((p) => (p == null ? 0.05 : Math.min(0.92, p + 0.06)));
-                  }, 280);
                   try {
-                    await downloadAndCache(item);
-                    await api.download(item.id).catch(() => undefined);
-                    setDlProgress(1);
+                    await startDownload(item);
                     setOnDevice(true);
                     setPlaylistMsg('Téléchargé sur cet appareil');
                   } catch (e) {
                     console.error(e);
                     setPlaylistMsg(String((e as Error)?.message || e || 'Échec téléchargement'));
                   } finally {
-                    window.clearInterval(tick);
-                    window.setTimeout(() => setDlProgress(null), 400);
                     setBusy(false);
                   }
                 })();
@@ -524,14 +523,20 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
           {playable && (
             <>
               <Row
-                icon={<Sparkles className="h-4 w-4" />}
+                icon={
+                  <Radio
+                    className={`h-4 w-4 ${
+                      sourceKind === 'radio' && sourceId === item.id ? 'text-yt-red' : 'text-white'
+                    }`}
+                  />
+                }
                 label="En rapport"
                 sub="Mix · similaires + découverte"
                 onClick={() => after(() => void startMix(item))}
               />
               {artistsAll.length > 0 && (
                 <Row
-                  icon={<AudioLines className="h-4 w-4" />}
+                  icon={<Radio className="h-4 w-4 text-white" />}
                   label="Radio proche de l'artiste"
                   sub="Plus du même univers"
                   onClick={() =>
@@ -543,14 +548,14 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
               )}
               {albumId && (
                 <Row
-                  icon={<Disc3 className="h-4 w-4" />}
+                  icon={<Radio className="h-4 w-4 text-white" />}
                   label="Radio de l'album"
                   onClick={() => after(() => void startRadio({ kind: 'album', id: albumId, seed: item }))}
                 />
               )}
               {artistsAll[0] && (
                 <Row
-                  icon={<Mic2 className="h-4 w-4" />}
+                  icon={<Radio className="h-4 w-4 text-white" />}
                   label="Radio de l'artiste"
                   sub={artistsAll[0].name}
                   onClick={() =>

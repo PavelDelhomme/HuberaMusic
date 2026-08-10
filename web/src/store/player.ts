@@ -28,7 +28,12 @@ import {
 type RepeatMode = 'off' | 'all' | 'one';
 
 function refreshMediaSession() {
-  void import('../lib/mediaKeys').then((m) => m.updateMediaSessionMetadata()).catch(() => undefined);
+  void import('../lib/mediaKeys')
+    .then((m) => {
+      m.wireMediaSession();
+      m.updateMediaSessionMetadata();
+    })
+    .catch(() => undefined);
 }
 
 type PlayerState = {
@@ -672,11 +677,12 @@ function schedulePrefetch(queue: Track[], queueIndex: number) {
       ));
   const loopOne = usePlayer.getState().repeat === 'one';
   const durationsSec = playable.map((t) => trackDurationSeconds(t));
+  // Pendant la lecture : peu de full-prefetch (évite de voler la bande du titre long)
   prefetchAround(ids, idx, {
-    ahead: saveData ? 2 : 6,
+    ahead: saveData ? 2 : 4,
     behind: 0,
-    fullAhead: saveData ? 0 : 3,
-    delayFullMs: saveData ? 4000 : 400,
+    fullAhead: saveData || loopOne ? 0 : 1,
+    delayFullMs: saveData ? 6000 : 2500,
     durationsSec,
     loopOne,
   });
@@ -766,7 +772,16 @@ function mergeAutoTracks(seedId: string, pool: Track[], relatedUpdate?: Track[])
   if (!Object.keys(patch).length) return;
   usePlayer.setState(patch);
   if (patch.queue) {
-    schedulePrefetch(patch.queue, state.queueIndex);
+    // Différer le prefetch : laisser le stream courant respirer (similaires / autoplay)
+    const q = patch.queue;
+    const qi = state.queueIndex;
+    window.setTimeout(() => {
+      if (usePlayer.getState().queue === q || usePlayer.getState().current?.id === seedId) {
+        schedulePrefetch(usePlayer.getState().queue, usePlayer.getState().queueIndex);
+      } else {
+        schedulePrefetch(q, qi);
+      }
+    }, 2800);
     void enrichMissingDurations(patch.queue);
   }
   publish();
@@ -1055,21 +1070,10 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
     !el.paused &&
     src.startsWith('blob:')
   ) {
-    // Upgrade soft vers blob préchargé (seulement si early a marché)
-    try {
-      const t = el.currentTime;
-      await tryPlaySrc(src);
-      if (Number.isFinite(t) && t > 0.2) {
-        try {
-          el.currentTime = t;
-        } catch {
-          /* */
-        }
-      }
-      usedSrc = src;
-    } catch {
-      /* garde early */
-      usedSrc = quickSrc;
+    // Ne PAS upgrader vers blob en cours de lecture (load() = silence / coupe)
+    usedSrc = quickSrc;
+    if (typeof console !== 'undefined') {
+      console.info(`[play] ${track.id} keep-early-proxy (no mid-play blob upgrade)`);
     }
   } else {
     try {
@@ -1692,46 +1696,74 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       !audioEl.src ||
       audioEl.src === window.location.href ||
       (current && audioEl.dataset.trackId !== current.id);
-    if (needsLoad && current) {
-      void (async () => {
-        set({ isLoading: true });
-        try {
+
+    const waitCanPlay = (el: HTMLAudioElement) =>
+      new Promise<void>((resolve) => {
+        if (el.readyState >= 2) {
+          resolve();
+          return;
+        }
+        const done = () => {
+          el.removeEventListener('canplay', done);
+          el.removeEventListener('loadeddata', done);
+          resolve();
+        };
+        el.addEventListener('canplay', done, { once: true });
+        el.addEventListener('loadeddata', done, { once: true });
+        window.setTimeout(done, 8_000);
+      });
+
+    const resumeAtProgress = async () => {
+      set({ isLoading: true });
+      try {
+        if (needsLoad && current) {
           await restoreAudioFromPersisted();
-          if (progress > 0) {
-            try {
-              audioEl.currentTime = progress;
-            } catch {
-              /* ignore */
-            }
+        }
+        const seekTo = progress > 0 ? progress : 0;
+        if (seekTo > 0) {
+          try {
+            audioEl.currentTime = seekTo;
+          } catch {
+            /* ignore */
           }
-          await audioEl.play();
-          set({ isPlaying: true, isLoading: false });
-          refreshMediaSession();
-          publish();
-          if (current.id) void ensureAutoRadio(current.id);
-        } catch (err) {
-          console.error(err);
+        }
+        await waitCanPlay(audioEl);
+        if (seekTo > 0 && Math.abs(audioEl.currentTime - seekTo) > 1.5) {
+          try {
+            audioEl.currentTime = seekTo;
+          } catch {
+            /* ignore */
+          }
+        }
+        await audioEl.play();
+        set({ isPlaying: true, isLoading: false, playError: null });
+        refreshMediaSession();
+        persistPlayer();
+        publish();
+        if (current?.id) void ensureAutoRadio(current.id);
+      } catch (err) {
+        console.error(err);
+        set({ isLoading: false });
+        if (current) {
+          // Reprend au timecode persisté (pas un restart froid à 0)
           await get().play(current, queue.length ? queue : [current], {
             preserveQueue: true,
             noAutoRadio: false,
           });
+          const el = get().audioEl;
+          const p = get().progress;
+          if (el && p > 0) {
+            try {
+              el.currentTime = p;
+            } catch {
+              /* ignore */
+            }
+          }
         }
-      })();
-      return;
-    }
-    void audioEl
-      .play()
-      .then(() => {
-        set({ isPlaying: true, isLoading: false });
-        refreshMediaSession();
-        publish();
-      })
-      .catch((err) => {
-        console.error(err);
-        if (current) {
-          void get().play(current, queue.length ? queue : [current], { preserveQueue: true });
-        }
-      });
+      }
+    };
+
+    void resumeAtProgress();
   },
 
   next: async (opts) => {

@@ -10,6 +10,7 @@ import { formatTrackDuration } from '../lib/time';
 import { useItemActions } from '../store/itemActions';
 import { PlayingCoverOverlay } from './PlayingBars';
 import { usePins } from '../store/pins';
+import { useDownloads } from '../store/downloads';
 
 type Props = {
   track: Track;
@@ -58,6 +59,7 @@ export function TrackRow({
   const openActions = useItemActions((s) => s.open);
   const pinned = usePins((s) => s.isPinned(track.id));
   const togglePin = usePins((s) => s.togglePin);
+  const dlPct = useDownloads((s) => s.progress[track.id]);
   const [dragging, setDragging] = useState(false);
   const [enriched, setEnriched] = useState<Track>(track);
   const [pinBusy, setPinBusy] = useState(false);
@@ -228,9 +230,7 @@ export function TrackRow({
               e.stopPropagation();
               void startRadio({ kind: 'track', id: track.id, seed: track });
             }}
-            className={`flex h-9 w-9 items-center justify-center rounded-full text-yt-muted transition hover:bg-white/10 hover:text-white sm:h-10 sm:w-10 ${
-              showActions ? 'hidden opacity-100 sm:inline-flex' : 'opacity-0 group-hover:inline-flex'
-            }`}
+            className="flex h-9 w-9 items-center justify-center rounded-full text-yt-muted transition hover:bg-white/10 hover:text-white sm:h-10 sm:w-10"
           >
             <Radio
               className={`h-4 w-4 sm:h-5 sm:w-5 ${
@@ -238,6 +238,14 @@ export function TrackRow({
               }`}
             />
           </button>
+        )}
+        {dlPct != null && (
+          <span
+            className="mr-0.5 min-w-[2rem] text-right text-[10px] font-semibold tabular-nums text-yt-red"
+            title="Téléchargement en cours"
+          >
+            {Math.round(dlPct * 100)}%
+          </span>
         )}
         <button
           type="button"

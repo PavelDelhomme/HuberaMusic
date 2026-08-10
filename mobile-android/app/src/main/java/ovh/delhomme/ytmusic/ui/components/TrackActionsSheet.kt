@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.PlaylistRemove
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.RemoveFromQueue
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
@@ -122,15 +123,20 @@ fun TrackActionsSheet(
     var pinned by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
     var downloaded by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableStateOf<Float?>(null) }
+    var wasDownloading by remember { mutableStateOf(false) }
     var albumInLibrary by remember { mutableStateOf(false) }
     var songInLibrary by remember { mutableStateOf(false) }
     var liked by remember(track.id) { mutableStateOf(track.id in likedIds) }
     var receiveRemoteSync by remember { mutableStateOf(container.receiveRemoteSync()) }
     val playerUi by player.state.collectAsState()
+    val dlProgressMap by container.downloadManager.progress.collectAsState()
+    val downloadProgress = dlProgressMap[enriched.id]
+    val offlineRev by container.offlineStore.revision.collectAsState()
+    val dlErrors by container.downloadManager.errors.collectAsState()
     val queueIndex = playerUi.queue.indexOfFirst { it.id == enriched.id }
     val inQueue = queueIndex >= 0
     val isCurrent = inQueue && queueIndex == playerUi.queueIndex
+    val radioActive = playerUi.sourceKind == "radio" && playerUi.sourceId == enriched.id
     val inLibrary = songInLibrary ||
         (enriched.isAlbum() && albumInLibrary) ||
         (enriched.album?.id != null && albumInLibrary && !enriched.isPlayable())
@@ -138,6 +144,26 @@ fun TrackActionsSheet(
     LaunchedEffect(track.id, likedIds) {
         // Sync cœur uniquement — ne pas re-fetch library (écrasait l’optimiste)
         liked = track.id in likedIds
+    }
+
+    LaunchedEffect(downloadProgress) {
+        if (downloadProgress != null) wasDownloading = true
+    }
+
+    LaunchedEffect(enriched.id, offlineRev, downloadProgress) {
+        val has = container.offlineStore.has(enriched.id)
+        if (has && wasDownloading && downloadProgress == null) {
+            downloaded = true
+            wasDownloading = false
+            Toast.makeText(context, "Téléchargé — lisible hors-ligne", Toast.LENGTH_SHORT).show()
+        } else if (downloadProgress == null) {
+            downloaded = has
+        }
+    }
+
+    LaunchedEffect(enriched.id, dlErrors[enriched.id]) {
+        val err = container.downloadManager.consumeError(enriched.id) ?: return@LaunchedEffect
+        Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
     }
 
     LaunchedEffect(track.id) {
@@ -458,32 +484,23 @@ fun TrackActionsSheet(
                     Toast.makeText(context, "Déjà sur l'appareil (lisible hors-ligne)", Toast.LENGTH_SHORT).show()
                     return@SheetAction
                 }
-                scope.launch {
-                    downloadProgress = 0.02f
-                    runCatching {
-                        container.ensureFreshToken()
-                        container.offlineStore.download(
-                            enriched,
-                            container.remoteStreamUrl(enriched.id),
-                        ) { p -> downloadProgress = p.coerceIn(0.02f, 0.99f) }
-                    }.onSuccess { result ->
-                        result.getOrThrow()
-                        downloadProgress = 1f
-                        downloaded = true
-                        // Best-effort sync serveur (n’empêche pas le local)
-                        runCatching { container.api.download(enriched.id) }
-                        delay(200)
-                        downloadProgress = null
-                        Toast.makeText(context, "Téléchargé — lisible hors-ligne", Toast.LENGTH_SHORT).show()
-                    }.onFailure {
-                        downloadProgress = null
-                        Toast.makeText(context, it.message ?: "Échec téléchargement", Toast.LENGTH_SHORT).show()
-                    }
+                if (downloadProgress != null) return@SheetAction
+                val started = container.downloadManager.enqueue(enriched)
+                if (!started && container.offlineStore.has(enriched.id)) {
+                    downloaded = true
+                    Toast.makeText(context, "Déjà sur l'appareil (lisible hors-ligne)", Toast.LENGTH_SHORT).show()
+                } else if (started) {
+                    Toast.makeText(context, "Téléchargement… tu peux fermer ce menu", Toast.LENGTH_SHORT).show()
                 }
             }
 
             // Radios — hard-start + top-up progressif (évite soft-enqueue / file à 1 titre)
-            SheetAction(Icons.Default.AutoAwesome, "En rapport", "Mix · similaires + découverte") {
+            SheetAction(
+                Icons.Default.Radio,
+                "En rapport",
+                "Mix · similaires + découverte",
+                iconTint = if (radioActive) Color(0xFFFF0033) else Color.White,
+            ) {
                 scope.launch {
                     val ok = runCatching {
                         val mix = buildRadioQueue(
@@ -514,7 +531,12 @@ fun TrackActionsSheet(
                 }
             }
             if (namedArtists.isNotEmpty()) {
-                SheetAction(Icons.Default.SpatialAudioOff, "Radio proche de l'artiste", "Plus du même univers") {
+                SheetAction(
+                    Icons.Default.Radio,
+                    "Radio proche de l'artiste",
+                    "Plus du même univers",
+                    iconTint = Color.White,
+                ) {
                     scope.launch {
                         runCatching {
                             val mix = buildRadioQueue(
@@ -546,7 +568,7 @@ fun TrackActionsSheet(
                 }
             }
             enriched.album?.id?.let { albumId ->
-                SheetAction(Icons.Default.Album, "Radio de l'album") {
+                SheetAction(Icons.Default.Radio, "Radio de l'album", iconTint = Color.White) {
                     scope.launch {
                         runCatching {
                             val mix = buildRadioQueue(container.api, "album", albumId, enriched, mixCache = container.mixCache)
@@ -568,7 +590,12 @@ fun TrackActionsSheet(
                 }
             }
             namedArtists.firstOrNull()?.let { artist ->
-                SheetAction(Icons.Default.Mic, "Radio de l'artiste", artist.name) {
+                SheetAction(
+                    Icons.Default.Radio,
+                    "Radio de l'artiste",
+                    artist.name,
+                    iconTint = Color.White,
+                ) {
                     scope.launch {
                         runCatching {
                             val artistId = resolveArtistId(container.api, artist.id, artist.name)
@@ -864,11 +891,17 @@ private fun SheetAction(
     label: String,
     sub: String? = null,
     enabled: Boolean = true,
+    iconTint: Color? = null,
     onClick: () -> Unit,
 ) {
     SheetAction(
         leading = {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(26.dp))
+            Icon(
+                icon,
+                null,
+                tint = iconTint ?: MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(26.dp),
+            )
         },
         label = label,
         sub = sub,

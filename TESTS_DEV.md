@@ -1,99 +1,128 @@
 # TESTS_DEV — à faire **maintenant** (session courante)
 
-Focus sur les correctifs récents (reprise player, file, similaires, fonts, offline, pins, radio, UI).  
-Environnement : **local** (web + Samsung LAN). Prod = smoke rapide après si déjà déployé.
+Environnement : **local** d’abord (web `http://localhost:5173` + Samsung API LAN).  
+Prod = smoke seulement quand LOCAL A1–A6 + B liés sont OK.
 
-Prérequis : stack local UP + Samsung APK **dev** (API LAN). Voir [`TESTS.LOCAL.md`](./TESTS.LOCAL.md) §0.
+**Règle** : un bloc parent n’est **OK** que si **toutes** ses cases enfants sont cochées.  
+Ne passe **pas** à A7+ tant que A1–A6 (et fixes associés) ne sont pas tous verts.
 
----
+Glossaire :
+- **Now Playing (NP)** = écran plein lecteur (clic sur la **barre du bas** qui montre le titre en cours).
+- **File** = onglet « File » dans NP (ou panneau file latéral desktop).
 
-## A. Web local (`http://localhost:5173`)
-
-### A1. Reprise lecture
-1. Lance un titre, avance à ~1:00, **recharge** la page (F5).
-2. **Attendu** : barre de progression déjà au bon endroit **sans** cliquer Play ; Play reprend au bon timecode.
-
-### A2. Fonts / console
-1. Ouvre DevTools → Console sur Accueil / Biblio.
-2. **Attendu** : **plus** d’erreur CSP `fonts.googleapis.com`.
-
-### A3. File & À suivre
-1. Now Playing → File : scrolle **Déjà joués** (pas de rétraction agressive).
-2. Laisse l’autoplay remplir À suivre ; clique un titre **loin** (pas le 1er).
-3. **Attendu** : ce titre passe **juste après** le courant ; le milieu n’est pas « déjà joué ».
-
-### A4. Similaires
-1. Lance un titre ; ouvre onglet **Similaires** tout de suite.
-2. **Attendu** : ~10 suggestions déjà là (ou quasi) ; scroll → plus de titres.
-
-### A5. Radio
-1. Sur un titre de la file : icône radio **blanche**.
-2. Clique radio → lecture mix ; icône **rouge** sur ce titre ; libellé type « Mix à partir de … ».
-
-### A6. Téléchargement
-1. Menu ⋯ d’un titre → Télécharger.
-2. **Attendu** : cercle / % visible ; sheet ne disparaît pas avant la fin ; puis « Sur l’appareil ».
-
-### A7. Pin → biblio
-1. Épingle un titre **et** un album (accès rapide).
-2. **Attendu** : apparaissent aussi en Bibliothèque (Titres / Albums).
-
-### A8. Playlist UI
-1. Ouvre une playlist.
-2. **Attendu** : auteur / N titres empilés ; Lecture et Aléatoire l’un sous l’autre.
-
-### A9. Accueil ordre
-1. Soft refresh Accueil.
-2. **Attendu** : Accès rapide (si pins) → Mixés pour toi → shelves (récents prioritaires).
+Prérequis : [`TESTS.LOCAL.md`](./TESTS.LOCAL.md) §0 · Samsung APK **dev** LAN.
 
 ---
 
-## B. Samsung APK **dev** (API `http://<LAN>:8787`)
+## A. Web local
 
-### B1. Boot / session
-1. Force-stop + relance.
-2. **Attendu** : pas d’écran noir interminable ; Accueil ou login cohérent.
+### [ ] A — Web local (tout A1…A9)
 
-### B2. Offline
-1. Mode avion.
-2. **Attendu** : Accueil sans Mixés ; message hors ligne + accès Téléchargés.
-3. Réactive le réseau → refresh Accueil → mixes revenus.
+#### [ ] A1. Reprise lecture *(parent OK quand A1.1–A1.3 OK)*
+- [x] A1.1 — Avancer ~1:00, F5 → barre déjà au bon endroit **sans** Play
+- [x] A1.2 — Play reprend au bon timecode (pause / perte connexion OK)
+- [ ] A1.3 — **Clavier** Media keys / barre OS : Play/Pause reprend bien le titre après reload (prod + local)
 
-### B3. Similaires + radio + download
-1. Même scénarios A4–A6 côté Android.
-2. **Attendu** : progress download visible ; radio label OK ; similaires pas vides au 1er open.
+> Note session : A1.1–A1.2 OK. A1.3 à **retester** après fix media session + toggle canplay.
 
-### B4. Biblio
-1. Onglet Biblio à l’ouverture → filtre **Titres**.
-2. Téléchargés : spinner si enrichissement, puis liste.
+#### [x] A2. Fonts / console
+- [x] A2.1 — Plus d’erreur CSP `fonts.googleapis.com` (local)
 
-### B5. Album header
-1. Ouvre un album.
-2. **Attendu** : retour / artiste / année bien visibles (gros).
+#### [ ] A3. File & À suivre *(parent OK quand A3.1–A3.4 OK)*
+- [x] A3.1 — Ouvrir NP (clic barre bas) → File → section **Déjà joués** scrollable, pas de rétraction agressive
+- [x] A3.2 — Autoplay remplit **À suivre**
+- [x] A3.3 — Clic titre **loin** dans À suivre → insert juste après le courant (milieu pas « déjà joué »)
+- [ ] A3.4 — Titre **long** : le son démarre vite (début) pendant que la suite charge — **pas** d’attente longue / coupure
+
+> Note : A3.1–A3.3 OK web. A3.4 à **retester** (Content-Length, audio-only yt-dlp, moins de prefetch concurrent).
+
+#### [ ] A4. Similaires
+- [ ] A4.1 — Au play, onglet Similaires : ~10 titres **rapides**
+- [ ] A4.2 — Scroll → charge plus
+- [ ] A4.3 — Chargement similaires **ne coupe pas** / ne sacade pas l’audio en cours
+
+> Note : prefetch différé après merge autoplay — à retester.
+
+#### [ ] A5. Radio
+- [ ] A5.1 — Icône **radio blanche** sur la row (file / liste) par défaut (toujours visible)
+- [ ] A5.2 — Après lancement mix titre → icône **rouge** sur ce titre + libellé « Mix à partir de {titre} »
+- [ ] A5.3 — Menu ⋯ : « En rapport » / radios artiste avec **icône Radio** cohérente
+- [ ] A5.4 — Mix remplace / remplit la file correctement
+
+#### [ ] A6. Téléchargement
+- [ ] A6.1 — ⋯ → Télécharger : % **réel** (pas bloqué 2 % puis saut)
+- [ ] A6.2 — Download **audio only** (pas vidéo) — raisonnablement rapide
+- [ ] A6.3 — Sheet peut se fermer : le download **continue** (pas d’erreur « coroutine scope left »)
+- [ ] A6.4 — Progress visible **partout** pour ce titre (⋯, row %, chrome NP) tant que DL en cours
+- [ ] A6.5 — Fin → « Sur l’appareil » / check, fichier jouable hors ligne
+
+> Note : manager global Android + progress IndexedDB web — à retester avant A7.
+
+#### [ ] A7. Pin → biblio *(après A1–A6 OK)*
+- [ ] A7.1 — Épingler un **titre** → Accès rapide + Bibliothèque Titres
+- [ ] A7.2 — Épingler un **album** → Accès rapide + Bibliothèque Albums
+
+#### [ ] A8. Playlist UI *(après A1–A6 OK)*
+- [ ] A8.1 — Auteur / N titres empilés
+- [ ] A8.2 — Lecture et Aléatoire l’un sous l’autre
+
+#### [ ] A9. Accueil ordre *(après A1–A6 OK)*
+- [ ] A9.1 — Accès rapide (si pins) → Mixés pour toi → shelves
 
 ---
 
-## C. Smoke prod (si déjà déployé — 5 min)
+## B. Samsung APK **dev** (API LAN)
 
-Ne remplace pas [`TESTS_PROD.md`](./TESTS_PROD.md).
+### [ ] B — Samsung (tout B1…B5)
 
-- [ ] https://ytmusic.delhomme.ovh → login + play 1 titre + reload progression
-- [ ] Console : pas d’erreur fonts Google
-- [ ] Nothing APK prod : play + file (si installé)
+#### [ ] B1. Boot / session
+- [ ] B1.1 — Force-stop + relance sans écran noir long
+- [ ] B1.2 — Session / Accueil cohérent
+
+#### [ ] B2. Offline
+- [ ] B2.1 — Mode avion : pas de Mixés + message hors ligne
+- [ ] B2.2 — Accès Téléchargés
+- [ ] B2.3 — Retour réseau + refresh Accueil → mixes OK
+
+#### [ ] B3. Similaires + radio + download *(miroirs A4–A6)*
+- [ ] B3.1 — Similaires rapides, peu de coupe audio
+- [ ] B3.2 — Radio / En rapport icônes + comportement OK
+- [ ] B3.3 — Download % global + continue si on ferme le sheet
+- [ ] B3.4 — File : section **Déjà joués** présente (parité web)
+
+#### [ ] B4. Biblio
+- [ ] B4.1 — Filtre défaut **Titres**
+- [ ] B4.2 — Téléchargés : spinner puis liste
+
+#### [ ] B5. Album header
+- [ ] B5.1 — Retour / artiste / année bien visibles
 
 ---
 
-## Critères « GO » pour la suite
+## C. Smoke prod *(seulement si A+B GO)*
 
-| GO local | Condition |
-|----------|-----------|
-| Oui | A1–A9 + B1–B5 OK |
-| Non | Bloquant : progression, crash, offline cassé, download sans feedback |
+### [ ] C — Smoke prod
+- [ ] C.1 — https://ytmusic.delhomme.ovh login + play + F5 progression
+- [ ] C.2 — Clavier Play/Pause après reload (A1.3 prod)
+- [ ] C.3 — Console : pas d’erreur fonts
+- [ ] C.4 — Nothing APK prod : play + file + download smoke
 
-Ensuite :
+---
 
-1. Commit / PR → `dev` → deploy prod (déjà fait pour la dernière vague si `b9ca6e1` live).
-2. `DEVICE=<nothing> make android-prod`
-3. Enchaîner [`TESTS_PROD.md`](./TESTS_PROD.md).
+## Critères GO
 
-Index : [`TESTS.md`](./TESTS.md).
+| Niveau | Condition |
+|--------|-----------|
+| **GO A1–A6** | Toutes cases A1…A6 cochées (fixes inclus) |
+| **GO suite** | GO A1–A6 + A7–A9 + B1–B5 |
+| **GO prod** | GO suite + C |
+
+Tant que A1–A6 ne sont pas verts → **pas** A7+, **pas** TESTS_PROD.
+
+Index : [`TESTS.md`](./TESTS.md) · Local : [`TESTS.LOCAL.md`](./TESTS.LOCAL.md).
+
+---
+
+### Glossaire (rappel)
+- **Now Playing (NP)** = clic sur la **barre du bas** (titre en cours) → plein écran lecteur.
+- **File** = onglet / panneau file dans NP (Déjà joués · En cours · À suivre).

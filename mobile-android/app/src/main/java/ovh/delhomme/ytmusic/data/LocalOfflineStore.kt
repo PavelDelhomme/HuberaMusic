@@ -59,7 +59,6 @@ class LocalOfflineStore(
     }
 
     fun listIds(): List<String> = synchronized(this) {
-        // Inclut fichiers présents même sans meta (reprise après crash)
         dir.listFiles()
             ?.mapNotNull { f ->
                 val name = f.name
@@ -90,76 +89,75 @@ class LocalOfflineStore(
     }
 
     /**
-     * Télécharge le flux complet vers le stockage local.
-     * @param streamUrl URL `/api/stream/{id}` (avec token)
+     * Télécharge le flux **audio** (`/api/stream/{id}`) vers le stockage local.
+     * Mutex uniquement pour meta/rename — le HTTP reste libre (progress UI).
      */
     suspend fun download(
         track: TrackDto,
         streamUrl: String,
         onProgress: ((Float) -> Unit)? = null,
     ): Result<File> = withContext(Dispatchers.IO) {
-        mutex.withLock {
-            val dest = audioFile(track.id)
-            if (dest.isFile && dest.length() > 8_000L) {
+        val dest = audioFile(track.id)
+        if (dest.isFile && dest.length() > 8_000L) {
+            mutex.withLock {
                 upsertMetaUnlocked(track)
-                onProgress?.invoke(1f)
                 bump()
-                return@withLock Result.success(dest)
             }
-            val part = File(dir, "${track.id}.part")
-            part.delete()
-            runCatching {
-                val req = Request.Builder().url(streamUrl).get().build()
-                http.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                    val body = resp.body ?: error("Réponse vide")
-                    val total = body.contentLength().takeIf { it > 0 } ?: -1L
-                    var readTotal = 0L
-                    body.byteStream().use { input ->
-                        part.outputStream().use { output ->
-                            val buf = ByteArray(64 * 1024)
-                            var lastPct = -1
-                            while (true) {
-                                val n = input.read(buf)
-                                if (n < 0) break
-                                output.write(buf, 0, n)
-                                readTotal += n
-                                if (total > 0) {
-                                    val pct = ((readTotal * 100) / total).toInt().coerceIn(0, 99)
-                                    if (pct != lastPct) {
-                                        lastPct = pct
-                                        withContext(Dispatchers.Main.immediate) {
-                                            onProgress?.invoke(pct / 100f)
-                                        }
-                                    }
-                                } else if (readTotal % (512 * 1024L) == 0L) {
-                                    withContext(Dispatchers.Main.immediate) {
-                                        onProgress?.invoke(
-                                            (0.15f + (readTotal % 5_000_000L) / 10_000_000f).coerceAtMost(0.9f),
-                                        )
-                                    }
+            onProgress?.invoke(1f)
+            return@withContext Result.success(dest)
+        }
+        val part = File(dir, "${track.id}.part")
+        part.delete()
+        runCatching {
+            val req = Request.Builder().url(streamUrl).get().build()
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                val body = resp.body ?: error("Réponse vide")
+                val total = body.contentLength().takeIf { it > 0 } ?: -1L
+                var readTotal = 0L
+                body.byteStream().use { input ->
+                    part.outputStream().use { output ->
+                        val buf = ByteArray(64 * 1024)
+                        var lastPct = -1
+                        var lastByteReport = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            output.write(buf, 0, n)
+                            readTotal += n
+                            if (total > 0) {
+                                val pct = ((readTotal * 100) / total).toInt().coerceIn(0, 99)
+                                if (pct != lastPct) {
+                                    lastPct = pct
+                                    onProgress?.invoke(pct / 100f)
                                 }
+                            } else if (readTotal - lastByteReport >= 256 * 1024L) {
+                                lastByteReport = readTotal
+                                val soft = (0.08f + (readTotal / (1024f * 1024f)) * 0.04f).coerceAtMost(0.92f)
+                                onProgress?.invoke(soft)
                             }
-                            output.flush()
                         }
+                        output.flush()
                     }
-                    if (part.length() < 8_000L) {
-                        part.delete()
-                        error("Fichier trop petit — stream incomplet")
-                    }
+                }
+                if (part.length() < 8_000L) {
+                    part.delete()
+                    error("Fichier trop petit — stream incomplet")
+                }
+                mutex.withLock {
                     if (dest.exists()) dest.delete()
                     if (!part.renameTo(dest)) {
                         part.copyTo(dest, overwrite = true)
                         part.delete()
                     }
                     upsertMetaUnlocked(track)
-                    onProgress?.invoke(1f)
                     bump()
-                    dest
                 }
-            }.onFailure {
-                part.delete()
+                onProgress?.invoke(1f)
+                dest
             }
+        }.onFailure {
+            part.delete()
         }
     }
 

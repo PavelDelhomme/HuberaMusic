@@ -4,6 +4,9 @@ import android.content.Context
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.Authenticator
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -37,6 +40,17 @@ class AppContainer(context: Context) {
     }
     val offlineStore by lazy { LocalOfflineStore(appContext, moshi) }
     val localPlayback by lazy { LocalPlaybackStore(appContext, moshi) }
+    /** Scope application — downloads survivent à la fermeture des sheets Compose. */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val downloadManager by lazy {
+        OfflineDownloadManager(
+            scope = appScope,
+            offlineStore = offlineStore,
+            streamUrl = { id -> remoteStreamUrl(id) },
+            ensureToken = { ensureFreshToken() },
+            notifyServer = { id -> runCatching { api.download(id) } },
+        )
+    }
     private val apiPrefs = appContext.getSharedPreferences("ytm_api", Context.MODE_PRIVATE)
 
     val deviceId: String by lazy {

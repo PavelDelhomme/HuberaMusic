@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Save
@@ -72,6 +73,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -780,39 +782,29 @@ fun NowPlayingScreen(
                                             Icons.Default.PlaylistAdd, slot.label, PlayerFg, showLabel = true,
                                         ) { onOpenAddToPlaylist?.invoke(track) }
                                         PlayerChromeAction.Download -> {
-                                            var dlProgress by remember(track.id) { mutableStateOf<Float?>(null) }
+                                            val dlMap by container.downloadManager.progress.collectAsState()
+                                            val offlineRev by container.offlineStore.revision.collectAsState()
+                                            val dlProgress = dlMap[track.id]
                                             var dlDone by remember(track.id) { mutableStateOf(false) }
-                                            LaunchedEffect(track.id) {
-                                                dlDone = container.offlineStore.has(track.id) ||
-                                                    runCatching {
-                                                        container.api.library().downloaded.contains(track.id)
-                                                    }.getOrDefault(false)
+                                            LaunchedEffect(track.id, offlineRev, dlProgress) {
+                                                if (dlProgress == null) {
+                                                    dlDone = container.offlineStore.has(track.id) ||
+                                                        runCatching {
+                                                            container.api.library().downloaded.contains(track.id)
+                                                        }.getOrDefault(false)
+                                                }
                                             }
                                             Row(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(20.dp))
                                                     .background(PlayerFg.copy(alpha = 0.08f))
                                                     .clickable(enabled = dlProgress == null && !dlDone) {
-                                                        scope.launch {
-                                                            dlProgress = 0.02f
-                                                            runCatching {
-                                                                container.ensureFreshToken()
-                                                                container.offlineStore.download(
-                                                                    track,
-                                                                    container.remoteStreamUrl(track.id),
-                                                                ) { p -> dlProgress = p.coerceIn(0.02f, 0.99f) }
-                                                            }.onSuccess { r ->
-                                                                r.getOrThrow()
-                                                                dlProgress = 1f
-                                                                dlDone = true
-                                                                runCatching { container.api.download(track.id) }
-                                                                delay(200)
-                                                                dlProgress = null
-                                                                Toast.makeText(context, "Téléchargé — hors-ligne OK", Toast.LENGTH_SHORT).show()
-                                                            }.onFailure {
-                                                                dlProgress = null
-                                                                Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
-                                                            }
+                                                        val started = container.downloadManager.enqueue(track)
+                                                        if (!started && container.offlineStore.has(track.id)) {
+                                                            dlDone = true
+                                                            Toast.makeText(context, "Déjà sur l'appareil", Toast.LENGTH_SHORT).show()
+                                                        } else if (started) {
+                                                            Toast.makeText(context, "Téléchargement…", Toast.LENGTH_SHORT).show()
                                                         }
                                                     }
                                                     .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -1419,7 +1411,12 @@ private fun QueueExpandedBody(
 ) {
     var tabDragX by remember { mutableFloatStateOf(0f) }
     val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
-    val userTracks = ui.queue.take(boundary)
+    val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
+    val currentAndUpcomingUser = if (ui.queueIndex < boundary) {
+        ui.queue.subList(ui.queueIndex.coerceAtLeast(0), boundary)
+    } else {
+        emptyList()
+    }
     val autoTracks = if (ui.autoplaySuggestions) ui.queue.drop(boundary) else emptyList()
 
     var similarTracks by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
@@ -1567,16 +1564,51 @@ private fun QueueExpandedBody(
                 }
             }
             LazyColumn(modifier.fillMaxSize(), state = listState) {
-                itemsIndexed(userTracks, key = { i, t -> "u-${t.id}-$i" }) { index, item ->
+                if (playedBefore.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Déjà joués",
+                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = PlayerMuted,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    itemsIndexed(playedBefore, key = { i, t -> "played-${t.id}-$i" }) { index, item ->
+                        QueueTrackRow(
+                            track = item,
+                            index = index,
+                            highlighted = false,
+                            onClick = { onPlayAt(index) },
+                            onLongClick = { onMore?.invoke(item) },
+                            onMove = onMove,
+                            onMore = onMore?.let { { it(item) } },
+                            onMix = { startMixFor(item) },
+                            radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                        )
+                    }
+                }
+                item {
+                    Text(
+                        "En cours",
+                        Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = PlayerMuted,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                itemsIndexed(currentAndUpcomingUser, key = { i, t -> "u-${t.id}-${ui.queueIndex + i}" }) { i, item ->
+                    val abs = ui.queueIndex + i
                     QueueTrackRow(
                         track = item,
-                        index = index,
-                        highlighted = index == ui.queueIndex,
-                        onClick = { onPlayAt(index) },
+                        index = abs,
+                        highlighted = abs == ui.queueIndex,
+                        onClick = { onPlayAt(abs) },
                         onLongClick = { onMore?.invoke(item) },
                         onMove = onMove,
                         onMore = onMore?.let { { it(item) } },
                         onMix = { startMixFor(item) },
+                        radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
                     )
                 }
                 item {
@@ -1629,6 +1661,7 @@ private fun QueueExpandedBody(
                         onMove = onMove,
                         onMore = onMore?.let { { it(item) } },
                         onMix = { startMixFor(item) },
+                        radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
                     )
                 }
                 item { Spacer(Modifier.height(48.dp)) }
@@ -1823,6 +1856,7 @@ private fun QueueTrackRow(
     onMove: (from: Int, to: Int) -> Unit,
     onMore: (() -> Unit)? = null,
     onMix: (() -> Unit)? = null,
+    radioActive: Boolean = false,
 ) {
     var dragAccum by remember { mutableFloatStateOf(0f) }
     Row(
@@ -1898,9 +1932,9 @@ private fun QueueTrackRow(
         if (onMix != null) {
             IconButton(onClick = onMix) {
                 Icon(
-                    MixIcon,
-                    contentDescription = "Lancer un mix",
-                    tint = SeekRed,
+                    Icons.Default.Radio,
+                    contentDescription = if (radioActive) "Mix actif" else "Lancer un mix",
+                    tint = if (radioActive) SeekRed else Color.White,
                     modifier = Modifier.size(22.dp),
                 )
             }

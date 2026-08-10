@@ -60,6 +60,8 @@ function ensurePlaying() {
     // État store désynchronisé
     usePlayer.setState({ isPlaying: false });
   }
+  // Media Session / clavier = geste utilisateur → toggle (canplay + seek persisté)
+  wireMediaSession();
   p.toggle();
   requestAnimationFrame(() => {
     syncPlayingFromAudio();
@@ -256,6 +258,14 @@ function handleMediaAction(action: MediaAction) {
 export function installMediaKeys(): () => void {
   wireMediaSession();
   updateMediaSessionMetadata();
+
+  // Après hydrate (current restauré) → re-bind Media Session pour les touches OS
+  const unsubHydrate = usePlayer.subscribe((s, prev) => {
+    if (s.hydrated && (!prev.hydrated || s.current?.id !== prev.current?.id)) {
+      wireMediaSession();
+      updateMediaSessionMetadata();
+    }
+  });
 
   const onKey = (e: KeyboardEvent) => {
     const media = mediaActionFromEvent(e);
@@ -473,6 +483,7 @@ export function installMediaKeys(): () => void {
     window.removeEventListener('pointerdown', onPointer);
     window.clearInterval(keepAlive);
     unsub();
+    unsubHydrate();
     unsubAudio();
     attachAudio(null);
   };
