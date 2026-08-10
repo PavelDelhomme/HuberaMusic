@@ -285,6 +285,19 @@ Tu n’as **plus** à toucher Portainer pour une MAJ normale (sauf souci).
 
 ---
 
+## Recette après déploiement
+
+Ne pas « tout tester d’un coup » : suivre l’ordre des checklists.
+
+1. Avant push prod : [`TESTS.LOCAL.md`](./TESTS.LOCAL.md) puis [`TESTS_DEV.md`](./TESTS_DEV.md)  
+2. Deploy (cette page / Admin / `scripts/admin-deploy-prod.sh`)  
+3. Après image VPS à jour : [`TESTS_PROD.md`](./TESTS_PROD.md)  
+4. Nothing : `DEVICE=<ip>:5555 make android-prod` · Samsung reste en **API LAN** au quotidien  
+
+Index : [`TESTS.md`](./TESTS.md).
+
+---
+
 ## Rappel `.env` local (déjà fait)
 
 ```env

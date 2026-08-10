@@ -320,7 +320,7 @@ fun LibraryScreen(
                     }
                 }
 
-                val content = remember(data, selected, downloadMeta, offlineRev, spokenItems, spokenLoading, spokenError) {
+                val content = remember(data, selected, downloadMeta, offlineRev, spokenItems, spokenLoading, spokenError, downloadsEnriching) {
                     when (selected) {
                         LibraryFilter.Podcasts, LibraryFilter.Audiobooks -> {
                             val title = if (selected == LibraryFilter.Audiobooks) "Livres audio" else "Podcasts"
@@ -338,13 +338,31 @@ fun LibraryScreen(
                                 playLabel = "Tout lire",
                                 shuffleLabel = "Aléatoire",
                                 collectionHint = "Lecture en flux audio (YouTube).",
+                                loading = spokenLoading && spokenItems.isEmpty(),
                             )
                         }
-                        else -> buildLibraryContent(data, selected, downloadMeta)
+                        else -> buildLibraryContent(data, selected, downloadMeta, downloadsEnriching)
                     }
                 }
                 when {
                     content.comingSoon != null -> EmptyHint(content.comingSoon!!)
+                    content.loading -> {
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                content.emptyMessage.ifBlank { "Chargement…" },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     content.rows.isEmpty() -> EmptyHint(content.emptyMessage)
                     else -> {
                         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
@@ -504,12 +522,14 @@ private data class LibraryContent(
     val shuffleLabel: String = "Aléatoire",
     val collectionHint: String? = null,
     val comingSoon: String? = null,
+    val loading: Boolean = false,
 )
 
 private fun buildLibraryContent(
     data: LibraryResponse,
     filter: LibraryFilter,
     downloadMeta: Map<String, TrackDto> = emptyMap(),
+    downloadsEnriching: Boolean = false,
 ): LibraryContent {
     fun az(tracks: List<TrackDto>) = tracks.sortedBy { it.title.lowercase() }
 
@@ -647,33 +667,21 @@ private fun buildLibraryContent(
             )
             val playable = rows.filter { it.isPlayable() }
             val unresolved = rows.any { it.title == it.id && it.id.length == 11 }
-            if (downloadsEnriching && (rows.isEmpty() || unresolved)) {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    CircularProgressIndicator()
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        "Chargement des téléchargements…",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            } else {
-                LibraryContent(
-                    headline = "Téléchargés · A–Z",
-                    rows = rows,
-                    playableQueue = playable,
-                    emptyMessage = "Aucun téléchargement sur l'appareil. Menu ⋮ d'un titre → Télécharger.",
-                    showPlayAll = playable.isNotEmpty(),
-                    playLabel = "Tout lire",
-                    shuffleLabel = "Aléatoire",
-                )
-            }
+            val enriching = downloadsEnriching && (rows.isEmpty() || unresolved)
+            LibraryContent(
+                headline = "Téléchargés · A–Z",
+                rows = if (enriching) emptyList() else rows,
+                playableQueue = if (enriching) emptyList() else playable,
+                emptyMessage = if (enriching) {
+                    "Chargement des téléchargements…"
+                } else {
+                    "Aucun téléchargement sur l'appareil. Menu ⋮ d'un titre → Télécharger."
+                },
+                showPlayAll = !enriching && playable.isNotEmpty(),
+                playLabel = "Tout lire",
+                shuffleLabel = "Aléatoire",
+                loading = enriching,
+            )
         }
         LibraryFilter.Profiles -> LibraryContent(
             headline = "Profils",
