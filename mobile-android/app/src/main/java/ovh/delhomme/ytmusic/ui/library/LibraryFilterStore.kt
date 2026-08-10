@@ -32,7 +32,7 @@ enum class LibraryFilter(val label: String) {
             DeviceFiles.name,
         )
         val defaultVisible: Set<String> = entries.map { it.name }.toSet() - defaultHidden
-        val defaultSelected: LibraryFilter = Additions
+        val defaultSelected: LibraryFilter = Tracks
 
         /** Demande d’ouverture d’un filtre (ex. depuis Account → Téléchargements). */
         @Volatile

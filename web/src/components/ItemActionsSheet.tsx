@@ -495,23 +495,27 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
               disabled={busy || dlProgress != null}
               onClick={() => {
                 if (onDevice || dlProgress != null) return;
-                after(async () => {
+                void (async () => {
                   setBusy(true);
-                  setDlProgress(0.08);
+                  setDlProgress(0.05);
                   const tick = window.setInterval(() => {
-                    setDlProgress((p) => (p == null ? 0.08 : Math.min(0.9, p + 0.07)));
-                  }, 350);
+                    setDlProgress((p) => (p == null ? 0.05 : Math.min(0.92, p + 0.06)));
+                  }, 280);
                   try {
                     await downloadAndCache(item);
                     await api.download(item.id).catch(() => undefined);
                     setDlProgress(1);
                     setOnDevice(true);
+                    setPlaylistMsg('Téléchargé sur cet appareil');
+                  } catch (e) {
+                    console.error(e);
+                    setPlaylistMsg(String((e as Error)?.message || e || 'Échec téléchargement'));
                   } finally {
                     window.clearInterval(tick);
-                    setDlProgress(null);
+                    window.setTimeout(() => setDlProgress(null), 400);
                     setBusy(false);
                   }
-                });
+                })();
               }}
             />
           )}

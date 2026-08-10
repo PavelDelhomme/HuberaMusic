@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -148,14 +149,21 @@ fun HomeScreen(
             state.loading && state.shelves.isEmpty() -> {
                 HomeLoadingSkeleton()
             }
-            state.error != null && state.shelves.isEmpty() -> {
+            state.error != null && state.shelves.isEmpty() && state.radios.isEmpty() -> {
                 Column(
                     Modifier.fillMaxSize().padding(24.dp),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(state.error!!, color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = vm::refresh) { Text("Réessayer") }
+                    Spacer(Modifier.height(12.dp))
+                    if (state.error!!.contains("Hors ligne", ignoreCase = true)) {
+                        Button(onClick = onOpenDownloads) {
+                            Text("Ouvrir Téléchargés")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    TextButton(onClick = { vm.refresh(fromUser = true) }) { Text("Réessayer") }
                 }
             }
             else -> {

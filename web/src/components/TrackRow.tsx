@@ -52,6 +52,8 @@ export function TrackRow({
   const moveInQueue = usePlayer((s) => s.moveInQueue);
   const current = usePlayer((s) => s.current);
   const isPlaying = usePlayer((s) => s.isPlaying);
+  const sourceId = usePlayer((s) => s.sourceId);
+  const sourceKind = usePlayer((s) => s.sourceKind);
   const { isLiked, toggleLike } = useLibrary();
   const openActions = useItemActions((s) => s.open);
   const pinned = usePins((s) => s.isPinned(track.id));
@@ -61,6 +63,7 @@ export function TrackRow({
   const [pinBusy, setPinBusy] = useState(false);
   const navigate = useNavigate();
   const active = current?.id === track.id;
+  const radioActive = sourceKind === 'radio' && sourceId === track.id;
   const liked = isLiked(track.id);
   const inQueue = typeof queueIndex === 'number';
   const showActions = alwaysActions || inQueue;
@@ -215,7 +218,11 @@ export function TrackRow({
         {isPlayable(track) && (
           <button
             type="button"
-            title="Lancer un mix à partir de ce titre"
+            title={
+              radioActive
+                ? `Mix actif à partir de « ${track.title} »`
+                : 'Lancer un mix à partir de ce titre'
+            }
             aria-label="Lancer un mix à partir de ce titre"
             onClick={(e) => {
               e.stopPropagation();
@@ -225,7 +232,11 @@ export function TrackRow({
               showActions ? 'hidden opacity-100 sm:inline-flex' : 'opacity-0 group-hover:inline-flex'
             }`}
           >
-            <Radio className="h-4 w-4 text-yt-red sm:h-5 sm:w-5" />
+            <Radio
+              className={`h-4 w-4 sm:h-5 sm:w-5 ${
+                radioActive ? 'text-yt-red' : 'text-white'
+              }`}
+            />
           </button>
         )}
         <button

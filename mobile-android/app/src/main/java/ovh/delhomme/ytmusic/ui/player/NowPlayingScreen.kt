@@ -833,7 +833,7 @@ fun NowPlayingScreen(
                                             scope.launch {
                                                 val mix = buildRadioQueue(container.api, "track", track.id, track, mixCache = container.mixCache)
                                                 if (mix.isNotEmpty()) {
-                                                    player.playRadioOrEnqueue(mix, "Mix")
+                                                    player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
                                                     Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
                                                 }
                                             }
@@ -1000,7 +1000,7 @@ fun NowPlayingScreen(
                                 scope.launch {
                                     val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
                                     if (mix.isNotEmpty()) {
-                                        player.playRadioOrEnqueue(mix, "Mix")
+                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
                                         Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
                                     }
                                 }
@@ -1030,7 +1030,7 @@ fun NowPlayingScreen(
                                 scope.launch {
                                     val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
                                     if (mix.isNotEmpty()) {
-                                        player.playRadioOrEnqueue(mix, "Mix")
+                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
                                         Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
                                     }
                                 }
@@ -1080,7 +1080,7 @@ fun NowPlayingScreen(
                                     scope.launch {
                                         val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
                                         if (mix.isNotEmpty()) {
-                                            player.playRadioOrEnqueue(mix, "Mix")
+                                            player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
                                             Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
                                         }
                                     }
@@ -1113,7 +1113,7 @@ fun NowPlayingScreen(
                             scope.launch {
                                 val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
                                 if (mix.isNotEmpty()) {
-                                    player.playRadioOrEnqueue(mix, "Mix")
+                                    player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
                                     Toast.makeText(context, "Mix ajouté à la file", Toast.LENGTH_SHORT).show()
                                 }
                             }
@@ -1228,7 +1228,7 @@ private fun QueueSectionHeader(
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Lecture à partir de",
+                    "Mix à partir de",
                     style = MaterialTheme.typography.labelSmall,
                     color = PlayerMuted,
                 )
@@ -1387,7 +1387,10 @@ private fun QueueExpandedHeader(
             }
         }
         Text(
-            "Lecture à partir de « $queueTitle »",
+            if (queueTitle.startsWith("Mix à partir de")) queueTitle
+            else if (queueTitle.equals("Mix", ignoreCase = true) || queueTitle.equals("File d'attente", ignoreCase = true))
+                queueTitle
+            else "Mix · $queueTitle",
             style = MaterialTheme.typography.labelMedium,
             color = PlayerMuted,
             modifier = Modifier.padding(top = 8.dp, start = 4.dp),
@@ -1427,7 +1430,7 @@ private fun QueueExpandedBody(
         scope.launch {
             val mix = buildRadioQueue(container.api, "track", track.id, track, mixCache = container.mixCache)
             if (mix.isNotEmpty()) {
-                player.playRadioOrEnqueue(mix, "Mix")
+                player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
             }
         }
     }
@@ -1464,20 +1467,21 @@ private fun QueueExpandedBody(
         }
     }
 
-    LaunchedEffect(seedId, panelTab) {
-        if (panelTab != 1 || seedId.isNullOrBlank()) return@LaunchedEffect
+    LaunchedEffect(seedId) {
+        if (seedId.isNullOrBlank()) return@LaunchedEffect
         similarLoading = true
-        // Phase 1 : fast (rapide) — affiche tout de suite
+        // Phase 1 : fast — ~10 titres dès le play (même hors onglet Similaires)
         val fast = runCatching {
             val rel = container.api.related(seedId, fast = 1)
             (rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty())
                 .filter { it.isPlayable() && it.id != seedId }
                 .distinctBy { it.id }
+                .take(10)
         }.getOrDefault(emptyList())
         if (ui.track?.id != seedId) return@LaunchedEffect
         similarTracks = fast
         similarLoading = false
-        // Phase 2 : batch moyen (full=0) — enrichit sans bloquer
+        // Phase 2 : batch moyen
         val mid = runCatching {
             val rel = container.api.related(seedId, full = 0)
             (rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty())
@@ -1941,7 +1945,7 @@ private fun InlineSyncedLyrics(
     }
 
     // Lead ~250 ms : ligne allumée juste avant le chant (karaoke)
-    val leadMs = 250L
+    val leadMs = 0L
     val active = if (timed.isEmpty()) -1
     else timed.indexOfLast { it.startMsLong() <= positionMs + leadMs }.coerceAtLeast(0)
     val listState = rememberLazyListState()

@@ -494,7 +494,7 @@ fun TrackActionsSheet(
                             Toast.makeText(context, "Mix indisponible", Toast.LENGTH_SHORT).show()
                             return@runCatching
                         }
-                        player.playRadioOrEnqueue(mix, "En rapport")
+                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
                         Toast.makeText(
                             context,
                             "Mix démarré · ${mix.size} titres",

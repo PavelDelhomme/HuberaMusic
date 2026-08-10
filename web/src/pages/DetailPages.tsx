@@ -970,16 +970,19 @@ export function PlaylistPage() {
     <CollectionHeader
       kind="Playlist"
       title={data.playlist.title}
+      stackActions
       subtitle={
-        [
-          data.playlist.author,
-          data.playlist.trackCount
-            ? `${data.playlist.trackCount} titre${Number(data.playlist.trackCount) !== 1 ? 's' : ''}`
-            : `${data.tracks.length} titre${data.tracks.length !== 1 ? 's' : ''}`,
-          formatTotalDuration(sumTracksDurationSeconds(data.tracks)),
-        ]
-          .filter(Boolean)
-          .join(' · ') || 'Playlist'
+        <>
+          {data.playlist.author ? <div className="font-medium text-white/80">{data.playlist.author}</div> : null}
+          <div>
+            {data.playlist.trackCount
+              ? `${data.playlist.trackCount} titre${Number(data.playlist.trackCount) !== 1 ? 's' : ''}`
+              : `${data.tracks.length} titre${data.tracks.length !== 1 ? 's' : ''}`}
+            {formatTotalDuration(sumTracksDurationSeconds(data.tracks))
+              ? ` · ${formatTotalDuration(sumTracksDurationSeconds(data.tracks))}`
+              : ''}
+          </div>
+        </>
       }
       cover={data.playlist}
       tracks={data.tracks}
@@ -1047,6 +1050,7 @@ function CollectionHeader({
   onLike,
   inLibrary,
   liked,
+  stackActions = false,
 }: {
   kind: string;
   title: string;
@@ -1065,6 +1069,8 @@ function CollectionHeader({
   onLike?: () => Promise<void>;
   inLibrary?: boolean;
   liked?: boolean;
+  /** Playlist : titre/meta empilés + Lecture / Aléatoire empilés. */
+  stackActions?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [offlinePct, setOfflinePct] = useState<number | null>(null);
@@ -1120,12 +1126,18 @@ function CollectionHeader({
         <div>
           <p className="text-xs uppercase tracking-widest text-yt-muted">{kind}</p>
           <h1 className="font-display text-3xl font-semibold tracking-tight sm:text-5xl">{title}</h1>
-          <p className="mt-2 text-sm text-yt-muted">{subtitle}</p>
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className={`mt-2 text-sm text-yt-muted ${stackActions ? 'space-y-1' : ''}`}>{subtitle}</div>
+          <div
+            className={`mt-4 ${
+              stackActions ? 'flex max-w-xs flex-col gap-2' : 'flex flex-wrap gap-2'
+            }`}
+          >
             <button
               type="button"
               onClick={onPlay}
-              className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
+              className={`inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium ${
+                stackActions ? 'justify-center' : ''
+              }`}
             >
               <Play className="h-4 w-4 fill-white" /> Lecture
             </button>
@@ -1133,7 +1145,9 @@ function CollectionHeader({
               <button
                 type="button"
                 onClick={onShuffle}
-                className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-4 py-2.5 text-sm text-yt-muted hover:text-white"
+                className={`inline-flex items-center gap-2 rounded-full bg-yt-elevated px-4 py-2.5 text-sm text-yt-muted hover:text-white ${
+                  stackActions ? 'justify-center' : ''
+                }`}
               >
                 <Shuffle className="h-4 w-4" /> Aléatoire
               </button>

@@ -18,8 +18,8 @@ let sessionMediaMode: 'cover' | 'video' = 'cover';
 
 type LyricLine = { t: number; text: string };
 
-/** Avance légère : la ligne s’allume juste avant le chant (feel YTM). */
-const LYRIC_LEAD_SEC = 0.25;
+/** Avance nulle : paroles en temps réel (sync audio). */
+const LYRIC_LEAD_SEC = 0;
 
 /** LRC uniquement — pas de faux timings sur texte brut (ça décale / n’arrête pas). */
 function parseLrcLines(raw: string | null): LyricLine[] {
@@ -232,6 +232,8 @@ export function NowPlaying({
   const autoplay = usePlayer((s) => s.autoplay);
   const autoRadioLoading = usePlayer((s) => s.autoRadioLoading);
   const related = usePlayer((s) => s.related);
+  const relatedLoading = usePlayer((s) => s.relatedLoading);
+  const relatedSeedId = usePlayer((s) => s.relatedSeedId);
   const playAt = usePlayer((s) => s.playAt);
   const playUpcomingInQueue = usePlayer((s) => s.playUpcomingInQueue);
   const addNext = usePlayer((s) => s.addNext);
@@ -251,6 +253,7 @@ export function NowPlaying({
   const [lyricsTimed, setLyricsTimed] = useState<{ startMs: number; text: string }[] | null>(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [queueVisible, setQueueVisible] = useState(QUEUE_PAGE);
+  const [similarVisible, setSimilarVisible] = useState(10);
   const [saveOpen, setSaveOpen] = useState(false);
   const [mediaMode, setMediaMode] = useState<'cover' | 'video'>(sessionMediaMode);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -296,6 +299,7 @@ export function NowPlaying({
 
   useEffect(() => {
     setQueueVisible(QUEUE_PAGE);
+    setSimilarVisible(10);
   }, [current?.id]);
 
   useEffect(() => {
@@ -428,9 +432,13 @@ export function NowPlaying({
 
   const onQueueScroll = () => {
     const el = queueScrollRef.current;
-    if (!el || !canLoadMoreQueue) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight < el.scrollHeight - 120) return;
+    if (tab === 'queue' && canLoadMoreQueue) {
       setQueueVisible((n) => Math.min(QUEUE_MAX, n + QUEUE_PAGE, autoList.length));
+    }
+    if (tab === 'related') {
+      setSimilarVisible((n) => Math.min(related.length, n + 10));
     }
   };
 
@@ -567,7 +575,7 @@ export function NowPlaying({
           <div
             ref={queueScrollRef}
             className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain"
-            onScroll={tab === 'queue' ? onQueueScroll : undefined}
+            onScroll={tab === 'queue' || tab === 'related' ? onQueueScroll : undefined}
           >
             {tab === 'queue' && (
               <div>
@@ -821,7 +829,7 @@ export function NowPlaying({
                 <section>
                   <div className="mb-3 flex items-center justify-between px-1">
                     <h3 className="font-display text-lg font-semibold">Découvrez également</h3>
-                    {related.length > 0 && (
+                    {related.length > 0 && relatedSeedId === current?.id && (
                       <button
                         type="button"
                         className="text-xs text-yt-muted hover:text-white"
@@ -831,12 +839,24 @@ export function NowPlaying({
                       </button>
                     )}
                   </div>
-                  {related.length === 0 && (
+                  {relatedLoading && related.length === 0 && (
                     <p className="px-2 text-sm text-yt-muted">Chargement des suggestions…</p>
                   )}
-                  {related.slice(0, 20).map((t) => (
+                  {!relatedLoading && related.length === 0 && (
+                    <p className="px-2 text-sm text-yt-muted">Aucune suggestion pour l’instant.</p>
+                  )}
+                  {(relatedSeedId === current?.id ? related : []).slice(0, similarVisible).map((t) => (
                     <TrackRow key={`rel-${t.id}`} track={t} queue={related} hideIndex />
                   ))}
+                  {relatedSeedId === current?.id && similarVisible < related.length && (
+                    <button
+                      type="button"
+                      className="w-full py-3 text-center text-xs text-yt-muted hover:text-white"
+                      onClick={() => setSimilarVisible((n) => Math.min(related.length, n + 10))}
+                    >
+                      Charger plus ({similarVisible} / {related.length})
+                    </button>
+                  )}
                 </section>
 
                 {relatedArtists.length > 0 && (

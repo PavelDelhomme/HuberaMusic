@@ -1557,9 +1557,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       lyrics: null,
       lyricsTimed: null,
       playError: null,
-      // Nouvelle lecture → oublier « À suivre » / suggestions de l’ancienne file
-      related: [],
-      relatedSeedId: null,
+      // Garde les suggestions jusqu’au remplacement (évite trou « Chargement… » sur Similaires)
+      relatedLoading: true,
+      relatedError: null,
     });
     // Notif OS immédiatement (titre cible) — avant le buffer audio
     refreshMediaSession();
@@ -1581,15 +1581,14 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       if (n) void warmFormat(n.id);
     }
 
-    // Suggestions dès le démarrage (fast) — pas de délai qui bloque le « suivant »
+    // Similaires dès le play (fast ~10) — indépendant de l’onglet ouvert
     const seedId = playTrack.id;
     const radioGen = gen;
     queueMicrotask(() => {
       if (radioGen !== playGeneration) return;
+      void get().loadRelated(seedId);
       if (!opts?.noAutoRadio && get().autoplay !== false) {
         void ensureAutoRadio(seedId);
-      } else {
-        void get().loadRelated(seedId);
       }
     });
 
@@ -2396,7 +2395,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   loadRelated: async (trackId) => {
     set({ relatedLoading: true, relatedError: null });
     try {
-      // Progressif : fast puis batch moyen
+      // Progressif : fast (~10) puis batch moyen
       const relFast = await api
         .related(trackId, { fast: true })
         .catch(() => ({ related: [] as Track[], radio: [] as Track[] }));
@@ -2406,8 +2405,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       }
       let pool = (relFast.related?.length ? relFast.related : relFast.radio || []).filter(isPlayable);
       if (pool.length) {
+        const first = diversifyByArtist(pool, usePlayer.getState().current?.artists?.[0]).slice(0, 10);
         set({
-          related: diversifyByArtist(pool, usePlayer.getState().current?.artists?.[0]),
+          related: first,
           relatedSeedId: trackId,
           relatedLoading: false,
           relatedError: null,

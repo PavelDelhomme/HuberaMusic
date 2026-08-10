@@ -2,7 +2,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { Track } from '../api';
 import { api } from '../api';
 import { usePlayer } from '../store/player';
-import { Check, Library, MoreHorizontal, Pin, Play, Plus } from 'lucide-react';
+import { Check, Disc3, Library, ListMusic, MoreHorizontal, Pin, Play, Plus, Radio, User } from 'lucide-react';
 import { ArtistLinks } from './ArtistLinks';
 import { CoverImage } from './CoverImage';
 import { useLibrary } from '../store/library';
@@ -201,7 +201,7 @@ export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
       <div
         role="button"
         tabIndex={0}
-        className="aspect-square cursor-pointer"
+        className="relative aspect-square cursor-pointer"
         onClick={openItem}
         onContextMenu={openMenu}
         onKeyDown={(e) => {
@@ -218,6 +218,35 @@ export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
           className="transition duration-300 group-hover:scale-[1.03]"
         />
         <PlayingCoverOverlay active={nowActive} playing={nowPlaying} size="md" />
+        {(item.type === 'album' ||
+          item.type === 'playlist' ||
+          item.type === 'mix' ||
+          item.type === 'artist' ||
+          local) && (
+          <span
+            className="pointer-events-none absolute bottom-2 left-2 z-[1] flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-white shadow"
+            title={
+              item.type === 'album'
+                ? 'Album'
+                : item.type === 'artist'
+                  ? 'Artiste'
+                  : item.type === 'mix'
+                    ? 'Mix'
+                    : 'Playlist'
+            }
+            aria-hidden
+          >
+            {item.type === 'album' ? (
+              <Disc3 className="h-3.5 w-3.5" />
+            ) : item.type === 'artist' ? (
+              <User className="h-3.5 w-3.5" />
+            ) : item.type === 'mix' ? (
+              <Radio className="h-3.5 w-3.5" />
+            ) : (
+              <ListMusic className="h-3.5 w-3.5" />
+            )}
+          </span>
+        )}
       </div>
       {/* Épingle toujours visible si épinglé (pas seulement au survol) */}
       {pinned && (

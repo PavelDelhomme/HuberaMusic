@@ -64,6 +64,7 @@ export function HomePage() {
   const isPlaying = usePlayer((s) => s.isPlaying);
   const currentId = usePlayer((s) => s.current?.id);
   const pinCount = usePins((s) => s.pins.length);
+  const pinRows = usePins((s) => s.pins);
   const refreshPins = usePins((s) => s.refresh);
   const hasMix = useLibrary((s) => s.hasMix);
   const saveMix = useLibrary((s) => s.saveMix);
@@ -133,18 +134,22 @@ export function HomePage() {
           seeds: r.seeds || [],
           hasMore: r.hasMore !== false,
         });
-        const previews: Record<string, Track[]> = {};
-        await Promise.all(
-          cats.slice(0, 8).map(async (cat) => {
-            try {
-              const mix = await api.recoRadio(cat.id, { preview: true });
-              previews[cat.id] = (mix.tracks || []).slice(0, 4);
-            } catch {
-              /* ignore */
+        // Previews mix : d’abord les 2 premiers (visibles), puis le reste
+        const loadPreview = async (cat: { id: string }) => {
+          try {
+            const mix = await api.recoRadio(cat.id, { preview: true });
+            const tracks = (mix.tracks || []).slice(0, 4);
+            if (tracks.length) {
+              setRadioPreviews((prev) => ({ ...prev, [cat.id]: tracks }));
             }
-          }),
-        );
-        setRadioPreviews(previews);
+          } catch {
+            /* ignore */
+          }
+        };
+        for (const cat of cats.slice(0, 2)) {
+          await loadPreview(cat);
+        }
+        await Promise.all(cats.slice(2, 8).map((cat) => loadPreview(cat)));
       })
       .catch((e) => {
         if (!shelves.length) setError(String(e.message || e));
@@ -184,7 +189,6 @@ export function HomePage() {
     return () => io.disconnect();
   }, [loadMore]);
 
-  const pinned = shelves.find((s) => /^épinglé$/i.test(s.title));
   const quick = shelves.find((s) => /rapide|pour toi|plus écoutés/i.test(s.title));
   const quickTracks = (quick?.items || []).filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(t.id));
 
@@ -249,6 +253,36 @@ export function HomePage() {
     } as Track);
   };
 
+  const quickAccessItems: Track[] = pinRows
+    .map((p) => {
+      const payload =
+        p.payload && typeof p.payload === 'object'
+          ? (p.payload as Record<string, unknown>)
+          : {};
+      const id = String(payload.id || p.targetId || p.id || '');
+      if (!id) return null;
+      return {
+        id,
+        title: String(payload.title || payload.name || id),
+        type: String(payload.type || p.kind || 'song'),
+        artists: Array.isArray(payload.artists) ? (payload.artists as Track['artists']) : [],
+        thumbnails: Array.isArray(payload.thumbnails)
+          ? (payload.thumbnails as Track['thumbnails'])
+          : [],
+        album: payload.album as Track['album'],
+      } as Track;
+    })
+    .filter(Boolean) as Track[];
+
+  const orderedShelves = shelves
+    .filter((s) => !/^épinglé$/i.test(s.title))
+    .slice()
+    .sort((a, b) => {
+      const score = (t: string) =>
+        /écouté récemment|recently played/i.test(t) ? 0 : /accès rapide|quick/i.test(t) ? 1 : 2;
+      return score(a.title) - score(b.title);
+    });
+
   return (
     <div className="animate-fade-up">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
@@ -277,13 +311,13 @@ export function HomePage() {
         )}
       </div>
 
-      {pinned && pinned.items.length > 0 && (
+      {quickAccessItems.length > 0 && (
         <section className="mb-8">
           <div className="mb-3 flex items-center gap-2">
             <Pin className="h-4 w-4 text-yt-muted" />
-            <h2 className="font-display text-lg font-semibold">Épinglé</h2>
+            <h2 className="font-display text-lg font-semibold">Accès rapide</h2>
           </div>
-          <ShelfRow title="" items={pinned.items} />
+          <ShelfRow title="" items={quickAccessItems} />
         </section>
       )}
 
@@ -331,12 +365,10 @@ export function HomePage() {
           </button>
         </div>
       )}
-      {!loading && !error && shelves.length === 0 && (
+      {!loading && !error && shelves.length === 0 && quickAccessItems.length === 0 && (
         <p className="text-yt-muted">Aucun contenu pour le moment. Essaie la recherche.</p>
       )}
-      {shelves
-        .filter((s) => !/^épinglé$/i.test(s.title))
-        .map((shelf, i) => (
+      {orderedShelves.map((shelf, i) => (
           <ShelfRow key={`${shelf.title}-${i}`} title={shelf.title} items={shelf.items} />
         ))}
 

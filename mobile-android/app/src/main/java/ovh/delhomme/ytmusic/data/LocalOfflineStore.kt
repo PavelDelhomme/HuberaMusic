@@ -128,12 +128,16 @@ class LocalOfflineStore(
                                     val pct = ((readTotal * 100) / total).toInt().coerceIn(0, 99)
                                     if (pct != lastPct) {
                                         lastPct = pct
-                                        onProgress?.invoke(pct / 100f)
+                                        withContext(Dispatchers.Main.immediate) {
+                                            onProgress?.invoke(pct / 100f)
+                                        }
                                     }
                                 } else if (readTotal % (512 * 1024L) == 0L) {
-                                    onProgress?.invoke(
-                                        (0.15f + (readTotal % 5_000_000L) / 10_000_000f).coerceAtMost(0.9f),
-                                    )
+                                    withContext(Dispatchers.Main.immediate) {
+                                        onProgress?.invoke(
+                                            (0.15f + (readTotal % 5_000_000L) / 10_000_000f).coerceAtMost(0.9f),
+                                        )
+                                    }
                                 }
                             }
                             output.flush()

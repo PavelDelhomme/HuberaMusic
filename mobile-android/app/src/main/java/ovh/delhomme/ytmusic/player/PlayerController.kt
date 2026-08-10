@@ -882,15 +882,28 @@ class PlayerController(
      * Radio / Mix : coupe toujours le titre en cours et démarre le mix depuis l’index 0
      * (comportement YTM). La file « À suivre » = le reste du mix.
      */
-    fun playRadioOrEnqueue(mix: List<TrackDto>, title: String, sourceKind: String = "mix") {
+    fun playRadioOrEnqueue(
+        mix: List<TrackDto>,
+        title: String,
+        sourceKind: String = "mix",
+        sourceId: String? = null,
+    ) {
         val playable = mix.filter { it.isPlayable() }.take(MixCacheStore.MIX_TARGET)
         if (playable.isEmpty()) return
+        val seed = playable.first()
+        val displayTitle =
+            if (sourceKind == "radio" || title.equals("Mix", ignoreCase = true)) {
+                "Mix à partir de « ${seed.title} »"
+            } else {
+                title
+            }
         // Toujours hard-start : soft-enqueue laissait l’ancien titre + souvent 0 « À suivre »
         play(
             playable,
             0,
-            title = title,
+            title = displayTitle,
             userQueueEnd = playable.size,
+            sourceId = sourceId ?: if (sourceKind == "radio") seed.id else null,
             sourceKind = sourceKind,
         )
         // Garder l’autoplay si le mix est encore court (top-up progressif)

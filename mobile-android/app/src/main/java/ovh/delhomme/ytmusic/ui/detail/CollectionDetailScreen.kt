@@ -570,18 +570,23 @@ fun CollectionDetailScreen(
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                Text(
-                                    subtitle,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                // Titre puis meta (auteur / N titres) empilés
+                                subtitle.split(" · ").forEach { part ->
+                                    if (part.isNotBlank()) {
+                                        Text(
+                                            part.trim(),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
                                 Spacer(Modifier.height(12.dp))
                                 if (tracks.isNotEmpty()) {
-                                    Row(
+                                    Column(
                                         Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
                                     ) {
                                         Button(
                                             onClick = {
@@ -595,7 +600,7 @@ fun CollectionDetailScreen(
                                                     sourceKind = kindStr,
                                                 ) ?: onPlayNamed(tracks, 0, title)
                                             },
-                                            modifier = Modifier.weight(1f),
+                                            modifier = Modifier.fillMaxWidth(),
                                         ) {
                                             Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
                                             Spacer(Modifier.width(4.dp))
@@ -614,7 +619,7 @@ fun CollectionDetailScreen(
                                                     sourceKind = kindStr,
                                                 ) ?: onPlayNamed(shuffled, 0, title)
                                             },
-                                            modifier = Modifier.weight(1f),
+                                            modifier = Modifier.fillMaxWidth(),
                                         ) {
                                             Icon(Icons.Default.Shuffle, null, Modifier.size(18.dp))
                                             Spacer(Modifier.width(4.dp))

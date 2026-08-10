@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
+import ovh.delhomme.ytmusic.data.NetworkMonitor
 import ovh.delhomme.ytmusic.data.RadioCategoryDto
 import ovh.delhomme.ytmusic.data.ShelfDto
 import ovh.delhomme.ytmusic.data.TrackDto
@@ -49,7 +50,18 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     fun refresh(fromUser: Boolean = false) {
         viewModelScope.launch {
-            val hadContent = _state.value.shelves.isNotEmpty()
+            if (!NetworkMonitor.isOnline()) {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    refreshing = false,
+                    radios = emptyList(),
+                    shelves = emptyList(),
+                    radioPreviews = emptyMap(),
+                    error = "Hors ligne — ouvre Bibliothèque → Téléchargés",
+                )
+                return@launch
+            }
+            val hadContent = _state.value.shelves.isNotEmpty() || _state.value.radios.isNotEmpty()
             _state.value = _state.value.copy(
                 loading = !fromUser && !hadContent,
                 refreshing = fromUser,
@@ -78,9 +90,21 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     page = 0,
                     radioPreviews = _state.value.radioPreviews,
                 )
-                // Mosaïques mix (preview) en arrière-plan
+                // Mosaïques mix (preview) : d’abord les 2 visibles, puis le reste
                 val previews = mutableMapOf<String, List<TrackDto>>()
-                home.radios.take(8).forEach { radio ->
+                home.radios.take(2).forEach { radio ->
+                    runCatching {
+                        container.api.recoRadio(radio.id, preview = 1).tracks.take(4)
+                    }.onSuccess { tracks ->
+                        if (tracks.isNotEmpty()) {
+                            previews[radio.id] = tracks
+                            _state.value = _state.value.copy(
+                                radioPreviews = _state.value.radioPreviews + previews,
+                            )
+                        }
+                    }
+                }
+                home.radios.drop(2).take(6).forEach { radio ->
                     runCatching {
                         container.api.recoRadio(radio.id, preview = 1).tracks.take(4)
                     }.onSuccess { tracks ->
@@ -88,15 +112,17 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     }
                 }
                 if (previews.isNotEmpty()) {
-                    _state.value = _state.value.copy(radioPreviews = previews)
+                    _state.value = _state.value.copy(radioPreviews = _state.value.radioPreviews + previews)
                 }
             } catch (e: Exception) {
-                val offline = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+                val offline = !NetworkMonitor.isOnline()
                 _state.value = _state.value.copy(
                     loading = false,
                     refreshing = false,
+                    radios = if (offline) emptyList() else _state.value.radios,
+                    shelves = if (offline) emptyList() else _state.value.shelves,
                     error = when {
-                        hadContent -> null
+                        hadContent && !offline -> null
                         offline -> "Hors ligne — ouvre Bibliothèque → Téléchargés"
                         else -> (e.message ?: "Erreur accueil")
                     },
