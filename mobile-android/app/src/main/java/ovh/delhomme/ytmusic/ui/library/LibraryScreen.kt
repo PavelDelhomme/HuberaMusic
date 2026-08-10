@@ -92,6 +92,7 @@ fun LibraryScreen(
     var selected by remember { mutableStateOf(LibraryFilter.defaultSelected) }
     var lastFetchAt by remember { mutableStateOf(0L) }
     var downloadMeta by remember { mutableStateOf<Map<String, TrackDto>>(emptyMap()) }
+    var downloadsEnriching by remember { mutableStateOf(false) }
     var spokenItems by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
     var spokenLoading by remember { mutableStateOf(false) }
     var spokenError by remember { mutableStateOf<String?>(null) }
@@ -197,7 +198,11 @@ fun LibraryScreen(
         val missing = data.downloaded.filter { id ->
             id.length == 11 && byId[id] == null && downloadMeta[id] == null
         }.take(24)
-        if (missing.isEmpty()) return@LaunchedEffect
+        if (missing.isEmpty()) {
+            downloadsEnriching = false
+            return@LaunchedEffect
+        }
+        downloadsEnriching = true
         val fetched = mutableMapOf<String, TrackDto>()
         for (id in missing) {
             runCatching { container.api.track(id).track }
@@ -206,6 +211,7 @@ fun LibraryScreen(
                 ?.let { fetched[id] = it }
         }
         if (fetched.isNotEmpty()) downloadMeta = downloadMeta + fetched
+        downloadsEnriching = false
     }
 
     val visibleFilters = remember(hidden) {
@@ -640,15 +646,34 @@ private fun buildLibraryContent(
                 }.distinctBy { it.id },
             )
             val playable = rows.filter { it.isPlayable() }
-            LibraryContent(
-                headline = "Téléchargés · A–Z",
-                rows = rows,
-                playableQueue = playable,
-                emptyMessage = "Aucun téléchargement sur l'appareil. Menu ⋮ d'un titre → Télécharger.",
-                showPlayAll = playable.isNotEmpty(),
-                playLabel = "Tout lire",
-                shuffleLabel = "Aléatoire",
-            )
+            val unresolved = rows.any { it.title == it.id && it.id.length == 11 }
+            if (downloadsEnriching && (rows.isEmpty() || unresolved)) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Chargement des téléchargements…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                LibraryContent(
+                    headline = "Téléchargés · A–Z",
+                    rows = rows,
+                    playableQueue = playable,
+                    emptyMessage = "Aucun téléchargement sur l'appareil. Menu ⋮ d'un titre → Télécharger.",
+                    showPlayAll = playable.isNotEmpty(),
+                    playLabel = "Tout lire",
+                    shuffleLabel = "Aléatoire",
+                )
+            }
         }
         LibraryFilter.Profiles -> LibraryContent(
             headline = "Profils",

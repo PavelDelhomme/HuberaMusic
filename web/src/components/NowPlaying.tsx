@@ -233,6 +233,8 @@ export function NowPlaying({
   const autoRadioLoading = usePlayer((s) => s.autoRadioLoading);
   const related = usePlayer((s) => s.related);
   const playAt = usePlayer((s) => s.playAt);
+  const playUpcomingInQueue = usePlayer((s) => s.playUpcomingInQueue);
+  const addNext = usePlayer((s) => s.addNext);
   const appendRelated = usePlayer((s) => s.appendRelated);
   const loadRelated = usePlayer((s) => s.loadRelated);
   const toggleAutoplay = usePlayer((s) => s.toggleAutoplay);
@@ -294,7 +296,7 @@ export function NowPlaying({
 
   useEffect(() => {
     setQueueVisible(QUEUE_PAGE);
-  }, [current?.id, queueIndex]);
+  }, [current?.id]);
 
   useEffect(() => {
     if (!open || tab !== 'lyrics' || !current?.id) return;
@@ -458,8 +460,9 @@ export function NowPlaying({
       else if (dx > 0 && tab === 'lyrics') setTab('queue');
       return;
     }
-    // En haut + pull bas → réaffiche le lecteur (cover)
-    if (tab === 'queue' && start.atTop && dy > 72 && Math.abs(dy) > Math.abs(dx)) {
+    // En haut + pull bas marqué → réaffiche le lecteur (cover) — seuil haut pour ne pas
+    // « rétracter » quand on scrolle juste vers Déjà joués.
+    if (tab === 'queue' && start.atTop && dy > 110 && Math.abs(dy) > Math.abs(dx) * 1.5) {
       coverRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   };
@@ -478,7 +481,12 @@ export function NowPlaying({
         </div>
       )}
       <div className="relative mx-auto grid min-h-0 w-full max-w-[1800px] flex-1 grid-cols-1 gap-3 overflow-hidden px-2 pb-[100px] pt-3 sm:px-4 md:grid-cols-[minmax(260px,0.85fr)_minmax(420px,1.25fr)] md:gap-8 md:px-6 lg:grid-cols-[minmax(280px,0.75fr)_minmax(520px,1.35fr)] lg:gap-10 lg:px-10 xl:px-14">
-        <div ref={coverRef} className="flex min-h-0 flex-col items-center justify-center overflow-hidden">
+        <div
+          ref={coverRef}
+          className={`min-h-0 flex-col items-center justify-center overflow-hidden ${
+            tab === 'queue' ? 'hidden md:flex' : 'flex'
+          }`}
+        >
           <div className="mb-4 flex rounded-full bg-[#1d1d1d] p-1 text-xs font-medium">
             <button
               type="button"
@@ -714,7 +722,7 @@ export function NowPlaying({
                           hideIndex
                           draggable
                           alwaysActions
-                          onPlay={() => void playAt(abs)}
+                          onPlay={() => void playUpcomingInQueue(abs)}
                         />
                       );
                     })}
@@ -763,7 +771,17 @@ export function NowPlaying({
                         </button>
                       </div>
                       {relatedForQueue.map((t) => (
-                        <TrackRow key={`qrel-${t.id}`} track={t} queue={related} alwaysActions hideIndex />
+                        <TrackRow
+                          key={`qrel-${t.id}`}
+                          track={t}
+                          queue={related}
+                          alwaysActions
+                          hideIndex
+                          onPlay={() => {
+                            addNext(t);
+                            void playUpcomingInQueue(queueIndex + 1);
+                          }}
+                        />
                       ))}
                     </div>
                   )}

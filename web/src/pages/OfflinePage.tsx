@@ -25,6 +25,7 @@ export function OfflinePage() {
   const { liked, playlists, refresh } = useLibrary();
   const playQueue = usePlayer((s) => s.playQueue);
   const [localTracks, setLocalTracks] = useState<Track[]>([]);
+  const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [online, setOnline] = useState(isBrowserOnline());
@@ -32,13 +33,17 @@ export function OfflinePage() {
   const [persisted, setPersisted] = useState(false);
 
   const reloadLocal = useCallback(async () => {
-    const tracks = await listCachedTracks();
-    setLocalTracks(tracks);
-    setStorage(await getStorageEstimate());
     try {
-      setPersisted(Boolean(await navigator.storage?.persisted?.()));
-    } catch {
-      setPersisted(false);
+      const tracks = await listCachedTracks();
+      setLocalTracks(tracks);
+      setStorage(await getStorageEstimate());
+      try {
+        setPersisted(Boolean(await navigator.storage?.persisted?.()));
+      } catch {
+        setPersisted(false);
+      }
+    } finally {
+      setReady(true);
     }
   }, []);
 
@@ -170,7 +175,13 @@ export function OfflinePage() {
 
       <section>
         <h2 className="mb-3 font-display text-xl font-semibold">Disponibles hors ligne</h2>
-        {localTracks.map((t) => (
+        {!ready && (
+          <p className="flex items-center gap-2 text-sm text-yt-muted">
+            <Loader2 className="h-4 w-4 animate-spin" /> Chargement des titres téléchargés…
+          </p>
+        )}
+        {ready &&
+          localTracks.map((t) => (
           <div key={t.id} className="group flex items-center gap-1">
             <div className="min-w-0 flex-1">
               <TrackRow track={t} queue={localTracks} />
@@ -190,7 +201,7 @@ export function OfflinePage() {
             </button>
           </div>
         ))}
-        {!localTracks.length && (
+        {ready && !localTracks.length && (
           <p className="text-sm text-yt-muted">
             Aucun titre sur cet appareil. En ligne : télécharge des aimés, une playlist, ou un
             titre via le menu ⋯.

@@ -29,12 +29,13 @@ export function QueuePanel() {
   const cycleRepeat = usePlayer((s) => s.cycleRepeat);
   const topUpAutoplay = usePlayer((s) => s.topUpAutoplay);
   const playAt = usePlayer((s) => s.playAt);
+  const playUpcomingInQueue = usePlayer((s) => s.playUpcomingInQueue);
   const appendRelated = usePlayer((s) => s.appendRelated);
+  const addNext = usePlayer((s) => s.addNext);
   const loadRelated = usePlayer((s) => s.loadRelated);
   const relatedLoading = usePlayer((s) => s.relatedLoading);
   const autoRadioLoading = usePlayer((s) => s.autoRadioLoading);
   const relatedError = usePlayer((s) => s.relatedError);
-  const play = usePlayer((s) => s.play);
   const clearUpcomingFromQueue = usePlayer((s) => s.clearUpcomingFromQueue);
   const openActions = useItemActions((s) => s.open);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -74,10 +75,17 @@ export function QueuePanel() {
     Math.max(userQueueEnd || 0, queueIndex + 1),
     queue.length,
   );
+  const playingUser = queueIndex < boundary;
+  const playedBefore = queueIndex > 0 ? queue.slice(0, queueIndex) : [];
   const userTracks = queue.slice(0, boundary);
+  const userUpcoming = playingUser ? queue.slice(queueIndex + 1, boundary) : [];
+  // « À suivre » = suite auto uniquement (pas le titre courant)
   const autoTracks = autoplay
-    ? queue.slice(queueIndex >= boundary ? queueIndex : boundary)
+    ? playingUser
+      ? queue.slice(boundary)
+      : queue.slice(queueIndex + 1)
     : [];
+  const autoStart = playingUser ? boundary : queueIndex + 1;
 
   return (
     <aside className="fixed bottom-[88px] right-0 top-0 z-30 flex w-full max-w-xl flex-col border-l border-yt-border bg-yt-surface shadow-2xl md:static md:bottom-auto md:z-10 md:max-w-lg lg:max-w-xl">
@@ -261,42 +269,62 @@ export function QueuePanel() {
                   queue={related}
                   hideIndex
                   alwaysActions
-                  onPlay={() => void play(track, related, { forceRestart: true })}
+                  onPlay={() => {
+                    addNext(track);
+                    void playUpcomingInQueue(queueIndex + 1);
+                  }}
                 />
               ))
             )}
           </div>
         ) : (
           <>
-            {userTracks.map((track, i) => (
-              <div
-                key={`u-${track.id}-${i}`}
-                className={[
-                  i === queueIndex ? 'rounded-lg ring-1 ring-yt-red/40' : '',
-                  i < queueIndex ? 'opacity-60' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ') || undefined}
-              >
+            {playedBefore.length > 0 && (
+              <div className="mb-2 opacity-70">
+                <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-yt-muted">
+                  Déjà joués
+                </p>
+                {playedBefore.map((track, i) => (
+                  <TrackRow
+                    key={`played-${track.id}-${i}`}
+                    track={track}
+                    queue={queue}
+                    queueIndex={i}
+                    hideIndex
+                    draggable
+                    alwaysActions
+                    onPlay={() => void playAt(i)}
+                  />
+                ))}
+              </div>
+            )}
+
+            <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-yt-muted">
+              En cours
+            </p>
+            {current && (
+              <div className="mb-2 rounded-lg bg-[#ff0033]/15 ring-1 ring-yt-red/40">
                 <TrackRow
-                  track={track}
+                  track={current}
                   queue={queue}
-                  queueIndex={i}
+                  queueIndex={queueIndex}
                   hideIndex
                   draggable
                   alwaysActions
-                  onPlay={() => void playAt(i)}
                 />
               </div>
-            ))}
+            )}
 
-            {autoplay && queueIndex >= boundary && boundary < queueIndex && (
-              <div className="mt-2 opacity-60">
-                {queue.slice(boundary, queueIndex).map((track, i) => {
-                  const abs = boundary + i;
+            {userUpcoming.length > 0 && (
+              <div className="mb-2">
+                <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-yt-muted">
+                  Ensuite dans ta file
+                </p>
+                {userUpcoming.map((track, i) => {
+                  const abs = queueIndex + 1 + i;
                   return (
                     <TrackRow
-                      key={`apast-${track.id}-${abs}`}
+                      key={`u-next-${track.id}-${abs}`}
                       track={track}
                       queue={queue}
                       queueIndex={abs}
@@ -334,12 +362,13 @@ export function QueuePanel() {
                     }`}
                   />
                 </button>
-              </div>              {!autoplay && (
+              </div>
+              {!autoplay && (
                 <p className="px-2 text-xs text-yt-muted">Lecture automatique désactivée.</p>
               )}
               {autoplay &&
                 autoTracks.map((track, i) => {
-                  const abs = (queueIndex >= boundary ? queueIndex : boundary) + i;
+                  const abs = autoStart + i;
                   return (
                     <TrackRow
                       key={`a-${track.id}-${abs}`}
@@ -349,7 +378,7 @@ export function QueuePanel() {
                       hideIndex
                       draggable
                       alwaysActions
-                      onPlay={() => void playAt(abs)}
+                      onPlay={() => void playUpcomingInQueue(abs)}
                     />
                   );
                 })}
@@ -380,7 +409,10 @@ export function QueuePanel() {
                       queue={related}
                       hideIndex
                       alwaysActions
-                      onPlay={() => void play(track, related, { forceRestart: true })}
+                      onPlay={() => {
+                        addNext(track);
+                        void playUpcomingInQueue(queueIndex + 1);
+                      }}
                     />
                   ))}
                 </div>

@@ -107,6 +107,13 @@ export class SessionSocket {
       return;
     }
     const token = getToken() || '';
+    // Prod privée : sans JWT le serveur ferme en 4401 — attendre d’être connecté
+    if (!token) {
+      this.reconnectAttempt += 1;
+      const delay = Math.min(15_000, 800 * 2 ** Math.min(this.reconnectAttempt, 4));
+      this.reconnectTimer = window.setTimeout(() => this.open(), delay);
+      return;
+    }
     const qs = new URLSearchParams({
       device: this.deviceId,
       token,

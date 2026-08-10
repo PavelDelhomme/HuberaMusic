@@ -1,4 +1,5 @@
 import { usePlayer } from '../store/player';
+import { trackDurationSeconds } from './time';
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -165,7 +166,14 @@ export function updateMediaSessionMetadata() {
       artwork: mediaArtwork(current),
     });
     navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
-    const dur = Number.isFinite(duration) && duration > 0 ? duration : audio?.duration || 0;
+    const dur =
+      Number.isFinite(duration) && duration > 0
+        ? duration
+        : audio?.duration && Number.isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : current
+            ? trackDurationSeconds(current) || 0
+            : 0;
     const pos = Number.isFinite(progress) ? progress : audio?.currentTime || 0;
     if (dur > 0 && Number.isFinite(pos)) {
       navigator.mediaSession.setPositionState({

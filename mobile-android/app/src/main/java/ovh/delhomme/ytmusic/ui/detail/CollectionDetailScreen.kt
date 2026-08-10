@@ -767,12 +767,12 @@ private fun AlbumHeroHeader(
         ) {
             IconButton(
                 onClick = onBack,
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(56.dp),
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Retour",
-                    modifier = Modifier.size(26.dp),
+                    modifier = Modifier.size(32.dp),
                 )
             }
             Column(
@@ -782,8 +782,8 @@ private fun AlbumHeroHeader(
                 if (artistLine.isNotBlank()) {
                     Text(
                         artistLine,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,
@@ -795,14 +795,14 @@ private fun AlbumHeroHeader(
                 }
                 Text(
                     metaLine,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center,
                 )
             }
-            Spacer(Modifier.size(48.dp))
+            Spacer(Modifier.size(56.dp))
         }
 
         Spacer(Modifier.height(8.dp))

@@ -23,7 +23,7 @@ import { useLibrary } from '../store/library';
 import { useSession } from '../store/session';
 import { useItemActions } from '../store/itemActions';
 import { CoverImage } from './CoverImage';
-import { formatClock, formatRemaining } from '../lib/time';
+import { formatClock, formatRemaining, trackDurationSeconds } from '../lib/time';
 import { useHoldSeek } from '../lib/holdSeek';
 import { applySleepPick, SLEEP_TIMER_OPTIONS } from '../lib/sleepTimer';
 import type { NowPlayingTab } from './NowPlaying';
@@ -70,7 +70,6 @@ export function PlayerBar({
     clearPlayError,
     autoRadioLoading,
     queueHint,
-    stopAndClear,
   } = usePlayer();
   const { isLiked, toggleLike } = useLibrary();
   const openActions = useItemActions((s) => s.open);
@@ -232,7 +231,11 @@ export function PlayerBar({
 
   const expand = (tab?: NowPlayingTab) => onExpand?.(tab);
   const effectiveDuration =
-    duration > 0 ? duration : Number.isFinite(audioEl?.duration) ? Number(audioEl?.duration) : 0;
+    duration > 0
+      ? duration
+      : Number.isFinite(audioEl?.duration) && (audioEl?.duration || 0) > 0
+        ? Number(audioEl?.duration)
+        : trackDurationSeconds(current) || 0;
   const displayProgress = liveProgress;
   const pct =
     effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayProgress / effectiveDuration) * 100)) : 0;
@@ -296,10 +299,9 @@ export function PlayerBar({
         swipeY0.current = null;
         const y1 = e.changedTouches[0]?.clientY;
         if (y0 == null || y1 == null) return;
-        // Swipe bas sur barre réduite → tout fermer
+        // Swipe bas sur barre réduite → replier seulement (ne pas vider la lecture)
         if (y1 - y0 > 64) {
           e.preventDefault();
-          stopAndClear();
           onCollapse?.();
         }
       }}

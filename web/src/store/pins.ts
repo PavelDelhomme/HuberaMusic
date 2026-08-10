@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { api } from '../api';
+import { api, type Track } from '../api';
+import { useLibrary } from './library';
 
 export type PinRow = {
   id: string;
@@ -111,6 +112,26 @@ export const usePins = create<PinsState>((set, get) => ({
     const pins = dedupePinRows((r.pins || []) as PinRow[]);
     writePinsCache(pins);
     set({ pins, loaded: true });
+    // Épingler ⇒ aussi en bibliothèque (cohérent accès rapide ↔ biblio)
+    try {
+      if (pinType === 'album') {
+        if (!useLibrary.getState().hasAlbum(item.id)) {
+          const saved = await api.saveAlbum(payload as Record<string, unknown>);
+          if (saved.library) useLibrary.getState().applyLibrary(saved.library);
+        }
+      } else if (pinType === 'song' || pinType === 'video' || !item.type) {
+        if (!useLibrary.getState().isInLibrary(item.id)) {
+          await useLibrary.getState().toggleLibrarySong(payload as Track);
+        }
+      } else if (pinType === 'artist') {
+        if (!useLibrary.getState().hasArtist(item.id)) {
+          const saved = await api.saveArtist(payload as Record<string, unknown>);
+          if (saved.library) useLibrary.getState().applyLibrary(saved.library);
+        }
+      }
+    } catch {
+      /* pin OK même si biblio échoue */
+    }
     return 'pinned';
   },
 }));

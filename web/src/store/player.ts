@@ -85,6 +85,11 @@ type PlayerState = {
     },
   ) => Promise<void>;
   playAt: (index: number) => Promise<void>;
+  /**
+   * Clic dans « À suivre » : place le titre juste après le courant puis le lance,
+   * sans marquer les suggestions intermédiaires comme déjà jouées.
+   */
+  playUpcomingInQueue: (index: number) => Promise<void>;
   toggle: () => void;
   next: (opts?: { fromEnded?: boolean }) => Promise<void>;
   prev: () => Promise<void>;
@@ -236,6 +241,8 @@ type PersistedPlayer = {
   shuffle: boolean;
   repeat: RepeatMode;
   progress: number;
+  /** Durée en secondes — pour la barre de progression dès le reload (sans attendre Play). */
+  duration?: number;
   savedAt?: number;
 };
 
@@ -302,6 +309,12 @@ function persistPlayer() {
       s.queueIndex || 0,
       typeof s.userQueueEnd === 'number' ? s.userQueueEnd : (s.queue || []).length,
     );
+    const durationSec =
+      s.duration > 0
+        ? s.duration
+        : s.current
+          ? trackDurationSeconds(s.current) || 0
+          : 0;
     const payload: PersistedPlayer = {
       v: 3,
       current: s.current ? slimTrack(s.current) : null,
@@ -313,6 +326,7 @@ function persistPlayer() {
       shuffle: s.shuffle,
       repeat: s.repeat,
       progress,
+      duration: durationSec > 0 ? durationSec : undefined,
       savedAt: Date.now(),
     };
 
@@ -338,6 +352,7 @@ function persistPlayer() {
         shuffle: s.shuffle,
         repeat: s.repeat,
         progress,
+        duration: durationSec > 0 ? durationSec : undefined,
         savedAt: Date.now(),
       };
       localStorage.setItem(PLAYER_STORAGE_KEY, JSON.stringify(compact));
@@ -426,7 +441,7 @@ function publish() {
 }
 
 async function restoreAudioFromPersisted() {
-  const { audioEl, current, progress, volume } = usePlayer.getState();
+  const { audioEl, current, progress, volume, duration } = usePlayer.getState();
   if (!audioEl || !current || !isPlayable(current)) return;
   // Déjà chargé pour ce titre
   if (audioEl.dataset.trackId === current.id && audioEl.src) return;
@@ -451,10 +466,27 @@ async function restoreAudioFromPersisted() {
       } catch {
         /* ignore */
       }
+      const metaDur = Number.isFinite(audioEl.duration) && audioEl.duration > 0 ? audioEl.duration : 0;
+      if (metaDur > 0 && !(usePlayer.getState().duration > 0)) {
+        usePlayer.getState().setDuration(metaDur);
+      }
+      refreshMediaSession();
     };
+    // Précharge metadata sans play (barre de progression visible tout de suite)
+    try {
+      audioEl.load();
+    } catch {
+      /* ignore */
+    }
     if (audioEl.readyState >= 1) applySeek();
     else audioEl.addEventListener('loadedmetadata', applySeek, { once: true });
+    // Seed durée depuis le track / persist si metadata encore absente
+    if (!(duration > 0)) {
+      const seed = trackDurationSeconds(current);
+      if (seed && seed > 0) usePlayer.getState().setDuration(seed);
+    }
     void usePlayer.getState().loadRelated(current.id);
+    refreshMediaSession();
   } catch (err) {
     console.error('restore playback', err);
   }
@@ -1383,6 +1415,13 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       typeof saved.userQueueEnd === 'number'
         ? Math.min(Math.max(saved.userQueueEnd, queue.length ? queueIndex + 1 : 0), queue.length)
         : queue.length;
+    const progress = typeof saved.progress === 'number' ? saved.progress : 0;
+    const durationSeed =
+      typeof saved.duration === 'number' && saved.duration > 0
+        ? saved.duration
+        : current
+          ? trackDurationSeconds(current) || 0
+          : 0;
     set({
       current,
       queue,
@@ -1394,11 +1433,13 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         typeof saved.volume === 'number' && saved.volume > 0.02 ? saved.volume : 0.9,
       shuffle: Boolean(saved.shuffle),
       repeat: saved.repeat || 'off',
-      progress: typeof saved.progress === 'number' ? saved.progress : 0,
+      progress,
+      duration: durationSeed,
       isPlaying: false,
       hydrated: true,
     });
     await restoreAudioFromPersisted();
+    refreshMediaSession();
   },
 
   playQueue: async (tracks, startIndex = 0, opts) => {
@@ -1611,6 +1652,22 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     }
     publish();
     refreshMediaSession();
+  },
+
+  playUpcomingInQueue: async (index) => {
+    const { queue, queueIndex } = get();
+    if (!queue[index]) return;
+    // Passé / courant → jump classique
+    if (index <= queueIndex) {
+      await get().playAt(index);
+      return;
+    }
+    const dest = queueIndex + 1;
+    if (index !== dest) {
+      get().moveInQueue(index, dest);
+    }
+    // Après move, le titre cliqué est juste après le courant
+    await get().playAt(dest);
   },
 
   toggle: () => {

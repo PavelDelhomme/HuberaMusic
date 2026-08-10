@@ -616,31 +616,31 @@ export function AlbumPage() {
   return (
     <div className="animate-fade-up">
       {/* Top : retour + artiste / type-année */}
-      <div className="mb-4 flex items-center gap-1">
+      <div className="mb-5 flex items-center gap-2">
         <button
           type="button"
           onClick={() => {
             if (window.history.length > 1) window.history.back();
             else navigate('/');
           }}
-          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white transition hover:bg-yt-elevated"
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-white transition hover:bg-yt-elevated"
           aria-label="Retour"
         >
-          <ArrowLeft className="h-7 w-7" />
+          <ArrowLeft className="h-9 w-9" strokeWidth={2.25} />
         </button>
         <div className="min-w-0 flex-1 text-center">
           <button
             type="button"
-            className="block w-full truncate text-base font-semibold text-white hover:underline"
+            className="block w-full truncate font-display text-xl font-bold tracking-tight text-white hover:underline sm:text-2xl"
             onClick={() => {
               if (primaryArtist?.id) navigate(`/artist/${primaryArtist.id}`);
             }}
           >
             {artistLabel}
           </button>
-          <p className="truncate text-sm text-yt-muted">{metaLine}</p>
+          <p className="mt-0.5 truncate text-base font-medium text-yt-muted sm:text-lg">{metaLine}</p>
         </div>
-        <div className="h-12 w-12 shrink-0" aria-hidden />
+        <div className="h-14 w-14 shrink-0" aria-hidden />
       </div>
 
       {/* Vignette centrée */}

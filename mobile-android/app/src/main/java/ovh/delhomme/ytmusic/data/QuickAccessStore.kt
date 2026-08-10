@@ -127,7 +127,23 @@ class QuickAccessStore(private val context: Context) {
         if (api != null) {
             runCatching {
                 if (nowPinned) {
-                    api.addPin(trackToPinBody(track.copy(type = track.type?.takeIf { it != "video" } ?: "song")))
+                    val pinType = track.type?.takeIf { it != "video" && it.isNotBlank() } ?: "song"
+                    api.addPin(trackToPinBody(track.copy(type = pinType)))
+                    // Épingler ⇒ aussi bibliothèque (sans toggle-off si déjà présent)
+                    runCatching {
+                        when (pinType) {
+                            "album" -> api.saveAlbum(track.copy(type = "album"))
+                            "artist" -> api.saveArtist(track.copy(type = "artist"))
+                            else -> {
+                                val already = runCatching {
+                                    api.library().songs.any { it.id == track.id }
+                                }.getOrDefault(false)
+                                if (!already) {
+                                    api.toggleLibrarySong(track.copy(type = "song"))
+                                }
+                            }
+                        }
+                    }
                 } else {
                     api.removePin(track.id)
                 }
