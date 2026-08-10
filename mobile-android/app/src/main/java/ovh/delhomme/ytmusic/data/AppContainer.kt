@@ -13,6 +13,7 @@ import okhttp3.Response
 import okhttp3.Route
 import okhttp3.logging.HttpLoggingInterceptor
 import ovh.delhomme.ytmusic.BuildConfig
+import ovh.delhomme.ytmusic.debug.AppLog
 import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -273,13 +274,14 @@ class AppContainer(context: Context) {
         resolvedApiBase() + "/api/stream/$trackId/url"
 
     /** Ping /api/health sur l’URL courante (ou une URL candidate). */
-    suspend fun probeApiHealth(baseUrl: String? = null): Result<String> {
+    suspend fun probeApiHealth(baseUrl: String? = null, timeoutSec: Long = 8): Result<String> {
         val base = (baseUrl ?: resolvedApiBase()).trimEnd('/')
         return runCatching {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val probeClient = OkHttpClient.Builder()
-                    .connectTimeout(8, TimeUnit.SECONDS)
-                    .readTimeout(8, TimeUnit.SECONDS)
+                    .connectTimeout(timeoutSec, TimeUnit.SECONDS)
+                    .readTimeout(timeoutSec, TimeUnit.SECONDS)
+                    .callTimeout(timeoutSec + 1, TimeUnit.SECONDS)
                     .build()
                 val req = okhttp3.Request.Builder()
                     .url("$base/api/health")
@@ -291,6 +293,32 @@ class AppContainer(context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * Si l’API courante est DEV/LAN et injoignable (hors Wi‑Fi maison, VPS only),
+     * bascule vers la prod publique. Les JWT locaux ne marchent pas sur le VPS → clear session.
+     * @return true si l’URL API a changé.
+     */
+    suspend fun ensureReachableApiOrFallbackToProd(
+        prodUrl: String = "https://ytmusic.delhomme.ovh",
+    ): Boolean {
+        val current = resolvedApiBase()
+        if (apiEnvKind(current) == "prod") {
+            // Prod déjà : ping court — ne change rien si KO (avion / DNS), validateSession gère.
+            return false
+        }
+        val ok = probeApiHealth(current, timeoutSec = 2).isSuccess
+        if (ok) return false
+        val prod = prodUrl.trimEnd('/')
+        if (probeApiHealth(prod, timeoutSec = 4).isFailure) {
+            // Ni LAN ni prod → laisser tel quel (mode dégradé / offline)
+            return false
+        }
+        setApiBaseOverride(prod)
+        tokenStore.clear()
+        AppLog.breadcrumb("api-fallback", "LAN down → $prod (session reset)")
+        return true
     }
 
     /**
