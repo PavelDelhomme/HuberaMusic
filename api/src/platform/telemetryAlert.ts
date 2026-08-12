@@ -1,7 +1,10 @@
 import { sendMail, getAppEnv } from './mail.js';
+import { buildTextPdf } from './textPdf.js';
 
 const THROTTLE_MS = Number(process.env.TELEMETRY_ALERT_THROTTLE_MS || 90_000);
 const lastSent = new Map<string, number>();
+/** Au-delà : corps email résumé + PDF PJ avec dump complet. */
+const INLINE_MAX = Number(process.env.TELEMETRY_ALERT_INLINE_MAX || 10_000);
 
 function alertRecipients(): string {
   const raw =
@@ -31,9 +34,42 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function asRecord(meta: unknown): Record<string, unknown> {
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    return meta as Record<string, unknown>;
+  }
+  return {};
+}
+
+function extractLogs(meta: unknown): string {
+  const m = asRecord(meta);
+  const logs = m.recentLogs;
+  if (typeof logs === 'string' && logs.trim()) return logs;
+  return '';
+}
+
+function extractBreadcrumbs(meta: unknown): string {
+  const m = asRecord(meta);
+  const b = m.breadcrumbs;
+  if (Array.isArray(b)) return b.map((x) => String(x)).join('\n');
+  if (typeof b === 'string') return b;
+  return '';
+}
+
+function metaWithoutHeavy(meta: unknown): string {
+  const m = { ...asRecord(meta) };
+  delete m.recentLogs;
+  delete m.breadcrumbs;
+  try {
+    return JSON.stringify(m, null, 2);
+  } catch {
+    return String(meta);
+  }
+}
+
 /**
  * Email admin sur error/fatal (throttle par fingerprint).
- * Inclut stack + meta + extrait de logs si fourni dans meta.recentLogs.
+ * Inclut stack + breadcrumbs + recentLogs ; si trop gros → PDF en pièce jointe.
  */
 export async function maybeAlertTelemetryError(ev: {
   id: string;
@@ -47,7 +83,7 @@ export async function maybeAlertTelemetryError(ev: {
   userId?: string;
   deviceId?: string;
   meta?: unknown;
-}): Promise<{ sent: boolean; reason?: string }> {
+}): Promise<{ sent: boolean; reason?: string; pdfAttached?: boolean }> {
   const level = String(ev.level || '').toLowerCase();
   if (level !== 'error' && level !== 'fatal') {
     return { sent: false, reason: 'level' };
@@ -74,21 +110,12 @@ export async function maybeAlertTelemetryError(ev: {
   }
 
   const env = ev.env || getAppEnv();
-  const metaStr =
-    ev.meta == null
-      ? ''
-      : typeof ev.meta === 'string'
-        ? ev.meta
-        : (() => {
-            try {
-              return JSON.stringify(ev.meta, null, 2);
-            } catch {
-              return String(ev.meta);
-            }
-          })();
+  const logs = extractLogs(ev.meta);
+  const crumbs = extractBreadcrumbs(ev.meta);
+  const metaLite = metaWithoutHeavy(ev.meta);
+  const stack = (ev.stack || '').trim() || '(aucune stack Throwable — voir logs / breadcrumbs)';
 
-  const subject = `[PLM ${env}] ${level.toUpperCase()} · ${ev.kind} · ${(ev.message || 'erreur').slice(0, 80)}`;
-  const text = [
+  const fullDump = [
     `PLM telemetry alert`,
     `id=${ev.id}`,
     `env=${env} level=${level} kind=${ev.kind}`,
@@ -96,14 +123,45 @@ export async function maybeAlertTelemetryError(ev: {
     `url=${ev.url || '—'}`,
     `ua=${ev.userAgent || '—'}`,
     '',
-    `--- message ---`,
+    '=== MESSAGE ===',
     ev.message || '(vide)',
     '',
-    `--- stack ---`,
-    ev.stack || '(aucune)',
+    '=== STACK / DIAGNOSTIC ===',
+    stack,
     '',
-    `--- meta ---`,
-    metaStr || '(aucune)',
+    '=== BREADCRUMBS ===',
+    crumbs || '(aucun)',
+    '',
+    '=== RECENT LOGS ===',
+    logs || '(aucun)',
+    '',
+    '=== META ===',
+    metaLite || '(aucune)',
+  ].join('\n');
+
+  const heavy = fullDump.length > INLINE_MAX;
+  const subject = `[PLM ${env}] ${level.toUpperCase()} · ${ev.kind} · ${(ev.message || 'erreur').slice(0, 80)}`;
+
+  const textSummary = [
+    `PLM telemetry alert`,
+    `id=${ev.id}`,
+    `env=${env} level=${level} kind=${ev.kind}`,
+    `device=${ev.deviceId || '—'} user=${ev.userId || '—'}`,
+    `url=${ev.url || '—'}`,
+    '',
+    '--- message ---',
+    ev.message || '(vide)',
+    '',
+    '--- stack (extrait) ---',
+    stack.slice(0, 4_000) + (stack.length > 4_000 ? '\n…[tronqué — voir PDF]' : ''),
+    '',
+    '--- breadcrumbs (extrait) ---',
+    (crumbs || '(aucun)').slice(0, 2_000),
+    '',
+    '--- recent logs (extrait) ---',
+    (logs || '(aucun)').slice(-3_000),
+    '',
+    heavy ? '→ Dump complet en pièce jointe PDF.' : '--- meta ---\n' + metaLite,
   ].join('\n');
 
   const html = `
@@ -115,16 +173,57 @@ export async function maybeAlertTelemetryError(ev: {
   url=<code>${esc(ev.url || '—')}</code></p>
   <h3>Message</h3>
   <pre style="white-space:pre-wrap;background:#f4f4f5;padding:12px;border-radius:8px">${esc(ev.message || '(vide)')}</pre>
-  <h3>Stack</h3>
-  <pre style="white-space:pre-wrap;background:#111;color:#fafafa;padding:12px;border-radius:8px;overflow:auto;max-height:480px">${esc(ev.stack || '(aucune)')}</pre>
-  <h3>Meta / logs</h3>
-  <pre style="white-space:pre-wrap;background:#f4f4f5;padding:12px;border-radius:8px;overflow:auto;max-height:640px">${esc(metaStr || '(aucune)')}</pre>
+  <h3>Stack / diagnostic</h3>
+  <pre style="white-space:pre-wrap;background:#111;color:#fafafa;padding:12px;border-radius:8px;overflow:auto;max-height:420px">${esc(stack.slice(0, 8_000))}${stack.length > 8_000 ? esc('\n…[tronqué — PDF]') : ''}</pre>
+  <h3>Breadcrumbs</h3>
+  <pre style="white-space:pre-wrap;background:#f4f4f5;padding:12px;border-radius:8px;overflow:auto;max-height:240px">${esc((crumbs || '(aucun)').slice(0, 4_000))}</pre>
+  <h3>Recent logs</h3>
+  <pre style="white-space:pre-wrap;background:#f4f4f5;padding:12px;border-radius:8px;overflow:auto;max-height:320px">${esc((logs || '(aucun)').slice(-6_000))}</pre>
+  <h3>Meta</h3>
+  <pre style="white-space:pre-wrap;background:#f4f4f5;padding:12px;border-radius:8px;overflow:auto;max-height:240px">${esc(metaLite.slice(0, 4_000))}</pre>
+  ${heavy ? '<p><em>Dump complet joint en PDF.</em></p>' : ''}
 </div>`.trim();
 
+  const attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = [];
+  if (heavy || !ev.stack || logs.length > 2_000) {
+    try {
+      const pdf = buildTextPdf({
+        title: `PLM ${env} · ${level} · ${ev.kind} · ${ev.id}`,
+        sections: [
+          { heading: 'Résumé', body: `message: ${ev.message || '(vide)'}\ndevice: ${ev.deviceId || '—'}\nuser: ${ev.userId || '—'}\nurl: ${ev.url || '—'}\nua: ${ev.userAgent || '—'}` },
+          { heading: 'Stack / diagnostic', body: stack },
+          { heading: 'Breadcrumbs', body: crumbs || '(aucun)' },
+          { heading: 'Recent logs', body: logs || '(aucun)' },
+          { heading: 'Meta', body: metaLite || '(aucune)' },
+        ],
+      });
+      attachments.push({
+        filename: `plm-telemetry-${ev.id.slice(0, 8)}.pdf`,
+        content: pdf,
+        contentType: 'application/pdf',
+      });
+    } catch (err) {
+      console.error('[telemetry-alert] pdf failed', err);
+      attachments.push({
+        filename: `plm-telemetry-${ev.id.slice(0, 8)}.txt`,
+        content: Buffer.from(fullDump, 'utf8'),
+        contentType: 'text/plain; charset=utf-8',
+      });
+    }
+  }
+
   try {
-    await sendMail({ to, subject, html, text });
-    console.info(`[telemetry-alert] sent to=${to} kind=${ev.kind} id=${ev.id}`);
-    return { sent: true };
+    await sendMail({
+      to,
+      subject,
+      html,
+      text: textSummary,
+      attachments,
+    });
+    console.info(
+      `[telemetry-alert] sent to=${to} kind=${ev.kind} id=${ev.id} pdf=${attachments.some((a) => a.contentType === 'application/pdf')}`,
+    );
+    return { sent: true, pdfAttached: attachments.some((a) => a.contentType === 'application/pdf') };
   } catch (err) {
     console.error('[telemetry-alert] mail failed', err);
     return { sent: false, reason: 'mail-failed' };
