@@ -26,16 +26,14 @@ data class AuthUiState(
     val loggedIn: Boolean = false,
     /** Après login mot de passe : proposer d’enregistrer une passkey. */
     val offerPasskey: Boolean = false,
-    /** Bouton « Continuer avec une passkey » (flag appareil local). */
-    val showPasskeyLogin: Boolean = false,
+    /** Toujours true : Bitwarden / GPM peuvent avoir une passkey sans flag local. */
+    val showPasskeyLogin: Boolean = true,
 )
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
     private val prefs = container.sharedPrefs("ytm_passkey")
 
-    private val _state = MutableStateFlow(
-        AuthUiState(showPasskeyLogin = prefs.getBoolean(KEY_READY, false)),
-    )
+    private val _state = MutableStateFlow(AuthUiState())
     val state: StateFlow<AuthUiState> = _state.asStateFlow()
 
     init {

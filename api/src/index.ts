@@ -2,7 +2,7 @@ import { config as loadEnv } from 'dotenv';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { installConsoleTimestamps } from './log.js';
+import { installConsoleTimestamps } from './platform/log.js';
 
 installConsoleTimestamps();
 process.env.DOTENV_CONFIG_QUIET = 'true';
@@ -17,6 +17,7 @@ else loadEnv({ quiet: true });
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import helmet from 'helmet';
 import type { Request, Response, NextFunction } from 'express';
 import { createServer } from 'node:http';
@@ -40,8 +41,8 @@ import {
   getArtistSongs,
   getMoodCategory,
   resetYT,
-} from './yt.js';
-import { identifyAudio } from './identify.js';
+} from './youtube/yt.js';
+import { identifyAudio } from './media/identify.js';
 import {
   getFullLibrary,
   toggleLikeTrack,
@@ -72,12 +73,14 @@ import {
   listDownloads,
   markDownloaded,
   listPlaylists,
+  playlistIdsContainingTrack,
   repairLibraryTrackMeta,
-} from './library.js';
-import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream } from './stream.js';
-import { importByKind, importByQueryOrUrl } from './import.js';
-import { handleOfflineStatus, startOfflineCollection } from './offline.js';
-import { handleImageProxy } from './img.js';
+} from './library/library.js';
+import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream } from './media/stream.js';
+import { streamHeadStats } from './media/streamHeadCache.js';
+import { importByKind, importByQueryOrUrl } from './media/import.js';
+import { handleOfflineStatus, startOfflineCollection } from './library/offline.js';
+import { handleImageProxy } from './media/img.js';
 import {
   deployInfo,
   getApkJob,
@@ -86,18 +89,18 @@ import {
   publishApkBuffer,
   startApkBuild,
   startBuild,
-} from './admin.js';
+} from './platform/admin.js';
 import {
   deployAdminHints,
   getDeployJob,
   startAdminDeploy,
   type DeployMode,
-} from './deployRemote.js';
+} from './platform/deployRemote.js';
 import {
   clearYoutubeCookieHeader,
   saveYoutubeCookieHeader,
   youtubeCookiesStatus,
-} from './youtubeCookies.js';
+} from './youtube/youtubeCookies.js';
 import {
   beginAuthentication,
   beginRegistration,
@@ -107,7 +110,7 @@ import {
   getOrigin,
   getRpID,
   listPasskeys,
-} from './passkeys.js';
+} from './auth/passkeys.js';
 import {
   approveDeviceLogin,
   claimDeviceLogin,
@@ -115,7 +118,7 @@ import {
   inviteDeviceLogin,
   pollDeviceLogin,
   startDeviceLogin,
-} from './deviceLogin.js';
+} from './auth/deviceLogin.js';
 import {
   accountRequired,
   authAllowGuest,
@@ -130,8 +133,8 @@ import {
   signToken,
   syncSeedCredentials,
   verifyToken,
-} from './auth.js';
-import { rateLimit } from './rateLimit.js';
+} from './auth/auth.js';
+import { rateLimit } from './platform/rateLimit.js';
 import {
   addPin,
   addRecoFeedback,
@@ -151,7 +154,7 @@ import {
   savePrefs,
   saveWeights,
   unfollowArtist,
-} from './prefs.js';
+} from './library/prefs.js';
 import {
   exploreReco,
   homeReco,
@@ -163,9 +166,9 @@ import {
   artistSimilarForUser,
   suggestSearch,
   warmCategoryMixes,
-} from './reco.js';
-import { MIX_TARGET } from './mixCache.js';
-import { sendBatteryOptimizationMail } from './batteryReport.js';
+} from './reco/reco.js';
+import { MIX_TARGET } from './library/mixCache.js';
+import { sendBatteryOptimizationMail } from './platform/batteryReport.js';
 import {
   createEmailToken,
   insertTelemetry,
@@ -176,28 +179,28 @@ import {
   rotateRefreshToken,
   revokeRefreshToken,
   telemetryStats,
-} from './platform.js';
-import { sendVerificationEmail, getAppEnv, smtpPublicConfig, testSmtp } from './mail.js';
+} from './platform/platform.js';
+import { sendVerificationEmail, getAppEnv, smtpPublicConfig, testSmtp } from './platform/mail.js';
 import {
   disableTotpForUser,
   enableTotpForUser,
   generateTotpSetup,
-} from './totp.js';
-import './platform.js';
+} from './auth/totp.js';
+import './platform/platform.js';
 import {
   disconnectYtm,
   getYtmAccountPublic,
   saveYtmCookie,
-} from './ytm-account.js';
+} from './youtube/ytm-account.js';
 import {
   clearYtmSession,
   getYtmOauthStatus,
   startYtmDeviceOauth,
   syncYtmLibrary,
-} from './ytm-sync.js';
-import { findUserByEmail, createUser, publicUser, updateUserProfile, findUserById, isAdminUser } from './db.js';
-import { detachSocket, getHubPublic, handleSessionMessage, publishPlaybackState, touchHttpDevice, setActiveDeviceHttp, transferPlaybackHttp } from './sessions.js';
-import type { Track } from './types.js';
+} from './youtube/ytm-sync.js';
+import { findUserByEmail, createUser, publicUser, updateUserProfile, findUserById, isAdminUser } from './library/db.js';
+import { detachSocket, getHubPublic, handleSessionMessage, publishPlaybackState, touchHttpDevice, setActiveDeviceHttp, transferPlaybackHttp } from './auth/sessions.js';
+import type { Track } from './youtube/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..');
@@ -270,6 +273,23 @@ app.use(
     credentials: true,
   }),
 );
+
+/** Gzip JSON (home/search/library/lyrics…) — jamais les streams audio/img/APK. */
+app.use(
+  compression({
+    threshold: 512,
+    level: 4,
+    filter(req, res) {
+      const url = req.originalUrl || req.url || '';
+      if (/^\/api\/stream\/[a-zA-Z0-9_-]{11}(\?|$)/.test(url)) return false;
+      if (url.startsWith('/api/img')) return false;
+      if (url.includes('/apk')) return false;
+      if (url.startsWith('/api/download/') && req.method === 'GET') return false;
+      return compression.filter(req, res);
+    },
+  }),
+);
+
 /** Upload APK binaire — avant express.json pour ne pas consommer le flux. */
 app.use('/api/admin/apk/upload', express.raw({ type: () => true, limit: '120mb' }));
 app.use(express.json({ limit: '6mb' }));
@@ -308,6 +328,8 @@ app.get('/api/health', (_req, res) => {
       maxBitrateHintKbps: ytCookies.configured ? 256 : 160,
       note: 'Stream audio direct (yt-dlp / Innertube). Cookies optionnels — pas de YouTube Premium requis.',
       premiumRequired: false,
+      compression: 'gzip-json',
+      streamHeadCache: streamHeadStats(),
     },
     streamUpstream: resolveStreamUpstream(),
   });
@@ -545,7 +567,7 @@ app.post('/api/auth/resend-verification', authRequired, async (req, res) => {
     }
     const raw = createEmailToken(req.userId!, 'verify');
     await sendVerificationEmail(req.user!.email, req.user!.name, raw);
-    const { appUrl } = await import('./mail.js');
+    const { appUrl } = await import('./platform/mail.js');
     const verifyUrl = `${appUrl()}/verify-email?token=${encodeURIComponent(raw)}`;
     const env = process.env.APP_ENV || 'local';
     res.json({
@@ -643,7 +665,7 @@ app.post(
       perf: b.perf,
     });
     // Fire-and-forget : email admin sur error/fatal (throttle côté telemetryAlert)
-    void import('./telemetryAlert.js')
+    void import('./platform/telemetryAlert.js')
       .then(({ maybeAlertTelemetryError }) =>
         maybeAlertTelemetryError({
           id,
@@ -709,7 +731,7 @@ app.get('/api/auth/passkeys', authRequired, (req, res) => {
   res.json({ passkeys: listPasskeys(req.userId!) });
 });
 
-/** Digital Asset Links — Passkeys / Credential Manager Android */
+/** Digital Asset Links — Passkeys / Credential Manager Android (prod + flavor .dev) */
 app.get('/.well-known/assetlinks.json', (_req, res) => {
   const fps = (process.env.ANDROID_SHA256_FINGERPRINTS || '')
     .split(',')
@@ -719,19 +741,27 @@ app.get('/.well-known/assetlinks.json', (_req, res) => {
     fps.length > 0
       ? fps
       : ['3C:F6:C5:32:1D:A1:51:7E:79:94:0C:9E:25:51:4A:63:9B:2C:44:9E:3E:FF:7D:F7:47:68:76:CB:F6:F4:C1:1F'];
-  res.json([
-    {
+  const packages = new Set(
+    (process.env.ANDROID_PACKAGE_NAMES || process.env.ANDROID_PACKAGE_NAME || 'ovh.delhomme.ytmusic')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  // Flavor debug / Samsung DEV
+  if (packages.has('ovh.delhomme.ytmusic')) packages.add('ovh.delhomme.ytmusic.dev');
+  res.json(
+    [...packages].map((package_name) => ({
       relation: [
         'delegate_permission/common.handle_all_urls',
         'delegate_permission/common.get_login_creds',
       ],
       target: {
         namespace: 'android_app',
-        package_name: process.env.ANDROID_PACKAGE_NAME || 'ovh.delhomme.ytmusic',
+        package_name,
         sha256_cert_fingerprints: fingerprints,
       },
-    },
-  ]);
+    })),
+  );
 });
 
 app.post('/api/auth/passkeys/register/options', authRequired, async (req, res) => {
@@ -1764,9 +1794,25 @@ app.get('/api/stream/:id', (req, res, next) => {
 app.post('/api/download/:id', accountRequired, async (req, res) => {
   try {
     const id = p(req.params.id);
+    // Client mobile a déjà le fichier local : ack rapide sans re-télécharger via yt-dlp
+    if (String(req.query.ack || req.body?.ack || '') === '1') {
+      markDownloaded(req.userId!, id);
+      res.json({ ok: true, ack: true });
+      return;
+    }
     const path = await downloadTrack(id);
     markDownloaded(req.userId!, id, path);
     res.json({ ok: true, path, streamUrl: `/api/stream/${id}` });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+/** Membership playlists pour un titre — prioritaire / rapide (avant affichage sheet). */
+app.get('/api/library/playlists/containing/:trackId', accountRequired, (req, res) => {
+  try {
+    const trackId = p(req.params.trackId);
+    res.json({ playlistIds: playlistIdsContainingTrack(req.userId!, trackId) });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2203,7 +2249,7 @@ process.on('uncaughtException', (err) => {
       stack: err?.stack,
       meta: { code },
     });
-    void import('./telemetryAlert.js').then(({ maybeAlertTelemetryError }) =>
+    void import('./platform/telemetryAlert.js').then(({ maybeAlertTelemetryError }) =>
       maybeAlertTelemetryError({
         id,
         env: getAppEnv(),
@@ -2231,7 +2277,7 @@ process.on('unhandledRejection', (reason) => {
       message: err.message,
       stack: err.stack,
     });
-    void import('./telemetryAlert.js').then(({ maybeAlertTelemetryError }) =>
+    void import('./platform/telemetryAlert.js').then(({ maybeAlertTelemetryError }) =>
       maybeAlertTelemetryError({
         id,
         env: getAppEnv(),

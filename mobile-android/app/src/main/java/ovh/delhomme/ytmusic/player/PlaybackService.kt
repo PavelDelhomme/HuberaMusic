@@ -155,10 +155,62 @@ class PlaybackService : MediaSessionService() {
 
             val localFile = item.localConfiguration?.uri?.scheme == "file"
             val networkish = !localFile && isNetworkOrServerError(error)
+            val dur = exo.duration
+            val pos = exo.currentPosition
+            // Fin de titre souvent signalée comme IO/403/connexion coupée par googlevideo —
+            // ce n’est PAS une panne réseau : avancer proprement, sans toast « connexion perdue ».
+            val nearEnd =
+                !localFile &&
+                    dur > 0L &&
+                    dur != C.TIME_UNSET &&
+                    pos >= 0L &&
+                    (
+                        pos.toDouble() / dur.toDouble() >= 0.88 ||
+                            (dur - pos) in 0L..5_000L
+                    )
+            if (nearEnd) {
+                streamFailStreak.set(0)
+                StreamPrefetcher.markStreamOk()
+                AppLog.i(
+                    "PlaybackService",
+                    "EOS via error (pas une panne réseau) id=$id pos=$pos dur=$dur code=${error.errorCode}",
+                )
+                val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                val end = Holder.userQueueEnd
+                val nextIdx = curIdx + 1
+                if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
+                    exo.playWhenReady = false
+                    runCatching { exo.pause() }
+                    android.os.Handler(mainLooper).post {
+                        android.widget.Toast.makeText(
+                            this@PlaybackService,
+                            "Fin de la file — active « À suivre » pour continuer",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    return
+                }
+                if (nextIdx < exo.mediaItemCount) {
+                    runCatching {
+                        exo.seekTo(nextIdx, 0L)
+                        exo.prepare()
+                        exo.playWhenReady = true
+                        exo.play()
+                        Holder.index = nextIdx
+                    }
+                    warmUpcoming(nextIdx)
+                    enqueueOfflineAhead(nextIdx)
+                    return
+                }
+                // Fin de file Exo → laisser l’UI remplir « À suivre »
+                Holder.onSkipAtEnd?.invoke()
+                return
+            }
+
             val streak = streamFailStreak.incrementAndGet()
             AppLog.w(
                 "PlaybackService",
-                "onPlayerError code=${error.errorCode} network=$networkish local=$localFile streak=$streak id=$id",
+                "onPlayerError code=${error.errorCode} network=$networkish local=$localFile streak=$streak id=$id pos=$pos dur=$dur",
                 error,
             )
             runCatching {
@@ -302,39 +354,49 @@ class PlaybackService : MediaSessionService() {
                     }
                     return
                 }
-                // Encore « online » : glitch / handover — retenter le MÊME titre (pas de skip)
+                // Encore « online » : glitch / URL stream expirée — retenter LE MÊME titre (pas de skip)
                 if (streak <= 4) {
                     val attempt = recoverGen.incrementAndGet()
+                    val resumePos = exo.currentPosition.coerceAtLeast(0L)
                     scope.launch {
                         runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
-                        delay(400L * streak)
+                        // Bust format côté API (URL googlevideo morte / 403)
+                        runCatching {
+                            container?.api?.streamResolveUrl(id)
+                        }
+                        delay(350L * streak)
                         if (attempt != recoverGen.get()) return@launch
                         if (exo.currentMediaItem?.mediaId != id) return@launch
                         runCatching {
-                            val pos = exo.currentPosition.coerceAtLeast(0L)
                             val track = Holder.queue.firstOrNull { it.id == id }
                             val nextItem = if (track != null && container != null) {
-                                mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle)
+                                // remoteStreamUrl = proxy API frais (pas cache Exo empoisonné)
+                                mediaItemFor(
+                                    track,
+                                    { tid -> container.remoteStreamUrl(tid) },
+                                    Holder.queueTitle,
+                                )
                             } else {
                                 item
                             }
-                            exo.setMediaItem(nextItem, pos)
+                            exo.setMediaItem(nextItem, resumePos)
                             exo.prepare()
                             exo.playWhenReady = true
                         }
                     }
+                    // Toast honnête : le device est online — c’est le flux, pas « Wi‑Fi mort »
                     if (streak == 1 || streak == 3) {
                         android.os.Handler(mainLooper).post {
                             android.widget.Toast.makeText(
                                 this@PlaybackService,
-                                "Réseau instable — reprise…",
+                                "Reprise du flux…",
                                 android.widget.Toast.LENGTH_SHORT,
                             ).show()
                         }
                     }
                     return
                 }
-                // Échecs réseau répétés alors que le device se dit en ligne → pause (pas de skip)
+                // Échecs répétés alors que le device se dit en ligne → pause (flux, pas Wi‑Fi)
                 StreamPrefetcher.markStreamDown()
                 StreamPrefetcher.cancelIdle()
                 recoverGen.incrementAndGet()
@@ -351,7 +413,7 @@ class PlaybackService : MediaSessionService() {
                         this@PlaybackService,
                         when {
                             localApi -> "API locale injoignable (port 8787 ?) — ou change de réseau"
-                            else -> "Connexion perdue — vérifie le réseau (Wi‑Fi / données)"
+                            else -> "Flux audio indisponible — réessaie (le Wi‑Fi n’est pas forcément en cause)"
                         },
                         android.widget.Toast.LENGTH_LONG,
                     ).show()

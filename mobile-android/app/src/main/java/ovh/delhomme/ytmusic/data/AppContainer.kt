@@ -48,7 +48,14 @@ class AppContainer(context: Context) {
             offlineStore = offlineStore,
             streamUrl = { id -> remoteStreamUrl(id) },
             ensureToken = { ensureFreshToken() },
-            notifyServer = { id -> runCatching { api.download(id) } },
+            // Ack rapide : le fichier est déjà local — ne pas relancer yt-dlp (~10–20 s)
+            notifyServer = { id -> runCatching { api.download(id, ack = 1) } },
+            warmStream = { id ->
+                runCatching {
+                    val req = okhttp3.Request.Builder().url(warmStreamUrl(id)).get().build()
+                    client.newCall(req).execute().close()
+                }
+            },
         )
     }
     private val apiPrefs = appContext.getSharedPreferences("ytm_api", Context.MODE_PRIVATE)

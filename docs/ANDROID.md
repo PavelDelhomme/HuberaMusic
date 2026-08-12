@@ -49,8 +49,11 @@ Index : [`TESTS.md`](../TESTS.md) · [`TESTING.md`](./TESTING.md).
 ## Auth
 
 - Email / mot de passe préremplis depuis `.env` (`SEED_EMAIL` / `SEED_PASSWORD`)
-- Passkeys via **Credential Manager** (Biblio → Enregistrer une passkey)
-- Asset links : `GET /.well-known/assetlinks.json`
+- Passkeys via **Credential Manager** (Bitwarden, Google Password Manager, empreinte appareil)
+  - Login : bouton **Continuer avec une passkey** toujours visible
+  - Enregistrement : Compte → Enregistrer une passkey (feuille système → choisir Bitwarden)
+  - Sur Android : activer Bitwarden comme fournisseur de passkeys (Réglages → Mots de passe / comptes)
+- Asset links : `GET /.well-known/assetlinks.json` (packages `ovh.delhomme.ytmusic` + `.dev`)
 
 ## Legacy Capacitor
 

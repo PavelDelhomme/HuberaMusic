@@ -1,20 +1,20 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
-import { Layout } from './components/Layout';
-import { HomePage } from './pages/HomePage';
-import { ExplorePage } from './pages/ExplorePage';
-import { SearchPage } from './pages/SearchPage';
-import { LibraryPage } from './pages/LibraryPage';
-import { ArtistPage, ArtistSongsPage, AlbumPage, PlaylistPage } from './pages/DetailPages';
-import { MoodPage } from './pages/MoodPage';
-import { LocalPlaylistPage } from './pages/LocalPlaylistPage';
-import { MixPage } from './pages/MixPage';
-import { ImportPage } from './pages/ImportPage';
-import { OfflinePage } from './pages/OfflinePage';
-import { TvPage } from './pages/TvPage';
-import { ProfilePage } from './pages/ProfilePage';
-import { AdminPage } from './pages/AdminPage';
-import { VerifyEmailPage } from './pages/VerifyEmailPage';
-import { LoginDevicePage } from './pages/LoginDevicePage';
+import { Layout } from './components/layout/Layout';
+import { HomePage } from './pages/browse/HomePage';
+import { ExplorePage } from './pages/browse/ExplorePage';
+import { SearchPage } from './pages/browse/SearchPage';
+import { LibraryPage } from './pages/library/LibraryPage';
+import { ArtistPage, ArtistSongsPage, AlbumPage, PlaylistPage } from './pages/detail/DetailPages';
+import { MoodPage } from './pages/browse/MoodPage';
+import { LocalPlaylistPage } from './pages/library/LocalPlaylistPage';
+import { MixPage } from './pages/browse/MixPage';
+import { ImportPage } from './pages/library/ImportPage';
+import { OfflinePage } from './pages/library/OfflinePage';
+import { TvPage } from './pages/account/TvPage';
+import { ProfilePage } from './pages/account/ProfilePage';
+import { AdminPage } from './pages/account/AdminPage';
+import { VerifyEmailPage } from './pages/account/VerifyEmailPage';
+import { LoginDevicePage } from './pages/account/LoginDevicePage';
 
 export default function App() {
   return (
