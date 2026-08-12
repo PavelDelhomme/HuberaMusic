@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -111,6 +112,12 @@ class PlayerController(
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
             syncFrom(player)
+            if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+                (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
+                    player.playbackState == Player.STATE_READY)
+            ) {
+                ensureAutoplayAhead()
+            }
         }
     }
 
@@ -154,6 +161,7 @@ class PlayerController(
                         if (!auto) c.pause() else c.play()
                         syncFrom(c)
                     }
+                    ensureAutoplayAhead()
                 }
             }
         }, MoreExecutors.directExecutor())
@@ -209,6 +217,7 @@ class PlayerController(
         val c = controller
         if (c != null) {
             playNow(c, tracks, startIndex)
+            ensureAutoplayAhead()
         } else {
             pending = tracks to startIndex
             pendingSeekMs = 0L
@@ -218,6 +227,10 @@ class PlayerController(
                 exo.playTracks(streamUrl, tracks, startIndex)
                 applyRepeatShuffle(exo)
                 syncFrom(exo)
+            }
+            scope.launch {
+                delay(700)
+                ensureAutoplayAhead()
             }
         }
     }
@@ -259,7 +272,7 @@ class PlayerController(
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
         val extra = tracks.filter { it.isPlayable() }
         if (extra.isEmpty()) return
-        val c = player() ?: return
+        val c = player() ?: PlaybackService.Holder.player ?: return
         val queue = PlaybackService.Holder.queue.toMutableList()
         val existing = queue.map { it.id }.toHashSet()
         // Titres déjà passés dans la file (avant l’index) → pas de remise en « À suivre »
@@ -281,6 +294,35 @@ class PlayerController(
         toAdd.forEach { c.addMediaItem(mediaItem(it)) }
         warmAround(queue, c.currentMediaItemIndex.coerceAtLeast(0))
         syncFrom(c)
+    }
+
+    /**
+     * Précharge « À suivre » dès qu’il reste peu de titres — même sans ouvrir le plein écran.
+     * Sans ça, un seul titre (ex. Welcome to the Internet) s’arrête net à la fin.
+     */
+    fun ensureAutoplayAhead() {
+        if (!autoplaySuggestions) return
+        if (fillJob?.isActive == true) return
+        val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
+        if (isPrecomputedMixSource(sourceKind, remainingUser)) return
+        val remaining = (PlaybackService.Holder.queue.size - _state.value.queueIndex - 1)
+            .coerceAtLeast(0)
+        if (remaining >= 6) return
+        val seed = _state.value.track?.id
+            ?: PlaybackService.Holder.queue.getOrNull(_state.value.queueIndex)?.id
+            ?: return
+        val fetcher = autoFillFetcher ?: return
+        fillJob = scope.launch {
+            try {
+                _state.value = _state.value.copy(autoFillBusy = true)
+                val tracks = runCatching { fetcher(seed) }.getOrDefault(emptyList())
+                if (tracks.isNotEmpty() && _state.value.track?.id == seed) {
+                    appendAutoTracks(tracks, forSeedId = seed)
+                }
+            } finally {
+                _state.value = _state.value.copy(autoFillBusy = false)
+            }
+        }
     }
 
     /** Coupe la zone auto (après userQueueEnd) — nouveau seed / change de monde. */
