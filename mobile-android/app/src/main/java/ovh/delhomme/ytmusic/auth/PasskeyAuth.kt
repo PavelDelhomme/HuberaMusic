@@ -7,6 +7,11 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
+import androidx.credentials.exceptions.CreateCredentialCancellationException
+import androidx.credentials.exceptions.CreateCredentialException
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -18,6 +23,7 @@ import ovh.delhomme.ytmusic.BuildConfig
 
 /**
  * Passkeys via Android Credential Manager (pas de WebView).
+ * Compatible biométrie appareil **et** gestionnaires (Bitwarden, Google Password Manager…).
  * L’origine attendue côté API est WEBAUTHN_ANDROID_ORIGINS (apk-key-hash).
  */
 class PasskeyAuth(private val context: Context, private val http: OkHttpClient) {
@@ -33,10 +39,14 @@ class PasskeyAuth(private val context: Context, private val http: OkHttpClient) 
         val options = withContext(Dispatchers.IO) {
             postJson("/api/auth/passkeys/login/options", optionsBody, authed = false)
         }
-        val request = GetCredentialRequest(
-            listOf(GetPublicKeyCredentialOption(options.toString())),
-        )
-        val result = cm.getCredential(context, request)
+        val request = GetCredentialRequest.Builder()
+            .addCredentialOption(GetPublicKeyCredentialOption(options.toString()))
+            .build()
+        val result = try {
+            cm.getCredential(context, request)
+        } catch (e: Exception) {
+            throw Exception(friendlyGetError(e), e)
+        }
         val cred = result.credential as? PublicKeyCredential
             ?: error("Réponse passkey invalide")
         val responseJson = JSONObject(cred.authenticationResponseJson)
@@ -61,8 +71,16 @@ class PasskeyAuth(private val context: Context, private val http: OkHttpClient) 
                 bearer = accessToken,
             )
         }
-        val createReq = CreatePublicKeyCredentialRequest(options.toString())
-        val result = cm.createCredential(context, createReq)
+        val createReq = CreatePublicKeyCredentialRequest(
+            /* requestJson = */ options.toString(),
+            /* clientDataHash = */ null,
+            /* preferImmediatelyAvailableCredentials = */ false,
+        )
+        val result = try {
+            cm.createCredential(context, createReq)
+        } catch (e: Exception) {
+            throw Exception(friendlyCreateError(e), e)
+        }
         val response = result as? CreatePublicKeyCredentialResponse
             ?: error("Création passkey invalide")
         val responseJson = JSONObject(response.registrationResponseJson)
@@ -76,6 +94,33 @@ class PasskeyAuth(private val context: Context, private val http: OkHttpClient) 
                 authed = true,
                 bearer = accessToken,
             )
+        }
+    }
+
+    private fun friendlyGetError(e: Throwable): String {
+        return when (e) {
+            is NoCredentialException ->
+                "Aucune passkey trouvée. Active Bitwarden (ou GPM) comme fournisseur de passkeys " +
+                    "dans Réglages Android, ou connecte-toi au mot de passe puis enregistre-en une."
+            is GetCredentialCancellationException ->
+                "Connexion passkey annulée."
+            is GetCredentialException ->
+                e.errorMessage?.toString()?.ifBlank { null }
+                    ?: "Échec passkey — vérifie Bitwarden / empreinte."
+            else -> e.message?.ifBlank { null }
+                ?: "Échec connexion passkey."
+        }
+    }
+
+    private fun friendlyCreateError(e: Throwable): String {
+        return when (e) {
+            is CreateCredentialCancellationException ->
+                "Enregistrement passkey annulé."
+            is CreateCredentialException ->
+                e.errorMessage?.toString()?.ifBlank { null }
+                    ?: "Échec enregistrement — choisis Bitwarden ou l’empreinte dans la feuille système."
+            else -> e.message?.ifBlank { null }
+                ?: "Échec enregistrement passkey."
         }
     }
 

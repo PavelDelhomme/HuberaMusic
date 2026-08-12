@@ -183,7 +183,7 @@ Chaque session a des **sous-catégories** : Auth, Batterie, Pages/scroll, Lecteu
 2. Redeploy web pour **E1/B4.16** (compteur drawer) + revalider PROD  
 3. Continuer backlog B1.8, B2.*, B5, B6  
 
-**Smoke charge** : `node scripts/smoke-load-test.mjs both` (rapport `logs/smoke-*.json`).
+**Smoke charge** : `node scripts/test/smoke-load-test.mjs both` (rapport `logs/smoke-*.json`).
 
 ---
 

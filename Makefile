@@ -80,23 +80,23 @@ install: ## Installe les dépendances (workspaces api + web)
 	cd $(ROOT) && npm install
 
 seed-users: ## Crée/maj comptes SEED_* (SEED_PASSWORD dans .env)
-	cd $(ROOT) && node scripts/seed-users.mjs
+	cd $(ROOT) && node scripts/dev/seed-users.mjs
 
 test-verify-email: ## Teste validation email (API locale)
-	cd $(ROOT) && node scripts/test-verify-email.mjs
+	cd $(ROOT) && node scripts/test/test-verify-email.mjs
 
 test-search: ## Batterie tests recherche (ranking + live YouTube)
-	cd $(ROOT) && npx tsx scripts/test-search.mjs
+	cd $(ROOT) && npx tsx scripts/test/test-search.mjs
 
 env-check: ## Vérifie que .env et .env.example ont les mêmes clés
-	@chmod +x $(ROOT)/scripts/env-check.sh
-	@bash $(ROOT)/scripts/env-check.sh
+	@chmod +x $(ROOT)/scripts/dev/env-check.sh
+	@bash $(ROOT)/scripts/dev/env-check.sh
 
 dev: ## API (ensure) + Vite au premier plan — logs ytmusic-dev.log
-	@chmod +x $(ROOT)/scripts/ensure-api.sh $(ROOT)/scripts/kill-dev.sh $(ROOT)/scripts/env-check.sh
-	@bash $(ROOT)/scripts/env-check.sh || true
-	@FORCE_RESTART=0 bash $(ROOT)/scripts/ensure-api.sh
-	@bash $(ROOT)/scripts/kill-dev.sh vite-only
+	@chmod +x $(ROOT)/scripts/dev/ensure-api.sh $(ROOT)/scripts/dev/kill-dev.sh $(ROOT)/scripts/dev/env-check.sh
+	@bash $(ROOT)/scripts/dev/env-check.sh || true
+	@FORCE_RESTART=0 bash $(ROOT)/scripts/dev/ensure-api.sh
+	@bash $(ROOT)/scripts/dev/kill-dev.sh vite-only
 	@mkdir -p $(ROOT)/logs
 	@printf "$(C_YELL)📝 Logs → $(ROOT)/logs/ytmusic-dev.log  ·  suivi : make logs$(C_RESET)\n"
 	@echo "   API :8787 (ensure-api) + Vite :5173 uniquement"
@@ -104,18 +104,18 @@ dev: ## API (ensure) + Vite au premier plan — logs ytmusic-dev.log
 	cd $(ROOT) && npm run dev:web 2>&1 | tee -a $(ROOT)/logs/ytmusic-dev.log
 
 up: ## API + Vite en fond (setsid) — terminal libre
-	@chmod +x $(ROOT)/scripts/dev-up.sh
-	@bash $(ROOT)/scripts/dev-up.sh
+	@chmod +x $(ROOT)/scripts/dev/dev-up.sh
+	@bash $(ROOT)/scripts/dev/dev-up.sh
 	@printf '%s\n' up > "$(ROOT)/.ytmusic-stack-mode" 2>/dev/null || true
 
 up-full: ## Reset propre + API + Vite + status (+ seed optionnel)
 	@printf "$(C_BOLD)🚀 up-full PLM$(C_RESET)\n"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-	@chmod +x $(ROOT)/scripts/kill-dev.sh $(ROOT)/scripts/dev-up.sh $(ROOT)/scripts/env-check.sh
-	@bash $(ROOT)/scripts/env-check.sh || true
-	@bash $(ROOT)/scripts/kill-dev.sh || true
+	@chmod +x $(ROOT)/scripts/dev/kill-dev.sh $(ROOT)/scripts/dev/dev-up.sh $(ROOT)/scripts/dev/env-check.sh
+	@bash $(ROOT)/scripts/dev/env-check.sh || true
+	@bash $(ROOT)/scripts/dev/kill-dev.sh || true
 	@mkdir -p $(ROOT)/logs $(ROOT)/data
-	@bash $(ROOT)/scripts/dev-up.sh
+	@bash $(ROOT)/scripts/dev/dev-up.sh
 	@printf '%s\n' up-full > "$(ROOT)/.ytmusic-stack-mode" 2>/dev/null || true
 	@echo ""
 	@$(MAKE) --no-print-directory status
@@ -124,8 +124,8 @@ up-full: ## Reset propre + API + Vite + status (+ seed optionnel)
 	@printf "$(C_DIM)   make logs · make android · make db-status$(C_RESET)\n"
 
 down: ## Arrête API + Vite locaux (données SQLite intactes)
-	@chmod +x $(ROOT)/scripts/kill-dev.sh
-	@bash $(ROOT)/scripts/kill-dev.sh
+	@chmod +x $(ROOT)/scripts/dev/kill-dev.sh
+	@bash $(ROOT)/scripts/dev/kill-dev.sh
 	@rm -f "$(ROOT)/.ytmusic-stack-mode"
 	@printf "$(C_GREEN)✅ Stack locale arrêtée$(C_RESET) (data/ytmusic.db conservée)\n"
 
@@ -138,21 +138,21 @@ restart: ## down + up-full
 	@$(MAKE) --no-print-directory up-full
 
 dev-server: ## API seule — réutilise :8787 si déjà UP
-	@chmod +x $(ROOT)/scripts/ensure-api.sh
-	@bash $(ROOT)/scripts/ensure-api.sh
+	@chmod +x $(ROOT)/scripts/dev/ensure-api.sh
+	@bash $(ROOT)/scripts/dev/ensure-api.sh
 	@echo "   Relancer de force : make restart-api · logs : make logs"
 
 ensure-api: ## Garantit l’API :8787 (réutilise si UP)
-	@chmod +x $(ROOT)/scripts/ensure-api.sh
-	@bash $(ROOT)/scripts/ensure-api.sh
+	@chmod +x $(ROOT)/scripts/dev/ensure-api.sh
+	@bash $(ROOT)/scripts/dev/ensure-api.sh
 
 restart-api: ## Tue :8787 puis relance l’API en fond
-	@chmod +x $(ROOT)/scripts/ensure-api.sh
-	@FORCE_RESTART=1 bash $(ROOT)/scripts/ensure-api.sh
+	@chmod +x $(ROOT)/scripts/dev/ensure-api.sh
+	@FORCE_RESTART=1 bash $(ROOT)/scripts/dev/ensure-api.sh
 
 dev-web: ## Frontend Vite seul (port 5173)
-	@chmod +x $(ROOT)/scripts/kill-dev.sh
-	@bash $(ROOT)/scripts/kill-dev.sh vite-only
+	@chmod +x $(ROOT)/scripts/dev/kill-dev.sh
+	@bash $(ROOT)/scripts/dev/kill-dev.sh vite-only
 	@mkdir -p $(ROOT)/logs
 	cd $(ROOT) && npm run dev:web 2>&1 | tee -a $(ROOT)/logs/ytmusic-web.log
 
@@ -177,7 +177,7 @@ icons: ## Régénère les icônes PWA (PNG) depuis favicon.svg
 	  rsvg-convert -w 192 -h 192 favicon.svg -o icon-192.png && \
 	  rsvg-convert -w 512 -h 512 favicon.svg -o icon-512.png && \
 	  rsvg-convert -w 180 -h 180 favicon.svg -o apple-touch-icon.png && \
-	  python3 $(ROOT)/scripts/make-maskable-icons.py
+	  python3 $(ROOT)/scripts/dev/make-maskable-icons.py
 	@echo "Icônes OK dans web/public/"
 
 docker-dev: ## Conteneurs locaux (+ Mailhog :8025)
@@ -217,50 +217,50 @@ mobile-qr: ## Liste les URLs d’accès LAN pour le mobile
 	@echo "Préféré USB : make mobile-install-adb DEVICE=$(DEVICE)"
 
 mobile-adb: ## Ouvre PLM sur le device (adb reverse + Chrome)
-	@chmod +x $(ROOT)/scripts/mobile-install-adb.sh
-	@DEVICE="$(DEVICE)" bash $(ROOT)/scripts/mobile-install-adb.sh open
+	@chmod +x $(ROOT)/scripts/android/mobile-install-adb.sh
+	@DEVICE="$(DEVICE)" bash $(ROOT)/scripts/android/mobile-install-adb.sh open
 
 mobile-install-adb: ## Installe la PWA sur le device (reverse + Chrome ?install=1)
-	@chmod +x $(ROOT)/scripts/mobile-install-adb.sh
-	@DEVICE="$(DEVICE)" bash $(ROOT)/scripts/mobile-install-adb.sh install
+	@chmod +x $(ROOT)/scripts/android/mobile-install-adb.sh
+	@DEVICE="$(DEVICE)" bash $(ROOT)/scripts/android/mobile-install-adb.sh install
 
 android-sync: ## Sync Capacitor legacy (sans rebuild APK)
-	@chmod +x $(ROOT)/scripts/android-install.sh
-	@DEVICE="$(DEVICE)" VITE_API_ORIGIN="$(VITE_API_ORIGIN)" bash $(ROOT)/scripts/android-install.sh sync
+	@chmod +x $(ROOT)/scripts/android/android-install.sh
+	@DEVICE="$(DEVICE)" VITE_API_ORIGIN="$(VITE_API_ORIGIN)" bash $(ROOT)/scripts/android/android-install.sh sync
 
 android-build: ## Compile l’APK Kotlin (Compose / Media3)
-	@chmod +x $(ROOT)/scripts/kotlin-android-install.sh
-	@DEVICE="$(DEVICE)" API_BASE_URL="$(or $(API_BASE_URL),$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787))" bash $(ROOT)/scripts/kotlin-android-install.sh build
+	@chmod +x $(ROOT)/scripts/android/kotlin-android-install.sh
+	@DEVICE="$(DEVICE)" API_BASE_URL="$(or $(API_BASE_URL),$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787))" bash $(ROOT)/scripts/android/kotlin-android-install.sh build
 
 android-install: ## Build + installe l’APK Kotlin (ADB) — ensure-api
-	@chmod +x $(ROOT)/scripts/kotlin-android-install.sh $(ROOT)/scripts/ensure-api.sh
-	@bash $(ROOT)/scripts/ensure-api.sh
-	@DEVICE="$(DEVICE)" API_BASE_URL="$(or $(API_BASE_URL),$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787))" bash $(ROOT)/scripts/kotlin-android-install.sh install
+	@chmod +x $(ROOT)/scripts/android/kotlin-android-install.sh $(ROOT)/scripts/dev/ensure-api.sh
+	@bash $(ROOT)/scripts/dev/ensure-api.sh
+	@DEVICE="$(DEVICE)" API_BASE_URL="$(or $(API_BASE_URL),$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787))" bash $(ROOT)/scripts/android/kotlin-android-install.sh install
 
 android-logs: ## Pull crashes + journal APK → logs/android/ (dev)
-	@chmod +x $(ROOT)/scripts/android-pull-logs.sh
-	@DEVICE="$(DEVICE)" bash $(ROOT)/scripts/android-pull-logs.sh
+	@chmod +x $(ROOT)/scripts/android/android-pull-logs.sh
+	@DEVICE="$(DEVICE)" bash $(ROOT)/scripts/android/android-pull-logs.sh
 
 android-publish: ## Compile APK + publie pour /api/deploy/apk (Admin QR)
-	@chmod +x $(ROOT)/scripts/android-publish-apk.sh
-	@API_BASE_URL="$(or $(API_BASE_URL),)" bash $(ROOT)/scripts/android-publish-apk.sh
+	@chmod +x $(ROOT)/scripts/android/android-publish-apk.sh
+	@API_BASE_URL="$(or $(API_BASE_URL),)" bash $(ROOT)/scripts/android/android-publish-apk.sh
 
 android-upload-apk: ## Build APK prod + upload vers Portainer (Admin QR en ligne)
-	@chmod +x $(ROOT)/scripts/publish-apk-remote.sh $(ROOT)/scripts/android-publish-apk.sh
+	@chmod +x $(ROOT)/scripts/android/publish-apk-remote.sh $(ROOT)/scripts/android/android-publish-apk.sh
 	@API_BASE_URL="$(or $(API_BASE_URL),$(PUBLIC_API_URL))" \
 	 DEPLOY_URL="$(or $(DEPLOY_URL),$(or $(PUBLIC_API_URL),$(APP_URL)))" \
-	 bash $(ROOT)/scripts/publish-apk-remote.sh
+	 bash $(ROOT)/scripts/android/publish-apk-remote.sh
 
 android: ## Raccourci : ensure-api + APK Kotlin native
 	@$(MAKE) android-install DEVICE="$(DEVICE)" API_BASE_URL="$(or $(API_BASE_URL),$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787))"
 
 adb-fix: ## Répare ADB unauthorized (diagnostic + reset USB)
-	@chmod +x $(ROOT)/scripts/adb-fix-auth.sh
-	@bash $(ROOT)/scripts/adb-fix-auth.sh
+	@chmod +x $(ROOT)/scripts/adb/adb-fix-auth.sh
+	@bash $(ROOT)/scripts/adb/adb-fix-auth.sh
 
 adb-fix-keys: ## Régénère clés ADB (après révocation USB sur le téléphone)
-	@chmod +x $(ROOT)/scripts/adb-fix-auth.sh
-	@bash $(ROOT)/scripts/adb-fix-auth.sh --new-keys
+	@chmod +x $(ROOT)/scripts/adb/adb-fix-auth.sh
+	@bash $(ROOT)/scripts/adb/adb-fix-auth.sh --new-keys
 
 # ---------------------------------------------------------------------------
 # ADB Wi‑Fi + batterie réelle (Samsung + Nothing, hors charge USB)
@@ -277,83 +277,83 @@ adb-fix-keys: ## Régénère clés ADB (après révocation USB sur le téléphon
 #   B) Ou : make adb-wifi-pair  (Débogage sans fil + code)
 
 adb-wifi-doctor: ## Vérifie Samsung + Nothing (ignore le reste / virtuel)
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@bash $(ROOT)/scripts/adb-wifi.sh doctor || true
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb/adb-wifi.sh doctor || true
 
 adb-wifi-ensure: ## Attend/connecte Samsung + Nothing en ADB Wi‑Fi
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@INCLUDE_NOTHING="$(or $(INCLUDE_NOTHING),1)" bash $(ROOT)/scripts/adb-wifi.sh ensure
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
+	@INCLUDE_NOTHING="$(or $(INCLUDE_NOTHING),1)" bash $(ROOT)/scripts/adb/adb-wifi.sh ensure
 
 adb-both: ## Rapide : reconnecte Samsung (DEV) + Nothing (PROD) en ADB
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@INCLUDE_NOTHING=1 MIN_DEVICES=1 bash $(ROOT)/scripts/adb-wifi.sh ensure
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
+	@INCLUDE_NOTHING=1 MIN_DEVICES=1 bash $(ROOT)/scripts/adb/adb-wifi.sh ensure
 
 adb-devices: ## Alias de make adb-both (liste + reconnect)
 	@$(MAKE) adb-both
 
 adb-wifi-pair: ## Associe un téléphone via Débogage sans fil (IP:port + code)
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@bash $(ROOT)/scripts/adb-wifi.sh pair
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb/adb-wifi.sh pair
 
 adb-wifi: ## USB → active ADB tcpip + enregistre IPs Wi‑Fi (1+ téléphones)
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
 	@if [ -n "$(DEVICES)" ]; then \
-	  bash $(ROOT)/scripts/adb-wifi.sh enable $$(echo "$(DEVICES)" | tr ',' ' '); \
+	  bash $(ROOT)/scripts/adb/adb-wifi.sh enable $$(echo "$(DEVICES)" | tr ',' ' '); \
 	else \
-	  bash $(ROOT)/scripts/adb-wifi.sh enable; \
+	  bash $(ROOT)/scripts/adb/adb-wifi.sh enable; \
 	fi
 
 adb-wifi-connect: ## Connecte ADB en Wi‑Fi (après make adb-wifi)
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@bash $(ROOT)/scripts/adb-wifi.sh connect
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb/adb-wifi.sh connect
 
 adb-wifi-status: ## Alias doctor (Samsung + Nothing)
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@bash $(ROOT)/scripts/adb-wifi.sh doctor || true
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb/adb-wifi.sh doctor || true
 
 adb-wifi-wait-unplug: ## Attend que Samsung + Nothing soient hors charge USB/AC
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@bash $(ROOT)/scripts/adb-wifi.sh wait-unplug
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb/adb-wifi.sh wait-unplug
 
 adb-wifi-disconnect: ## Coupe les sessions ADB Wi‑Fi
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@bash $(ROOT)/scripts/adb-wifi.sh disconnect
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
+	@bash $(ROOT)/scripts/adb/adb-wifi.sh disconnect
 
 battery-go: ## ALL-IN-ONE : ≥1 Wi‑Fi → test → rapport (USAGE=0 recommandé pour mesure calme)
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh $(ROOT)/scripts/battery-session.sh
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh $(ROOT)/scripts/battery/battery-session.sh
 	@DURATION="$(DURATION)" SAMPLE_SECS="$(SAMPLE_SECS)" MIN_DEVICES="$(or $(MIN_DEVICES),1)" \
 	  USAGE="$(or $(USAGE),0)" \
-	  bash $(ROOT)/scripts/adb-wifi.sh go
+	  bash $(ROOT)/scripts/adb/adb-wifi.sh go
 
 battery-go-calm: ## Test batterie calme : USAGE=0 + écran OFF + mail auto
-	@chmod +x $(ROOT)/scripts/adb-wifi.sh $(ROOT)/scripts/battery-session.sh $(ROOT)/scripts/battery-mail-report.mjs
+	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh $(ROOT)/scripts/battery/battery-session.sh $(ROOT)/scripts/battery/battery-mail-report.mjs
 	@echo ""
 	@echo "  Lecture calme 30 min — écran OFF, pas de stim ADB, puis email rapport"
 	@echo "  Prérequis : make adb-wifi-doctor (Nothing Wi‑Fi OK)"
 	@echo ""
 	@DURATION="$(or $(DURATION),1800)" SAMPLE_SECS="$(or $(SAMPLE_SECS),15)" MIN_DEVICES="$(or $(MIN_DEVICES),1)" \
-	  USAGE=0 bash $(ROOT)/scripts/adb-wifi.sh go
-	@cd $(ROOT) && node --env-file=.env scripts/battery-mail-report.mjs || true
+	  USAGE=0 bash $(ROOT)/scripts/adb/adb-wifi.sh go
+	@cd $(ROOT) && node --env-file=.env scripts/battery/battery-mail-report.mjs || true
 	@$(MAKE) battery-report
 
 battery-suite: ## 3 phases (~45 min) : écran OFF / ON / mixte + lecture vérifiée + rapport
-	@chmod +x $(ROOT)/scripts/battery-suite.sh $(ROOT)/scripts/battery-mail-report.mjs
+	@chmod +x $(ROOT)/scripts/battery/battery-suite.sh $(ROOT)/scripts/battery/battery-mail-report.mjs
 	@echo ""
 	@echo "  Suite batterie : screen_off → screen_on → mixed (DURATION_PHASE=$(or $(DURATION_PHASE),900)s chacune)"
 	@echo "  Débranche le téléphone. Lance une lecture si possible."
 	@echo ""
 	@DURATION_PHASE="$(or $(DURATION_PHASE),900)" SAMPLE_SECS="$(or $(SAMPLE_SECS),15)" MAIL="$(or $(MAIL),1)" \
-	  bash $(ROOT)/scripts/battery-suite.sh
+	  bash $(ROOT)/scripts/battery/battery-suite.sh
 
 battery-test: ## Session batterie 30 min (Wi‑Fi ADB, débranché) + logs serveur DEV
-	@chmod +x $(ROOT)/scripts/battery-session.sh $(ROOT)/scripts/adb-wifi.sh
+	@chmod +x $(ROOT)/scripts/battery/battery-session.sh $(ROOT)/scripts/adb/adb-wifi.sh
 	@echo ""
 	@echo "  Astuce : préfère « make battery-go » (vérifie les 2 appareils avant)."
 	@echo "  Durée=$(DURATION)s  sample=$(SAMPLE_SECS)s  sortie=logs/battery-session/"
 	@echo ""
 	@DURATION="$(DURATION)" SAMPLE_SECS="$(SAMPLE_SECS)" DEVICES="$(DEVICES)" \
 	  REQUIRE_UNPLUGGED="$(or $(REQUIRE_UNPLUGGED),1)" USAGE="$(or $(USAGE),1)" \
-	  bash $(ROOT)/scripts/battery-session.sh
+	  bash $(ROOT)/scripts/battery/battery-session.sh
 
 battery-test-short: ## Idem battery-test mais 3 min (smoke)
 	@$(MAKE) battery-test DURATION=180 SAMPLE_SECS=10 DEVICES="$(DEVICES)" REQUIRE_UNPLUGGED="$(or $(REQUIRE_UNPLUGGED),1)"
@@ -368,11 +368,11 @@ battery-report: ## Affiche le dernier rapport batterie
 	fi
 
 battery-report-mail: ## Email le dernier rapport batterie → BATTERY_REPORT_TO / SEED_EMAIL (+ zip)
-	@chmod +x $(ROOT)/scripts/battery-mail-report.mjs
-	@cd $(ROOT) && node --env-file=.env scripts/battery-mail-report.mjs
+	@chmod +x $(ROOT)/scripts/battery/battery-mail-report.mjs
+	@cd $(ROOT) && node --env-file=.env scripts/battery/battery-mail-report.mjs
 
 android-prod: ## APK → API prod (PUBLIC_API_URL / DEPLOY_URL / ANDROID_API_BASE_URL) + ADB + publish
-	@chmod +x $(ROOT)/scripts/kotlin-android-install.sh $(ROOT)/scripts/android-publish-apk.sh
+	@chmod +x $(ROOT)/scripts/android/kotlin-android-install.sh $(ROOT)/scripts/android/android-publish-apk.sh
 	@API_URL="$$( \
 	  if [ -n "$(API_BASE_URL)" ]; then echo "$(API_BASE_URL)"; \
 	  else \
@@ -389,26 +389,26 @@ android-prod: ## APK → API prod (PUBLIC_API_URL / DEPLOY_URL / ANDROID_API_BAS
 	  fi)"; \
 	 if [ -z "$$API_URL" ]; then echo "❌ Définis PUBLIC_API_URL ou DEPLOY_URL dans .env" >&2; exit 1; fi; \
 	 echo "==> android-prod API=$$API_URL"; \
-	 DEVICE="$(DEVICE)" API_BASE_URL="$$API_URL" bash $(ROOT)/scripts/kotlin-android-install.sh install; \
-	 API_BASE_URL="$$API_URL" bash $(ROOT)/scripts/android-publish-apk.sh
+	 DEVICE="$(DEVICE)" API_BASE_URL="$$API_URL" bash $(ROOT)/scripts/android/kotlin-android-install.sh install; \
+	 API_BASE_URL="$$API_URL" bash $(ROOT)/scripts/android/android-publish-apk.sh
 
 android-capacitor: ## Legacy : APK Capacitor (WebView) + API locale
-	@chmod +x $(ROOT)/scripts/android-install.sh $(ROOT)/scripts/ensure-api.sh
-	@bash $(ROOT)/scripts/ensure-api.sh
-	@DEVICE="$(DEVICE)" VITE_API_ORIGIN="$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787)" bash $(ROOT)/scripts/android-install.sh install
+	@chmod +x $(ROOT)/scripts/android/android-install.sh $(ROOT)/scripts/dev/ensure-api.sh
+	@bash $(ROOT)/scripts/dev/ensure-api.sh
+	@DEVICE="$(DEVICE)" VITE_API_ORIGIN="$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787)" bash $(ROOT)/scripts/android/android-install.sh install
 
 android-capacitor-prod: ## Legacy Capacitor → API PUBLIC_API_URL / DEPLOY_URL
-	@chmod +x $(ROOT)/scripts/android-install.sh
+	@chmod +x $(ROOT)/scripts/android/android-install.sh
 	@API_URL="$$(grep -E '^(PUBLIC_API_URL|DEPLOY_URL)=' $(ROOT)/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' ')"; \
 	 if [ -z "$$API_URL" ]; then echo "❌ PUBLIC_API_URL / DEPLOY_URL manquant" >&2; exit 1; fi; \
-	 DEVICE="$(DEVICE)" VITE_API_ORIGIN="$$API_URL" bash $(ROOT)/scripts/android-install.sh install
+	 DEVICE="$(DEVICE)" VITE_API_ORIGIN="$$API_URL" bash $(ROOT)/scripts/android/android-install.sh install
 
 test-register-adb: ## Recrée compte + email validation + ouvre le lien sur Android
 	@cd $(ROOT) && \
 	  DEVICE="$(DEVICE)" \
 	  TEST_EMAIL="$(or $(TEST_EMAIL),$(SEED_EMAIL))" \
 	  TEST_PASSWORD="$(TEST_PASSWORD)" \
-	  node scripts/test-register-verify-adb.mjs
+	  node scripts/test/test-register-verify-adb.mjs
 
 update-apps: ## Rappel : comment MAJ web / mobile / desktop
 	@echo ""
@@ -527,20 +527,20 @@ status: ## Statut coloré API / Vite / process locaux / Docker / ADB
 	@echo ""
 
 status-watch: ## Rafraîchit make status en boucle (INTERVAL=4)
-	@chmod +x $(ROOT)/scripts/status-watch.sh 2>/dev/null || true
-	@INTERVAL="$(or $(INTERVAL),4)" CLEAR="$(or $(CLEAR),1)" bash $(ROOT)/scripts/status-watch.sh
+	@chmod +x $(ROOT)/scripts/dev/status-watch.sh 2>/dev/null || true
+	@INTERVAL="$(or $(INTERVAL),4)" CLEAR="$(or $(CLEAR),1)" bash $(ROOT)/scripts/dev/status-watch.sh
 
 link-home-stream: ## Relais streams prod → API maison (IP résidentielle YouTube)
-	@chmod +x $(ROOT)/scripts/link-home-stream.sh
-	@bash $(ROOT)/scripts/link-home-stream.sh start
+	@chmod +x $(ROOT)/scripts/deploy/link-home-stream.sh
+	@bash $(ROOT)/scripts/deploy/link-home-stream.sh start
 
 link-home-stream-status: ## Statut tunnel STREAM_UPSTREAM
-	@chmod +x $(ROOT)/scripts/link-home-stream.sh
-	@bash $(ROOT)/scripts/link-home-stream.sh status
+	@chmod +x $(ROOT)/scripts/deploy/link-home-stream.sh
+	@bash $(ROOT)/scripts/deploy/link-home-stream.sh status
 
 link-home-stream-stop: ## Stoppe le tunnel maison
-	@chmod +x $(ROOT)/scripts/link-home-stream.sh
-	@bash $(ROOT)/scripts/link-home-stream.sh stop
+	@chmod +x $(ROOT)/scripts/deploy/link-home-stream.sh
+	@bash $(ROOT)/scripts/deploy/link-home-stream.sh stop
 
 logs: ## Logs colorés + suivi temps réel (Docker ou local) — Ctrl+C
 	@chmod +x $(ROOT)/scripts/ops/logs.sh $(ROOT)/scripts/ops/color-logs.sh
@@ -570,12 +570,12 @@ logs-archive: ## Rotate les logs locaux vers logs/archive/
 # ---------------------------------------------------------------------------
 
 db-status: ## Stats SQLite (users, likes, refresh, orphans)
-	@chmod +x $(ROOT)/scripts/db-ops.sh
-	@bash $(ROOT)/scripts/db-ops.sh status
+	@chmod +x $(ROOT)/scripts/dev/db-ops.sh
+	@bash $(ROOT)/scripts/dev/db-ops.sh status
 
 db-backup: ## Backup data/ytmusic.db → data/backups/
-	@chmod +x $(ROOT)/scripts/db-ops.sh
-	@bash $(ROOT)/scripts/db-ops.sh backup
+	@chmod +x $(ROOT)/scripts/dev/db-ops.sh
+	@bash $(ROOT)/scripts/dev/db-ops.sh backup
 
 ports: ## Affiche qui écoute 5173 / 8787
 	@echo "Ports PLM :"
@@ -627,13 +627,13 @@ version: ## Affiche la version courante (fichier VERSION)
 	  echo "VERSION $$v  →  d+$$v (local/dev) · p+$$v (prod)"
 
 bump-patch: ## Correctif : X.Y.Z → X.Y.(Z+1)
-	@chmod +x $(ROOT)/scripts/bump-version.sh
-	@bash $(ROOT)/scripts/bump-version.sh patch
+	@chmod +x $(ROOT)/scripts/deploy/bump-version.sh
+	@bash $(ROOT)/scripts/deploy/bump-version.sh patch
 
 bump-minor: ## Fonctionnalité : X.Y.Z → X.(Y+1).0
-	@chmod +x $(ROOT)/scripts/bump-version.sh
-	@bash $(ROOT)/scripts/bump-version.sh minor
+	@chmod +x $(ROOT)/scripts/deploy/bump-version.sh
+	@bash $(ROOT)/scripts/deploy/bump-version.sh minor
 
 bump-major: ## Breaking : X.Y.Z → (X+1).0.0
-	@chmod +x $(ROOT)/scripts/bump-version.sh
-	@bash $(ROOT)/scripts/bump-version.sh major
+	@chmod +x $(ROOT)/scripts/deploy/bump-version.sh
+	@bash $(ROOT)/scripts/deploy/bump-version.sh major

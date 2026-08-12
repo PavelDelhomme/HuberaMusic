@@ -24,6 +24,7 @@ class OfflineDownloadManager(
     private val streamUrl: (trackId: String) -> String,
     private val ensureToken: suspend () -> Unit,
     private val notifyServer: suspend (trackId: String) -> Unit,
+    private val warmStream: (suspend (trackId: String) -> Unit)? = null,
     private val maxConcurrent: Int = 3,
 ) {
     private val jobsMutex = Mutex()
@@ -87,13 +88,17 @@ class OfflineDownloadManager(
                     // Re-check après attente du sémaphore
                     if (offlineStore.has(track.id)) return@withPermit
                     ensureToken()
+                    _progress.update { it + (track.id to 0.05f) }
+                    runCatching { warmStream?.invoke(track.id) }
+                    _progress.update { it + (track.id to 0.08f) }
                     offlineStore
                         .download(track, streamUrl(track.id)) { p ->
                             _progress.update { cur ->
-                                cur + (track.id to p.coerceIn(0.02f, 0.99f))
+                                cur + (track.id to p.coerceIn(0.08f, 0.99f))
                             }
                         }
                         .getOrThrow()
+                    // Marque serveur sans re-télécharger (ack)
                     runCatching { notifyServer(track.id) }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

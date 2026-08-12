@@ -12,6 +12,16 @@
         android:name="android.hardware.microphone"
         android:required="false" />
 
+    <!-- Visibilité des fournisseurs Credential Manager (Bitwarden, GPM…) Android 11+ -->
+    <queries>
+        <intent>
+            <action android:name="androidx.credentials.CREDENTIAL_PROVIDER_SERVICE" />
+        </intent>
+        <package android:name="com.x8bit.bitwarden" />
+        <package android:name="com.x8bit.bitwarden.beta" />
+        <package android:name="com.google.android.gms" />
+    </queries>
+
     <application
         android:name=".YtMusicApp"
         android:allowBackup="true"
@@ -20,6 +30,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.YTMusic"
+        android:appCategory="audio"
         android:usesCleartextTraffic="${usesCleartext}"
         android:networkSecurityConfig="@xml/network_security_config"
         android:hardwareAccelerated="true">

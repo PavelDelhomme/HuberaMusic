@@ -2,9 +2,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App';
-import { installGlobalTelemetry } from './lib/telemetry';
-import { initNativeShell } from './lib/native';
-import { initConnectivityWatch, isBrowserOnline } from './lib/connectivity';
+import { installGlobalTelemetry } from './lib/util/telemetry';
+import { initNativeShell } from './lib/util/native';
+import { initConnectivityWatch, isBrowserOnline } from './lib/offline/connectivity';
 import { usePlayer } from './store/player';
 
 installGlobalTelemetry();

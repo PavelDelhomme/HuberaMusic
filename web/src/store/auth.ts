@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api, setRefreshToken, setToken, type User } from '../api';
-import { sessionSocket } from '../lib/session';
+import { sessionSocket } from '../lib/auth/session';
 import { useSession } from './session';
 
 type AuthState = {

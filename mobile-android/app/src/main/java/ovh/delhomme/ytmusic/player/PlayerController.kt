@@ -806,10 +806,9 @@ class PlayerController(
     }
 
     /**
-     * Mode titre : coupe les fins « vides » sans casser le pipeline audio.
-     * - Si la durée YTM (métadonnées) est nettement plus courte que le flux → skip après meta+grâce
-     * - Sinon fallback paroles timed (dernière lyric + grâce)
-     * Mode vidéo : ne coupe pas.
+     * Mode titre : coupe uniquement une vraie fin vide près de la fin du flux.
+     * Ne coupe PAS sur durée méta seule (souvent trop courte vs stream) ni
+     * sur lyrics-end s’il reste beaucoup d’audio.
      */
     private fun maybeSkipTrailingSilence(p: Player) {
         if (SessionMediaMode.video) return
@@ -820,10 +819,12 @@ class PlayerController(
         val dur = p.duration
         val pos = p.currentPosition
         if (dur <= 0L || dur == androidx.media3.common.C.TIME_UNSET || pos < 0L) return
-        if (dur < 40_000L) return
-        // Jamais pendant les 40 % premiers
-        if (pos.toDouble() / dur < 0.40) return
-        if (dur - pos < 800L) return
+        if (dur < 45_000L) return
+        // Jamais pendant les 75 % premiers
+        if (pos.toDouble() / dur < 0.75) return
+        val remaining = dur - pos
+        // Il doit rester peu d’audio (sinon break / outro encore jouable)
+        if (remaining > 18_000L || remaining < 800L) return
 
         val trackId = p.currentMediaItem?.mediaId ?: return
         if (silenceSkipTrackId == trackId) return
@@ -834,18 +835,19 @@ class PlayerController(
         }
 
         val track = PlaybackService.Holder.queue.firstOrNull { it.id == trackId }
-        val metaMs = track?.durationMsOrNull()?.takeIf { it >= 40_000L }
-        // Flux souvent plus long que la durée YTM (silence / outro vidéo)
+        val metaMs = track?.durationMsOrNull()?.takeIf { it >= 45_000L }
+        // Seulement si meta est nettement plus courte ET on est déjà dans les ~12 s finales du flux
         val paddedEnd =
             metaMs != null &&
-                dur >= metaMs + 3_500L &&
-                pos >= metaMs + 1_200L
+                dur >= metaMs + 5_000L &&
+                pos >= metaMs + 2_500L &&
+                remaining <= 12_000L
 
         val lyricsEnd =
             lastLyricEndMs > 0L &&
-                lastLyricEndMs.toDouble() / dur >= 0.45 &&
-                pos >= lastLyricEndMs + 2_200L &&
-                dur - pos >= 1_500L
+                lastLyricEndMs.toDouble() / dur >= 0.55 &&
+                pos >= lastLyricEndMs + 5_000L &&
+                remaining <= 12_000L
 
         if (!paddedEnd && !lyricsEnd) return
 

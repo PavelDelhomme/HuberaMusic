@@ -61,8 +61,8 @@ fun LoginScreen(
             title = { Text("Connexion rapide ?") },
             text = {
                 Text(
-                    "Enregistre une passkey (empreinte / PIN) pour te reconnecter sans mot de passe. " +
-                        "Sinon tu pourras le faire plus tard dans Compte.",
+                    "Enregistre une passkey (Bitwarden, Google Password Manager, empreinte…) " +
+                        "pour te reconnecter sans mot de passe. Sinon tu pourras le faire plus tard dans Compte.",
                 )
             },
             confirmButton = {
@@ -195,7 +195,7 @@ fun LoginScreen(
             if (state.loading) CircularProgressIndicator(modifier = Modifier.height(20.dp))
             else Text(if (state.registerMode) "Créer un compte" else "Se connecter")
         }
-        if (!state.registerMode && state.showPasskeyLogin) {
+        if (!state.registerMode) {
             Spacer(modifier = Modifier.height(10.dp))
             OutlinedButton(
                 onClick = { vm.loginWithPasskey(context) },
@@ -205,11 +205,9 @@ fun LoginScreen(
                 Icon(Icons.Default.Fingerprint, contentDescription = null)
                 Text("  Continuer avec une passkey")
             }
-        }
-        if (!state.registerMode && !state.showPasskeyLogin) {
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
-                "Passkey : proposée après ta première connexion.",
+                "Bitwarden / GPM / empreinte — active le fournisseur de passkeys dans les Réglages Android.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -17,7 +17,7 @@
     "docker:dev": "docker compose -f docker-compose.dev.yml up --build -d",
     "docker:dev:down": "docker compose -f docker-compose.dev.yml down",
     "docker:build": "docker build -t ytmusic:local .",
-    "seed-users": "node scripts/seed-users.mjs"
+    "seed-users": "node scripts/dev/seed-users.mjs"
   },
   "workspaces": [
     "api",
