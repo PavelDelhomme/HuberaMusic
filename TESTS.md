@@ -13,12 +13,14 @@ Compléments :
 
 | Sujet | Où |
 |-------|-----|
+| **Erreurs ouvertes** | [`ERRORS.md`](./ERRORS.md) |
 | Suivi features / bugs | [`STATUS.md`](./STATUS.md) |
 | Backlog produit | [`docs/FEATURES-BACKLOG.md`](./docs/FEATURES-BACKLOG.md) |
 | Déploiement | [`DEPLOY.md`](./DEPLOY.md) |
 | Android | [`docs/ANDROID.md`](./docs/ANDROID.md) |
 | Batterie | `make battery-help` · `make battery-go` |
 | Auth / SMTP | [`docs/AUTH-EMAIL.md`](./docs/AUTH-EMAIL.md) · [`docs/SMTP-MAILY.md`](./docs/SMTP-MAILY.md) |
+| Smoke API charge | `node scripts/smoke-load-test.mjs both` → `logs/smoke-*.json` |
 
 ---
 

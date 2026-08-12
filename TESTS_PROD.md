@@ -15,9 +15,17 @@ make adb-both
 curl -sS https://ytmusic.delhomme.ovh/api/health | jq .
 # appVersion / ref doivent matcher le commit déployé
 DEVICE=192.168.1.44:5555 make android-prod
+make link-home-stream   # si streams 502 (IP datacenter)
+node scripts/smoke-load-test.mjs prod
 ```
 
-Tracking : [`STATUS.md`](./STATUS.md) colonnes `DEPLOY` + `PROD`.
+Tracking : [`STATUS.md`](./STATUS.md) · [`ERRORS.md`](./ERRORS.md).
+
+### Journal sessions
+
+| Date | Commit / version | Résultat | Notes |
+|------|------------------|----------|-------|
+| 2026-08-12 | `a481e3b` / `p+1.3.17` | Health OK ; streams 206 (tunnel) ; Nothing APK UP ; logcat clean | Même E1–E5 que local ; warm batch ~16 s ; badge SW parfois stale |
 
 ---
 
@@ -28,6 +36,7 @@ Tracking : [`STATUS.md`](./STATUS.md) colonnes `DEPLOY` + `PROD`.
 - [ ] `appVersion` = version attendue (pas une vieille `1.3.9` si on a livré plus récent)
 - [ ] `playback.premiumRequired === false` ; `ytdlp: true`
 - [ ] Conteneur Portainer **healthy** ; volumes non effacés
+- [ ] Tunnel maison UP si requis (`make link-home-stream-status`)
 - [ ] Image GHCR tag `:prod` / `:latest` digest récent
 - [ ] WSS upgrade OK avec JWT
 

@@ -2,7 +2,13 @@
 
 **Appareil** : Samsung (`192.168.1.184:5555` ou USB `R5CT7263YJL`) — APK **dev** → API LAN.  
 **Web** : `http://localhost:5173` · **API** : `http://127.0.0.1:8787` / `http://<LAN>:8787`.  
-**Tracking** : cocher aussi les IDs dans [`STATUS.md`](./STATUS.md).
+**Tracking** : [`STATUS.md`](./STATUS.md) · erreurs : [`ERRORS.md`](./ERRORS.md).
+
+### Journal sessions
+
+| Date | Commit / version | Résultat | Notes |
+|------|------------------|----------|-------|
+| 2026-08-12 | `a481e3b` / `d+1.3.17` | Smoke API OK ; apps UP ; logcat clean | E1 drawer 0 titres (fix Layout) ; E2 radio artiste 50–75 s ; E3 reco chill vide — voir ERRORS.md |
 
 Prérequis :
 
@@ -11,6 +17,7 @@ make adb-both
 make up-full
 LAN=$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}')
 DEVICE=192.168.1.184:5555 API_BASE_URL=http://$LAN:8787 make android-install
+node scripts/smoke-load-test.mjs local
 # login : make adb-login DEVICE=…  (si dispo) ou manuel
 ```
 

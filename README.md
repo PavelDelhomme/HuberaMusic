@@ -30,7 +30,7 @@ make android           # APK Kotlin sur device ADB (API LAN)
 
 ## Tests manuels (ordre)
 
-Ne pas tout enchaîner d’un coup. Suivi : [`STATUS.md`](STATUS.md).
+Ne pas tout enchaîner d’un coup. Suivi : [`STATUS.md`](STATUS.md) · erreurs : [`ERRORS.md`](ERRORS.md).
 
 1. [`TESTS.LOCAL.md`](TESTS.LOCAL.md) — local web + Samsung (API LAN)  
 2. [`TESTS_DEV.md`](TESTS_DEV.md) — **session DEV** (Samsung + web/API local)  
@@ -38,6 +38,11 @@ Ne pas tout enchaîner d’un coup. Suivi : [`STATUS.md`](STATUS.md).
 4. [`TESTS_PROD.md`](TESTS_PROD.md) — **session PROD** (Nothing + web/API prod)  
 
 Index : [`TESTS.md`](TESTS.md) · résumé docs : [`docs/TESTING.md`](docs/TESTING.md) · backlog : [`docs/FEATURES-BACKLOG.md`](docs/FEATURES-BACKLOG.md)
+
+```bash
+# Batterie API multi-titres / artistes (local + prod)
+node scripts/smoke-load-test.mjs both
+```
 
 ```bash
 make adb-both          # Samsung DEV + Nothing PROD

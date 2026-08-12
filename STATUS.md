@@ -5,8 +5,9 @@
 > Campagnes : [`TESTS.md`](./TESTS.md).
 
 **Branche courante** : `fix/ux-similar-offline-radio`  
-**Version APK / API locale** : `1.3.17` (`d+` / `p+`)  
-**Dernière MAJ STATUS** : 2026-08-12
+**Version APK / API locale** : `1.3.17` (`d+` / `p+`) · prod live `a481e3b`  
+**Dernière MAJ STATUS** : 2026-08-12  
+**Erreurs ouvertes** : [`ERRORS.md`](./ERRORS.md)
 
 ---
 
@@ -112,6 +113,7 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | B4.13 | Crash `trackCount` string YTM → int (Ambiance Chill etc.) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.14 | Playlist hero : play / shuffle / DL icône+progress + menu ⋮ (rename/delete/mix/offline) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.15 | Sync playlists mobile→web drawer (poll 20s + refresh focus 8s) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.16 | Drawer web : compter `trackCount` (pas `tracks.length`) — régression playlists light | ✅ | ✅ | 🧪 | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B5 — Réglages / logs
 
@@ -134,6 +136,8 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | ID | Demande | SPEC | CODE | LOCAL | DEV | PR | DEPLOY | PROD |
 |----|---------|:----:|:----:|:-----:|:---:|:--:|:------:|:----:|
 | B7.1 | Chargements sélectifs + cache vignettes partout (accueil, mixes, listes) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B7.2 | Radio artiste `/api/artist/:id/radio` trop lente (50–75 s) → preview + fill async | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B7.3 | `POST /api/stream/warm` sous charge trop lent (~16 s) → file + timeout | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B8 — Ops / status / devices (infra locale)
 
@@ -142,7 +146,8 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | B8.1 | `make status` : process locaux + ADB Samsung/Nothing attendus | ✅ | ✅ | 🧪 | ⬜ | ⬜ | — | — |
 | B8.2 | `make adb-both` reconnect rapide dual devices | ✅ | ✅ | 🧪 | ⬜ | ⬜ | — | — |
 | B8.3 | Docs STATUS + backlog + sessions tests DEV/PROD | ✅ | ✅ | ⬜ | ⬜ | ⬜ | — | — |
-| B8.4 | Promo fixes stream/playlist déjà commités → `dev` puis `prod` + Pull | ⬜ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B8.4 | Promo fixes stream/playlist déjà commités → `dev` puis `prod` + Pull | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | 🧪 |
+| B8.5 | Badge version web / SW parfois stale vs `/api/health` | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ---
 
@@ -174,9 +179,11 @@ Chaque session a des **sous-catégories** : Auth, Batterie, Pages/scroll, Lecteu
 
 ## Prochaine action recommandée
 
-1. Implémenter **B1.2 / B3.1** (+ B1.5–B1.10, mixes, etc.) sur branche courante  
-2. PR → `dev` → promo `prod` + Pull Portainer (`DEPLOY_SSH` / `DEPLOY_SSH_CMD`)  
-3. Session `TESTS_PROD.md` sur Nothing  
+1. Traiter **[`ERRORS.md`](./ERRORS.md)** : **E2** radio artiste lente, **E3**/B2.5 mixes vides, **E4**/B1.1 biblio  
+2. Redeploy web pour **E1/B4.16** (compteur drawer) + revalider PROD  
+3. Continuer backlog B1.8, B2.*, B5, B6  
+
+**Smoke charge** : `node scripts/smoke-load-test.mjs both` (rapport `logs/smoke-*.json`).
 
 ---
 

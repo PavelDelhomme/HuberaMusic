@@ -429,7 +429,7 @@ export function Layout() {
             >
               <div className="truncate font-medium text-white">{p.name}</div>
               <div className="truncate text-[11px] text-yt-muted">
-                {p.tracks.length} titres · {user?.name || 'Toi'}
+                {p.trackCount ?? p.tracks?.length ?? 0} titres · {user?.name || 'Toi'}
               </div>
             </NavLink>
           ))}

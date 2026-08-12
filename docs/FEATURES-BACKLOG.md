@@ -202,6 +202,15 @@ Style YouTube Music (« Forgotten favorites ») :
 - [ ] **Web** : clic zone vide barre noire → toggle Now Playing (hors contrôles)
 - [ ] **Web** : retry auto plafonné (pas de boucle « nouvel essai » infinie sur 502)
 - [ ] **Ops** : prod streams via tunnel maison si IP VPS bloquée YouTube (`scripts/link-home-stream.sh`)
+- [ ] **À suivre** : suggestions visibles même si auto OFF ; stop fin de file ; Suivant charge ; sync préf
+- [ ] Prefetch listes longues (~10 s tête viewport)
+- [ ] Playlist hero Android : play / shuffle / DL icône + menu ⋮
+
+### Perf API (voir ERRORS.md)
+
+- [ ] Radio artiste < ~3 s pour un preview jouable (pas 50–75 s pour 200 titres)
+- [ ] Reco / mix seed texte non vide (ex. chill / nouveauté)
+- [ ] Warm stream sous charge non bloquant
 
 ### Réglages / logs
 
