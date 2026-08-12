@@ -155,9 +155,16 @@ export function HomePage() {
             /* ignore */
           }
         };
+        // Préserver les previews déjà en cache / state pendant le refetch
+        // (évite d’effacer la mosaïque si un 2ᵉ home() arrive avant la fin des reco).
+        const keptPreviews = {
+          ...(readHomeCache()?.radioPreviews || {}),
+          ...radioPreviews,
+        };
         writeHomeCache({
           shelves: r.shelves,
           radios: cats,
+          ...(Object.keys(keptPreviews).length ? { radioPreviews: keptPreviews } : {}),
           seeds: r.seeds || [],
           hasMore: r.hasMore !== false,
         });
