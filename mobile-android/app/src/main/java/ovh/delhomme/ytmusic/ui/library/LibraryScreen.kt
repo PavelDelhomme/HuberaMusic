@@ -58,6 +58,7 @@ import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ArtistRef
 import ovh.delhomme.ytmusic.data.LibraryResponse
+import ovh.delhomme.ytmusic.data.OfflineKeeper
 import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.Thumb
 import ovh.delhomme.ytmusic.data.TrackDto
@@ -123,10 +124,52 @@ fun LibraryScreen(
             }
         }.onFailure {
             if (localTracks.isNotEmpty()) {
-                // Mode hors-ligne : bibliothèque minimale = fichiers locaux
-                lib = LibraryResponse(downloaded = localTracks.map { t -> t.id })
+                // Mode hors-ligne : biblio = fichiers locaux (titres / albums / artistes dérivés)
+                val albums = localTracks
+                    .mapNotNull { t ->
+                        val a = t.album ?: return@mapNotNull null
+                        val name = a.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                        TrackDto(
+                            id = a.id?.takeIf { it.isNotBlank() } ?: "album:${name.lowercase()}",
+                            title = name,
+                            artists = t.artists,
+                            thumbnails = t.thumbnails,
+                            type = "album",
+                        )
+                    }
+                    .distinctBy { it.id }
+                val artists = localTracks
+                    .flatMap { t -> t.artists.orEmpty().map { ar -> ar to t } }
+                    .map { (ar, t) ->
+                        TrackDto(
+                            id = ar.id?.takeIf { it.isNotBlank() } ?: "artist:${ar.name.lowercase()}",
+                            title = ar.name,
+                            artists = listOf(ar),
+                            thumbnails = t.thumbnails,
+                            type = "artist",
+                        )
+                    }
+                    .distinctBy { it.id }
+                lib = LibraryResponse(
+                    downloaded = localTracks.map { t -> t.id },
+                    songs = localTracks,
+                    liked = localTracks,
+                    history = localTracks.take(40),
+                    albums = albums,
+                    artists = artists,
+                )
                 downloadMeta = localTracks.associateBy { t -> t.id }
-                selected = LibraryFilter.Downloads
+                if (selected !in setOf(
+                        LibraryFilter.Downloads,
+                        LibraryFilter.Tracks,
+                        LibraryFilter.Liked,
+                        LibraryFilter.Albums,
+                        LibraryFilter.Artists,
+                        LibraryFilter.Mixes,
+                    )
+                ) {
+                    selected = LibraryFilter.Downloads
+                }
                 error = null
             } else if (lib == null) {
                 error = it.message
@@ -344,8 +387,9 @@ fun LibraryScreen(
                     }
                 }
 
-                val content = remember(data, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching) {
-                    buildLibraryContent(data, selected, downloadMeta, downloadsEnriching, homeMixes)
+                val monMixIds = remember(offlineRev) { container.offlineKeeper.monMixIds() }
+                val content = remember(data, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching, monMixIds) {
+                    buildLibraryContent(data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds)
                 }
                 val listState = rememberLazyListState()
                 LaunchedEffect(selected, content.playableQueue) {
@@ -559,6 +603,7 @@ private fun buildLibraryContent(
     downloadMeta: Map<String, TrackDto> = emptyMap(),
     downloadsEnriching: Boolean = false,
     homeMixes: List<TrackDto> = emptyList(),
+    monMixIds: List<String> = emptyList(),
 ): LibraryContent {
     fun az(tracks: List<TrackDto>) = tracks.sortedBy { it.title.lowercase() }
 
@@ -606,27 +651,47 @@ private fun buildLibraryContent(
             )
         }
         LibraryFilter.Tracks -> {
-            val tracks = az((data.songs.ifEmpty { data.liked }).filter { it.isPlayable() })
+            val offlineOnly = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+            val base = if (offlineOnly) {
+                downloadMeta.values.filter { it.isPlayable() }
+            } else {
+                (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }
+            }
+            // Aimés / biblio toujours visibles s’ils sont DL
+            val tracks = az(base.distinctBy { it.id })
             LibraryContent(
-                headline = "Titres · A–Z",
+                headline = if (offlineOnly) "Titres hors ligne · A–Z" else "Titres · A–Z",
                 rows = tracks,
                 playableQueue = tracks,
-                emptyMessage = "Aucun titre. Utilise « Enregistrer dans la bibliothèque » (≠ J'aime).",
+                emptyMessage = if (offlineOnly) {
+                    "Aucun titre téléchargé. En ligne : ⋮ → Télécharger (J'aime se télécharge auto)."
+                } else {
+                    "Aucun titre. Utilise « Enregistrer dans la bibliothèque » (≠ J'aime)."
+                },
                 showPlayAll = tracks.isNotEmpty(),
                 playLabel = "Tout lire",
-                shuffleLabel = "Aléatoire",
+                shuffleLabel = if (offlineOnly) "Mix hors-ligne" else "Aléatoire",
             )
         }
         LibraryFilter.Liked -> {
-            val tracks = az(data.liked.filter { it.isPlayable() })
+            val offlineOnly = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+            val likedIds = data.liked.map { it.id }.toHashSet()
+            val tracks = az(
+                if (offlineOnly) {
+                    downloadMeta.values.filter { it.isPlayable() && (it.id in likedIds || likedIds.isEmpty()) }
+                        .ifEmpty { downloadMeta.values.filter { it.isPlayable() } }
+                } else {
+                    data.liked.filter { it.isPlayable() }
+                },
+            )
             LibraryContent(
-                headline = "J'aime · A–Z",
+                headline = if (offlineOnly) "J'aime · hors ligne" else "J'aime · A–Z",
                 rows = tracks,
                 playableQueue = tracks,
                 emptyMessage = "Aucun J'aime. Appuie sur le cœur d'un titre.",
                 showPlayAll = tracks.isNotEmpty(),
                 playLabel = "Tout lire",
-                shuffleLabel = "Aléatoire",
+                shuffleLabel = if (offlineOnly) "Mix hors-ligne" else "Aléatoire",
             )
         }
         LibraryFilter.Playlists -> {
@@ -648,6 +713,25 @@ private fun buildLibraryContent(
             )
         }
         LibraryFilter.Mixes -> {
+            val monMixTracks: List<TrackDto> = monMixIds.mapNotNull { mid ->
+                downloadMeta[mid]
+                    ?: data.history.find { it.id == mid }
+                    ?: data.liked.find { it.id == mid }
+                    ?: data.songs.find { it.id == mid }
+            }
+            val monMixRow = if (monMixIds.isNotEmpty()) {
+                listOf(
+                    TrackDto(
+                        id = OfflineKeeper.MON_MIX_ID,
+                        title = "${OfflineKeeper.MON_MIX_TITLE} · ${monMixIds.size}",
+                        artists = listOf(ArtistRef("Toujours hors ligne")),
+                        thumbnails = monMixTracks.firstOrNull()?.thumbnails,
+                        type = "mix",
+                    ),
+                )
+            } else {
+                emptyList()
+            }
             val saved = data.mixes.map { m ->
                 m.copy(
                     type = "mix",
@@ -660,29 +744,53 @@ private fun buildLibraryContent(
                     artists = (m.artists ?: emptyList()).ifEmpty { listOf(ArtistRef("Mix pour toi")) },
                 )
             }
-            val rows = (saved + generated)
+            val rows = (monMixRow + saved + generated)
                 .distinctBy { it.id }
                 .sortedBy { it.title.lowercase() }
+            val playableMon = monMixTracks.filter { t -> t.isPlayable() }
             LibraryContent(
                 headline = if (rows.isEmpty()) "Mixes" else "Mixes · ${rows.size}",
                 rows = rows,
-                playableQueue = emptyList(),
+                playableQueue = playableMon,
                 emptyMessage = "Aucun mix. Sur Accueil → Mixés pour toi, ou enregistre un mix (+).",
-                showPlayAll = false,
+                showPlayAll = playableMon.isNotEmpty(),
+                playLabel = "Lire Mon Mix",
+                shuffleLabel = "Mix hors-ligne",
                 collectionHint = if (rows.isNotEmpty()) {
-                    "Enregistrés + générés (humeur / écoutes). Ouvre un mix pour lire."
+                    "Mon Mix = ~100 titres (aimés + écoutes) téléchargés en fond."
                 } else {
                     null
                 },
             )
         }
         LibraryFilter.Albums -> {
-            val rows = az(data.albums.map { it.copy(type = it.type ?: "album") })
+            val offlineOnly = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+            val fromDl = downloadMeta.values
+                .mapNotNull { t ->
+                    val a = t.album ?: return@mapNotNull null
+                    val name = a.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    TrackDto(
+                        id = a.id?.takeIf { it.isNotBlank() } ?: "album:${name.lowercase()}",
+                        title = name,
+                        artists = t.artists,
+                        thumbnails = t.thumbnails,
+                        type = "album",
+                    )
+                }
+                .distinctBy { it.id }
+            val rows = az(
+                if (offlineOnly || data.albums.isEmpty()) fromDl
+                else data.albums.map { it.copy(type = it.type ?: "album") },
+            )
             LibraryContent(
-                headline = "Albums · A–Z",
+                headline = if (offlineOnly) "Albums hors ligne · A–Z" else "Albums · A–Z",
                 rows = rows,
                 playableQueue = emptyList(),
-                emptyMessage = "Aucun album. Utilise « Enregistrer dans la bibliothèque » sur un album.",
+                emptyMessage = if (offlineOnly) {
+                    "Aucun album dérivé des titres téléchargés."
+                } else {
+                    "Aucun album. Utilise « Enregistrer dans la bibliothèque » sur un album."
+                },
                 collectionHint = if (rows.isNotEmpty()) {
                     "Ouvre un album pour Lecture ou Aléatoire"
                 } else {
@@ -691,14 +799,34 @@ private fun buildLibraryContent(
             )
         }
         LibraryFilter.Artists -> {
-            val rows = az(data.artists.map { it.copy(type = it.type ?: "artist") })
+            val offlineOnly = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+            val fromDl = downloadMeta.values
+                .flatMap { t -> t.artists.orEmpty().map { ar -> ar to t } }
+                .map { (ar, t) ->
+                    TrackDto(
+                        id = ar.id?.takeIf { it.isNotBlank() } ?: "artist:${ar.name.lowercase()}",
+                        title = ar.name,
+                        artists = listOf(ar),
+                        thumbnails = t.thumbnails,
+                        type = "artist",
+                    )
+                }
+                .distinctBy { it.id }
+            val rows = az(
+                if (offlineOnly || data.artists.isEmpty()) fromDl
+                else data.artists.map { it.copy(type = it.type ?: "artist") },
+            )
             LibraryContent(
-                headline = "Artistes · A–Z",
+                headline = if (offlineOnly) "Artistes hors ligne · A–Z" else "Artistes · A–Z",
                 rows = rows,
                 playableQueue = emptyList(),
-                emptyMessage = "Aucun artiste enregistré.",
+                emptyMessage = if (offlineOnly) {
+                    "Aucun artiste avec titres téléchargés."
+                } else {
+                    "Aucun artiste enregistré."
+                },
                 collectionHint = if (rows.isNotEmpty()) {
-                    "Ouvre un artiste pour ses titres et sa radio"
+                    "Ouvre un artiste pour ses titres téléchargés"
                 } else {
                     null
                 },
@@ -737,11 +865,11 @@ private fun buildLibraryContent(
                 },
                 showPlayAll = !enriching && playable.isNotEmpty(),
                 playLabel = "Tout lire",
-                shuffleLabel = "Aléatoire",
+                shuffleLabel = "Mix hors-ligne",
                 collectionHint = when {
                     enriching -> null
                     playlistsDl.isNotEmpty() || albumsDl.isNotEmpty() ->
-                        "Playlists → albums → titres. Lecture / aléatoire = titres uniquement."
+                        "Playlists → albums → titres. Lecture / mix = titres uniquement."
                     else -> null
                 },
                 loading = enriching,

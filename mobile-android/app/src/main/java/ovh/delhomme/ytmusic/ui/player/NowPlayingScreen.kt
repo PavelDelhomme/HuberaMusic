@@ -1541,6 +1541,11 @@ private fun QueueExpandedBody(
     modifier: Modifier = Modifier,
 ) {
     var tabDragX by remember { mutableFloatStateOf(0f) }
+    val online by ovh.delhomme.ytmusic.data.NetworkMonitor.onlineFlow.collectAsState()
+    val offlineRev by container.offlineStore.revision.collectAsState()
+    val unavailable: (TrackDto) -> Boolean = remember(online, offlineRev) {
+        { t -> !online && !container.offlineStore.has(t.id) }
+    }
     val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
     val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
     val currentAndUpcomingUser = if (ui.queueIndex < boundary) {
@@ -1764,6 +1769,7 @@ private fun QueueExpandedBody(
                         onMore = onMore?.let { { it(item) } },
                         onMix = { startMixFor(item) },
                         radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                        offlineUnavailable = unavailable(item),
                     )
                 }
                 item {
@@ -1817,6 +1823,7 @@ private fun QueueExpandedBody(
                         onMore = onMore?.let { { it(item) } },
                         onMix = { startMixFor(item) },
                         radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                        offlineUnavailable = unavailable(item),
                     )
                 }
                 item { Spacer(Modifier.height(48.dp)) }
@@ -2012,16 +2019,24 @@ private fun QueueTrackRow(
     onMore: (() -> Unit)? = null,
     onMix: (() -> Unit)? = null,
     radioActive: Boolean = false,
+    /** Hors-ligne : titre non téléchargé → grisé / non cliquable. */
+    offlineUnavailable: Boolean = false,
 ) {
     var dragAccum by remember { mutableFloatStateOf(0f) }
+    val enabled = !offlineUnavailable
     Row(
         Modifier
             .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.38f)
             .background(
                 if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                 else Color.Transparent,
             )
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(
+                enabled = enabled,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
             .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -2126,17 +2141,50 @@ private fun InlineSyncedLyrics(
     LaunchedEffect(track.id) {
         loading = true
         userOffsetMs = syncPrefs.getLong(track.id, 0L)
+        // Cache local paroles (karaoké hors-ligne)
+        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v1")
+        val cachedText = lyricsCache.getString("t_${track.id}", null)
+        val cachedTimed = lyricsCache.getString("l_${track.id}", null)
+        if (!cachedText.isNullOrBlank()) {
+            text = cachedText
+            timed = if (!cachedTimed.isNullOrBlank()) {
+                cachedTimed.lineSequence().mapNotNull { line ->
+                    val p = line.split('|', limit = 2)
+                    if (p.size < 2) return@mapNotNull null
+                    val ms = p[0].toLongOrNull() ?: return@mapNotNull null
+                    TimedLyricLine(startMs = ms.toDouble(), text = p[1])
+                }.toList()
+            } else parseLrcLines(cachedText)
+            lyricsSource = lyricsCache.getString("s_${track.id}", null)
+            loading = false
+        }
+        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() && !cachedText.isNullOrBlank()) {
+            return@LaunchedEffect
+        }
         runCatching { container.api.lyrics(track.id) }
             .onSuccess {
                 text = it.lyrics
                 lyricsSource = it.source
                 val apiTimed = it.timed.orEmpty()
                 timed = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
+                // Persiste pour hors-ligne
+                runCatching {
+                    lyricsCache.edit()
+                        .putString("t_${track.id}", it.lyrics)
+                        .putString("s_${track.id}", it.source)
+                        .putString(
+                            "l_${track.id}",
+                            timed.joinToString("\n") { l -> "${l.startMsLong()}|${l.text}" },
+                        )
+                        .apply()
+                }
             }
             .onFailure {
-                text = null
-                timed = emptyList()
-                lyricsSource = null
+                if (cachedText.isNullOrBlank()) {
+                    text = null
+                    timed = emptyList()
+                    lyricsSource = null
+                }
             }
         loading = false
     }

@@ -38,6 +38,9 @@ class AppContainer(context: Context) {
     fun bumpLibraryEpoch() {
         libraryEpoch.value = System.currentTimeMillis()
     }
+    init {
+        CoverUrlProxy.baseProvider = { resolvedApiBase() }
+    }
     val offlineStore by lazy { LocalOfflineStore(appContext, moshi) }
     val localPlayback by lazy { LocalPlaybackStore(appContext, moshi) }
     /** Scope application — downloads survivent à la fermeture des sheets Compose. */
@@ -56,6 +59,16 @@ class AppContainer(context: Context) {
                     client.newCall(req).execute().close()
                 }
             },
+        )
+    }
+    val offlineKeeper by lazy {
+        OfflineKeeper(
+            context = appContext,
+            scope = appScope,
+            offlineStore = offlineStore,
+            downloadManager = downloadManager,
+            api = api,
+            ensureToken = { ensureFreshToken() },
         )
     }
     private val apiPrefs = appContext.getSharedPreferences("ytm_api", Context.MODE_PRIVATE)

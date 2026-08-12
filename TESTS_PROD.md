@@ -25,6 +25,7 @@ Tracking : [`STATUS.md`](./STATUS.md) · [`ERRORS.md`](./ERRORS.md) · index [`T
 
 | Date | Commit / version | Résultat | Notes |
 |------|------------------|----------|-------|
+| 2026-08-12 | `54f6aff` / `p+1.3.17` | **Samsung + Nothing PROD OK** | Deploy VPS + APK ; Papaoutai PLAYING des deux côtés ; gzip + streamHeadCache UP ; E13 (EOS≠réseau) mergé `prod` |
 | 2026-08-12 | `p+1.3.17` | **Samsung PROD smoke OK** (Nothing reporté) | APK `ovh.delhomme.ytmusic` ; login ; Accueil ; **Papaoutai PLAYING** ; Compte → passkey + `PROD · https://ytmusic.delhomme.ovh` ; stream 206 ~0,2 s ; gzip/head-cache **pas encore** sur VPS (attendre promo) |
 | 2026-08-12 | (à venir) R1–R12 | À faire après promo | Passkeys, paroles, DL ack, À suivre, UI playlist, membership… |
 | 2026-08-12 | `a481e3b` / `p+1.3.17` | Health OK ; streams 206 (tunnel) ; Nothing APK UP | E1–E5 ; warm ~16 s ; badge SW stale |

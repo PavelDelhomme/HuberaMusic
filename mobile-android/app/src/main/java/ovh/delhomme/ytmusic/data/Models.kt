@@ -77,30 +77,36 @@ data class TrackDto(
     }
 
     fun coverUrl(sizeHint: Int = 400): String? {
-        val ytimg = if (id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))) {
-            when {
-                sizeHint <= 200 -> "https://i.ytimg.com/vi/$id/mqdefault.jpg"
-                else -> "https://i.ytimg.com/vi/$id/hqdefault.jpg"
-            }
-        } else {
-            null
+        val s = sizeHint.coerceIn(60, 800)
+        val isVideo = id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))
+        // 1) Proxy API (fiable prod/mobile — même chaîne que le web)
+        if (isVideo) {
+            CoverUrlProxy.video(id, s)?.let { return it }
         }
         val thumbs = thumbnails.orEmpty()
         if (thumbs.isNotEmpty()) {
             val sortedAsc = thumbs.sortedBy { it.width ?: 0 }
             val maxW = sortedAsc.lastOrNull()?.width ?: 0
-            // ggpht/yt3 à 60–120px : préférer ytimg (mix Accueil sinon tuiles vides)
-            if (ytimg != null && maxW > 0 && maxW < 200) return ytimg
+            if (isVideo && maxW > 0 && maxW < 200) {
+                CoverUrlProxy.video(id, s)?.let { return it }
+            }
             val fit = sortedAsc.firstOrNull { (it.width ?: 0) >= sizeHint }
             val pick = fit ?: sortedAsc.lastOrNull()
-            val url = pick?.url?.takeIf { it.isNotBlank() }
-            if (url != null) {
-                // Upscale paramètres =sNNN / =wNNN-hNNN quand possible
-                val upsized = resizeGoogleThumb(url, sizeHint)
+            val raw = pick?.url?.takeIf { it.isNotBlank() }
+            if (raw != null) {
+                val upsized = resizeGoogleThumb(raw, sizeHint)
+                CoverUrlProxy.remote(upsized, s)?.let { return it }
                 return upsized
             }
         }
-        return ytimg
+        // 2) Fallback direct ytimg (dev / API down)
+        if (isVideo) {
+            return when {
+                sizeHint <= 200 -> "https://i.ytimg.com/vi/$id/mqdefault.jpg"
+                else -> "https://i.ytimg.com/vi/$id/hqdefault.jpg"
+            }
+        }
+        return null
     }
 
     private fun resizeGoogleThumb(url: String, sizeHint: Int): String {
