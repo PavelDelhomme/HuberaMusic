@@ -9,11 +9,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * Téléchargements hors du scope Compose (survit à la fermeture du sheet).
  * Progress partagée : sheet, chrome NP, biblio.
+ * Concurrence limitée pour éviter les DL bloqués à 2 % (saturation réseau / API).
  */
 class OfflineDownloadManager(
     private val scope: CoroutineScope,
@@ -21,9 +24,11 @@ class OfflineDownloadManager(
     private val streamUrl: (trackId: String) -> String,
     private val ensureToken: suspend () -> Unit,
     private val notifyServer: suspend (trackId: String) -> Unit,
+    private val maxConcurrent: Int = 3,
 ) {
     private val jobsMutex = Mutex()
     private val jobs = mutableMapOf<String, Job>()
+    private val gate = Semaphore(maxConcurrent.coerceIn(1, 4))
 
     private val _progress = MutableStateFlow<Map<String, Float>>(emptyMap())
     val progress: StateFlow<Map<String, Float>> = _progress.asStateFlow()
@@ -34,6 +39,30 @@ class OfflineDownloadManager(
     fun progressOf(trackId: String): Float? = _progress.value[trackId]
 
     fun isDownloading(trackId: String): Boolean = _progress.value.containsKey(trackId)
+
+    fun hasActiveJobs(ids: Collection<String>): Boolean {
+        if (ids.isEmpty()) return false
+        val active = _progress.value
+        return ids.any { id -> active.containsKey(id) || jobs[id]?.isActive == true }
+    }
+
+    /**
+     * Progression agrégée 0..1 pour un album / playlist :
+     * titres locaux = 1, en cours = progress map, sinon 0.
+     */
+    fun aggregateProgress(ids: List<String>): Float {
+        if (ids.isEmpty()) return 0f
+        val map = _progress.value
+        var sum = 0f
+        for (id in ids) {
+            sum += when {
+                offlineStore.has(id) -> 1f
+                map.containsKey(id) -> map.getValue(id).coerceIn(0.02f, 0.99f)
+                else -> 0f
+            }
+        }
+        return (sum / ids.size).coerceIn(0f, 1f)
+    }
 
     /**
      * Lance le DL en arrière-plan (no-op si déjà local / déjà en cours).
@@ -49,15 +78,19 @@ class OfflineDownloadManager(
 
         val job = scope.launch(Dispatchers.IO) {
             try {
-                ensureToken()
-                offlineStore
-                    .download(track, streamUrl(track.id)) { p ->
-                        _progress.update { cur ->
-                            cur + (track.id to p.coerceIn(0.02f, 0.99f))
+                gate.withPermit {
+                    // Re-check après attente du sémaphore
+                    if (offlineStore.has(track.id)) return@withPermit
+                    ensureToken()
+                    offlineStore
+                        .download(track, streamUrl(track.id)) { p ->
+                            _progress.update { cur ->
+                                cur + (track.id to p.coerceIn(0.02f, 0.99f))
+                            }
                         }
-                    }
-                    .getOrThrow()
-                runCatching { notifyServer(track.id) }
+                        .getOrThrow()
+                    runCatching { notifyServer(track.id) }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 runCatching {
                     java.io.File(
@@ -81,6 +114,15 @@ class OfflineDownloadManager(
         return true
     }
 
+    /** Enfile une collection (album / playlist) — concurrence gérée par le sémaphore. */
+    fun enqueueMany(tracks: List<TrackDto>): Int {
+        var started = 0
+        for (t in tracks) {
+            if (enqueue(t)) started++
+        }
+        return started
+    }
+
     /**
      * Pré-télécharge silencieusement les prochains titres (mix / file) pour survivre
      * à une coupure réseau. Limité pour ne pas saturer la bande.
@@ -93,7 +135,6 @@ class OfflineDownloadManager(
             if (!t.id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))) continue
             if (offlineStore.has(t.id)) continue
             if (jobs[t.id]?.isActive == true) continue
-            // Silent : progress visible mais sans toast
             if (enqueue(t)) started++
         }
     }

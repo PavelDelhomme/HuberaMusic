@@ -1,186 +1,153 @@
-# TESTS_PROD — campagne production (ultra)
+# TESTS_PROD — Session PROD (Nothing + web / API prod)
 
-À lancer **uniquement** après LOCAL + DEV OK et déploiement VPS réussi.
+À lancer **uniquement** après LOCAL + DEV OK et déploiement VPS réussi (`dev` → `prod` + Pull Portainer).
 
 | Surface | Cible |
 |---------|--------|
 | Web | https://ytmusic.delhomme.ovh |
 | API | même origin `/api/health` |
-| Nothing | APK **prod** (`make android-prod`) |
-| Samsung | smoke APK prod optionnel (dev reste LAN au quotidien) |
-| Serveur | VPS / Portainer / Watchtower / cookies / volumes |
+| Nothing | APK **prod** (`DEVICE=192.168.1.44:5555 make android-prod`) |
+| Samsung | smoke APK prod optionnel |
+| Serveur | VPS / Portainer / volumes / cookies |
 
 ```bash
+make adb-both
 curl -sS https://ytmusic.delhomme.ovh/api/health | jq .
-# version = commit déployé, premiumRequired false, ytdlp true
+# appVersion / ref doivent matcher le commit déployé
 DEVICE=192.168.1.44:5555 make android-prod
 ```
 
----
-
-## Phase 0 — Gate serveur (bloquant)
-
-- [ ] DNS : `dig +short ytmusic.delhomme.ovh` → IP VPS
-- [ ] HTTPS valide (pas d’avertissement certificat)
-- [ ] `GET /api/health` → `ok`, `ref: prod`, `appEnv: production`
-- [ ] `playback.premiumRequired === false` (pas de Premium YouTube requis)
-- [ ] `ytdlp: true`
-- [ ] Cookies YouTube : `youtubeCookies.configured` (anti-bot) — optionnel mais recommandé
-- [ ] Conteneur Portainer **healthy** ; volumes **non** effacés au redeploy
-- [ ] Image GHCR = tag attendu (`:latest` / digests récents après push `prod`)
-- [ ] WebSockets NPM **ON** ; `wss://…/ws` upgrade OK avec JWT (pas de fail TCP)
-
-Si Phase 0 KO → **stop** ; corriger ops ([`DEPLOY.md`](./DEPLOY.md)) avant UI.
+Tracking : [`STATUS.md`](./STATUS.md) colonnes `DEPLOY` + `PROD`.
 
 ---
 
-## Phase 1 — Auth & comptes (web + Nothing)
+## P0 — Gate serveur (bloquant)
 
-- [ ] Login compte autorisé
-- [ ] Compte non autorisé / mauvais mdp → erreur claire
-- [ ] Inscription fermée si `allowRegister: false`
-- [ ] Logout → login
-- [ ] Reload / cold start app → session OK
-- [ ] Admin (`/admin`) accessible seulement admin
-- [ ] Passkey (si configuré) : enregistrement + login
+- [ ] DNS OK ; HTTPS valide
+- [ ] `GET /api/health` → `ok`, `ref: prod` / `appEnv: production`
+- [ ] `appVersion` = version attendue (pas une vieille `1.3.9` si on a livré plus récent)
+- [ ] `playback.premiumRequired === false` ; `ytdlp: true`
+- [ ] Conteneur Portainer **healthy** ; volumes non effacés
+- [ ] Image GHCR tag `:prod` / `:latest` digest récent
+- [ ] WSS upgrade OK avec JWT
 
----
-
-## Phase 2 — Web prod (parcours complet)
-
-### 2.1 Accueil & perf perçue
-- [ ] Accès rapide → Mixés (covers) → shelves au scroll
-- [ ] Pas d’erreur CSP fonts (self-host)
-- [ ] Images mixes se peuplent (pas 4 carrés vides > 10 s)
-
-### 2.2 Lecture
-- [ ] Play titre / album / playlist / mix
-- [ ] Reload mid-track → progression restaurée sans recliquer Play
-- [ ] Seek, volume, molette / flèches (si dispo)
-- [ ] File : insert À suivre, Déjà joués scrollable
-- [ ] Similaires rapides + pagination scroll
-- [ ] Radio blanc → rouge ; « Mix à partir de {titre} »
-- [ ] Paroles temps réel
-- [ ] Stream HTTP 206 sur `/api/stream/:id` (Range)
-- [ ] Cast / sync multi-appareils (si `receiveRemoteSync` ON) — smoke
-
-### 2.3 Bibliothèque & pins
-- [ ] Titres / J’aime / Albums / Playlists / Mixes
-- [ ] Overlay type sur covers
-- [ ] Pin → aussi biblio (titre + album)
-- [ ] Playlist UI empilée (Lecture / Aléatoire)
-
-### 2.4 Offline web
-- [ ] Download titre + progression
-- [ ] `/offline` liste après chargement (spinner puis contenu)
-- [ ] DevTools Offline → lecture cache
-
-### 2.5 Erreurs web
-- [ ] Console : pas de spam WS 4401 une fois loggé
-- [ ] 502 / redeploy : backoff WS puis reconnexion
-- [ ] Titre indisponible → message, pas page blanche
+Si P0 KO → **stop** ([`DEPLOY.md`](./DEPLOY.md)).
 
 ---
 
-## Phase 3 — Nothing Phone (APK prod)
+## P1 — Auth (web + Nothing)
 
-### 3.1 Install & boot
-- [ ] `make android-prod` DEVICE Nothing
-- [ ] API affichée / utilisée = `https://ytmusic.delhomme.ovh`
-- [ ] Login → Accueil (pas d’écran noir au relaunch)
-
-### 3.2 Lecture & file
-- [ ] Play / skip / seek / lockscreen
-- [ ] File + À suivre (insert)
-- [ ] Similaires préchargés
-- [ ] Radio / mix labels
-- [ ] Paroles
-
-### 3.3 Biblio & offline
-- [ ] Filtre défaut Titres
-- [ ] Télécharger avec progress
-- [ ] Téléchargés : spinner puis liste
-- [ ] Mode avion → pas Mixés ; lecture DL OK
-- [ ] Retour online → refresh Accueil OK
-
-### 3.4 Stabilité
-- [ ] 15 min lecture continue (pas de crash)
-- [ ] Kill + relaunch → file / titre cohérents
-- [ ] Logs : `make android-logs DEVICE=…` si anomalie
+- [ ] Login / mauvais mdp / logout / cold start session
+- [ ] Inscription selon `allowRegister`
+- [ ] Admin seulement pour admin
+- [ ] Passkey si configuré
 
 ---
 
-## Phase 4 — Samsung smoke prod (optionnel)
+## P2 — Batterie & usage (Nothing)
 
-Samsung reste **dev/LAN** au quotidien. Smoke prod seulement pour valider le binaire :
-
-```bash
-DEVICE=192.168.1.184:5555 make android-prod   # temporaire
-# puis rebasculer en LAN :
-DEVICE=192.168.1.184:5555 API_BASE_URL=http://<LAN>:8787 make android-install
-```
-
-- [ ] Login prod + 1 play + 1 download
-- [ ] Remettre APK **dev** après le smoke
+- [ ] `make adb-wifi-doctor` → Nothing ✅
+- [ ] 15–30 min usage réel (lecture + biblio + next)
+- [ ] Optionnel : `INCLUDE_NOTHING=1 make battery-go-calm` (Nothing)
+- [ ] Email rapport batterie
 
 ---
 
-## Phase 5 — Base de données & données utilisateur
+## P3 — Erreurs → email
 
-- [ ] Après redeploy : playlists / pins / likes **toujours là** (volume SQLite)
-- [ ] Nouveau pin web → visible Nothing (même compte) après refresh
-- [ ] Pas de wipe accidentel (`Remove volumes` jamais coché)
-- [ ] Backup : copie volume / fichier DB hors VPS (procédure ops documentée ou snapshot)
-
----
-
-## Phase 6 — Ops & préproduction
-
-- [ ] Branche `prod` = commit attendu (`git log origin/prod -1`)
-- [ ] Workflow GitHub Actions Docker **vert** sur push `prod`
-- [ ] Watchtower ou redeploy SSH a bien tiré la **nouvelle** digest (pas « Up 3 days » sans pull)
-- [ ] Variables Portainer : `APP_URL`, `JWT_SECRET`, SMTP, `AUTH_*` cohérents
-- [ ] SMTP test admin (si mails utilisés)
-- [ ] `/api/auth/config` : privateMode / allowRegister attendus
-- [ ] Cookies YouTube : test stream après rotation cookies ([`scripts/push-youtube-cookies.sh`](./scripts/push-youtube-cookies.sh))
+- [ ] Erreur stream / crash → email reçu avec version **prod** + device Nothing
+- [ ] Visible aussi dans admin outbox / logs serveur
+- [ ] Pas de boucle mail
 
 ---
 
-## Phase 7 — Performances & batterie
+## P4 — Pages + scroll + progressif (web prod + Nothing)
 
-- [ ] Web : skip ×20 fluide ; pas de fuite onglet (Task Manager mémoire raisonnable)
-- [ ] Nothing : session batterie **mixte** (lecture + UI) — `make battery-help` / `scripts/battery-session.sh`
-- [ ] Réseau : pas de boucle related/stream en erreur (logcat)
-- [ ] Thermique : 20 min lecture casque, pas de thermal throttle extrême
+Même grille que DEV :
 
-Critères indicatifs (à calibrer) : session mixte ~ quelques %/h ; stress UI bien plus élevé — noter le contexte (USAGE).
+### Accueil
+- [ ] Accès rapide, mixes covers, shelves
+- [ ] Podcasts / chips Albums·Livres·Podcasts (si déployé)
+- [ ] Explorer : images + noms OK
 
----
+### Artiste / Album / Titres
+- [ ] Cartes albums/singles ; état scroll ; perf
+- [ ] Album DL progress live
 
-## Phase 8 — Sécurité & conformité légère
+### File
+- [ ] Auto + depuis album ; next/prev stables (20×)
 
-- [ ] CSP : pas d’inline script dangereux ajouté ; fonts self-host
-- [ ] Pas de token JWT dans logs publics / URLs partagées
-- [ ] Admin non accessible anonymement
-- [ ] Health n’expose pas de secrets
+### Playlists / Mixes
+- [ ] Playlist sans Tout lire/Aléatoire ; DL playlist entière
+- [ ] Mixes user + générés ; Mix Nouveauté ; mixes déjà écouté
+- [ ] Mix depuis album / artiste / titre
 
----
-
-## Phase 9 — Recette « GO prod »
-
-| Statut | Condition |
-|--------|-----------|
-| **GO** | Phases 0–3 + 5 OK ; 6–8 sans bloquant |
-| **NO-GO** | Health KO, stream systématique fail, wipe data, crash boot Nothing |
-
-Après GO : tag release / note version (`p+x.y.z`) ; garder Samsung en **dev LAN**.
+### Pins / j’aime
+- [ ] J’aime titre/album ; épingles Accès rapide
 
 ---
 
-## Liens
+## P5 — Lecteur
 
-- Index : [`TESTS.md`](./TESTS.md)
-- Local : [`TESTS.LOCAL.md`](./TESTS.LOCAL.md)
-- Session : [`TESTS_DEV.md`](./TESTS_DEV.md)
-- Deploy : [`DEPLOY.md`](./DEPLOY.md)
-- Android : [`docs/ANDROID.md`](./docs/ANDROID.md)
+- [ ] Play/pause/seek/next/prev ; NP scroll ; paroles
+- [ ] Stream 206 `/api/stream/:id`
+- [ ] Cast / sync si activé (smoke)
+
+---
+
+## P6 — Bibliothèque
+
+- [ ] Filtres + ✕ retour accueil biblio
+- [ ] Titres chargement OK
+- [ ] Téléchargés : Playlists → Albums → Titres ; lecture aléatoire titres only
+- [ ] Podcasts / livres = ajoutés only
+- [ ] Sheet biblio état rapide
+
+---
+
+## P7 — Téléchargements
+
+- [ ] Titre + album (cas *Pandemonium*) progress non stuck
+- [ ] Playlist entière
+- [ ] Offline lecture OK
+
+---
+
+## P8 — Connexion perdue
+
+- [ ] Nav rapide multi-pages sans faux positifs
+- [ ] Couper réseau → recovery
+- [ ] Pendant redeploy court → backoff puis OK
+
+---
+
+## P9 — Réglages / logs
+
+- [ ] Pages Crash/Perf/Logs scroll page + journal
+- [ ] Layout réglages (espace haut)
+
+---
+
+## P10 — Appui long album
+
+- [ ] Sheet complet ; j’aime tous titres ; pas de duplicata biblio
+
+---
+
+## Alternatives session PROD
+
+| Alt | Action |
+|-----|--------|
+| Smoke web only | P0 + P1 + 1 play + 1 biblio sur desktop |
+| Samsung APK prod | Install prod sur Samsung après Nothing OK |
+| Dual parallel | Web prod + Nothing **et** notes divergences vs DEV local |
+
+---
+
+## Fin de session PROD
+
+- [ ] Cocher STATUS → `✅` PROD pour IDs validés
+- [ ] Ouvrir / garder `⬜` pour régressions
+- [ ] Noter version APK + `appVersion` health dans le commit / issue
+
+Si KO majeur : hotfix branche `fix/…` depuis `dev`, rejouer DEV puis promo.

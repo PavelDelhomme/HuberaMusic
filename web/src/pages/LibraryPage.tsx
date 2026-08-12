@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLibrary } from '../store/library';
 import { TrackRow } from '../components/TrackRow';
-import { Heart, Play, Plus, Shuffle, Trash2 } from 'lucide-react';
+import { Heart, Play, Plus, Shuffle, Trash2, X } from 'lucide-react';
 import { usePlayer } from '../store/player';
 import { MediaCard } from '../components/MediaCard';
 import { CoverImage } from '../components/CoverImage';
@@ -44,16 +44,11 @@ export function LibraryPage() {
     useLibrary();
   const playQueue = usePlayer((s) => s.playQueue);
   const openActions = useItemActions((s) => s.open);
-  const [tab, setTab] = useState<'titres' | 'liked' | 'playlists' | 'albums' | 'artists' | 'mixes' | 'history' | 'podcasts' | 'audiobooks'>('titres');
+  const [tab, setTab] = useState<'ajouts' | 'titres' | 'liked' | 'playlists' | 'albums' | 'artists' | 'mixes' | 'history' | 'podcasts' | 'audiobooks'>('ajouts');
   const [name, setName] = useState('');
-  const [spoken, setSpoken] = useState<{ podcasts: Track[]; audiobooks: Track[] }>({
-    podcasts: [],
-    audiobooks: [],
-  });
-  const [spokenLoading, setSpokenLoading] = useState(false);
-  const [spokenError, setSpokenError] = useState('');
 
   const tabs = [
+    ['ajouts', 'Ajouts'],
     ['titres', 'Titres'],
     ['liked', "J'aime"],
     ['playlists', 'Playlists'],
@@ -65,32 +60,17 @@ export function LibraryPage() {
     ['history', 'Historique'],
   ] as const;
 
-  useEffect(() => {
-    if (tab !== 'podcasts' && tab !== 'audiobooks') return;
-    const kind = tab === 'audiobooks' ? 'audiobook' : 'podcast';
-    let cancelled = false;
-    setSpokenLoading(true);
-    setSpokenError('');
-    void api
-      .exploreSpoken(kind)
-      .then((r) => {
-        if (cancelled) return;
-        setSpoken((prev) =>
-          kind === 'audiobook'
-            ? { ...prev, audiobooks: r.items || [] }
-            : { ...prev, podcasts: r.items || [] },
-        );
-      })
-      .catch((e) => {
-        if (!cancelled) setSpokenError(String((e as Error)?.message || e));
-      })
-      .finally(() => {
-        if (!cancelled) setSpokenLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [tab]);
+  const spokenFromLib = (kind: 'podcast' | 'audiobook') => {
+    const pool = [...songs, ...liked, ...albums];
+    return pool.filter((t) => {
+      const typ = String(t.type || '').toLowerCase();
+      const title = String(t.title || '').toLowerCase();
+      if (kind === 'audiobook') {
+        return typ.includes('audiobook') || typ.includes('livre') || title.includes('audiobook') || title.includes('livre audio');
+      }
+      return typ.includes('podcast') || title.includes('podcast') || title.includes('épisode');
+    });
+  };
 
   return (
     <div className="animate-fade-up">
@@ -110,27 +90,73 @@ export function LibraryPage() {
       )}
 
       <div className="mb-6 flex flex-wrap gap-2">
-        {tabs.map(([id, label]) => (
+        {tab !== 'ajouts' && (
           <button
-            key={id}
             type="button"
-            onClick={() => setTab(id)}
-            className={`rounded-full px-4 py-1.5 text-sm ${
-              tab === id ? 'bg-white text-black' : 'bg-yt-elevated text-yt-muted'
-            }`}
+            onClick={() => setTab('ajouts')}
+            className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-1.5 text-sm text-black"
+            title="Fermer le filtre · retour bibliothèque"
           >
-            {label}
+            {tabs.find(([id]) => id === tab)?.[1] ?? tab}
+            <X className="h-3.5 w-3.5" />
           </button>
-        ))}
+        )}
+        {tabs
+          .filter(([id]) => id !== 'ajouts' && id !== tab)
+          .map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className="rounded-full bg-yt-elevated px-4 py-1.5 text-sm text-yt-muted hover:text-white"
+            >
+              {label}
+            </button>
+          ))}
+        {tab === 'ajouts' &&
+          tabs
+            .filter(([id]) => id !== 'ajouts')
+            .map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className="rounded-full bg-yt-elevated px-4 py-1.5 text-sm text-yt-muted hover:text-white"
+              >
+                {label}
+              </button>
+            ))}
       </div>
 
       {!loaded && tab !== 'podcasts' && tab !== 'audiobooks' ? (
-        tab === 'titres' || tab === 'liked' || tab === 'history' ? (
+        tab === 'titres' || tab === 'liked' || tab === 'history' || tab === 'ajouts' ? (
           <LibraryListSkeleton />
         ) : (
           <HomeShelfSkeleton rows={2} />
         )
       ) : null}
+
+      {loaded && tab === 'ajouts' && (
+        <div>
+          <p className="mb-4 text-sm text-yt-muted">Enregistré récemment dans ta bibliothèque.</p>
+          {songs.length === 0 && albums.length === 0 && playlists.length === 0 && mixes.length === 0 ? (
+            <p className="text-yt-muted">Rien d&apos;enregistré pour l&apos;instant.</p>
+          ) : (
+            <>
+              {[...songs.slice(0, 30)].map((t) => (
+                <TrackRow key={t.id} track={t} queue={songs} showAlbum />
+              ))}
+              {albums.slice(0, 12).length > 0 && (
+                <div className="mt-6 shelf-scroll">
+                  {albums.slice(0, 12).map((a) => (
+                    <MediaCard key={`alb-${a.id}`} item={{ ...a, type: a.type || 'album' }} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {loaded && tab === 'titres' && (
         <div>
@@ -500,52 +526,44 @@ export function LibraryPage() {
         <div>
           <p className="mb-4 text-sm text-yt-muted">
             {tab === 'podcasts'
-              ? 'Épisodes podcast trouvés sur YouTube Music — lecture en flux audio.'
-              : 'Livres audio / versions audio trouvés sur YouTube — lecture en flux audio.'}{' '}
-            Tu peux aussi chercher via Recherche → filtre Podcasts / Livres audio.
+              ? 'Uniquement les podcasts ajoutés à ta bibliothèque.'
+              : 'Uniquement les livres audio ajoutés à ta bibliothèque.'}
           </p>
-          {spokenError && (
-            <p className="mb-3 text-sm text-red-300">{spokenError}</p>
-          )}
-          {spokenLoading ? (
-            <LibraryListSkeleton />
-          ) : (
-            (() => {
-              const items = tab === 'podcasts' ? spoken.podcasts : spoken.audiobooks;
-              if (!items.length) {
-                return (
-                  <p className="text-yt-muted">
-                    Aucun résultat pour le moment. Réessaie plus tard ou lance une recherche.
-                  </p>
-                );
-              }
+          {(() => {
+            const items = spokenFromLib(tab === 'audiobooks' ? 'audiobook' : 'podcast');
+            if (!items.length) {
               return (
-                <>
-                  <div className="mb-4 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void playQueue(items, 0)}
-                      className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
-                    >
-                      <Play className="h-4 w-4 fill-white" /> Tout lire
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void playQueue(shuffleTracks(items), 0)}
-                      className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium"
-                    >
-                      <Shuffle className="h-4 w-4" /> Aléatoire
-                    </button>
-                  </div>
-                  <div className="space-y-0.5">
-                    {items.map((t) => (
-                      <TrackRow key={t.id} track={t} queue={items} showAlbum />
-                    ))}
-                  </div>
-                </>
+                <p className="text-yt-muted">
+                  Aucun élément ajouté. Enregistre via ⋮ → bibliothèque (ou Recherche).
+                </p>
               );
-            })()
-          )}
+            }
+            return (
+              <>
+                <div className="mb-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void playQueue(items, 0)}
+                    className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
+                  >
+                    <Play className="h-4 w-4 fill-white" /> Tout lire
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void playQueue(shuffleTracks(items), 0)}
+                    className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium"
+                  >
+                    <Shuffle className="h-4 w-4" /> Aléatoire
+                  </button>
+                </div>
+                <div className="space-y-0.5">
+                  {items.map((t) => (
+                    <TrackRow key={t.id} track={t} queue={items} showAlbum />
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

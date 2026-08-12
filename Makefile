@@ -28,7 +28,8 @@ SAMPLE_SECS ?= 15
 	android-capacitor android-capacitor-prod adb-fix \
 	adb-fix-keys \
 	adb-wifi adb-wifi-connect adb-wifi-status adb-wifi-wait-unplug adb-wifi-disconnect \
-	adb-wifi-doctor adb-wifi-ensure adb-wifi-pair battery-go battery-go-calm battery-suite \
+	adb-wifi-doctor adb-wifi-ensure adb-wifi-pair adb-both adb-devices \
+	battery-go battery-go-calm battery-suite \
 	battery-test battery-test-short battery-report battery-report-mail \
 	update-apps status status-watch \
 	logs logs-tail logs-watch logs-history logs-archive \
@@ -62,7 +63,9 @@ help: ## Affiche cette aide colorée
 	@echo ""
 	@printf "  $(C_DIM)Prod        : voir PUBLIC_API_URL / DEPLOY_URL dans .env$(C_RESET)\n"
 	@printf "  $(C_DIM)Dev local    : make up-full  ·  make logs  ·  make android$(C_RESET)\n"
-	@printf "  $(C_DIM)Batterie     : make battery-go  (ensure 2 Wi‑Fi → 30 min → rapport)$(C_RESET)\n"
+	@printf "  $(C_DIM)ADB dual     : make adb-both  (Samsung DEV + Nothing PROD)$(C_RESET)\n"
+	@printf "  $(C_DIM)Batterie     : make battery-go  (ensure Wi‑Fi → 30 min → rapport)$(C_RESET)\n"
+	@printf "  $(C_DIM)Suivi        : STATUS.md  ·  TESTS.md  ·  make status-watch$(C_RESET)\n"
 	@printf "  $(C_DIM)Branches     : feat/* depuis dev → merge prod$(C_RESET)\n"
 	@printf "  $(C_DIM)Version      : d+X.Y.Z (local/dev) · p+X.Y.Z (prod) — make bump-patch|minor|major$(C_RESET)\n"
 	@echo ""
@@ -275,9 +278,16 @@ adb-wifi-doctor: ## Vérifie Samsung + Nothing (ignore le reste / virtuel)
 	@chmod +x $(ROOT)/scripts/adb-wifi.sh
 	@bash $(ROOT)/scripts/adb-wifi.sh doctor || true
 
-adb-wifi-ensure: ## Attend/connecte les 2 physiques en ADB Wi‑Fi (USB ou déjà connus)
+adb-wifi-ensure: ## Attend/connecte Samsung + Nothing en ADB Wi‑Fi
 	@chmod +x $(ROOT)/scripts/adb-wifi.sh
-	@bash $(ROOT)/scripts/adb-wifi.sh ensure
+	@INCLUDE_NOTHING="$(or $(INCLUDE_NOTHING),1)" bash $(ROOT)/scripts/adb-wifi.sh ensure
+
+adb-both: ## Rapide : reconnecte Samsung (DEV) + Nothing (PROD) en ADB
+	@chmod +x $(ROOT)/scripts/adb-wifi.sh
+	@INCLUDE_NOTHING=1 MIN_DEVICES=1 bash $(ROOT)/scripts/adb-wifi.sh ensure
+
+adb-devices: ## Alias de make adb-both (liste + reconnect)
+	@$(MAKE) adb-both
 
 adb-wifi-pair: ## Associe un téléphone via Débogage sans fil (IP:port + code)
 	@chmod +x $(ROOT)/scripts/adb-wifi.sh
@@ -412,7 +422,7 @@ update-apps: ## Rappel : comment MAJ web / mobile / desktop
 # Statut & logs
 # ---------------------------------------------------------------------------
 
-status: ## Statut coloré API / Vite / Docker / DB
+status: ## Statut coloré API / Vite / process locaux / Docker / ADB
 	@echo ""
 	@printf "$(C_BOLD)📊 Statut PLM$(C_RESET)\n"
 	@echo "================="
@@ -439,7 +449,38 @@ status: ## Statut coloré API / Vite / Docker / DB
 	@MODE=$$(cat "$(ROOT)/.ytmusic-stack-mode" 2>/dev/null || true); \
 	if [ -n "$$MODE" ]; then printf "  \033[0;90m📌 dernier mode : %s\033[0m\n" "$$MODE"; fi
 	@echo ""
-	@echo "🐳 Conteneurs docker (ytmusic*) :"
+	@echo "🖥  Process locaux (make up / up-full) :"
+	@echo ""
+	@found_local=0; \
+	if [ -f "$(ROOT)/logs/ytmusic-server.pid" ]; then \
+	  spid=$$(cat "$(ROOT)/logs/ytmusic-server.pid" 2>/dev/null); \
+	  if [ -n "$$spid" ] && kill -0 "$$spid" 2>/dev/null; then \
+	    found_local=1; \
+	    printf "  \033[1;32m✅ UP\033[0m   %-22s pid %s  api/tsx\n" "server" "$$spid"; \
+	  fi; \
+	fi; \
+	if [ -f "$(ROOT)/logs/ytmusic-web.pid" ]; then \
+	  wpid=$$(cat "$(ROOT)/logs/ytmusic-web.pid" 2>/dev/null); \
+	  if [ -n "$$wpid" ] && kill -0 "$$wpid" 2>/dev/null; then \
+	    found_local=1; \
+	    printf "  \033[1;32m✅ UP\033[0m   %-22s pid %s  vite\n" "web" "$$wpid"; \
+	  fi; \
+	fi; \
+	if [ "$$found_local" = "0" ]; then \
+	  if pgrep -af 'tsx api/src/index.ts|api/src/index.ts' >/dev/null 2>&1; then \
+	    found_local=1; \
+	    printf "  \033[1;32m✅ UP\033[0m   %-22s (tsx détecté)\n" "server"; \
+	  fi; \
+	  if pgrep -af '[v]ite' >/dev/null 2>&1; then \
+	    found_local=1; \
+	    printf "  \033[1;32m✅ UP\033[0m   %-22s (vite détecté)\n" "web"; \
+	  fi; \
+	fi; \
+	if [ "$$found_local" = "0" ]; then \
+	  printf "  \033[0;90m(aucun process local — make up / make up-full)\033[0m\n"; \
+	fi
+	@echo ""
+	@echo "🐳 Conteneurs docker (ytmusic* / mailhog) :"
 	@echo ""
 	@found=0; \
 	for c in $$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E 'ytmusic|mailhog' || true); do \
@@ -455,19 +496,32 @@ status: ## Statut coloré API / Vite / Docker / DB
 	  fi; \
 	done; \
 	if [ "$$found" = "0" ]; then \
-	  printf "  \033[0;90m(aucun conteneur ytmusic — make docker-dev ou make up)\033[0m\n"; \
+	  printf "  \033[0;90m(aucun — normal si stack Node local ; optionnel : make docker-dev)\033[0m\n"; \
 	fi
 	@echo ""
-	@echo "📱 ADB :"
-	@adb devices -l 2>/dev/null | awk 'NR>1 && NF{ \
-	  if($$2=="device") printf "  \033[1;32m✅\033[0m %s\n", $$0; \
-	  else if($$2=="unauthorized") printf "  \033[1;33m⚠ unauthorized\033[0m %s  → accepte la popup USB\n", $$1; \
+	@echo "📱 ADB (Samsung=DEV · Nothing=PROD) — make adb-both :"
+	@echo ""
+	@ADB_OUT=$$(adb devices -l 2>/dev/null || true); \
+	print_dev() { \
+	  local role="$$1" label="$$2" serial="$$3" ip="$$4"; \
+	  local line; \
+	  line=$$(printf '%s\n' "$$ADB_OUT" | awk -v s="$$serial" -v ip="$$ip" '$$2=="device" && (index($$0,s)||index($$0,ip)){print; exit}'); \
+	  if [ -n "$$line" ]; then \
+	    printf "  \033[1;32m✅ %s\033[0m %-10s %s\n" "$$role" "$$label" "$$line"; \
+	  else \
+	    printf "  \033[1;31m❌ %s\033[0m %-10s manquant  → make adb-both  (%s / %s)\n" "$$role" "$$label" "$$serial" "$$ip"; \
+	  fi; \
+	}; \
+	print_dev "DEV " "Samsung" "R5CT7263YJL" "192.168.1.184:5555"; \
+	print_dev "PROD" "Nothing" "00145153K001434" "192.168.1.44:5555"; \
+	printf '%s\n' "$$ADB_OUT" | awk 'NR>1 && NF && $$2!="device"{ \
+	  if($$2=="unauthorized") printf "  \033[1;33m⚠ unauthorized\033[0m %s  → accepte la popup USB\n", $$1; \
 	  else if($$2=="offline") printf "  \033[1;31m❌ offline\033[0m %s\n", $$1; \
 	  else printf "  \033[0;90m· %s\033[0m\n", $$0; \
-	}' || echo "  (adb indisponible)"
+	}'
 	@echo ""
 	@LAN=$$(hostname -I 2>/dev/null | awk '{print $$1}'); \
-	if [ -n "$$LAN" ]; then echo "  LAN → http://$$LAN:5173"; fi
+	if [ -n "$$LAN" ]; then echo "  LAN → http://$$LAN:5173  ·  API http://$$LAN:8787"; fi
 	@echo ""
 
 status-watch: ## Rafraîchit make status en boucle (INTERVAL=4)

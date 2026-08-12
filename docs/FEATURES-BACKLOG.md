@@ -165,3 +165,52 @@ Style YouTube Music (« Forgotten favorites ») :
 - **Ajouter à la file** = append en fin de file « prévue » (pas dans le pool auto-radio si on peut le distinguer)  
 - Les actions radio / mix réutilisent `startRadio` / `buildRadioQueue`  
 - Le sheet doit marcher aussi pour album / playlist / artiste (sous-ensemble d’actions)  
+
+---
+
+## Sprint UX / biblio / DL / accueil (2026-08-12)
+
+> Tracking pipeline complet dans [`STATUS.md`](../STATUS.md) (IDs `B1.*` … `B8.*`).  
+> Ne cocher ici que quand **PROD (Nothing)** est validé.
+
+### Bibliothèque
+
+- [ ] Filtres : vue filtrée + **✕** pour revenir à l’accueil biblio (tous les chips)
+- [ ] Titres : chargement / affichage plus rapide
+- [ ] Mixes : mixes user **+** générés (biblio / humeur / habitudes)
+- [ ] Playlist : **sans** Tout lire / Aléatoire ; bouton **télécharger toute la playlist**
+- [ ] Téléchargés : Playlists → Albums → Titres ; Tout lire / Aléatoire **seulement** sur titres
+- [ ] Sheet actions : état « dans biblio » **instantané** (cache)
+- [ ] Podcasts / livres audio biblio = **uniquement** items ajoutés par l’user
+
+### Accueil
+
+- [ ] Section Podcasts + chips navigables (Albums / Livres / Podcasts)
+- [ ] Explorer : covers + noms corrects
+- [ ] Mixes : vignettes rapides (cache) ; Mix Nouveauté réparé ; mixes « déjà écouté »
+
+### Téléchargements
+
+- [ ] Progress non bloqué (titre / album, ex. Pandemonium) ; refresh live page album
+- [ ] Pipeline DL plus rapide + stockage optimisé
+
+### Lecteur / erreurs
+
+- [ ] Next intermittent / crash → fix
+- [ ] Toute erreur → email immédiat (télémétrie)
+- [ ] Toast « connexion perdue » : cause + fix
+
+### Réglages / logs
+
+- [ ] Page entière scrollable (Crash / Perf / Logs) + journal
+- [ ] Réglages : padding / espace haut
+
+### Artiste / albums
+
+- [ ] Albums / singles / playlists en cartes ; garder scroll state
+- [ ] Page artiste plus rapide (cache)
+- [ ] Appui long album = sheet complet (biblio, play, j’aime tous titres, ajouts individuels sans duplicata)
+
+### Plus tard — toute fin (ne pas prioriser)
+
+- [ ] **Z99 Rebrand install / domaines PLM** — PWA « Installer YTMusic » → PLM ; manifests ; `plm.delhomme.ovh` / `pue-la-merde.delhomme.ovh` déjà en redirect. À faire **après** le sprint UX biblio/DL. Voir `STATUS.md` §Plus tard.

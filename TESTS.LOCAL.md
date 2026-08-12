@@ -1,14 +1,14 @@
-# TESTS.LOCAL — validation locale (web + Android)
+# TESTS.LOCAL — validation locale (web + Android DEV)
 
-À faire **avant** tout déploiement. Serveur local + appareils physiques (ou émulateur).
+À faire **avant** Session DEV complète et tout déploiement.  
+Suite logique : [`TESTS_DEV.md`](./TESTS_DEV.md) → promo → [`TESTS_PROD.md`](./TESTS_PROD.md).  
+Suivi : [`STATUS.md`](./STATUS.md).
 
 Prérequis :
 
 ```bash
-make adb-wifi-ensure
-make ensure-api          # API :8787
-# autre terminal :
-cd web && npm run dev    # Vite :5173
+make adb-both            # Samsung + Nothing (Nothing optionnel ici)
+make up-full             # API :8787 + Vite :5173 (Node local, pas docker)
 make seed-users          # si besoin
 ```
 
@@ -17,14 +17,16 @@ make seed-users          # si besoin
 | Web PC | http://localhost:5173 |
 | API | http://127.0.0.1:8787 (PC) · `http://<LAN>:8787` (téléphones) |
 | Samsung | APK **dev** → API LAN (`make android-install`) |
-| Nothing | optionnel en local ; sinon réserve pour prod |
+| Nothing | réserve **prod** ; smoke local seulement si besoin |
 
 ```bash
 LAN=$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}')
 DEVICE=192.168.1.184:5555 API_BASE_URL=http://$LAN:8787 make android-install
 ```
 
-Coche au fur et à mesure. Si un item échoue → note le symptôme + appareil + logs (`make android-logs`).
+Coche au fur et à mesure. Si un item échoue → symptôme + appareil + `make android-logs` / `make logs`.
+
+> `make status` doit montrer **process locaux** UP. L’absence de conteneurs `ytmusic*` est **normale** hors `make docker-dev`.
 
 ---
 

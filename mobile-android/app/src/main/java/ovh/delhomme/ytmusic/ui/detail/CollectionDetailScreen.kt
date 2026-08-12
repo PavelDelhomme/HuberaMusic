@@ -118,6 +118,48 @@ fun CollectionDetailScreen(
     var showAlbumMenu by remember { mutableStateOf(false) }
     var offlineProgress by remember { mutableStateOf<Float?>(null) }
     var offlineDone by remember { mutableStateOf(false) }
+    val dlProgressMap by container.downloadManager.progress.collectAsState()
+
+    // Progress live album / playlist (agrège titres locaux + en cours)
+    LaunchedEffect(kind, id, tracks, dlProgressMap, offlineDone) {
+        if (kind != DetailKind.Album && kind != DetailKind.Playlist) return@LaunchedEffect
+        if (offlineDone) {
+            offlineProgress = null
+            return@LaunchedEffect
+        }
+        val playable = tracks.filter { it.isPlayable() }
+        if (playable.isEmpty()) return@LaunchedEffect
+        val ids = playable.map { it.id }
+        val local = playable.count { container.offlineStore.has(it.id) }
+        if (local >= playable.size) {
+            if (offlineProgress != null) {
+                Toast.makeText(context, "Téléchargement terminé — lisible hors-ligne", Toast.LENGTH_SHORT).show()
+            }
+            offlineDone = true
+            offlineProgress = null
+            return@LaunchedEffect
+        }
+        val active = container.downloadManager.hasActiveJobs(ids)
+        if (active || offlineProgress != null) {
+            val agg = container.downloadManager.aggregateProgress(ids)
+            offlineProgress = when {
+                agg <= 0f && active -> 0.02f
+                agg > 0f -> agg.coerceIn(0.02f, 0.99f)
+                else -> null
+            }
+            if (!active && local < playable.size && offlineProgress != null) {
+                // Jobs terminés (succès partiel / échecs) — libère le bouton
+                offlineProgress = null
+                if (local > 0) {
+                    Toast.makeText(
+                        context,
+                        "Téléchargé $local/${playable.size} titres",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+    }
 
     fun recordCollectionPlay() {
         val entityKind = when (kind) {
@@ -590,7 +632,7 @@ fun CollectionDetailScreen(
                                     }
                                 }
                                 Spacer(Modifier.height(12.dp))
-                                if (tracks.isNotEmpty()) {
+                                if (tracks.isNotEmpty() && kind != DetailKind.Playlist) {
                                     Column(
                                         Modifier.fillMaxWidth(),
                                         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -632,6 +674,33 @@ fun CollectionDetailScreen(
                                             Spacer(Modifier.width(4.dp))
                                             Text("Aléatoire")
                                         }
+                                    }
+                                }
+                                if (kind == DetailKind.Playlist && tracks.isNotEmpty()) {
+                                    val playable = tracks.filter { it.isPlayable() }
+                                    val downloading = offlineProgress != null
+                                    OutlinedButton(
+                                        onClick = {
+                                            if (offlineDone || downloading || playable.isEmpty()) return@OutlinedButton
+                                            offlineProgress = 0.02f
+                                            container.downloadManager.enqueueMany(playable)
+                                            Toast.makeText(
+                                                context,
+                                                "Téléchargement de ${playable.size} titres…",
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                        },
+                                        enabled = !offlineDone && !downloading && playable.isNotEmpty(),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            when {
+                                                offlineDone -> "Playlist sur l'appareil"
+                                                downloading ->
+                                                    "Téléchargement ${((offlineProgress ?: 0.02f) * 100).toInt()} %"
+                                                else -> "Télécharger la playlist"
+                                            },
+                                        )
                                     }
                                 }
                             }
@@ -678,34 +747,20 @@ fun CollectionDetailScreen(
                     return@AlbumOverflowSheet
                 }
                 offlineProgress = 0.02f
-                var done = 0
-                playable.forEach { t ->
-                    container.downloadManager.enqueue(t)
-                }
-                scope.launch {
-                    // Suit la progress globale jusqu’à ce que tous soient locaux
-                    container.downloadManager.progress.collect { map ->
-                        val local = playable.count { container.offlineStore.has(it.id) }
-                        done = local
-                        offlineProgress = (local.toFloat() / playable.size).coerceIn(0.02f, 0.99f)
-                        if (local >= playable.size) {
-                            offlineDone = true
-                            offlineProgress = null
-                            Toast.makeText(context, "Album téléchargé — lisible hors-ligne", Toast.LENGTH_SHORT).show()
-                            return@collect
-                        }
-                        // Si plus aucun job actif et pas tout local → échec partiel
-                        if (map.isEmpty() && local > 0 && local < playable.size) {
-                            offlineProgress = null
-                            Toast.makeText(
-                                context,
-                                "Téléchargé $local/${playable.size} titres",
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                            offlineDone = local == playable.size
-                            return@collect
-                        }
-                    }
+                val started = container.downloadManager.enqueueMany(playable)
+                if (started == 0 && playable.all { container.offlineStore.has(it.id) }) {
+                    offlineDone = true
+                    offlineProgress = null
+                    Toast.makeText(context, "Album déjà sur l'appareil", Toast.LENGTH_SHORT).show()
+                } else if (started == 0) {
+                    offlineProgress = null
+                    Toast.makeText(context, "Téléchargement déjà en cours", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(
+                        context,
+                        "Téléchargement de $started titres…",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
             },
             onPlayNext = {

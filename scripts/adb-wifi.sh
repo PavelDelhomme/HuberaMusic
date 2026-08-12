@@ -327,17 +327,19 @@ cmd_disconnect() {
 cmd_status() { cmd_doctor || true; }
 
 cmd_ensure() {
-  log "==> ensure (≥${MIN_DEVICES} appareil — préfère Samsung USB/Wi‑Fi ; Nothing opt-in)"
+  # INCLUDE_NOTHING=1 (défaut) : reconnecte Samsung + Nothing.
+  # INCLUDE_NOTHING=0 : Samsung seulement — ne déconnecte PAS Nothing s’il est déjà là.
+  local include_nothing="${INCLUDE_NOTHING:-1}"
+  log "==> ensure (≥${MIN_DEVICES} appareil — Samsung + Nothing=${include_nothing})"
   if [[ -f "$STATE_DIR/endpoints.txt" ]]; then
     cmd_connect || true
   fi
   # Samsung LAN d’abord
   "$ADB" connect 192.168.1.184:5555 >/dev/null 2>&1 || true
-  # Nothing seulement si INCLUDE_NOTHING=1 (évite de bloquer le téléphone à sortir)
-  if [[ "${INCLUDE_NOTHING:-0}" == "1" ]]; then
+  if [[ "$include_nothing" == "1" ]]; then
     "$ADB" connect 192.168.1.44:5555 >/dev/null 2>&1 || true
   else
-    "$ADB" disconnect 192.168.1.44:5555 >/dev/null 2>&1 || true
+    log "==> skip reconnect Nothing (INCLUDE_NOTHING=0) — session existante conservée"
   fi
 
   # Bascule USB→Wi‑Fi pour Samsung (et Nothing si INCLUDE_NOTHING)
@@ -346,7 +348,7 @@ cmd_ensure() {
     hw="$(hw_serial_of "$s")"
     for entry in "${EXPECTED_SERIALS[@]}"; do
       if [[ "$hw" == "${entry%%:*}" ]]; then
-        if [[ "$hw" == "00145153K001434" && "${INCLUDE_NOTHING:-0}" != "1" ]]; then
+        if [[ "$hw" == "00145153K001434" && "$include_nothing" != "1" ]]; then
           log "==> skip Nothing USB (INCLUDE_NOTHING=0)"
           continue
         fi

@@ -11,6 +11,7 @@ private val Context.libraryFilterStore by preferencesDataStore("library_filters"
 
 /** Filtres horizontaux Bibliothèque — masquables localement. */
 enum class LibraryFilter(val label: String) {
+    Additions("Ajouts"),
     Downloads("Téléchargés"),
     Playlists("Playlists"),
     Mixes("Mixes"),
@@ -21,7 +22,6 @@ enum class LibraryFilter(val label: String) {
     Profiles("Profils"),
     Podcasts("Podcasts"),
     Audiobooks("Livres audio"),
-    Additions("Ajouts"),
     DeviceFiles("Fichiers de l'appareil"),
     ;
 
@@ -32,7 +32,9 @@ enum class LibraryFilter(val label: String) {
             DeviceFiles.name,
         )
         val defaultVisible: Set<String> = entries.map { it.name }.toSet() - defaultHidden
-        val defaultSelected: LibraryFilter = Tracks
+        /** Accueil bibliothèque = Ajouts (pas un filtre « fermé »). */
+        val defaultSelected: LibraryFilter = Additions
+        val home: LibraryFilter = Additions
 
         /** Demande d’ouverture d’un filtre (ex. depuis Account → Téléchargements). */
         @Volatile

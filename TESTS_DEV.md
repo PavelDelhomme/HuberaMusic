@@ -1,128 +1,171 @@
-# TESTS_DEV — à faire **maintenant** (session courante)
+# TESTS_DEV — Session DEV (Samsung + web / API local)
 
-Environnement : **local** d’abord (web `http://localhost:5173` + Samsung API LAN).  
-Prod = smoke seulement quand LOCAL A1–A6 + B liés sont OK.
+**Appareil** : Samsung (`192.168.1.184:5555` ou USB `R5CT7263YJL`) — APK **dev** → API LAN.  
+**Web** : `http://localhost:5173` · **API** : `http://127.0.0.1:8787` / `http://<LAN>:8787`.  
+**Tracking** : cocher aussi les IDs dans [`STATUS.md`](./STATUS.md).
 
-**Règle** : un bloc parent n’est **OK** que si **toutes** ses cases enfants sont cochées.  
-Ne passe **pas** à A7+ tant que A1–A6 (et fixes associés) ne sont pas tous verts.
+Prérequis :
 
-Glossaire :
-- **Now Playing (NP)** = écran plein lecteur (clic sur la **barre du bas** qui montre le titre en cours).
-- **File** = onglet « File » dans NP (ou panneau file latéral desktop).
+```bash
+make adb-both
+make up-full
+LAN=$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}')
+DEVICE=192.168.1.184:5555 API_BASE_URL=http://$LAN:8787 make android-install
+# login : make adb-login DEVICE=…  (si dispo) ou manuel
+```
 
-Prérequis : [`TESTS.LOCAL.md`](./TESTS.LOCAL.md) §0 · Samsung APK **dev** LAN.
-
----
-
-## A. Web local
-
-### [ ] A — Web local (tout A1…A9)
-
-#### [ ] A1. Reprise lecture *(parent OK quand A1.1–A1.3 OK)*
-- [x] A1.1 — Avancer ~1:00, F5 → barre déjà au bon endroit **sans** Play
-- [x] A1.2 — Play reprend au bon timecode (pause / perte connexion OK)
-- [ ] A1.3 — **Clavier** Media keys / barre OS : Play/Pause reprend bien le titre après reload (prod + local)
-
-> Note session : A1.1–A1.2 OK. A1.3 à **retester** après fix media session + toggle canplay.
-
-#### [x] A2. Fonts / console
-- [x] A2.1 — Plus d’erreur CSP `fonts.googleapis.com` (local)
-
-#### [ ] A3. File & À suivre *(parent OK quand A3.1–A3.4 OK)*
-- [x] A3.1 — Ouvrir NP (clic barre bas) → File → section **Déjà joués** scrollable, pas de rétraction agressive
-- [x] A3.2 — Autoplay remplit **À suivre**
-- [x] A3.3 — Clic titre **loin** dans À suivre → insert juste après le courant (milieu pas « déjà joué »)
-- [ ] A3.4 — Titre **long** : le son démarre vite (début) pendant que la suite charge — **pas** d’attente longue / coupure
-
-> Note : A3.1–A3.3 OK web. A3.4 à **retester** (Content-Length, audio-only yt-dlp, moins de prefetch concurrent).
-
-#### [ ] A4. Similaires
-- [ ] A4.1 — Au play, onglet Similaires : ~10 titres **rapides**
-- [ ] A4.2 — Scroll → charge plus
-- [ ] A4.3 — Chargement similaires **ne coupe pas** / ne sacade pas l’audio en cours
-
-> Note : prefetch différé après merge autoplay — à retester.
-
-#### [ ] A5. Radio
-- [ ] A5.1 — Icône **radio blanche** sur la row (file / liste) par défaut (toujours visible)
-- [ ] A5.2 — Après lancement mix titre → icône **rouge** sur ce titre + libellé « Mix à partir de {titre} »
-- [ ] A5.3 — Menu ⋯ : « En rapport » / radios artiste avec **icône Radio** cohérente
-- [ ] A5.4 — Mix remplace / remplit la file correctement
-
-#### [ ] A6. Téléchargement
-- [ ] A6.1 — ⋯ → Télécharger : % **réel** (pas bloqué 2 % puis saut)
-- [ ] A6.2 — Download **audio only** (pas vidéo) — raisonnablement rapide
-- [ ] A6.3 — Sheet peut se fermer : le download **continue** (pas d’erreur « coroutine scope left »)
-- [ ] A6.4 — Progress visible **partout** pour ce titre (⋯, row %, chrome NP) tant que DL en cours
-- [ ] A6.5 — Fin → « Sur l’appareil » / check, fichier jouable hors ligne
-
-> Note : manager global Android + progress IndexedDB web — à retester avant A7.
-
-#### [ ] A7. Pin → biblio *(après A1–A6 OK)*
-- [ ] A7.1 — Épingler un **titre** → Accès rapide + Bibliothèque Titres
-- [ ] A7.2 — Épingler un **album** → Accès rapide + Bibliothèque Albums
-
-#### [ ] A8. Playlist UI *(après A1–A6 OK)*
-- [ ] A8.1 — Auteur / N titres empilés
-- [ ] A8.2 — Lecture et Aléatoire l’un sous l’autre
-
-#### [ ] A9. Accueil ordre *(après A1–A6 OK)*
-- [ ] A9.1 — Accès rapide (si pins) → Mixés pour toi → shelves
+Règle : un bloc parent n’est **OK** que si **toutes** ses cases enfants sont cochées.  
+Parallèle recommandé : web PC **et** Samsung pour chaque sous-catégorie.
 
 ---
 
-## B. Samsung APK **dev** (API LAN)
+## D0 — Gate local
 
-### [ ] B — Samsung (tout B1…B5)
-
-#### [ ] B1. Boot / session
-- [ ] B1.1 — Force-stop + relance sans écran noir long
-- [ ] B1.2 — Session / Accueil cohérent
-
-#### [ ] B2. Offline
-- [ ] B2.1 — Mode avion : pas de Mixés + message hors ligne
-- [ ] B2.2 — Accès Téléchargés
-- [ ] B2.3 — Retour réseau + refresh Accueil → mixes OK
-
-#### [ ] B3. Similaires + radio + download *(miroirs A4–A6)*
-- [ ] B3.1 — Similaires rapides, peu de coupe audio
-- [ ] B3.2 — Radio / En rapport icônes + comportement OK
-- [ ] B3.3 — Download % global + continue si on ferme le sheet
-- [ ] B3.4 — File : section **Déjà joués** présente (parité web)
-
-#### [ ] B4. Biblio
-- [ ] B4.1 — Filtre défaut **Titres**
-- [ ] B4.2 — Téléchargés : spinner puis liste
-
-#### [ ] B5. Album header
-- [ ] B5.1 — Retour / artiste / année bien visibles
+- [ ] `make status` : API UP, Vite UP, process locaux UP, Samsung ✅ (Nothing optionnel)
+- [ ] `curl -s http://127.0.0.1:8787/api/health` → `ok`, `ref: local`, version attendue
+- [ ] Pas de conteneur docker **requis** (message « aucun — normal si stack Node »)
 
 ---
 
-## C. Smoke prod *(seulement si A+B GO)*
+## D1 — Auth (web + Samsung)
 
-### [ ] C — Smoke prod
-- [ ] C.1 — https://ytmusic.delhomme.ovh login + play + F5 progression
-- [ ] C.2 — Clavier Play/Pause après reload (A1.3 prod)
-- [ ] C.3 — Console : pas d’erreur fonts
-- [ ] C.4 — Nothing APK prod : play + file + download smoke
+### Web
+- [ ] Connexion compte seed / autorisé
+- [ ] Mauvais mdp → erreur claire
+- [ ] Inscription (si ouverte) + validation email
+- [ ] Logout → login
+- [ ] Reload / onglet veille → session OK
 
----
-
-## Critères GO
-
-| Niveau | Condition |
-|--------|-----------|
-| **GO A1–A6** | Toutes cases A1…A6 cochées (fixes inclus) |
-| **GO suite** | GO A1–A6 + A7–A9 + B1–B5 |
-| **GO prod** | GO suite + C |
-
-Tant que A1–A6 ne sont pas verts → **pas** A7+, **pas** TESTS_PROD.
-
-Index : [`TESTS.md`](./TESTS.md) · Local : [`TESTS.LOCAL.md`](./TESTS.LOCAL.md).
+### Samsung DEV
+- [ ] Login → Accueil
+- [ ] Kill app → relance → session conservée
+- [ ] API LAN down → message clair (pas freeze)
 
 ---
 
-### Glossaire (rappel)
-- **Now Playing (NP)** = clic sur la **barre du bas** (titre en cours) → plein écran lecteur.
-- **File** = onglet / panneau file dans NP (Déjà joués · En cours · À suivre).
+## D2 — Batterie & usage
+
+- [ ] `make adb-wifi-doctor` (Samsung OK)
+- [ ] Smoke usage 10 min lecture + scroll Accueil / Biblio (notes janks)
+- [ ] Session calme optionnelle : `make battery-go-calm` ou `DURATION=600 make battery-go`
+- [ ] Rapport email batterie reçu / lisible (si SMTP OK)
+
+---
+
+## D3 — Erreurs → email / télémétrie
+
+- [ ] Forcer une erreur visible (stream fail / API stop 5 s) → toast clair
+- [ ] Crash / erreur non fatale → entrée dans **Réglages → Logs / Crash**
+- [ ] Email d’alerte reçu (admin / outbox) avec contexte (device, version, stack)
+- [ ] Pas de spam email en boucle sur la même erreur
+
+---
+
+## D4 — Chargement pages + scroll + progressif
+
+Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de freeze, pas de « connexion perdue » injustifiée.
+
+### Accueil
+- [ ] Accès rapide, mixes (covers), shelves au scroll
+- [ ] Section / chips Podcasts · Albums · Livres (si livré — sinon noter STATUS B2.*)
+- [ ] Explorer : images + noms OK (pas carrés vides / libellés chelous)
+
+### Artiste
+- [ ] Hero + listes albums / singles / playlists
+- [ ] Scroll fluide ; retour page = **état scroll conservé** (si livré)
+- [ ] Chargement raisonnable (< ~3 s perçu avec cache)
+
+### Album
+- [ ] Titres listés ; play album ; progress DL live si téléchargement
+
+### Titres artiste / titres album
+- [ ] Pagination / scroll progressif
+- [ ] ⋮ actions ; état biblio **rapide**
+
+### File d’attente
+- [ ] Auto-remplie depuis lecture
+- [ ] Depuis album (Tout lire) + insert À suivre
+- [ ] Next / prev stables (pas de crash — STATUS B4.1)
+
+### Playlists
+- [ ] Liste biblio ; ouvrir playlist (titres)
+- [ ] **Pas** de boutons Tout lire / Aléatoire sur header playlist (si livré B1.5)
+- [ ] Bouton télécharger **toute** la playlist (si livré B1.6)
+- [ ] Ajout playlist / ajout titre
+
+### Mixes
+- [ ] Mixes user + générés visibles
+- [ ] Mix depuis album / artiste / titre
+- [ ] Mix Nouveauté fonctionne
+- [ ] Mixes « déjà écouté » / artistes suivis
+
+### J’aime / pins
+- [ ] J’aime titre ; j’aime album (tous titres) — cœur plein/vide
+- [ ] Épingler artiste / titre / album / son → Accès rapide
+
+---
+
+## D5 — Lecteur multimédia
+
+- [ ] Play / pause / seek
+- [ ] Next / prev (répéter 20× sur playlist longue — noter crashes)
+- [ ] NP scroll file ; paysage OK
+- [ ] Paroles si dispo
+- [ ] Media keys / barre OS (web)
+
+---
+
+## D6 — Bibliothèque (focus sprint)
+
+- [ ] Accueil biblio OK
+- [ ] Clic filtre Titres / Albums / … → vue filtrée + **✕** revient à l’accueil biblio
+- [ ] Même pattern pour tous les chips
+- [ ] Titres : affichage / chargement améliorés
+- [ ] Mixes biblio = user + générés
+- [ ] Téléchargés : Playlists → Albums → Titres ; Tout lire / Aléatoire **seulement** titres
+- [ ] Podcasts = uniquement ajoutés
+- [ ] Livres audio = uniquement ajoutés
+- [ ] Sheet ⋮ : état biblio quasi immédiat
+
+---
+
+## D7 — Téléchargements
+
+- [ ] Titre : progress % réel, pas bloqué bleu
+- [ ] Album (ex. *Pandemonium* / Heaven Pierce Her) : progress live (pas stuck 2 %)
+- [ ] Playlist entière DL
+- [ ] Hors‑ligne : lecture OK
+- [ ] Fermer sheet pendant DL → continue
+
+---
+
+## D8 — Connexion perdue / stabilité
+
+- [ ] Naviguer 10 pages rapidement → pas de faux « connexion perdue »
+- [ ] Couper Wi‑Fi 5 s → message ; revenir → recovery
+- [ ] API restart (`make restart-api`) → clients récupèrent
+
+---
+
+## D9 — Réglages / logs UI
+
+- [ ] Crash / Perf / Logs : **page entière** scrollable + journal scrollable
+- [ ] Réglages : pas de trou / page trop basse (espace haut OK)
+
+---
+
+## D10 — Appui long album (si livré B6.4)
+
+- [ ] Même sheet que titre
+- [ ] Écouter album ; ajouter album biblio ; j’aime tous titres
+- [ ] Ajout titres individuels sans duplicata si album déjà en biblio
+
+---
+
+## Fin de session DEV
+
+- [ ] Notes dans STATUS (IDs concernés → `🧪` ou `✅` LOCAL/DEV)
+- [ ] Bugs nouveaux ouverts en lignes STATUS
+- [ ] **Ne pas** merger prod tant que D0–D8 critiques KO
+
+Session suivante : promo puis [`TESTS_PROD.md`](./TESTS_PROD.md) sur **Nothing**.

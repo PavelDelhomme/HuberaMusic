@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
@@ -93,9 +94,7 @@ fun LibraryScreen(
     var lastFetchAt by remember { mutableStateOf(0L) }
     var downloadMeta by remember { mutableStateOf<Map<String, TrackDto>>(emptyMap()) }
     var downloadsEnriching by remember { mutableStateOf(false) }
-    var spokenItems by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
-    var spokenLoading by remember { mutableStateOf(false) }
-    var spokenError by remember { mutableStateOf<String?>(null) }
+    var homeMixes by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
 
     suspend fun reloadLibrary(force: Boolean = false, showSpinner: Boolean = false) {
         val now = System.currentTimeMillis()
@@ -167,27 +166,19 @@ fun LibraryScreen(
     }
 
     LaunchedEffect(selected) {
-        if (selected != LibraryFilter.Podcasts && selected != LibraryFilter.Audiobooks) {
-            spokenItems = emptyList()
-            spokenError = null
-            spokenLoading = false
-            return@LaunchedEffect
-        }
-        spokenLoading = true
-        spokenError = null
-        spokenItems = emptyList()
-        val kind = if (selected == LibraryFilter.Audiobooks) "audiobook" else "podcast"
+        if (selected != LibraryFilter.Mixes) return@LaunchedEffect
+        if (homeMixes.isNotEmpty()) return@LaunchedEffect
         runCatching {
             container.ensureFreshToken()
-            container.api.exploreSpoken(kind).items
-        }.onSuccess {
-            spokenItems = it
-            spokenError = null
-        }.onFailure {
-            spokenError = it.message ?: "Impossible de charger"
-            spokenItems = emptyList()
-        }
-        spokenLoading = false
+            container.api.home().radios.map { radio ->
+                TrackDto(
+                    id = radio.id,
+                    title = radio.title,
+                    type = "mix",
+                    artists = listOf(ArtistRef("Mix pour toi")),
+                )
+            }
+        }.onSuccess { homeMixes = it }
     }
 
     // Enrichit les téléchargements dont on n’a que l’id
@@ -291,7 +282,35 @@ fun LibraryScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    visibleFilters.forEach { filter ->
+                    if (selected != LibraryFilter.home) {
+                        FilterChip(
+                            selected = true,
+                            onClick = { selected = LibraryFilter.home },
+                            label = { Text(selected.label) },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Fermer le filtre · retour bibliothèque",
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.onSurface,
+                                selectedLabelColor = MaterialTheme.colorScheme.surface,
+                                selectedTrailingIconColor = MaterialTheme.colorScheme.surface,
+                            ),
+                        )
+                    }
+                    visibleFilters
+                        .filter { filter ->
+                            // Accueil : tous sauf « Ajouts » (c’est déjà la page). Filtre actif : les autres options.
+                            when {
+                                filter == LibraryFilter.home -> false
+                                selected != LibraryFilter.home && filter == selected -> false
+                                else -> true
+                            }
+                        }
+                        .forEach { filter ->
                         Box(
                             Modifier.combinedClickable(
                                 onClick = { selected = filter },
@@ -301,7 +320,7 @@ fun LibraryScreen(
                             ),
                         ) {
                             FilterChip(
-                                selected = selected == filter,
+                                selected = false,
                                 onClick = { selected = filter },
                                 label = { Text(filter.label) },
                                 colors = FilterChipDefaults.filterChipColors(
@@ -320,29 +339,8 @@ fun LibraryScreen(
                     }
                 }
 
-                val content = remember(data, selected, downloadMeta, offlineRev, spokenItems, spokenLoading, spokenError, downloadsEnriching) {
-                    when (selected) {
-                        LibraryFilter.Podcasts, LibraryFilter.Audiobooks -> {
-                            val title = if (selected == LibraryFilter.Audiobooks) "Livres audio" else "Podcasts"
-                            val playable = spokenItems.filter { it.isPlayable() }
-                            LibraryContent(
-                                headline = title,
-                                rows = spokenItems,
-                                playableQueue = playable,
-                                emptyMessage = when {
-                                    spokenLoading -> "Chargement…"
-                                    spokenError != null -> spokenError!!
-                                    else -> "Aucun résultat. Cherche aussi via Recherche → $title."
-                                },
-                                showPlayAll = playable.isNotEmpty(),
-                                playLabel = "Tout lire",
-                                shuffleLabel = "Aléatoire",
-                                collectionHint = "Lecture en flux audio (YouTube).",
-                                loading = spokenLoading && spokenItems.isEmpty(),
-                            )
-                        }
-                        else -> buildLibraryContent(data, selected, downloadMeta, downloadsEnriching)
-                    }
+                val content = remember(data, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching) {
+                    buildLibraryContent(data, selected, downloadMeta, downloadsEnriching, homeMixes)
                 }
                 val warmKey = remember(content.playableQueue) {
                     content.playableQueue.take(40).joinToString(",") { it.id }
@@ -542,6 +540,7 @@ private fun buildLibraryContent(
     filter: LibraryFilter,
     downloadMeta: Map<String, TrackDto> = emptyMap(),
     downloadsEnriching: Boolean = false,
+    homeMixes: List<TrackDto> = emptyList(),
 ): LibraryContent {
     fun az(tracks: List<TrackDto>) = tracks.sortedBy { it.title.lowercase() }
 
@@ -556,6 +555,16 @@ private fun buildLibraryContent(
 
     fun likedPlaylistAsTrack(pl: TrackDto): TrackDto =
         pl.copy(type = pl.type ?: "playlist")
+
+    fun isSpoken(t: TrackDto, kind: String): Boolean {
+        val typ = (t.type ?: "").lowercase()
+        val title = t.title.lowercase()
+        return when (kind) {
+            "audiobook" -> typ.contains("audiobook") || typ.contains("livre") ||
+                title.contains("audiobook") || title.contains("livre audio")
+            else -> typ.contains("podcast") || title.contains("podcast") || title.contains("épisode")
+        }
+    }
 
     return when (filter) {
         LibraryFilter.Additions -> {
@@ -607,39 +616,46 @@ private fun buildLibraryContent(
                 addAll(data.playlists.map { playlistAsTrack(it) })
                 addAll(data.likedPlaylists.map { likedPlaylistAsTrack(it) })
             }.distinctBy { it.id }.sortedBy { it.title.lowercase() }
-            val fromLocal = data.playlists
-                .flatMap { it.tracks.orEmpty() }
-                .filter { it.isPlayable() }
-                .distinctBy { it.id }
             LibraryContent(
                 headline = "Playlists · A–Z",
                 rows = rows,
-                playableQueue = fromLocal,
+                playableQueue = emptyList(),
                 emptyMessage = "Aucune playlist. Crée-en une ou enregistre une playlist YT Music.",
-                showPlayAll = fromLocal.isNotEmpty(),
-                playLabel = "Tout lire",
-                shuffleLabel = "Aléatoire",
-                collectionHint = if (fromLocal.isEmpty() && rows.isNotEmpty()) {
-                    "Ouvre une playlist pour lancer la lecture"
+                showPlayAll = false,
+                collectionHint = if (rows.isNotEmpty()) {
+                    "Ouvre une playlist pour voir les titres"
                 } else {
                     null
                 },
             )
         }
         LibraryFilter.Mixes -> {
-            val rows = data.mixes.map { m ->
+            val saved = data.mixes.map { m ->
                 m.copy(
                     type = "mix",
-                    artists = listOf(ArtistRef("Mix radio")),
+                    artists = (m.artists ?: emptyList()).ifEmpty { listOf(ArtistRef("Mix enregistré")) },
                 )
-            }.sortedBy { it.title.lowercase() }
+            }
+            val generated = homeMixes.map { m ->
+                m.copy(
+                    type = "mix",
+                    artists = (m.artists ?: emptyList()).ifEmpty { listOf(ArtistRef("Mix pour toi")) },
+                )
+            }
+            val rows = (saved + generated)
+                .distinctBy { it.id }
+                .sortedBy { it.title.lowercase() }
             LibraryContent(
                 headline = if (rows.isEmpty()) "Mixes" else "Mixes · ${rows.size}",
                 rows = rows,
                 playableQueue = emptyList(),
-                emptyMessage = "Aucun mix. Sur Accueil → Mixés pour toi, enregistre un mix (+).",
+                emptyMessage = "Aucun mix. Sur Accueil → Mixés pour toi, ou enregistre un mix (+).",
                 showPlayAll = false,
-                collectionHint = if (rows.isNotEmpty()) "Ouvre un mix pour voir la liste" else null,
+                collectionHint = if (rows.isNotEmpty()) {
+                    "Enregistrés + générés (humeur / écoutes). Ouvre un mix pour lire."
+                } else {
+                    null
+                },
             )
         }
         LibraryFilter.Albums -> {
@@ -672,16 +688,28 @@ private fun buildLibraryContent(
         }
         LibraryFilter.Downloads -> {
             val byId = (data.songs + data.liked + data.history).associateBy { it.id } + downloadMeta
-            val rows = az(
-                data.downloaded.mapNotNull { id ->
-                    byId[id] ?: TrackDto(id = id, title = id, type = "song")
-                }.distinctBy { it.id },
+            val all = data.downloaded.mapNotNull { id ->
+                byId[id] ?: TrackDto(id = id, title = id, type = "song")
+            }.distinctBy { it.id }
+            val playlistsDl = az(all.filter { it.isPlaylist() || (it.type ?: "").equals("playlist", true) })
+            val albumsDl = az(all.filter { it.isAlbum() || (it.type ?: "").equals("album", true) })
+            val tracksDl = az(
+                all.filter {
+                    it.isPlayable() && !it.isPlaylist() && !it.isAlbum() &&
+                        !(it.type ?: "").equals("playlist", true) &&
+                        !(it.type ?: "").equals("album", true)
+                },
             )
-            val playable = rows.filter { it.isPlayable() }
+            val rows = buildList {
+                addAll(playlistsDl)
+                addAll(albumsDl)
+                addAll(tracksDl)
+            }
             val unresolved = rows.any { it.title == it.id && it.id.length == 11 }
             val enriching = downloadsEnriching && (rows.isEmpty() || unresolved)
+            val playable = tracksDl.filter { it.isPlayable() }
             LibraryContent(
-                headline = "Téléchargés · A–Z",
+                headline = "Téléchargés",
                 rows = if (enriching) emptyList() else rows,
                 playableQueue = if (enriching) emptyList() else playable,
                 emptyMessage = if (enriching) {
@@ -692,6 +720,12 @@ private fun buildLibraryContent(
                 showPlayAll = !enriching && playable.isNotEmpty(),
                 playLabel = "Tout lire",
                 shuffleLabel = "Aléatoire",
+                collectionHint = when {
+                    enriching -> null
+                    playlistsDl.isNotEmpty() || albumsDl.isNotEmpty() ->
+                        "Playlists → albums → titres. Lecture / aléatoire = titres uniquement."
+                    else -> null
+                },
                 loading = enriching,
             )
         }
@@ -702,12 +736,32 @@ private fun buildLibraryContent(
             emptyMessage = "",
             comingSoon = "Profils — bientôt disponible.",
         )
-        LibraryFilter.Podcasts, LibraryFilter.Audiobooks -> LibraryContent(
-            headline = filter.label,
-            rows = emptyList(),
-            playableQueue = emptyList(),
-            emptyMessage = "Chargement…",
-        )
+        LibraryFilter.Podcasts -> {
+            val pool = (data.songs + data.liked + data.albums).distinctBy { it.id }
+            val rows = az(pool.filter { isSpoken(it, "podcast") })
+            val playable = rows.filter { it.isPlayable() }
+            LibraryContent(
+                headline = "Podcasts · bibliothèque",
+                rows = rows,
+                playableQueue = playable,
+                emptyMessage = "Aucun podcast ajouté à ta bibliothèque. Enregistre-en un via ⋮ → bibliothèque.",
+                showPlayAll = playable.isNotEmpty(),
+                collectionHint = if (rows.isNotEmpty()) "Uniquement les podcasts que tu as ajoutés." else null,
+            )
+        }
+        LibraryFilter.Audiobooks -> {
+            val pool = (data.songs + data.liked + data.albums).distinctBy { it.id }
+            val rows = az(pool.filter { isSpoken(it, "audiobook") })
+            val playable = rows.filter { it.isPlayable() }
+            LibraryContent(
+                headline = "Livres audio · bibliothèque",
+                rows = rows,
+                playableQueue = playable,
+                emptyMessage = "Aucun livre audio ajouté à ta bibliothèque.",
+                showPlayAll = playable.isNotEmpty(),
+                collectionHint = if (rows.isNotEmpty()) "Uniquement les livres audio que tu as ajoutés." else null,
+            )
+        }
         LibraryFilter.DeviceFiles -> LibraryContent(
             headline = "Fichiers de l'appareil",
             rows = emptyList(),

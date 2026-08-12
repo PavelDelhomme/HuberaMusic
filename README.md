@@ -30,19 +30,24 @@ make android           # APK Kotlin sur device ADB (API LAN)
 
 ## Tests manuels (ordre)
 
-Ne pas tout enchaîner d’un coup :
+Ne pas tout enchaîner d’un coup. Suivi : [`STATUS.md`](STATUS.md).
 
 1. [`TESTS.LOCAL.md`](TESTS.LOCAL.md) — local web + Samsung (API LAN)  
-2. [`TESTS_DEV.md`](TESTS_DEV.md) — focus features de la session  
+2. [`TESTS_DEV.md`](TESTS_DEV.md) — **session DEV** (Samsung + web/API local)  
 3. Déploiement → [`DEPLOY.md`](DEPLOY.md)  
-4. [`TESTS_PROD.md`](TESTS_PROD.md) — prod web + VPS + Nothing  
+4. [`TESTS_PROD.md`](TESTS_PROD.md) — **session PROD** (Nothing + web/API prod)  
 
-Index : [`TESTS.md`](TESTS.md) · résumé docs : [`docs/TESTING.md`](docs/TESTING.md)
+Index : [`TESTS.md`](TESTS.md) · résumé docs : [`docs/TESTING.md`](docs/TESTING.md) · backlog : [`docs/FEATURES-BACKLOG.md`](docs/FEATURES-BACKLOG.md)
+
+```bash
+make adb-both          # Samsung DEV + Nothing PROD
+make status-watch      # process locaux + ADB (docker optionnel)
+```
 
 | Appareil | Mode | Commande |
 |----------|------|----------|
-| **Samsung** | Dev / LAN | `DEVICE=… API_BASE_URL=http://<LAN>:8787 make android-install` |
-| **Nothing** | Prod | `DEVICE=… make android-prod` |
+| **Samsung** | Dev / LAN | `DEVICE=192.168.1.184:5555 API_BASE_URL=http://<LAN>:8787 make android-install` |
+| **Nothing** | Prod | `DEVICE=192.168.1.44:5555 make android-prod` |
 
 ### Desktop
 
