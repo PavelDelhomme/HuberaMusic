@@ -512,6 +512,34 @@ private fun MainTabs(
     }
 
     fun openDetail(item: TrackDto) {
+        if (item.id == ovh.delhomme.ytmusic.data.OfflineKeeper.MON_MIX_ID) {
+            val ids = container.offlineKeeper.monMixIds()
+            val tracks = ids.mapNotNull { id ->
+                container.offlineStore.listTracks().find { it.id == id }
+            }.ifEmpty {
+                ids.map { TrackDto(id = it, title = it, type = "song") }
+                    .filter { container.offlineStore.has(it.id) }
+                    .map { id ->
+                        container.offlineStore.listTracks().find { it.id == id.id } ?: id
+                    }
+            }
+            if (tracks.isEmpty()) {
+                android.widget.Toast.makeText(
+                    context,
+                    "Mon Mix pas encore téléchargé — réessaie en Wi‑Fi",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+                return
+            }
+            player.play(
+                tracks.shuffled(),
+                0,
+                title = ovh.delhomme.ytmusic.data.OfflineKeeper.MON_MIX_TITLE,
+                sourceId = ovh.delhomme.ytmusic.data.OfflineKeeper.MON_MIX_ID,
+                sourceKind = "mix",
+            )
+            return
+        }
         if (item.type?.equals("mix", ignoreCase = true) == true) {
             nav.navigate("detail/mix/${Uri.encode(item.id)}")
             return

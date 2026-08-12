@@ -510,6 +510,27 @@ fun TrackActionsSheet(
             ) {
                 scope.launch {
                     val ok = runCatching {
+                        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) {
+                            val offlineMix = ovh.delhomme.ytmusic.data.buildOfflineMix(
+                                container.offlineStore,
+                                seed = enriched,
+                            )
+                            if (offlineMix.isEmpty()) {
+                                Toast.makeText(
+                                    context,
+                                    "Mix hors-ligne : télécharge d’abord des titres (⋮)",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                                return@runCatching
+                            }
+                            player.playRadioOrEnqueue(offlineMix, "Mix hors-ligne", sourceKind = "radio")
+                            Toast.makeText(
+                                context,
+                                "Mix hors-ligne · ${offlineMix.size} titres",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            return@runCatching
+                        }
                         val mix = buildRadioQueue(
                             container.api, "track", enriched.id, enriched,
                             mixCache = container.mixCache, progressive = true,

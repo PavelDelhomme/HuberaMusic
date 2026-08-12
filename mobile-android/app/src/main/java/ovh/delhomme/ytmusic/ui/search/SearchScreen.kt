@@ -241,6 +241,24 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
 
             // Toujours chercher d’abord dans les téléchargements locaux (offline-capable)
             val offlineHits = filterOfflineDownloads(currentQ, currentFilter)
+            val offlineOnly = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+
+            if (offlineOnly) {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    sections = if (offlineHits.isNotEmpty()) {
+                        listOf(SearchSection("Sur l'appareil (hors ligne)", offlineHits.take(60)))
+                    } else {
+                        emptyList()
+                    },
+                    error = if (offlineHits.isEmpty()) {
+                        "Hors ligne — aucun titre local ne correspond"
+                    } else {
+                        null
+                    },
+                )
+                return@launch
+            }
 
             try {
                 container.ensureFreshToken()
@@ -295,13 +313,45 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     private fun filterOfflineDownloads(query: String, filter: String): List<TrackDto> {
-        if (filter !in setOf("all", "song", "video")) return emptyList()
+        if (filter !in setOf("all", "song", "video", "album", "artist")) return emptyList()
         val q = query.lowercase()
-        return container.offlineStore.listTracks().filter { t ->
-            val title = t.title.lowercase()
-            val artists = t.artistLine().lowercase()
-            val album = t.album?.name.orEmpty().lowercase()
-            title.contains(q) || artists.contains(q) || album.contains(q)
+        val locals = container.offlineStore.listTracks()
+        return when (filter) {
+            "album" -> locals
+                .mapNotNull { t ->
+                    val album = t.album ?: return@mapNotNull null
+                    val name = album.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    if (!name.lowercase().contains(q) && !t.title.lowercase().contains(q)) return@mapNotNull null
+                    TrackDto(
+                        id = album.id?.takeIf { it.isNotBlank() } ?: "album:${name.lowercase()}",
+                        title = name,
+                        artists = t.artists,
+                        thumbnails = t.thumbnails,
+                        type = "album",
+                    )
+                }
+                .distinctBy { it.id }
+            "artist" -> locals
+                .flatMap { t -> t.artists.orEmpty().map { a -> a to t } }
+                .filter { (a, _) ->
+                    a.name.lowercase().contains(q) || a.id?.lowercase()?.contains(q) == true
+                }
+                .map { (a, t) ->
+                    TrackDto(
+                        id = a.id?.takeIf { it.isNotBlank() } ?: "artist:${a.name.lowercase()}",
+                        title = a.name,
+                        artists = listOf(a),
+                        thumbnails = t.thumbnails,
+                        type = "artist",
+                    )
+                }
+                .distinctBy { it.id }
+            else -> locals.filter { t ->
+                val title = t.title.lowercase()
+                val artists = t.artistLine().lowercase()
+                val album = t.album?.name.orEmpty().lowercase()
+                title.contains(q) || artists.contains(q) || album.contains(q)
+            }
         }
     }
 

@@ -1088,7 +1088,7 @@ class PlayerController(
             StreamPrefetcher.warmCurrentBlocking(base, currentId, timeoutMs = 450L)
         }
         warmAround(window, idx) // format + CacheWriter suite (async)
-        // Persist 2 titres suivants sur disque (coupure réseau / mix)
+        // Persist 2 titres suivants (séquentiel) — Exo CacheWriter couvre le reste sans reset CDN
         runCatching {
             val ahead = window.drop(idx + 1).take(3)
             YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
@@ -1121,7 +1121,7 @@ class PlayerController(
             base,
             playable.map { it.id },
             idx,
-            ahead = 4,
+            ahead = 6,
             behind = 1,
         )
         CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)

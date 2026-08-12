@@ -361,7 +361,33 @@ fun CollectionDetailScreen(
                 }
             }
         }.onFailure {
-            if (seed != null || tracks.isNotEmpty()) {
+            val locals = container.offlineStore.listTracks()
+            val offlineTracks = when (kind) {
+                DetailKind.Artist -> locals.filter { t ->
+                    t.artists.orEmpty().any { a ->
+                        a.id == id || a.name.equals(seed?.title, true) || a.name.equals(title, true)
+                    } || (id.startsWith("artist:") && t.artists.orEmpty().any {
+                        "artist:${it.name.lowercase()}" == id
+                    })
+                }
+                DetailKind.Album -> locals.filter { t ->
+                    t.album?.id == id ||
+                        t.album?.name.equals(seed?.title, true) ||
+                        (id.startsWith("album:") && t.album?.name?.let { "album:${it.lowercase()}" } == id)
+                }
+                else -> emptyList()
+            }
+            if (offlineTracks.isNotEmpty()) {
+                tracks = offlineTracks
+                title = title.ifBlank { seed?.title ?: when (kind) {
+                    DetailKind.Album -> "Album"
+                    DetailKind.Artist -> "Artiste"
+                    else -> "Collection"
+                } }
+                subtitle = "${offlineTracks.size} titres · hors ligne"
+                cover = seed ?: offlineTracks.first()
+                error = null
+            } else if (seed != null || tracks.isNotEmpty()) {
                 if (tracks.isEmpty()) tracks = resolvePlayableTracks(container.api, seed!!)
                 title = title.ifBlank { seed?.title ?: "Mix" }
                 subtitle = when (kind) {
@@ -898,14 +924,37 @@ fun CollectionDetailScreen(
             },
             onStartMix = {
                 showPlaylistMenu = false
-                if (!online) {
-                    Toast.makeText(context, "Mix indisponible hors-ligne", Toast.LENGTH_SHORT).show()
-                    return@PlaylistOverflowSheet
-                }
                 scope.launch {
                     radioBusy = true
                     try {
                         val seedTrack = tracks.firstOrNull() ?: return@launch
+                        if (!online) {
+                            val offlineMix = ovh.delhomme.ytmusic.data.buildOfflineMix(
+                                container.offlineStore,
+                                seed = seedTrack,
+                            )
+                            if (offlineMix.isEmpty()) {
+                                Toast.makeText(
+                                    context,
+                                    "Mix hors-ligne : télécharge d’abord des titres (⋮)",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                                return@launch
+                            }
+                            player?.play(
+                                offlineMix,
+                                0,
+                                title = "Mix hors-ligne · $title",
+                                sourceId = seedTrack.id,
+                                sourceKind = "radio",
+                            ) ?: onPlayNamed(offlineMix, 0, "Mix hors-ligne · $title")
+                            Toast.makeText(
+                                context,
+                                "Mix hors-ligne (${offlineMix.size} titres)",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            return@launch
+                        }
                         val mix = buildRadioQueue(
                             container.api,
                             "track",

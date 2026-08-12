@@ -124,8 +124,9 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            val exo = player ?: return
+            promoteUpcomingToLocal(exo, exo.currentMediaItemIndex + 1)
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-                val exo = player ?: return
                 maybeRecoverEarlyEnd(exo)
                 // Stop en fin de file user si lecture auto OFF (suggestions restent dans la file)
                 val idx = exo.currentMediaItemIndex
@@ -191,11 +192,11 @@ class PlaybackService : MediaSessionService() {
                     return
                 }
                 if (nextIdx < exo.mediaItemCount) {
+                    // Ne PAS re-prepare() : la file est déjà préparée → transition sans trou
                     runCatching {
-                        exo.seekTo(nextIdx, 0L)
-                        exo.prepare()
+                        promoteUpcomingToLocal(exo, nextIdx)
+                        exo.seekTo(nextIdx, C.TIME_UNSET)
                         exo.playWhenReady = true
-                        exo.play()
                         Holder.index = nextIdx
                     }
                     warmUpcoming(nextIdx)
@@ -509,10 +510,10 @@ class PlaybackService : MediaSessionService() {
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs */ 15_000,
-                /* maxBufferMs */ 70_000,
-                /* bufferForPlaybackMs */ 750,
-                /* bufferForPlaybackAfterRebufferMs */ 2_000,
+                /* minBufferMs */ 25_000,
+                /* maxBufferMs */ 90_000,
+                /* bufferForPlaybackMs */ 1_200,
+                /* bufferForPlaybackAfterRebufferMs */ 2_500,
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -556,6 +557,16 @@ class PlaybackService : MediaSessionService() {
 
         Holder.player = exo
         Holder.service = this
+
+        // Dès qu’un DL hors-ligne se termine → bascule les suivants en file:// (anti-coupure)
+        scope.launch {
+            val store = runCatching { YtMusicApp.instance.container.offlineStore }.getOrNull() ?: return@launch
+            store.revision.collect {
+                val p = player ?: return@collect
+                val idx = p.currentMediaItemIndex
+                promoteUpcomingToLocal(p, idx + 1)
+            }
+        }
     }
 
     private fun sessionActivityPendingIntent(): PendingIntent {
@@ -862,7 +873,7 @@ class PlaybackService : MediaSessionService() {
         enqueueOfflineAhead(fromIndex)
     }
 
-    /** Télécharge silencieusement les 2 titres suivants → survivre hors-ligne / mix. */
+    /** Télécharge silencieusement les 2 titres suivants → transition file:// sans saturer le CDN. */
     private fun enqueueOfflineAhead(fromIndex: Int) {
         val queue = Holder.queue
         if (queue.isEmpty()) return
@@ -870,6 +881,33 @@ class PlaybackService : MediaSessionService() {
         if (ahead.isEmpty()) return
         runCatching {
             ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
+        }
+        // Si déjà téléchargés : bascule URI file:// dans Exo (transition instantanée)
+        val exo = player ?: return
+        promoteUpcomingToLocal(exo, fromIndex + 1)
+    }
+
+    /**
+     * Remplace les MediaItem HTTP des titres suivants par `file://` dès qu’un DL est prêt.
+     * Évite le trou audible au changement de piste (plus de rebuffer réseau).
+     */
+    private fun promoteUpcomingToLocal(exo: ExoPlayer, fromIndex: Int) {
+        val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return
+        val queue = Holder.queue
+        val start = fromIndex.coerceAtLeast(0)
+        val end = (start + 4).coerceAtMost(minOf(queue.size, exo.mediaItemCount))
+        for (i in start until end) {
+            val track = queue.getOrNull(i) ?: continue
+            if (!container.offlineStore.has(track.id)) continue
+            val cur = exo.getMediaItemAt(i)
+            val scheme = cur.localConfiguration?.uri?.scheme
+            if (scheme == "file") continue
+            runCatching {
+                exo.replaceMediaItem(
+                    i,
+                    mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle),
+                )
+            }
         }
     }
 
@@ -968,7 +1006,19 @@ private class YtmForwardingPlayer(
         val wasOne = exo.repeatMode == Player.REPEAT_MODE_ONE
         if (wasOne) exo.repeatMode = Player.REPEAT_MODE_OFF
         val cur = exo.currentMediaItemIndex
+        val offline = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+        val store = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container.offlineStore }.getOrNull()
         val nextIdx = when {
+            offline && store != null -> {
+                val q = PlaybackService.Holder.queue
+                (cur + 1 until q.size).firstOrNull { store.has(q[it].id) }
+                    ?: if (exo.repeatMode == Player.REPEAT_MODE_ALL) {
+                        q.indices.firstOrNull { store.has(q[it].id) }
+                    } else {
+                        null
+                    }
+                    ?: cur
+            }
             exo.hasNextMediaItem() -> cur + 1
             exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 0 -> 0
             exo.mediaItemCount > 1 -> (cur + 1) % exo.mediaItemCount
@@ -977,7 +1027,12 @@ private class YtmForwardingPlayer(
         // Chauffe le titre cible + le suivant avant / pendant le seek (notif + UI)
         warmAroundIndex(nextIdx)
         when {
-            exo.hasNextMediaItem() -> {
+            offline && store != null && nextIdx != cur &&
+                store.has(PlaybackService.Holder.queue.getOrNull(nextIdx)?.id.orEmpty()) -> {
+                exo.seekTo(nextIdx, 0L)
+                exo.play()
+            }
+            exo.hasNextMediaItem() && !(offline && store != null) -> {
                 exo.seekToNextMediaItem()
                 exo.play()
             }
@@ -985,9 +1040,20 @@ private class YtmForwardingPlayer(
                 exo.seekTo(/* mediaItemIndex */ 0, /* positionMs */ 0L)
                 exo.play()
             }
-            exo.mediaItemCount > 1 -> {
+            exo.mediaItemCount > 1 && !(offline && store != null) -> {
                 exo.seekTo(nextIdx, 0L)
                 exo.play()
+            }
+            offline && store != null -> {
+                // Pas d’autre titre local — rester
+                val ctx = ovh.delhomme.ytmusic.YtMusicApp.instance
+                android.os.Handler(ctx.mainLooper).post {
+                    android.widget.Toast.makeText(
+                        ctx,
+                        "Hors ligne — pas d’autre titre téléchargé",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
             }
             else -> {
                 // Ne pas relancer le même titre — déléguer au fill autoplay
