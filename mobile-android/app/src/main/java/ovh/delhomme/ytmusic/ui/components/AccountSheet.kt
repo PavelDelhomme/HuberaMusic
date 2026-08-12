@@ -172,7 +172,7 @@ fun AccountSheet(
             AccountRow(
                 icon = { Icon(Icons.Default.VpnKey, contentDescription = null) },
                 title = "Enregistrer une passkey",
-                subtitle = "Connexion sans mot de passe",
+                subtitle = "Bitwarden, GPM ou empreinte — sans mot de passe",
                 onClick = {
                     scope.launch {
                         try {

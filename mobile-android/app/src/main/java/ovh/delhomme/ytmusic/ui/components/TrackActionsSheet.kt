@@ -108,7 +108,7 @@ fun TrackActionsSheet(
     likedIds: Set<String>,
     onDismiss: () -> Unit,
     onLikedChanged: (Set<String>) -> Unit,
-    onOpenAddToPlaylist: () -> Unit,
+    onOpenAddToPlaylist: (containedPlaylistIds: Set<String>) -> Unit,
     onOpenAlbum: ((String) -> Unit)? = null,
     onOpenArtist: ((String) -> Unit)? = null,
     onCast: (() -> Unit)? = null,
@@ -126,6 +126,7 @@ fun TrackActionsSheet(
     var wasDownloading by remember { mutableStateOf(false) }
     var albumInLibrary by remember { mutableStateOf(false) }
     var songInLibrary by remember { mutableStateOf(false) }
+    var playlistContainedIds by remember(track.id) { mutableStateOf<Set<String>>(emptySet()) }
     var liked by remember(track.id) { mutableStateOf(track.id in likedIds) }
     var receiveRemoteSync by remember { mutableStateOf(container.receiveRemoteSync()) }
     val playerUi by player.state.collectAsState()
@@ -171,6 +172,12 @@ fun TrackActionsSheet(
         pinned = container.quickAccess.isPinned(track.id)
         songInLibrary = false
         albumInLibrary = false
+        // Membership playlists en premier (valeur fiable avant ouverture du sous-sheet)
+        launch {
+            playlistContainedIds = runCatching {
+                container.api.playlistsContaining(track.id).playlistIds.toSet()
+            }.getOrDefault(emptySet())
+        }
         runCatching {
             container.ensureFreshToken()
             if (track.isPlayable()) {
@@ -390,7 +397,7 @@ fun TrackActionsSheet(
                     onDismiss()
                 }
                 QuickAction(Icons.Default.PlaylistAdd, "Enregistrer dans une playlist") {
-                    onOpenAddToPlaylist()
+                    onOpenAddToPlaylist(playlistContainedIds)
                 }
                 QuickAction(Icons.Default.Share, "Partager") {
                     val send = Intent(Intent.ACTION_SEND).apply {
@@ -957,6 +964,8 @@ fun AddToPlaylistSheet(
     track: TrackDto,
     container: AppContainer,
     onDismiss: () -> Unit,
+    /** Préchargé depuis le sheet ⋮ — membership déjà connue */
+    preloadedContainedIds: Set<String>? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -965,16 +974,27 @@ fun AddToPlaylistSheet(
     var loading by remember { mutableStateOf(true) }
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
-    var containedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var containedIds by remember(track.id) {
+        mutableStateOf(preloadedContainedIds ?: emptySet())
+    }
+    var membershipReady by remember(track.id) {
+        mutableStateOf(preloadedContainedIds != null)
+    }
 
     LaunchedEffect(track.id) {
-        loading = true
+        // 1) Membership d’abord (SQL rapide) — avant même la liste des playlists
+        if (preloadedContainedIds == null) {
+            containedIds = runCatching {
+                container.api.playlistsContaining(track.id).playlistIds.toSet()
+            }.getOrDefault(emptySet())
+            membershipReady = true
+        } else {
+            containedIds = preloadedContainedIds
+            membershipReady = true
+        }
+        // 2) Liste playlists (light — tracks vides, trackCount OK)
         playlists = runCatching { container.api.library().playlists }.getOrDefault(emptyList())
             .sortedByDescending { it.updatedAt ?: it.createdAt ?: 0L }
-        containedIds = playlists
-            .filter { pl -> pl.tracks.orEmpty().any { it.id == track.id } }
-            .map { it.id }
-            .toSet()
         loading = false
     }
 
@@ -1022,7 +1042,8 @@ fun AddToPlaylistSheet(
                             Column(
                                 Modifier
                                     .width(96.dp)
-                                    .clickable {
+                                    .clickable(enabled = membershipReady) {
+                                        if (!membershipReady) return@clickable
                                         if (already) {
                                             Toast.makeText(
                                                 context,

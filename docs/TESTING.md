@@ -16,7 +16,7 @@ Checklists à la **racine** :
 
 ```bash
 # Local + prod (SEED_EMAIL / SEED_PASSWORD dans .env)
-node scripts/smoke-load-test.mjs both
+node scripts/test/smoke-load-test.mjs both
 # Rapport JSON → logs/smoke-*.json + logs/smoke-latest.json
 # Toute anomalie → noter dans ERRORS.md
 ```

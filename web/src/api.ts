@@ -652,9 +652,12 @@ export const api = {
       tracks: Track[];
     }>(`/api/artist/${id}/songs${limit ? `?limit=${limit}` : ''}`),
   lyrics: (id: string) =>
-    req<{ lyrics: string | null; timed?: { startMs: number; text: string }[] | null }>(
-      `/api/track/${id}/lyrics`,
-    ),
+    req<{
+      lyrics: string | null;
+      timed?: { startMs: number; text: string }[] | null;
+      source?: 'youtube' | 'lrclib' | 'lrc' | null;
+      syncOffsetMs?: number;
+    }>(`/api/track/${id}/lyrics`),
   streamUrl: (id: string, type: 'audio' | 'video' = 'audio') =>
     req<{ url: string; expiresAt: number; mimeType: string | null; kind?: string }>(
       `/api/stream/${id}/url${type === 'video' ? '?type=video' : ''}`,
@@ -687,7 +690,15 @@ export const api = {
       playlist: { id: string; title: string; author?: string; trackCount?: number; thumbnails: Track['thumbnails']; description?: string };
       tracks: Track[];
     }>(`/api/playlist/${id}`),
-  download: (id: string) => req<{ ok: boolean }>(`/api/download/${id}`, { method: 'POST' }),
+  download: (id: string, opts?: { ack?: boolean }) =>
+    req<{ ok: boolean; path?: string; streamUrl?: string; ack?: boolean }>(
+      `/api/download/${id}${opts?.ack ? '?ack=1' : ''}`,
+      { method: 'POST' },
+    ),
+  playlistsContaining: (trackId: string) =>
+    req<{ playlistIds: string[] }>(
+      `/api/library/playlists/containing/${encodeURIComponent(trackId)}`,
+    ),
   recordHistory: (track: Track) =>
     req<{ ok: boolean; history: Track[] }>('/api/history', {
       method: 'POST',

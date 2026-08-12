@@ -5,8 +5,8 @@ import {
   type RemoteDevice,
   getDeviceName,
   setDeviceName,
-} from '../lib/session';
-import { getReceiveRemoteSync, setReceiveRemoteSync as persistReceiveRemoteSync } from '../lib/syncPrefs';
+} from '../lib/auth/session';
+import { getReceiveRemoteSync, setReceiveRemoteSync as persistReceiveRemoteSync } from '../lib/auth/syncPrefs';
 
 type SessionState = {
   connected: boolean;

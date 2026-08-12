@@ -2116,27 +2116,39 @@ private fun InlineSyncedLyrics(
 ) {
     var text by remember(track.id) { mutableStateOf<String?>(null) }
     var timed by remember(track.id) { mutableStateOf<List<TimedLyricLine>>(emptyList()) }
+    var lyricsSource by remember(track.id) { mutableStateOf<String?>(null) }
     var loading by remember(track.id) { mutableStateOf(true) }
+    val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v1") }
+    var userOffsetMs by remember(track.id) {
+        mutableLongStateOf(syncPrefs.getLong(track.id, 0L))
+    }
 
     LaunchedEffect(track.id) {
         loading = true
+        userOffsetMs = syncPrefs.getLong(track.id, 0L)
         runCatching { container.api.lyrics(track.id) }
             .onSuccess {
                 text = it.lyrics
+                lyricsSource = it.source
                 val apiTimed = it.timed.orEmpty()
                 timed = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
             }
             .onFailure {
                 text = null
                 timed = emptyList()
+                lyricsSource = null
             }
         loading = false
     }
 
-    // Lead ~250 ms : ligne allumée juste avant le chant (karaoke)
-    val leadMs = 250L
+    // Lead 500 ms − lag LRCLIB 2 s − offset user
+    val leadMs = 500L
+    val sourceLagMs =
+        if (lyricsSource == "lrclib" || lyricsSource == "lrc") 2000L else 0L
     val active = if (timed.isEmpty()) -1
-    else timed.indexOfLast { it.startMsLong() <= positionMs + leadMs }.coerceAtLeast(0)
+    else timed.indexOfLast {
+        it.startMsLong() <= positionMs + leadMs - userOffsetMs - sourceLagMs
+    }.coerceAtLeast(0)
     val listState = rememberLazyListState()
     LaunchedEffect(active) {
         if (active < 0) return@LaunchedEffect
@@ -2148,7 +2160,36 @@ private fun InlineSyncedLyrics(
         }
     }
 
+    fun nudgeOffset(delta: Long) {
+        val next = (userOffsetMs + delta).coerceIn(-15_000L, 15_000L)
+        userOffsetMs = next
+        syncPrefs.edit().putLong(track.id, next).apply()
+    }
+
     Column(modifier = modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+        if (timed.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { nudgeOffset(500L) }) {
+                    Text("Trop tôt", style = MaterialTheme.typography.labelSmall)
+                }
+                Text(
+                    if (userOffsetMs == 0L) "±0,5 s"
+                    else String.format("%+.1f s", userOffsetMs / 1000.0),
+                    color = PlayerMuted,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+                TextButton(onClick = { nudgeOffset(-500L) }) {
+                    Text("Trop tard", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
         when {
             loading -> Text(
                 "Chargement…",

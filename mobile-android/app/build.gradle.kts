@@ -193,8 +193,8 @@ dependencies {
     implementation("androidx.media3:media3-session:1.5.0")
     implementation("androidx.media3:media3-ui:1.5.0")
 
-    implementation("androidx.credentials:credentials:1.3.0")
-    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("androidx.credentials:credentials:1.5.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
     implementation("com.google.android.gms:play-services-fido:21.1.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

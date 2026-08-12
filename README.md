@@ -41,7 +41,7 @@ Index : [`TESTS.md`](TESTS.md) · résumé docs : [`docs/TESTING.md`](docs/TESTI
 
 ```bash
 # Batterie API multi-titres / artistes (local + prod)
-node scripts/smoke-load-test.mjs both
+node scripts/test/smoke-load-test.mjs both
 ```
 
 ```bash

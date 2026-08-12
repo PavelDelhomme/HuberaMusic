@@ -231,6 +231,8 @@ data class TimedLyricLine(
 data class LyricsResponse(
     val lyrics: String? = null,
     val timed: List<TimedLyricLine>? = null,
+    val source: String? = null,
+    val syncOffsetMs: Long? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -289,6 +291,11 @@ data class OfflineStatusResponse(val jobs: List<OfflineJobDto> = emptyList())
 
 @JsonClass(generateAdapter = false)
 data class OfflineDownloadsResponse(val downloads: List<OfflineDownloadDto> = emptyList())
+
+@JsonClass(generateAdapter = false)
+data class PlaylistsContainingResponse(
+    val playlistIds: List<String> = emptyList(),
+)
 
 @JsonClass(generateAdapter = false)
 data class OfflineDownloadDto(
@@ -605,7 +612,13 @@ interface YtMusicApi {
     suspend fun transferSession(@Body body: Map<String, @JvmSuppressWildcards Any?>): SessionSnapshot
 
     @POST("api/download/{id}")
-    suspend fun download(@Path("id") id: String): Map<String, Any>
+    suspend fun download(
+        @Path("id") id: String,
+        @Query("ack") ack: Int? = null,
+    ): Map<String, Any>
+
+    @GET("api/library/playlists/containing/{trackId}")
+    suspend fun playlistsContaining(@Path("trackId") trackId: String): PlaylistsContainingResponse
 
     @POST("api/offline/start")
     suspend fun offlineStart(@Body body: Map<String, String>): Map<String, Any>

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Track } from '../api';
-import { downloadAndCache, listCachedIds } from '../lib/offlineCache';
+import { downloadAndCache, listCachedIds } from '../lib/offline/offlineCache';
 
 type DownloadsState = {
   /** 0–1 pendant un DL ; absent = idle */

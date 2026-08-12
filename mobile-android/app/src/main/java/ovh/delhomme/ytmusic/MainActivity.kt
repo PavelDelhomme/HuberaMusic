@@ -544,6 +544,7 @@ private fun MainTabs(
     var menuPlaylistId by remember { mutableStateOf<String?>(null) }
     var detailReloadToken by remember { mutableStateOf(0) }
     var addToPlaylistTrack by remember { mutableStateOf<TrackDto?>(null) }
+    var addToPlaylistContainedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showCast by remember { mutableStateOf(false) }
     var likedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var forceOnboarding by remember { mutableStateOf(false) }
@@ -1165,7 +1166,8 @@ private fun MainTabs(
                 menuPlaylistId = null
             },
             onLikedChanged = { likedIds = it },
-            onOpenAddToPlaylist = {
+            onOpenAddToPlaylist = { containedIds ->
+                addToPlaylistContainedIds = containedIds
                 addToPlaylistTrack = track
                 menuTrack = null
                 menuPlaylistId = null
@@ -1187,7 +1189,11 @@ private fun MainTabs(
         AddToPlaylistSheet(
             track = track,
             container = container,
-            onDismiss = { addToPlaylistTrack = null },
+            preloadedContainedIds = addToPlaylistContainedIds,
+            onDismiss = {
+                addToPlaylistTrack = null
+                addToPlaylistContainedIds = emptySet()
+            },
         )
     }
 

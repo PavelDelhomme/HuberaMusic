@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api, artistNames, type Track } from '../api';
-import { resolvePlayUrl, streamProxyUrl } from '../lib/offlineCache';
+import { resolvePlayUrl, streamProxyUrl } from '../lib/offline/offlineCache';
 import {
   prefetchAround,
   resolvePrefetchedPlayUrl,
@@ -11,11 +11,11 @@ import {
   markStreamOk,
   pinFullTrack,
   clearPinnedFull,
-} from '../lib/streamPrefetch';
-import { eqNeedsSameOrigin, setMeterPreferred } from '../lib/equalizer';
-import { resetSilenceSkip, shouldSkipTrailingSilence } from '../lib/silenceSkip';
-import { trackDurationSeconds, formatClock } from '../lib/time';
-import { perfStart } from '../lib/perf';
+} from '../lib/audio/streamPrefetch';
+import { eqNeedsSameOrigin, setMeterPreferred } from '../lib/audio/equalizer';
+import { resetSilenceSkip, shouldSkipTrailingSilence } from '../lib/audio/silenceSkip';
+import { trackDurationSeconds, formatClock } from '../lib/util/time';
+import { perfStart } from '../lib/util/perf';
 import { useSession } from './session';
 import { useLibrary } from './library';
 import {
@@ -25,7 +25,7 @@ import {
   mixCacheKey,
   MIX_TARGET,
   setCachedMix,
-} from '../lib/mixCache';
+} from '../lib/util/mixCache';
 
 /** Sync préférence lecture auto → compte (multi-appareils). */
 function syncAutoplayPref(on: boolean) {
@@ -49,7 +49,7 @@ export async function hydrateAutoplayFromPrefs() {
 type RepeatMode = 'off' | 'all' | 'one';
 
 function refreshMediaSession() {
-  void import('../lib/mediaKeys')
+  void import('../lib/audio/mediaKeys')
     .then((m) => {
       m.wireMediaSession();
       m.updateMediaSessionMetadata();
@@ -86,6 +86,7 @@ type PlayerState = {
   mediaPresentation: 'cover' | 'video';
   lyrics: string | null;
   lyricsTimed: { startMs: number; text: string }[] | null;
+  lyricsSource: 'youtube' | 'lrclib' | 'lrc' | null;
   related: Track[];
   /** Seed pour lequel `related` a été fetché (évite de réinjecter une vieille liste). */
   relatedSeedId: string | null;
@@ -489,7 +490,7 @@ function publish() {
   }
 
   persistPlayer();
-  void import('../lib/backgroundAudio')
+  void import('../lib/audio/backgroundAudio')
     .then(({ setNativePlaybackNotification }) =>
       setNativePlaybackNotification({
         playing: s.isPlaying,
@@ -642,6 +643,8 @@ export function reportSkipIfEarly(progress: number) {
 let playGeneration = 0;
 /** Horodatage du dernier bump de génération (ignorer erreurs audio pendant un skip). */
 let lastPlayGenAt = 0;
+/** Retry unique si le stream coupe avant ~88 % de la durée méta. */
+const earlyEndRetryById = new Map<string, number>();
 
 /** Coalesce skips rapides : un seul chargement audio pour la dernière demande. */
 let playCoalesceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1164,7 +1167,13 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
           if (gen !== playGeneration) return;
           const n2 = err2 instanceof DOMException ? err2.name : '';
           if (n2 === 'AbortError') return;
-          throw new Error('Lecture bloquée ou interrompue');
+          const detail =
+            err2 instanceof Error ? err2.message : String(err2 || '');
+          throw new Error(
+            detail && detail !== 'Lecture bloquée ou interrompue'
+              ? `Lecture impossible (${detail})`
+              : 'Lecture impossible — flux indisponible',
+          );
         }
       } else {
         try {
@@ -1174,7 +1183,13 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
           if (gen !== playGeneration) return;
           const n2 = err2 instanceof DOMException ? err2.name : '';
           if (n2 === 'AbortError') return;
-          throw new Error('Lecture bloquée ou interrompue');
+          const detail =
+            err2 instanceof Error ? err2.message : String(err2 || '');
+          throw new Error(
+            detail && !/NotAllowedError|NotSupportedError/i.test(detail)
+              ? `Lecture impossible (${detail})`
+              : 'Lecture impossible — flux indisponible',
+          );
         }
       }
     }
@@ -1349,6 +1364,24 @@ function attachAudioRuntime(
       recovering = true;
       const gen = playGeneration;
       try {
+        // Fin de titre souvent vue comme MEDIA_ERR_NETWORK / decode quand le CDN coupe :
+        // ce n’est PAS une panne Wi‑Fi — enchaîner le suivant proprement.
+        const dur = Number(el.duration);
+        const t = Number(el.currentTime);
+        const nearEnd =
+          Number.isFinite(dur) &&
+          dur >= 30 &&
+          Number.isFinite(t) &&
+          t > 0 &&
+          (t / dur >= 0.88 || dur - t <= 5);
+        if (nearEnd) {
+          markStreamOk();
+          mediaAutoRetry = 0;
+          set({ playError: null, isLoading: false });
+          void get().next({ fromEnded: true });
+          return;
+        }
+
         markStreamOk();
         const fresh = await resolvePlayUrl(track.id);
         if (gen !== playGeneration || get().current?.id !== track.id) return;
@@ -1446,6 +1479,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   mediaPresentation: 'cover',
   lyrics: null,
   lyricsTimed: null,
+  lyricsSource: null,
   related: [],
   relatedSeedId: null,
   relatedLoading: false,
@@ -1658,6 +1692,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       progress: 0,
       lyrics: null,
       lyricsTimed: null,
+      lyricsSource: null,
       playError: null,
       // Nouvelle file → oublie l’ordre shuffle précédent
       ...(keepBoundary ? {} : { shuffleNatural: null, ...(opts?.forceRestart ? { shuffle: false } : {}) }),
@@ -1689,6 +1724,10 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     const seedId = playTrack.id;
     const radioGen = gen;
     resetSilenceSkip(seedId);
+    // Nouveau titre (pas un retry early-end) → reset compteur pour les autres ids
+    for (const k of [...earlyEndRetryById.keys()]) {
+      if (k !== seedId) earlyEndRetryById.delete(k);
+    }
     queueMicrotask(() => {
       if (radioGen !== playGeneration) return;
       void get().loadRelated(seedId);
@@ -1703,6 +1742,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
           set({
             lyrics: r.lyrics || get().lyrics,
             lyricsTimed: r.timed || null,
+            lyricsSource: (r as { source?: 'youtube' | 'lrclib' | 'lrc' | null }).source ?? null,
           });
         })
         .catch(() => undefined);
@@ -1894,6 +1934,33 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     if (isStreamDown()) {
       markStreamOk(); // laisse une chance au skip manuel
     }
+
+    // Fin « trop tôt » : le stream a coupé alors qu’il restait du titre → 1 retry
+    if (opts?.fromEnded) {
+      const s = get();
+      const cur = s.current;
+      const el = s.audioEl;
+      const expected = Number(cur?.durationSeconds) || 0;
+      const heard = Math.max(
+        Number.isFinite(el?.currentTime) ? el!.currentTime : 0,
+        s.progress || 0,
+      );
+      if (
+        cur?.id &&
+        expected >= 45 &&
+        heard > 8 &&
+        heard < expected * 0.88 &&
+        (earlyEndRetryById.get(cur.id) || 0) < 1
+      ) {
+        earlyEndRetryById.set(cur.id, 1);
+        const idx = s.queueIndex;
+        if (idx >= 0 && s.queue[idx]?.id === cur.id) {
+          await get().playAt(idx);
+          return;
+        }
+      }
+    }
+
     const { queue, queueIndex, repeat, shuffle, current, progress } = get();
     if (!queue.length) {
       if (current?.id) {
@@ -2263,10 +2330,14 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set({ showLyrics: true, showQueue: false });
     if (current) {
       try {
-        const { lyrics, timed } = await api.lyrics(current.id);
-        set({ lyrics, lyricsTimed: timed || null });
+        const { lyrics, timed, source } = await api.lyrics(current.id);
+        set({
+          lyrics,
+          lyricsTimed: timed || null,
+          lyricsSource: source ?? null,
+        });
       } catch {
-        set({ lyrics: null, lyricsTimed: null });
+        set({ lyrics: null, lyricsTimed: null, lyricsSource: null });
       }
     }
   },

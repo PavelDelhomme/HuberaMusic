@@ -201,7 +201,7 @@ Style YouTube Music (« Forgotten favorites ») :
 - [ ] Toast « connexion perdue » : cause + fix
 - [ ] **Web** : clic zone vide barre noire → toggle Now Playing (hors contrôles)
 - [ ] **Web** : retry auto plafonné (pas de boucle « nouvel essai » infinie sur 502)
-- [ ] **Ops** : prod streams via tunnel maison si IP VPS bloquée YouTube (`scripts/link-home-stream.sh`)
+- [ ] **Ops** : prod streams via tunnel maison si IP VPS bloquée YouTube (`scripts/deploy/link-home-stream.sh`)
 - [ ] **À suivre** : suggestions visibles même si auto OFF ; stop fin de file ; Suivant charge ; sync préf
 - [ ] Prefetch listes longues (~10 s tête viewport)
 - [ ] Playlist hero Android : play / shuffle / DL icône + menu ⋮

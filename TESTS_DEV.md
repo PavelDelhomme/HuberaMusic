@@ -2,13 +2,16 @@
 
 **Appareil** : Samsung (`192.168.1.184:5555` ou USB `R5CT7263YJL`) — APK **dev** → API LAN.  
 **Web** : `http://localhost:5173` · **API** : `http://127.0.0.1:8787` / `http://<LAN>:8787`.  
-**Tracking** : [`STATUS.md`](./STATUS.md) · erreurs : [`ERRORS.md`](./ERRORS.md).
+**Tracking** : [`STATUS.md`](./STATUS.md) · [`ERRORS.md`](./ERRORS.md) · index [`TESTS.md`](./TESTS.md) (**R1–R12**).
 
 ### Journal sessions
 
 | Date | Commit / version | Résultat | Notes |
 |------|------------------|----------|-------|
-| 2026-08-12 | `a481e3b` / `d+1.3.17` | Smoke API OK ; apps UP ; logcat clean | E1 drawer 0 titres (fix Layout) ; E2 radio artiste 50–75 s ; E3 reco chill vide — voir ERRORS.md |
+| 2026-08-12 | WIP / `d+1.3.17` | **Samsung DEV OK** | APK `ovh.delhomme.ytmusic.dev` → LAN ; login seed ; Accueil/Biblio ; **Papaoutai PLAYING** ; Compte → passkey visible ; gzip + stream RAM **2–3 ms** après warm ; related audio-first (0 « Officiel ») ; fix ROOT post-réorg (`yt-dlp`/`data/`) |
+| 2026-08-12 | (WIP) R1–R12 / E7–E10 | À revalider | À suivre, trackCount, prefetch, UI playlist, drawer, DL ack, passkeys, paroles, membership |
+| 2026-08-12 | (branche) sync paroles E8 | À revalider | Lead 0,5 s · align LRCLIB · Trop tôt/tard |
+| 2026-08-12 | `a481e3b` / `d+1.3.17` | Smoke API OK ; apps UP ; logcat clean | E1 drawer ; E2 radio lente ; E3 chill vide |
 
 Prérequis :
 
@@ -17,7 +20,7 @@ make adb-both
 make up-full
 LAN=$(ip -4 route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}')
 DEVICE=192.168.1.184:5555 API_BASE_URL=http://$LAN:8787 make android-install
-node scripts/smoke-load-test.mjs local
+node scripts/test/smoke-load-test.mjs local
 # login : make adb-login DEVICE=…  (si dispo) ou manuel
 ```
 
@@ -31,10 +34,11 @@ Parallèle recommandé : web PC **et** Samsung pour chaque sous-catégorie.
 - [ ] `make status` : API UP, Vite UP, process locaux UP, Samsung ✅ (Nothing optionnel)
 - [ ] `curl -s http://127.0.0.1:8787/api/health` → `ok`, `ref: local`, version attendue
 - [ ] Pas de conteneur docker **requis** (message « aucun — normal si stack Node »)
+- [ ] `GET /.well-known/assetlinks.json` → prod + `.dev`
 
 ---
 
-## D1 — Auth (web + Samsung)
+## D1 — Auth (web + Samsung) — R7 / E7
 
 ### Web
 - [ ] Connexion compte seed / autorisé
@@ -42,11 +46,16 @@ Parallèle recommandé : web PC **et** Samsung pour chaque sous-catégorie.
 - [ ] Inscription (si ouverte) + validation email
 - [ ] Logout → login
 - [ ] Reload / onglet veille → session OK
+- [ ] Passkey : bouton visible ; enroll + login (Bitwarden / plateforme)
 
 ### Samsung DEV
 - [ ] Login → Accueil
+- [ ] **Continuer avec une passkey** toujours visible
+- [ ] Compte → Enregistrer passkey → Bitwarden / GPM / empreinte
+- [ ] Login passkey après logout
 - [ ] Kill app → relance → session conservée
 - [ ] API LAN down → message clair (pas freeze)
+- [ ] APK en catégorie **Audio / Divertissement** (R11)
 
 ---
 
@@ -64,18 +73,20 @@ Parallèle recommandé : web PC **et** Samsung pour chaque sous-catégorie.
 - [ ] Forcer une erreur visible (stream fail / API stop 5 s) → toast clair
 - [ ] Crash / erreur non fatale → entrée dans **Réglages → Logs / Crash**
 - [ ] Email d’alerte reçu (admin / outbox) avec contexte (device, version, stack)
-- [ ] Pas de spam email en boucle sur la même erreur
+- [ ] Pas de spam email en boucle sur la même erreur (throttle)
 
 ---
 
-## D4 — Chargement pages + scroll + progressif
+## D4 — Chargement pages + scroll + progressif (R2, R3)
 
 Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de freeze, pas de « connexion perdue » injustifiée.
 
 ### Accueil
 - [ ] Accès rapide, mixes (covers), shelves au scroll
+- [ ] Playlists / cartes : **trackCount entier** — pas de crash / texte views (R2)
 - [ ] Section / chips Podcasts · Albums · Livres (si livré — sinon noter STATUS B2.*)
 - [ ] Explorer : images + noms OK (pas carrés vides / libellés chelous)
+- [ ] Prefetch : scroll longue shelf → play suivant fluide (R3)
 
 ### Artiste
 - [ ] Hero + listes albums / singles / playlists
@@ -89,16 +100,22 @@ Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de 
 - [ ] Pagination / scroll progressif
 - [ ] ⋮ actions ; état biblio **rapide**
 
-### File d’attente
+### File d’attente — R1
 - [ ] Auto-remplie depuis lecture
 - [ ] Depuis album (Tout lire) + insert À suivre
+- [ ] **À suivre** toujours visible ; switch autoplay ne masque pas les suggestions
+- [ ] À suivre / related : audio-first (pas clips Officiel en priorité) ; titres propres (R13)
+- [ ] Autoplay OFF → fin de file user = **stop** ; Suivant charge la suite
+- [ ] Préf autoplay sync `/api/prefs` (web ↔ Samsung)
 - [ ] Next / prev stables (pas de crash — STATUS B4.1)
+- [ ] Fin de piste complète : pas de skip anticipé (R14 / E12)
 
-### Playlists
+### Playlists — R4
 - [ ] Liste biblio ; ouvrir playlist (titres)
-- [ ] **Pas** de boutons Tout lire / Aléatoire sur header playlist (si livré B1.5)
-- [ ] Bouton télécharger **toute** la playlist (si livré B1.6)
+- [ ] Hero : **Play** + **Aléatoire** + icône **DL** (progress → coche)
+- [ ] Menu ⋮ : télécharger tout, file, mix, renommer/supprimer si propriétaire, hors-ligne
 - [ ] Ajout playlist / ajout titre
+- [ ] Membership « déjà dedans » immédiat dans ⋮ titre (R9 / E9)
 
 ### Mixes
 - [ ] Mixes user + générés visibles
@@ -112,12 +129,16 @@ Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de 
 
 ---
 
-## D5 — Lecteur multimédia
+## D5 — Lecteur multimédia (R8, R10)
 
 - [ ] Play / pause / seek
 - [ ] Next / prev (répéter 20× sur playlist longue — noter crashes)
 - [ ] NP scroll file ; paysage OK
-- [ ] Paroles si dispo
+- [ ] Paroles : sync ≈ chant (~0,5 s d’avance) ; pas 1–2 lignes (E8)
+- [ ] Paroles : Trop tôt / Trop tard mémorisé par titre
+- [ ] Paroles Keny : *Capitale de la rupture* + *Vie d’artiste*
+- [ ] Menu ⋮ : déjà dans playlist fiable (E9)
+- [ ] Téléchargement titre : pas de spinner bloqué 10–20 s (E10)
 - [ ] Media keys / barre OS (web)
 
 ---
@@ -133,16 +154,18 @@ Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de 
 - [ ] Podcasts = uniquement ajoutés
 - [ ] Livres audio = uniquement ajoutés
 - [ ] Sheet ⋮ : état biblio quasi immédiat
+- [ ] Prefetch warm au scroll listes longues (R3)
 
 ---
 
-## D7 — Téléchargements
+## D7 — Téléchargements (R6, R10)
 
-- [ ] Titre : progress % réel, pas bloqué bleu
+- [ ] Titre : progress % réel, pas bloqué bleu / hang final
 - [ ] Album (ex. *Pandemonium* / Heaven Pierce Her) : progress live (pas stuck 2 %)
 - [ ] Playlist entière DL
 - [ ] Hors‑ligne : lecture OK
 - [ ] Fermer sheet pendant DL → continue
+- [ ] Couper réseau mid-DL → reprise au retour (R6)
 
 ---
 
@@ -169,10 +192,26 @@ Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de 
 
 ---
 
+## D11 — Drawer web & multi-appareils (R5, R12)
+
+- [ ] Drawer : compteurs playlists = `trackCount` (pas 0) (E1)
+- [ ] Créer / renommer playlist sur Samsung → apparaît sur web sous ~8–20 s (focus + poll)
+- [ ] Autoplay prefs partagées web ↔ Samsung (`/api/prefs`)
+
+---
+
+## D12 — Smoke API local (optionnel mais recommandé)
+
+- [ ] `node scripts/test/smoke-load-test.mjs local` → pas de régression majeure
+- [ ] Noter E2/E3/E4/E5 si encore open dans [`ERRORS.md`](./ERRORS.md)
+
+---
+
 ## Fin de session DEV
 
 - [ ] Notes dans STATUS (IDs concernés → `🧪` ou `✅` LOCAL/DEV)
-- [ ] Bugs nouveaux ouverts en lignes STATUS
-- [ ] **Ne pas** merger prod tant que D0–D8 critiques KO
+- [ ] Bugs nouveaux ouverts en lignes STATUS / ERRORS
+- [ ] **R1–R12** tous OK sur web + Samsung
+- [ ] **Ne pas** merger prod tant que D0–D8 / D11 critiques KO
 
 Session suivante : promo puis [`TESTS_PROD.md`](./TESTS_PROD.md) sur **Nothing**.
