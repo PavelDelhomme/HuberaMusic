@@ -132,9 +132,12 @@ class PlaybackService : MediaSessionService() {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             val exo = player ?: return
+            // Snapshot AVANT promote / next-item events (sinon pos≈0 du nouveau titre → faux early_end)
+            val snapPrevId = lastPlayingId
+            val snapPrevPos = lastPlayingPosMs
             promoteUpcomingToLocal(exo, exo.currentMediaItemIndex + 1)
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-                maybeRecoverEarlyEnd(exo)
+                maybeRecoverEarlyEnd(exo, snapPrevId, snapPrevPos)
                 // Stop en fin de file user si lecture auto OFF (suggestions restent dans la file)
                 val idx = exo.currentMediaItemIndex
                 val end = Holder.userQueueEnd
@@ -842,32 +845,70 @@ class PlaybackService : MediaSessionService() {
     /**
      * Si Exo passe au suivant alors que le titre précédent n’a pas atteint ~85 %
      * de sa durée connue → stream tronqué / cache empoisonné : on revient et on retente.
+     *
+     * Important : [snapPrevId]/[snapPrevPos] sont capturés au moment de la transition
+     * (pas via lastPlayingId déjà basculé sur le nouveau titre — sinon faux positifs pos≈10ms).
      */
-    private fun maybeRecoverEarlyEnd(exo: Player) {
-        val prevId = prevPlayingId.ifBlank { lastPlayingId }
-        val pos = if (prevPlayingId.isNotBlank()) prevPlayingPosMs else lastPlayingPosMs
+    private fun maybeRecoverEarlyEnd(exo: Player, snapPrevId: String, snapPrevPos: Long) {
+        val prevId = snapPrevId.trim()
+        val pos = snapPrevPos.coerceAtLeast(0L)
         if (prevId.isBlank() || earlyEndRetries >= 2) return
+        // Nouveau titre déjà en lecture trop tôt / race seek → ignorer (ex. pos=10 expected=224000)
+        if (pos < 15_000L) {
+            AppLog.d(
+                "PlaybackService",
+                "early_end ignoré (trop tôt / race) id=$prevId pos=${pos}ms",
+            )
+            return
+        }
         val track = Holder.queue.firstOrNull { it.id == prevId } ?: return
         val expected = track.durationMsOrNull()?.takeIf { it >= 45_000L } ?: return
-        if (pos >= (expected * 0.85).toLong()) return
+        val ratio = pos.toDouble() / expected.toDouble()
+        if (ratio >= 0.85) return
+        // Sous 25 % : souvent skip / rebuild file, pas un stream tronqué « mid-track »
+        if (ratio < 0.25) {
+            AppLog.d(
+                "PlaybackService",
+                "early_end ignoré (ratio=${String.format(java.util.Locale.US, "%.2f", ratio)}) id=$prevId pos=$pos expected=$expected",
+            )
+            return
+        }
         val prevIdx = Holder.queue.indexOfFirst { it.id == prevId }
         if (prevIdx < 0) return
         earlyEndRetries += 1
+        val ratioLabel = String.format(java.util.Locale.US, "%.2f", ratio)
         AppLog.w(
             "PlaybackService",
-            "fin trop tôt id=$prevId pos=${pos}ms expected=${expected}ms → retry #$earlyEndRetries",
+            "fin trop tôt id=$prevId pos=${pos}ms expected=${expected}ms ratio=$ratioLabel → retry #$earlyEndRetries",
         )
+        val diag = buildString {
+            appendLine("android.player.early_end")
+            appendLine("trackId=$prevId posMs=$pos expectedMs=$expected ratio=$ratioLabel retry=$earlyEndRetries")
+            appendLine("queueSize=${Holder.queue.size} index=${Holder.index} userEnd=${Holder.userQueueEnd}")
+            appendLine()
+            appendLine("--- breadcrumbs ---")
+            AppLog.breadcrumbSnapshot().takeLast(30).forEach { appendLine(it) }
+            appendLine()
+            appendLine("--- recent logs ---")
+            append(AppLog.recentLogText(20_000))
+        }
         runCatching {
+            // warn : récupération auto, pas une crash — évite spam email ; logs + stack pour debug
             ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                level = "error",
+                level = if (earlyEndRetries >= 2) "error" else "warn",
                 kind = "android.player.early_end",
-                message = "early end $prevId pos=$pos expected=$expected",
+                message = "early end $prevId pos=$pos expected=$expected ratio=$ratioLabel",
+                stack = diag,
                 meta = mapOf(
                     "trackId" to prevId,
                     "positionMs" to pos,
                     "expectedMs" to expected,
+                    "ratio" to ratio,
                     "retry" to earlyEndRetries,
+                    "breadcrumbs" to AppLog.breadcrumbSnapshot().takeLast(40),
+                    "recentLogs" to AppLog.recentLogText(24_000),
                 ),
+                force = earlyEndRetries >= 2,
             )
         }
         val container = runCatching { YtMusicApp.instance.container }.getOrNull()
@@ -892,12 +933,15 @@ class PlaybackService : MediaSessionService() {
                 lastPlayingPosMs = pos
             }
         }
-        android.os.Handler(mainLooper).post {
-            android.widget.Toast.makeText(
-                this,
-                "Reprise du titre (fin anticipée évitée)",
-                android.widget.Toast.LENGTH_SHORT,
-            ).show()
+        // Toast seulement sur 2ᵉ tentative (vrai problème persistant)
+        if (earlyEndRetries >= 2) {
+            android.os.Handler(mainLooper).post {
+                android.widget.Toast.makeText(
+                    this,
+                    "Reprise du titre (fin anticipée évitée)",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
     }
 
