@@ -267,18 +267,13 @@ fun CollectionDetailScreen(
                 }
                 DetailKind.Playlist -> {
                     val rawId = id.removePrefix("local:")
+                    // Toujours l’endpoint dédié (GET library liste = playlists light sans tracks)
                     val fromLib = runCatching {
-                        if (id.startsWith("local:")) {
-                            container.api.library().playlists.firstOrNull { it.id == rawId }
-                        } else {
-                            // IDs biblio (UUID / liked-*) : endpoint dédié avant YouTube
-                            runCatching { container.api.libraryPlaylist(rawId) }.getOrNull()
-                                ?: container.api.library().playlists.firstOrNull { it.id == rawId }
-                        }
+                        container.api.libraryPlaylist(rawId)
                     }.getOrNull()
-                    if (fromLib != null) {
+                    if (fromLib != null && fromLib.tracks.orEmpty().isNotEmpty()) {
                         title = fromLib.displayName() ?: seed?.title ?: "Playlist"
-                        subtitle = "${fromLib.tracks?.size ?: 0} titres"
+                        subtitle = "${fromLib.resolvedTrackCount()} titres"
                         cover = seed ?: TrackDto(
                             id = id,
                             title = title,
@@ -290,11 +285,13 @@ fun CollectionDetailScreen(
                         tracks = fromLib.tracks.orEmpty().filter { it.isPlayable() }
                     } else {
                         val r = container.api.playlist(rawId)
-                        title = r.playlist?.displayName() ?: seed?.title ?: "Playlist"
+                        title = r.playlist?.displayName() ?: seed?.title ?: fromLib?.displayName() ?: "Playlist"
                         subtitle = listOfNotNull(
                             r.playlist?.description?.takeIf { it.isNotBlank() },
                             "${r.tracks.size} titres",
-                        ).joinToString(" · ").ifBlank { "Playlist" }
+                        ).joinToString(" · ").ifBlank {
+                            fromLib?.let { "${it.resolvedTrackCount()} titres" } ?: "Playlist"
+                        }
                         cover = r.playlist?.let {
                             TrackDto(
                                 id = it.id,
@@ -306,6 +303,10 @@ fun CollectionDetailScreen(
                             )
                         } ?: seed
                         tracks = r.tracks.filter { it.isPlayable() }
+                        if (tracks.isEmpty() && fromLib != null) {
+                            title = fromLib.displayName() ?: title
+                            subtitle = "${fromLib.resolvedTrackCount()} titres"
+                        }
                     }
                 }
                 DetailKind.Mix -> {

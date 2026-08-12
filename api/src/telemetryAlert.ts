@@ -1,6 +1,6 @@
 import { sendMail, getAppEnv } from './mail.js';
 
-const THROTTLE_MS = Number(process.env.TELEMETRY_ALERT_THROTTLE_MS || 5 * 60_000);
+const THROTTLE_MS = Number(process.env.TELEMETRY_ALERT_THROTTLE_MS || 90_000);
 const lastSent = new Map<string, number>();
 
 function alertRecipients(): string {
@@ -17,8 +17,10 @@ function alertRecipients(): string {
 }
 
 function fingerprint(level: string, kind: string, message: string, stack?: string): string {
-  const tip = (stack || message || '').split('\n').slice(0, 4).join('|').slice(0, 240);
-  return `${level}|${kind}|${tip}`;
+  // Inclut l’id piste / code erreur pour ne pas écraser des alertes distinctes
+  const tip = (message || '').slice(0, 120);
+  const stackTip = (stack || '').split('\n').slice(0, 2).join('|').slice(0, 120);
+  return `${level}|${kind}|${tip}|${stackTip}`;
 }
 
 function esc(s: string): string {
@@ -121,6 +123,7 @@ export async function maybeAlertTelemetryError(ev: {
 
   try {
     await sendMail({ to, subject, html, text });
+    console.info(`[telemetry-alert] sent to=${to} kind=${ev.kind} id=${ev.id}`);
     return { sent: true };
   } catch (err) {
     console.error('[telemetry-alert] mail failed', err);

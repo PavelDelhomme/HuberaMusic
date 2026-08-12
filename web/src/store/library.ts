@@ -67,7 +67,8 @@ function mergeLibrary(lib: LibraryData): LibraryData {
 
 function readLibraryCache(): LibraryData | null {
   try {
-    const raw = sessionStorage.getItem(LIB_CACHE_KEY);
+    const raw =
+      localStorage.getItem(LIB_CACHE_KEY) || sessionStorage.getItem(LIB_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as LibraryData;
     if (!parsed || typeof parsed !== 'object') return null;
@@ -79,26 +80,29 @@ function readLibraryCache(): LibraryData | null {
 
 function writeLibraryCache(lib: LibraryData) {
   try {
-    // Cap volumes pour rester sous le quota sessionStorage
-    const slim: LibraryData = {
+    const slim = {
       ...lib,
+      // Limite taille localStorage
       songs: lib.songs.slice(0, 200),
       liked: lib.liked.slice(0, 200),
       history: lib.history.slice(0, 80),
-      recentEntities: lib.recentEntities.slice(0, 40),
       downloaded: lib.downloaded.slice(0, 80),
-      playlists: lib.playlists.slice(0, 40).map((p) => ({
+      playlists: lib.playlists.slice(0, 80).map((p) => ({
         ...p,
-        tracks: (p.tracks || []).slice(0, 40),
+        tracks: (p.tracks || []).slice(0, 2),
       })),
     };
-    sessionStorage.setItem(LIB_CACHE_KEY, JSON.stringify(slim));
+    const raw = JSON.stringify(slim);
+    localStorage.setItem(LIB_CACHE_KEY, raw);
+    sessionStorage.setItem(LIB_CACHE_KEY, raw);
   } catch {
-    /* quota */
+    /* quota / private mode */
   }
 }
 
-const bootCache = typeof sessionStorage !== 'undefined' ? readLibraryCache() : null;
+const bootCache = typeof localStorage !== 'undefined' || typeof sessionStorage !== 'undefined'
+  ? readLibraryCache()
+  : null;
 
 export const useLibrary = create<LibraryState>((set, get) => ({
   ...(bootCache || empty),

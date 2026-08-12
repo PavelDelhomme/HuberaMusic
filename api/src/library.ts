@@ -11,6 +11,8 @@ export type LibraryPlaylist = {
   createdAt: number;
   updatedAt: number;
   tracks: Track[];
+  /** Nombre de titres (utile quand tracks est allégé). */
+  trackCount?: number;
 };
 
 function parseTrack(row: { payload?: string; track_id?: string }): Track | null {
@@ -112,7 +114,8 @@ export function getFullLibrary(userId: string) {
     } catch (err) {
       console.warn('[library] liked playlist', (err as Error).message);
     }
-    return listPlaylists(userId);
+    // Listing biblio : métadonnées + 1 cover max (pas tous les payloads tracks)
+    return listPlaylists(userId, { includeTracks: false });
   })();
 
   const history = getHistory(userId, 500);
@@ -885,7 +888,11 @@ export function getForgottenFavorites(userId: string, limit = 8): Track[] {
   return pool.slice(0, limit).map((c) => c.track);
 }
 
-export function listPlaylists(userId: string): LibraryPlaylist[] {
+export function listPlaylists(
+  userId: string,
+  opts?: { includeTracks?: boolean },
+): LibraryPlaylist[] {
+  const includeTracks = opts?.includeTracks !== false;
   const rows = db
     .prepare(
       `SELECT * FROM playlists WHERE user_id = ?
@@ -901,6 +908,43 @@ export function listPlaylists(userId: string): LibraryPlaylist[] {
   }[];
 
   return rows.map((p) => {
+    const countRow = db
+      .prepare(`SELECT COUNT(*) AS c FROM playlist_tracks WHERE playlist_id = ?`)
+      .get(p.id) as { c: number };
+    const trackCount = Number(countRow?.c || 0);
+
+    if (!includeTracks) {
+      let cover = p.cover_url || undefined;
+      if (!cover && trackCount > 0) {
+        const first = db
+          .prepare(
+            `SELECT t.payload FROM playlist_tracks pt
+             JOIN tracks_cache t ON t.id = pt.track_id
+             WHERE pt.playlist_id = ?
+             ORDER BY pt.position ASC LIMIT 1`,
+          )
+          .get(p.id) as { payload: string } | undefined;
+        if (first?.payload) {
+          try {
+            const t = JSON.parse(first.payload) as Track;
+            cover = t.thumbnails?.[0]?.url;
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      return {
+        id: p.id,
+        name: p.name,
+        description: p.description || '',
+        coverUrl: cover,
+        createdAt: p.created_at,
+        updatedAt: p.updated_at,
+        tracks: [],
+        trackCount,
+      };
+    }
+
     const tracks = (
       db
         .prepare(
@@ -920,6 +964,7 @@ export function listPlaylists(userId: string): LibraryPlaylist[] {
       createdAt: p.created_at,
       updatedAt: p.updated_at,
       tracks,
+      trackCount: tracks.length || trackCount,
     };
   });
 }

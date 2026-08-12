@@ -548,7 +548,7 @@ private fun buildLibraryContent(
         TrackDto(
             id = if (pl.id.startsWith("local:")) pl.id else "local:${pl.id}",
             title = pl.displayName(),
-            artists = listOf(ArtistRef("${pl.tracks?.size ?: 0} titres")),
+            artists = listOf(ArtistRef("${pl.resolvedTrackCount()} titres")),
             thumbnails = pl.cover()?.let { listOf(Thumb(it)) },
             type = "playlist",
         )

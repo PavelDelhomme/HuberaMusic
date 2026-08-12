@@ -114,7 +114,7 @@ object TelemetryReporter {
         // Ne spam pas les glitches réseau streak=1
         if (networkish && streak < 2 && !local) return
         report(
-            level = if (streak >= 3) "error" else "warn",
+            level = "error",
             kind = "android.player",
             message = "onPlayerError code=$code id=$trackId streak=$streak network=$networkish local=$local",
             stack = detail,
@@ -126,6 +126,7 @@ object TelemetryReporter {
                 "local" to local,
                 "recentLogs" to AppLog.recentLogText(12_000),
             ),
+            force = streak >= 3,
         )
     }
 }

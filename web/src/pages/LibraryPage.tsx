@@ -502,7 +502,7 @@ export function LibraryPage() {
                   <div className="font-medium">{p.name}</div>
                   <div className="text-xs text-yt-muted">
                     {[
-                      `${p.tracks.length} titre${p.tracks.length !== 1 ? 's' : ''}`,
+                      `${p.trackCount ?? p.tracks.length} titre${(p.trackCount ?? p.tracks.length) !== 1 ? 's' : ''}`,
                       formatTotalDuration(sumTracksDurationSeconds(p.tracks || [])),
                     ]
                       .filter(Boolean)

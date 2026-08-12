@@ -24,6 +24,7 @@ export type LibraryPlaylist = {
   createdAt: number;
   updatedAt: number;
   tracks: Track[];
+  trackCount?: number;
 };
 
 export type LibraryData = {

@@ -3,6 +3,7 @@ package ovh.delhomme.ytmusic.player
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.MediaItem
@@ -180,6 +181,17 @@ class PlayerController(
         sourceId: String? = null,
         sourceKind: String? = null,
     ) {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        val mode = am?.mode ?: AudioManager.MODE_NORMAL
+        if (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION) {
+            Toast.makeText(
+                context,
+                "Lecture impossible pendant un appel — termine l'appel puis réessaie",
+                Toast.LENGTH_LONG,
+            ).show()
+            AppLog.w("player", "play bloqué MODE_IN_CALL/COMM mode=$mode")
+            return
+        }
         if (title != null) queueTitle = title
         PlaybackService.Holder.queueTitle = queueTitle
         this.sourceId = sourceId

@@ -20,10 +20,13 @@ data class PlaylistDto(
     val thumbnails: List<Thumb>? = emptyList(),
     val updatedAt: Long? = null,
     val createdAt: Long? = null,
+    val trackCount: Int? = null,
 ) {
     fun displayName(): String = name?.ifBlank { null } ?: title ?: "Playlist"
     fun cover(): String? =
         coverUrl ?: thumbnails?.firstOrNull()?.url ?: tracks?.firstOrNull()?.coverUrl()
+    fun resolvedTrackCount(): Int =
+        trackCount?.takeIf { it > 0 } ?: tracks?.size ?: 0
 }
 
 @JsonClass(generateAdapter = false)

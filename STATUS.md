@@ -104,7 +104,9 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | B4.3 | Erreurs « connexion perdue » au chargement pages → cause + fix | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.5 | Clic zone vide barre noire lecteur **web** → toggle expand / collapse Now Playing (hors play/pause/next/seek) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.6 | Web : retry « Lecture impossible / nouvel essai auto » **ne boucle pas** ; message clair + bouton après N essais ; détecter 502 stream | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B4.7 | Prod streams 502 (IP VPS YouTube) → **STREAM_UPSTREAM** maison (`make link-home-stream` / `scripts/link-home-stream.sh`) obligatoire tant que VPS bloqué | ✅ | 🔧 | 🧪 | ⬜ | — | ✅ | 🧪 |
+| B4.8 | Android : toast clair si lecture bloquée pendant **appel** (`MODE_IN_CALL`) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.9 | Web refresh biblio lent → playlists light API + cache localStorage | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.10 | Emails télémétrie : streak≥2 = error, throttle 90s, fingerprint par message | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B5 — Réglages / logs
 
