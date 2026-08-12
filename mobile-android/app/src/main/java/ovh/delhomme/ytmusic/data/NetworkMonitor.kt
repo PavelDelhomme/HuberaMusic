@@ -7,6 +7,9 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import ovh.delhomme.ytmusic.player.PlaybackService
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import java.util.concurrent.atomic.AtomicBoolean
@@ -23,6 +26,9 @@ object NetworkMonitor {
     private val started = AtomicBoolean(false)
     @Volatile
     private var online = true
+    private val _onlineFlow = MutableStateFlow(true)
+    /** UI : collectAsState pour griser la file hors-ligne. */
+    val onlineFlow: StateFlow<Boolean> = _onlineFlow.asStateFlow()
     @Volatile
     private var pausedForNetwork = false
     private val main = Handler(Looper.getMainLooper())
@@ -43,6 +49,7 @@ object NetworkMonitor {
         val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return
         online = hasUsableInternet(cm)
+        _onlineFlow.value = online
 
         val req = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -55,6 +62,7 @@ object NetworkMonitor {
                         cancelOfflineConfirm()
                         val wasOffline = !online
                         online = true
+                        _onlineFlow.value = true
                         if (wasOffline) onBackOnline()
                     }
 
@@ -67,6 +75,7 @@ object NetworkMonitor {
                             cancelOfflineConfirm()
                             val wasOffline = !online
                             online = true
+                            _onlineFlow.value = true
                             if (wasOffline) onBackOnline()
                         }
                     }
@@ -92,9 +101,11 @@ object NetworkMonitor {
             val still = hasUsableInternet(cm)
             if (!still) {
                 online = false
+                _onlineFlow.value = false
                 onGoneOffline()
             } else {
                 online = true
+                _onlineFlow.value = true
             }
         }
         offlineConfirm = r
@@ -114,33 +125,64 @@ object NetworkMonitor {
             val exo = PlaybackService.Holder.player ?: return@post
             val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
                 ?: return@post
+            val store = container.offlineStore
+            val queue = PlaybackService.Holder.queue
+            val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
             val curId = exo.currentMediaItem?.mediaId
-            if (!curId.isNullOrBlank() && container.offlineStore.has(curId)) {
-                val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
-                val track = PlaybackService.Holder.queue.getOrNull(idx)
-                    ?: PlaybackService.Holder.queue.firstOrNull { it.id == curId }
-                if (track != null) {
-                    val pos = exo.currentPosition.coerceAtLeast(0L)
-                    val item = ovh.delhomme.ytmusic.player.mediaItemFor(
-                        track,
-                        { id -> container.streamUrl(id) },
-                        PlaybackService.Holder.queueTitle,
-                    )
-                    runCatching {
-                        exo.replaceMediaItem(idx, item)
-                        if (exo.currentPosition < 50L && pos > 50L) exo.seekTo(idx, pos)
-                        if (!exo.isPlaying && exo.playWhenReady) {
-                            exo.prepare()
-                            exo.play()
-                        }
+
+            fun jumpToOffline(idx: Int) {
+                val track = queue.getOrNull(idx) ?: return
+                runCatching {
+                    // Remplace toute la file : URI locaux prioritaires via streamUrl()
+                    val items = queue.map { t ->
+                        ovh.delhomme.ytmusic.player.mediaItemFor(
+                            t,
+                            { id -> container.streamUrl(id) },
+                            PlaybackService.Holder.queueTitle,
+                        )
                     }
+                    val pos = if (idx == curIdx) exo.currentPosition.coerceAtLeast(0L) else 0L
+                    exo.setMediaItems(items, idx, pos)
+                    exo.prepare()
+                    exo.playWhenReady = true
+                    exo.play()
+                    PlaybackService.Holder.index = idx
                 }
             }
+
+            if (!curId.isNullOrBlank() && store.has(curId)) {
+                jumpToOffline(curIdx)
+                return@post
+            }
+            val next = (curIdx until queue.size).firstOrNull { store.has(queue[it].id) }
+                ?: queue.indices.firstOrNull { store.has(queue[it].id) }
+            if (next != null) {
+                jumpToOffline(next)
+                android.widget.Toast.makeText(
+                    ovh.delhomme.ytmusic.YtMusicApp.instance,
+                    "Hors ligne — titres non téléchargés ignorés",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            } else {
+                exo.playWhenReady = false
+                runCatching { exo.pause() }
+                markPausedForNetwork()
+                android.widget.Toast.makeText(
+                    ovh.delhomme.ytmusic.YtMusicApp.instance,
+                    "Hors ligne — aucun titre téléchargé dans la file",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+            // Relance sync quand le réseau reviendra
+            runCatching { container.offlineKeeper.requestSoon("back-soon") }
         }
     }
 
     private fun onBackOnline() {
         StreamPrefetcher.markStreamOk()
+        runCatching {
+            ovh.delhomme.ytmusic.YtMusicApp.instance.container.offlineKeeper.requestSoon("online")
+        }
         main.post {
             val exo = PlaybackService.Holder.player ?: return@post
             if (!pausedForNetwork) return@post

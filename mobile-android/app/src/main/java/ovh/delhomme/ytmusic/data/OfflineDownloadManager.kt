@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Téléchargements hors du scope Compose (survit à la fermeture du sheet).
@@ -25,11 +26,13 @@ class OfflineDownloadManager(
     private val ensureToken: suspend () -> Unit,
     private val notifyServer: suspend (trackId: String) -> Unit,
     private val warmStream: (suspend (trackId: String) -> Unit)? = null,
-    private val maxConcurrent: Int = 3,
+    /** 1 max pendant la lecture : Exo + prefetch saturent déjà le tunnel. */
+    private val maxConcurrent: Int = 1,
 ) {
     private val jobsMutex = Mutex()
     private val jobs = mutableMapOf<String, Job>()
-    private val gate = Semaphore(maxConcurrent.coerceIn(1, 4))
+    private val gate = Semaphore(maxConcurrent.coerceIn(1, 2))
+    private val aheadRunning = AtomicBoolean(false)
 
     private val _progress = MutableStateFlow<Map<String, Float>>(emptyMap())
     val progress: StateFlow<Map<String, Float>> = _progress.asStateFlow()
@@ -135,17 +138,41 @@ class OfflineDownloadManager(
 
     /**
      * Pré-télécharge silencieusement les prochains titres (mix / file) pour survivre
-     * à une coupure réseau. Limité pour ne pas saturer la bande.
+     * à une coupure réseau. Séquentiel + limité : ne pas concurrencer la lecture
+     * (sinon googlevideo reset → trou / skip).
      */
     fun enqueueAhead(tracks: List<TrackDto>, limit: Int = 2) {
         if (!NetworkMonitor.isOnline()) return
-        var started = 0
-        for (t in tracks) {
-            if (started >= limit) break
-            if (!t.id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))) continue
-            if (offlineStore.has(t.id)) continue
-            if (jobs[t.id]?.isActive == true) continue
-            if (enqueue(t)) started++
+        if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return
+        val cap = limit.coerceIn(1, 2)
+        val candidates = tracks
+            .asSequence()
+            .filter { it.id.matches(Regex("^[a-zA-Z0-9_-]{11}$")) }
+            .filter { !offlineStore.has(it.id) }
+            .filter { jobs[it.id]?.isActive != true }
+            .take(cap)
+            .toList()
+        if (candidates.isEmpty()) return
+        // Un seul « ahead pipeline » à la fois — priorité au prochain titre
+        if (!aheadRunning.compareAndSet(false, true)) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                // Laisse Exo stabiliser le titre courant avant full-DL
+                kotlinx.coroutines.delay(2_500)
+                for ((i, t) in candidates.withIndex()) {
+                    if (!NetworkMonitor.isOnline()) break
+                    if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) break
+                    if (offlineStore.has(t.id)) continue
+                    enqueue(t)
+                    // Attendre la fin du job courant avant le suivant
+                    while (jobs[t.id]?.isActive == true) {
+                        kotlinx.coroutines.delay(400)
+                    }
+                    if (i < candidates.lastIndex) kotlinx.coroutines.delay(2_500)
+                }
+            } finally {
+                aheadRunning.set(false)
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api, artistNames, type Track } from '../api';
-import { resolvePlayUrl, streamProxyUrl } from '../lib/offline/offlineCache';
+import { listCachedTracks, resolvePlayUrl, streamProxyUrl } from '../lib/offline/offlineCache';
+import { isBrowserOnline } from '../lib/offline/connectivity';
 import {
   prefetchAround,
   resolvePrefetchedPlayUrl,
@@ -737,10 +738,10 @@ function schedulePrefetch(queue: Track[], queueIndex: number) {
   const durationsSec = playable.map((t) => trackDurationSeconds(t));
   // Pendant la lecture : peu de full-prefetch (évite de voler la bande du titre long)
   prefetchAround(ids, idx, {
-    ahead: saveData ? 2 : 4,
+    ahead: saveData ? 3 : 6,
     behind: 0,
-    fullAhead: saveData || loopOne ? 0 : 1,
-    delayFullMs: saveData ? 6000 : 2500,
+    fullAhead: saveData || loopOne ? 0 : 2,
+    delayFullMs: saveData ? 5000 : 1800,
     durationsSec,
     loopOne,
   });
@@ -1411,6 +1412,37 @@ function attachAudioRuntime(
         refreshMediaSession();
       } catch {
         if (gen !== playGeneration) return;
+        // Hors-ligne navigateur : bascule cache local ou titre suivant en cache
+        if (!isBrowserOnline()) {
+          mediaAutoRetry = 0;
+          markStreamOk();
+          const q = get().queue;
+          const idx = get().queueIndex;
+          const nextCached = await (async () => {
+            for (let i = idx + 1; i < q.length; i++) {
+              const id = q[i]?.id;
+              if (!id) continue;
+              const url = await resolvePlayUrl(id).catch(() => null);
+              if (url && String(url).startsWith('blob:')) return { i, track: q[i]! };
+            }
+            return null;
+          })();
+          if (nextCached) {
+            set({ playError: null, isLoading: true });
+            void get().play(nextCached.track, q, {
+              preserveQueue: true,
+              forceRestart: true,
+            });
+            return;
+          }
+          set({
+            isPlaying: false,
+            isLoading: false,
+            playError: 'Hors ligne — titre non disponible sur cet appareil.',
+          });
+          refreshMediaSession();
+          return;
+        }
         markStreamFailure('audio-error');
         if (gen === playGeneration && get().current?.id === track.id) {
           try {
@@ -1419,23 +1451,28 @@ function attachAudioRuntime(
             /* ignore */
           }
           mediaAutoRetry += 1;
-          const maxAuto = 3;
+          const maxAuto = 2;
           if (mediaAutoRetry > maxAuto) {
             set({
               isPlaying: false,
               isLoading: false,
               playError:
-                'Stream indisponible (502 / réseau). Réessaie manuellement ou change de titre.',
+                'Stream indisponible. Réessaie manuellement ou change de titre.',
             });
             refreshMediaSession();
             persistPlayer();
             publish();
             return;
           }
+          // Retry discret — pas de toast anxiogène au 1er échec
+          const delayMs = mediaAutoRetry === 1 ? 2_500 : 7_000;
           set({
             isPlaying: false,
-            isLoading: false,
-            playError: `Connexion / lecture impossible — nouvel essai ${mediaAutoRetry}/${maxAuto}…`,
+            isLoading: true,
+            playError:
+              mediaAutoRetry === 1
+                ? null
+                : `Reprise du flux… (${mediaAutoRetry}/${maxAuto})`,
           });
           refreshMediaSession();
           persistPlayer();
@@ -1449,7 +1486,7 @@ function attachAudioRuntime(
               preserveQueue: true,
               keepUserBoundary: true,
             });
-          }, 9_000);
+          }, delayMs);
         }
       } finally {
         recovering = false;
@@ -2581,6 +2618,41 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     try {
       let seedTrack: Track | null = seed && isPlayable(seed) ? seed : null;
       let pool: Track[] = [];
+
+      // Hors-ligne : mix à partir des titres déjà sur l’appareil (pas d’API)
+      if (!isBrowserOnline()) {
+        const local = (await listCachedTracks()).filter(isPlayable);
+        if (!local.length) return { added: 0, soft: false as const };
+        const seedId = seedTrack?.id;
+        const head =
+          (seedId && local.find((t) => t.id === seedId)) ||
+          local[Math.floor(Math.random() * local.length)]!;
+        const rest = local
+          .filter((t) => t.id !== head.id)
+          .sort(() => Math.random() - 0.5)
+          .slice(0, MIX_TARGET);
+        const mix = [head, ...rest];
+        autoRadioSeq += 1;
+        autoRadioInflight = null;
+        await get().play(head, mix, {
+          preserveQueue: true,
+          forceRestart: true,
+          noAutoRadio: true,
+          sourceId: head.id,
+          sourceKind: 'radio',
+        });
+        set({
+          showQueue: true,
+          showLyrics: false,
+          autoplay: false,
+          shuffle: false,
+          shuffleNatural: null,
+          related: rest,
+          relatedSeedId: head.id,
+        });
+        return { added: rest.length, soft: false as const };
+      }
+
       const cacheKind = kind === 'track' ? 'track' : kind === 'album' ? 'album' : 'artist';
       const cKey = mixCacheKey(cacheKind, id);
       const cached = getCachedMix(cKey);

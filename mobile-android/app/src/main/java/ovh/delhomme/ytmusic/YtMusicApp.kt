@@ -32,6 +32,8 @@ class YtMusicApp : Application(), ImageLoaderFactory {
         appScope.launch {
             runCatching { container.tokenStore.warmCache() }
         }
+        // Garde hors-ligne (aimés + Mon Mix) — léger, Wi‑Fi préféré
+        runCatching { container.offlineKeeper.start() }
     }
 
     override fun onTrimMemory(level: Int) {

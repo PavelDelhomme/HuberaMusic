@@ -11,7 +11,7 @@ import {
   requestPersistentStorage,
 } from '../../lib/offline/offlineCache';
 import { isBrowserOnline, onConnectivityChange } from '../../lib/offline/connectivity';
-import { Download, HardDrive, Loader2, Play, Trash2, WifiOff } from 'lucide-react';
+import { Download, HardDrive, Loader2, Play, Shuffle, Trash2, WifiOff } from 'lucide-react';
 import { TrackRow } from '../../components/media/TrackRow';
 
 function formatBytes(n: number) {
@@ -124,6 +124,20 @@ export function OfflinePage() {
           className="inline-flex items-center gap-2 rounded-full bg-yt-red px-4 py-2 text-sm font-medium disabled:opacity-50"
         >
           <Play className="h-4 w-4" /> Tout lire
+        </button>
+        <button
+          type="button"
+          disabled={!!busy || localTracks.length < 2}
+          onClick={() => {
+            const shuffled = [...localTracks].sort(() => Math.random() - 0.5);
+            void playQueue(shuffled, 0, {
+              sourceId: 'offline-mix',
+              sourceKind: 'radio',
+            });
+          }}
+          className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-4 py-2 text-sm font-medium disabled:opacity-50"
+        >
+          <Shuffle className="h-4 w-4" /> Mix hors-ligne
         </button>
         <button
           type="button"

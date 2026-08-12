@@ -6,18 +6,18 @@ const FULL_CACHE = 'ytm-stream-full-v1';
 const MAX_HEAD = 18;
 /** Tête générique (~10 s audio typique YT 160–256 kb/s) */
 const HEAD_BYTES = 1_600 * 1024;
-/** Prochain titre : plus d’octets pour un skip fluide */
-const HEAD_NEXT_BYTES = 2_800 * 1024;
+/** Prochain titre : plus d’octets pour un skip fluide (~90–120 s) */
+const HEAD_NEXT_BYTES = 3_800 * 1024;
 /** Pistes complètes en Cache Storage (instant play) — rester léger sur navigateur */
-const MAX_FULL = 12;
+const MAX_FULL = 14;
 /** Au-delà : on ne full-cache pas (trop lourd) — tête seulement */
 export const FULL_PRELOAD_MAX_SEC = 12 * 60;
 /** Warm format API en parallèle */
 const WARM_CONCURRENCY = 5;
 /** Prefetch tête en parallèle */
 const HEAD_CONCURRENCY = 4;
-/** Prefetch full — 1 à la fois (évite 502 / saturation avec le titre en lecture) */
-const FULL_CONCURRENCY = 1;
+/** Prefetch full — 2 max (suite + +2) sans saturer le titre en cours */
+const FULL_CONCURRENCY = 2;
 
 type HeadEntry = { buf: ArrayBuffer; at: number };
 

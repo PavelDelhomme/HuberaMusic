@@ -45,6 +45,9 @@ class LocalOfflineStore(
         .readTimeout(10, TimeUnit.MINUTES)
         .writeTimeout(60, TimeUnit.SECONDS)
         .followRedirects(true)
+        // HTTP/2 RST fréquents sur proxy maison / CDN pendant la lecture → forcer h1
+        .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+        .retryOnConnectionFailure(true)
         .build()
 
     init {
@@ -124,11 +127,13 @@ class LocalOfflineStore(
             return@withContext Result.success(dest)
         }
         var lastError: Throwable? = null
-        repeat(2) { attempt ->
+        repeat(4) { attempt ->
             val result = downloadOnce(track, streamUrl, onProgress, attempt)
             if (result.isSuccess) return@withContext result
             lastError = result.exceptionOrNull()
             AppLog.w("offline", "DL retry ${attempt + 1} ${track.id}: ${lastError?.message}")
+            // Backoff : laisse le lecteur / tunnel se stabiliser (reset CDN fréquent)
+            kotlinx.coroutines.delay(800L * (attempt + 1) * (attempt + 1))
         }
         Result.failure(lastError ?: Exception("Échec téléchargement"))
     }
