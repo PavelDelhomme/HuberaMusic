@@ -339,6 +339,24 @@ fun YtMusicAppContent(
         }
     }
 
+    // Vérif mise à jour quotidienne (force possible via Compte → Mettre à jour)
+    LaunchedEffect(loggedIn) {
+        if (loggedIn != true) return@LaunchedEffect
+        val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
+            context.applicationContext,
+            container,
+        )
+        if (!updater.shouldAutoCheck()) return@LaunchedEffect
+        val check = runCatching { updater.check(force = false) }.getOrNull() ?: return@LaunchedEffect
+        if (check.available) {
+            Toast.makeText(
+                context,
+                "Mise à jour ${check.info?.versionName ?: ""} disponible — Compte → Mettre à jour",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
     BackHandler(enabled = loggedIn == true && showNowPlaying) {
         showNowPlaying = false
     }

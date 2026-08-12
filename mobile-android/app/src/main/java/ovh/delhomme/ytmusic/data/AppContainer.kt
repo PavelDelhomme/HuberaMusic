@@ -251,6 +251,8 @@ class AppContainer(context: Context) {
 
     /** Client sans auth interceptor (passkeys login). */
     val httpPlain: OkHttpClient = plainClient
+    /** Client authentifié (JWT) — téléchargements APK / streams protégés. */
+    val httpAuth: OkHttpClient = client
 
     val apiBaseUrl: String
         get() = resolvedApiBase().trimEnd('/') + "/"
