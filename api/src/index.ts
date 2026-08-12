@@ -1096,11 +1096,17 @@ app.delete('/api/admin/youtube-cookies', requireAdmin, (_req, res) => {
 function apkDownloadAuthorized(req: import('express').Request) {
   const secret = (process.env.APK_DOWNLOAD_TOKEN || '').trim();
   const env = process.env.APP_ENV || 'local';
-  // Production : secret obligatoire
+  // Production : secret obligatoire (sauf utilisateur connecté — voir routes)
   if (!secret) return env !== 'production' && env !== 'preprod';
   const q = typeof req.query?.key === 'string' ? req.query.key : '';
   const header = String(req.headers['x-apk-token'] || '');
   return q === secret || header === secret;
+}
+
+function apkDownloadOrAccount(req: import('express').Request) {
+  if (apkDownloadAuthorized(req)) return true;
+  // Compte connecté (app mobile in-app update) — pas les invités
+  return Boolean(req.userId && req.user && !req.user.isGuest);
 }
 
 /** Relais VPS→maison : autorise le stream sans JWT (API locale privée + header). */
@@ -1113,9 +1119,9 @@ function isHomeStreamRelay(req: Request): boolean {
   return String(req.headers['x-ytm-stream-relay-token'] || '') === secret;
 }
 
-/** Téléchargement APK (QR). Optionnel : APK_DOWNLOAD_TOKEN → ?key=… */
-app.get('/api/deploy/apk', (req, res) => {
-  if (!apkDownloadAuthorized(req)) {
+/** Téléchargement APK (QR / in-app). Token APK_DOWNLOAD_TOKEN ou JWT compte. */
+app.get('/api/deploy/apk', authOptional, (req, res) => {
+  if (!apkDownloadOrAccount(req)) {
     res.status(401).json({ error: 'Lien APK protégé — clé manquante ou invalide' });
     return;
   }
@@ -1133,8 +1139,8 @@ app.get('/api/deploy/apk', (req, res) => {
   res.sendFile(path);
 });
 
-app.get('/api/deploy/apk/info', (req, res) => {
-  if (!apkDownloadAuthorized(req)) {
+app.get('/api/deploy/apk/info', authOptional, (req, res) => {
+  if (!apkDownloadOrAccount(req)) {
     res.status(401).json({ error: 'Lien APK protégé — clé manquante ou invalide' });
     return;
   }
