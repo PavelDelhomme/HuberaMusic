@@ -684,7 +684,7 @@ export const api = {
     }>(`/api/album/${id}`),
   playlist: (id: string) =>
     req<{
-      playlist: { id: string; title: string; author?: string; trackCount?: string; thumbnails: Track['thumbnails']; description?: string };
+      playlist: { id: string; title: string; author?: string; trackCount?: number; thumbnails: Track['thumbnails']; description?: string };
       tracks: Track[];
     }>(`/api/playlist/${id}`),
   download: (id: string) => req<{ ok: boolean }>(`/api/download/${id}`, { method: 'POST' }),

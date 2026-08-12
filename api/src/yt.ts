@@ -1968,18 +1968,6 @@ export async function getPlaylist(playlistId: string): Promise<{
   const header = (playlist as any).header || {};
   const cover = extractThumbs(header, playlist);
   const fromHeaderArtists = artistsFromHeader(header);
-  const meta: PlaylistMeta = {
-    id: playlistId,
-    title: String(header.title?.text || header.title || 'Playlist'),
-    author:
-      (typeof header.author === 'string' ? header.author : header.author?.name) ||
-      fromHeaderArtists[0]?.name ||
-      undefined,
-    trackCount: header.second_subtitle?.text || header.song_count,
-    thumbnails: cover,
-    description: header.description?.text,
-  };
-
   const contents = (playlist as any).contents || (playlist as any).items || [];
   const tracks = contents
     .map((c: any) => mapAny(c, cover))
@@ -1987,12 +1975,51 @@ export async function getPlaylist(playlistId: string): Promise<{
     .map((t: Track) => {
       if (!t.thumbnails?.length && cover.length) t.thumbnails = cover;
       if (!t.artists?.length && fromHeaderArtists.length) t.artists = fromHeaderArtists;
-      else if (!t.artists?.length && meta.author) {
-        t.artists = [{ name: String(meta.author) }];
+      else if (!t.artists?.length) {
+        /* author filled below */
       }
       return t;
     }) as Track[];
+
+  const meta: PlaylistMeta = {
+    id: playlistId,
+    title: String(header.title?.text || header.title || 'Playlist'),
+    author:
+      (typeof header.author === 'string' ? header.author : header.author?.name) ||
+      fromHeaderArtists[0]?.name ||
+      undefined,
+    trackCount: parsePlaylistTrackCount(header.song_count, header.second_subtitle?.text, tracks.length),
+    thumbnails: cover,
+    description: header.description?.text,
+  };
+  for (const t of tracks) {
+    if (!t.artists?.length && meta.author) {
+      t.artists = [{ name: String(meta.author) }];
+    }
+  }
   return { playlist: meta, tracks };
+}
+
+/** Extrais un entier depuis song_count ou « … - 27 tracks - … » (jamais le texte brut). */
+function parsePlaylistTrackCount(
+  songCount: unknown,
+  secondSubtitle: unknown,
+  fallbackLen: number,
+): number | undefined {
+  const fromNum = (v: unknown): number | undefined => {
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return Math.floor(v);
+    if (typeof v === 'string') {
+      const plain = v.trim().match(/^(\d+)$/);
+      if (plain) return Number(plain[1]);
+      const tracks = v.match(/(\d[\d\s]*)\s*tracks?/i);
+      if (tracks) {
+        const n = Number(String(tracks[1]).replace(/\s/g, ''));
+        if (Number.isFinite(n) && n >= 0) return n;
+      }
+    }
+    return undefined;
+  };
+  return fromNum(songCount) ?? fromNum(secondSubtitle) ?? (fallbackLen > 0 ? fallbackLen : undefined);
 }
 
 async function ytDlpGetUrl(

@@ -127,6 +127,23 @@ class PlaybackService : MediaSessionService() {
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                 val exo = player ?: return
                 maybeRecoverEarlyEnd(exo)
+                // Stop en fin de file user si lecture auto OFF (suggestions restent dans la file)
+                val idx = exo.currentMediaItemIndex
+                val end = Holder.userQueueEnd
+                if (!Holder.autoplaySuggestions && end > 0 && idx >= end) {
+                    val back = (end - 1).coerceAtLeast(0)
+                    exo.pause()
+                    val dur = exo.duration
+                    if (dur > 0) exo.seekTo(back, dur) else exo.seekTo(back, 0L)
+                    exo.pause()
+                    android.os.Handler(mainLooper).post {
+                        android.widget.Toast.makeText(
+                            this@PlaybackService,
+                            "Fin de la file — active « À suivre » pour continuer",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
             }
         }
 
@@ -830,6 +847,10 @@ class PlaybackService : MediaSessionService() {
         @Volatile var onLikedIdsChanged: ((Set<String>) -> Unit)? = null
         /** Skip à la fin de file (1 titre) → fill autoplay côté UI. */
         @Volatile var onSkipAtEnd: (() -> Unit)? = null
+        /** Frontière file utilisateur / suggestions. */
+        @Volatile var userQueueEnd: Int = 0
+        /** Auto-avance dans « À suivre » (sinon stop en fin de file user). */
+        @Volatile var autoplaySuggestions: Boolean = true
 
         fun resolvedApiBase(): String {
             val override = service

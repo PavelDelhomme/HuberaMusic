@@ -137,8 +137,9 @@ class AppContainer(context: Context) {
         if (apiEnvKind(base) == "prod") "PROD" else "DEV"
 
     private val moshi: Moshi = Moshi.Builder()
-        // Avant KotlinJsonAdapterFactory : duration (et autres) string|number
+        // Avant KotlinJsonAdapterFactory : duration string|number, trackCount string|number
         .add(FlexibleStringAdapter())
+        .add(FlexibleIntAdapter())
         .add(KotlinJsonAdapterFactory())
         .build()
 

@@ -4,10 +4,10 @@ const FULL_CACHE = 'ytm-stream-full-v1';
 
 /** Nombre max de pistes dont on garde le début en mémoire */
 const MAX_HEAD = 18;
-/** Tête générique (~384 Ko) */
-const HEAD_BYTES = 768 * 1024;
+/** Tête générique (~10 s audio typique YT 160–256 kb/s) */
+const HEAD_BYTES = 1_600 * 1024;
 /** Prochain titre : plus d’octets pour un skip fluide */
-const HEAD_NEXT_BYTES = 2_400 * 1024;
+const HEAD_NEXT_BYTES = 2_800 * 1024;
 /** Pistes complètes en Cache Storage (instant play) — rester léger sur navigateur */
 const MAX_FULL = 12;
 /** Au-delà : on ne full-cache pas (trop lourd) — tête seulement */

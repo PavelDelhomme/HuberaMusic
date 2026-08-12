@@ -78,6 +78,11 @@ class OfflineDownloadManager(
 
         val job = scope.launch(Dispatchers.IO) {
             try {
+                // Hors-ligne : rester en file jusqu’au retour réseau (ne pas échouer tout de suite)
+                while (!NetworkMonitor.isOnline()) {
+                    _progress.update { it + (track.id to 0.02f) }
+                    kotlinx.coroutines.delay(2_500)
+                }
                 gate.withPermit {
                     // Re-check après attente du sémaphore
                     if (offlineStore.has(track.id)) return@withPermit

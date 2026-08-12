@@ -17,7 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
@@ -342,17 +347,27 @@ fun LibraryScreen(
                 val content = remember(data, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching) {
                     buildLibraryContent(data, selected, downloadMeta, downloadsEnriching, homeMixes)
                 }
-                val warmKey = remember(content.playableQueue) {
-                    content.playableQueue.take(40).joinToString(",") { it.id }
-                }
-                LaunchedEffect(selected, warmKey) {
-                    val ids = content.playableQueue.map { it.id }.filter { it.length == 11 }.take(40)
-                    if (ids.isEmpty()) return@LaunchedEffect
-                    ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(
-                        container.resolvedApiBase(),
-                        ids,
-                        limit = 32,
-                    )
+                val listState = rememberLazyListState()
+                LaunchedEffect(selected, content.playableQueue) {
+                    snapshotFlow {
+                        listState.firstVisibleItemIndex to listState.layoutInfo.visibleItemsInfo.size
+                    }
+                        .distinctUntilChanged()
+                        .collect { (first, visible) ->
+                        val start = (first - 2).coerceAtLeast(0)
+                        val end = (first + visible + 12).coerceAtMost(content.playableQueue.size)
+                        if (start >= end) return@collect
+                        val ids = content.playableQueue
+                            .subList(start, end)
+                            .map { it.id }
+                            .filter { it.length == 11 }
+                        if (ids.isEmpty()) return@collect
+                        ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(
+                            container.resolvedApiBase(),
+                            ids,
+                            limit = 36,
+                        )
+                    }
                 }
                 when {
                     content.comingSoon != null -> EmptyHint(content.comingSoon!!)
@@ -375,7 +390,10 @@ fun LibraryScreen(
                     }
                     content.rows.isEmpty() -> EmptyHint(content.emptyMessage)
                     else -> {
-                        LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                        LazyColumn(
+                            state = listState,
+                            contentPadding = PaddingValues(bottom = 24.dp),
+                        ) {
                             item {
                                 Text(
                                     content.headline,

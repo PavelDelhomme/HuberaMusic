@@ -42,9 +42,9 @@ export function QueuePanel() {
   const [panelTab, setPanelTab] = useState<PanelTab>('queue');
 
   useEffect(() => {
-    if (!showQueue || !autoplay) return;
+    if (!showQueue) return;
     topUpAutoplay();
-  }, [showQueue, autoplay, topUpAutoplay, queueIndex]);
+  }, [showQueue, topUpAutoplay, queueIndex]);
 
   // Similaires se rafraîchissent à chaque titre (comme YTM Related)
   useEffect(() => {
@@ -79,12 +79,10 @@ export function QueuePanel() {
   const playedBefore = queueIndex > 0 ? queue.slice(0, queueIndex) : [];
   const userTracks = queue; // déjà joués + courant + suite déjà chargée/affichée
   const userUpcoming = playingUser ? queue.slice(queueIndex + 1, boundary) : [];
-  // « À suivre » = suite auto uniquement (pas le titre courant)
-  const autoTracks = autoplay
-    ? playingUser
-      ? queue.slice(boundary)
-      : queue.slice(queueIndex + 1)
-    : [];
+  // « À suivre » = suite auto (toujours affichée) — le switch ne coupe que l’auto-avance
+  const autoTracks = playingUser
+    ? queue.slice(boundary)
+    : queue.slice(queueIndex + 1);
   const autoStart = playingUser ? boundary : queueIndex + 1;
 
   return (
@@ -364,10 +362,11 @@ export function QueuePanel() {
                 </button>
               </div>
               {!autoplay && (
-                <p className="px-2 text-xs text-yt-muted">Lecture automatique désactivée.</p>
+                <p className="px-2 text-xs text-yt-muted">
+                  Lecture auto désactivée — stop en fin de file ; Suivant charge la suite.
+                </p>
               )}
-              {autoplay &&
-                autoTracks.map((track, i) => {
+              {autoTracks.map((track, i) => {
                   const abs = autoStart + i;
                   return (
                     <TrackRow
@@ -382,12 +381,12 @@ export function QueuePanel() {
                     />
                   );
                 })}
-              {autoplay && autoTracks.length === 0 && autoRadioLoading && (
+              {autoTracks.length === 0 && autoRadioLoading && (
                 <p className="px-2 py-3 text-center text-xs text-yt-muted">
                   Chargement des suggestions…
                 </p>
               )}
-              {autoplay && autoTracks.length === 0 && !autoRadioLoading && related.length === 0 && (
+              {autoTracks.length === 0 && !autoRadioLoading && related.length === 0 && (
                 <div className="px-2 py-3 text-center">
                   <p className="text-xs text-yt-muted">Aucune suggestion pour l’instant.</p>
                   <button
@@ -399,7 +398,7 @@ export function QueuePanel() {
                   </button>
                 </div>
               )}
-              {autoplay && autoTracks.length === 0 && related.length > 0 && (
+              {autoTracks.length === 0 && related.length > 0 && (
                 <div className="mt-2">
                   <p className="mb-1 px-2 text-[11px] text-yt-muted">Propositions</p>
                   {related.slice(0, 8).map((track) => (

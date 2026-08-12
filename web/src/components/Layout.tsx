@@ -188,7 +188,14 @@ export function Layout() {
     initSession();
     void api
       .prefs()
-      .then((r) => setNeedsOnboarding(!r.prefs?.onboardingDone))
+      .then((r) => {
+        setNeedsOnboarding(!r.prefs?.onboardingDone);
+        if (typeof r.prefs?.autoplaySuggestions === 'boolean') {
+          void import('../store/player').then((m) => {
+            void m.hydrateAutoplayFromPrefs();
+          });
+        }
+      })
       .catch(() => undefined);
   }, [authLoaded, user, refresh, refreshPins, initSession, location.pathname]);
 
@@ -284,15 +291,27 @@ export function Layout() {
       const guest = !u || u.isGuest || u.email?.includes('@local.ytmusic');
       if (guest) return;
       const now = Date.now();
-      if (now - lastLibRefresh < 45_000) return;
+      if (now - lastLibRefresh < 8_000) return;
       lastLibRefresh = now;
       void refresh();
     };
+    // Poll léger pour sync playlists créées sur mobile pendant que le drawer est ouvert
+    const poll = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      const u = useAuth.getState().user;
+      const guest = !u || u.isGuest || u.email?.includes('@local.ytmusic');
+      if (guest) return;
+      const now = Date.now();
+      if (now - lastLibRefresh < 20_000) return;
+      lastLibRefresh = now;
+      void refresh();
+    }, 20_000);
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
     document.addEventListener('visibilitychange', onHide);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
+      window.clearInterval(poll);
       window.removeEventListener('pagehide', flush);
       window.removeEventListener('beforeunload', flush);
       document.removeEventListener('visibilitychange', onHide);

@@ -572,6 +572,7 @@ private fun MainTabs(
             onboardingChecked = true
             forceOnboarding = runCatching {
                 val p = container.api.prefs().prefs
+                player.hydrateAutoplaySuggestions(p.autoplaySuggestions)
                 !p.onboardingDone || (p.genres.isEmpty() && p.moods.isEmpty())
             }.getOrDefault(false)
         }

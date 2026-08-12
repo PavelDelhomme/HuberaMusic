@@ -107,6 +107,11 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | B4.8 | Android : toast clair si lecture bloquée pendant **appel** (`MODE_IN_CALL`) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.9 | Web refresh biblio lent → playlists light API + cache localStorage | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.10 | Emails télémétrie : streak≥2 = error, throttle 90s, fingerprint par message | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.11 | « À suivre » toujours visible ; auto OFF = stop fin de file ; Suivant charge ; sync préf devices | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.12 | Prefetch listes longues (viewport / scroll) web+Android ~10 s tête | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.13 | Crash `trackCount` string YTM → int (Ambiance Chill etc.) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.14 | Playlist hero : play / shuffle / DL icône+progress + menu ⋮ (rename/delete/mix/offline) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.15 | Sync playlists mobile→web drawer (poll 20s + refresh focus 8s) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B5 — Réglages / logs
 

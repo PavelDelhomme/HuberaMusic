@@ -116,7 +116,7 @@ class PlayerController(
 
     fun connect() {
         ensureService()
-        PlaybackService.Holder.onSkipAtEnd = { fillThenSkipFromEnd() }
+        PlaybackService.Holder.onSkipAtEnd = { fillThenSkipFromEnd(fromUserSkip = true) }
         if (controller != null || controllerFuture != null) return
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
@@ -227,37 +227,33 @@ class PlayerController(
     }
 
     fun setAutoplaySuggestions(on: Boolean) {
-        autoplaySuggestions = on
-        playerPrefs.edit().putBoolean("autoplay_suggestions", on).apply()
-        if (!on) {
-            val queue = PlaybackService.Holder.queue
-            val end = userQueueEnd.coerceIn(0, queue.size).coerceAtLeast(
-                (_state.value.queueIndex + 1).coerceAtMost(queue.size),
-            )
-            val trimmed = queue.take(end)
-            userQueueEnd = trimmed.size
-            PlaybackService.Holder.queue = trimmed
-            val c = player()
-            if (c != null && c.mediaItemCount > end) {
-                c.removeMediaItems(end, c.mediaItemCount)
-                syncFrom(c)
-            } else {
-                _state.value = _state.value.copy(
-                    queue = trimmed,
-                    queueSize = trimmed.size,
-                    userQueueEnd = userQueueEnd,
-                    autoplaySuggestions = false,
-                )
-            }
-            _state.value = _state.value.copy(autoplaySuggestions = false)
-            return
-        }
-        _state.value = _state.value.copy(autoplaySuggestions = true)
+        applyAutoplaySuggestions(on, syncRemote = true)
     }
 
-    /** Ajoute des suggestions après la file utilisateur (zone auto). */
+    /** Applique la préf locale (hydratation serveur sans re-POST). */
+    fun hydrateAutoplaySuggestions(on: Boolean) {
+        applyAutoplaySuggestions(on, syncRemote = false)
+    }
+
+    private fun applyAutoplaySuggestions(on: Boolean, syncRemote: Boolean) {
+        autoplaySuggestions = on
+        playerPrefs.edit().putBoolean("autoplay_suggestions", on).apply()
+        PlaybackService.Holder.autoplaySuggestions = on
+        // Ne pas trimmer la zone « À suivre » — elle reste visible ; on coupe seulement l’auto-avance
+        _state.value = _state.value.copy(autoplaySuggestions = on)
+        if (syncRemote) {
+            scope.launch {
+                runCatching {
+                    YtMusicApp.instance.container.api.savePrefs(
+                        ovh.delhomme.ytmusic.data.SavePrefsBody(autoplaySuggestions = on),
+                    )
+                }
+            }
+        }
+    }
+
+    /** Ajoute des suggestions après la file utilisateur (zone auto) — toujours, pour affichage. */
     fun appendAutoTracks(tracks: List<TrackDto>, forSeedId: String? = null) {
-        if (!autoplaySuggestions) return
         if (forSeedId != null && _state.value.track?.id != forSeedId) return
         val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
@@ -281,6 +277,7 @@ class PlayerController(
             shuffleNatural = natural
         }
         PlaybackService.Holder.queue = queue
+        PlaybackService.Holder.userQueueEnd = userQueueEnd
         toAdd.forEach { c.addMediaItem(mediaItem(it)) }
         warmAround(queue, c.currentMediaItemIndex.coerceAtLeast(0))
         syncFrom(c)
@@ -438,7 +435,7 @@ class PlayerController(
             }
             else -> {
                 // Un seul titre : fill « À suivre » puis skip (ne pas relancer le même)
-                fillThenSkipFromEnd()
+                fillThenSkipFromEnd(fromUserSkip = true)
             }
         }
         if (wasOne) {
@@ -449,14 +446,15 @@ class PlayerController(
     }
 
     /** Appelé quand il n’y a plus de suivant (UI ou notif système). */
-    private fun fillThenSkipFromEnd() {
+    private fun fillThenSkipFromEnd(fromUserSkip: Boolean = false) {
         if (pauseAtEndOfQueue || pauseAtEndOfTrack) {
             player()?.pause()
             clearSleepTimer()
             Toast.makeText(context, "Mise en veille", Toast.LENGTH_SHORT).show()
             return
         }
-        if (!autoplaySuggestions) {
+        // Fin naturelle + auto OFF → stop (suggestions restent visibles)
+        if (!fromUserSkip && !autoplaySuggestions) {
             Toast.makeText(context, "Fin de la file", Toast.LENGTH_SHORT).show()
             return
         }
@@ -1213,6 +1211,8 @@ class PlayerController(
             sourceKind = sourceKind,
         )
         if (idx in queue.indices) PlaybackService.Holder.index = idx
+        PlaybackService.Holder.userQueueEnd = userQueueEnd.coerceIn(0, queue.size)
+        PlaybackService.Holder.autoplaySuggestions = autoplaySuggestions
         persistLocalSnapshot()
     }
 }

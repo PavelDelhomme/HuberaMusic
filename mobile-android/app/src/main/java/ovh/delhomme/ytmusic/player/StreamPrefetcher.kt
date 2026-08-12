@@ -26,23 +26,23 @@ import java.util.concurrent.TimeUnit
  * Annulé uniquement sur pause volontaire (pas pendant un rebuffer / skip).
  */
 object StreamPrefetcher {
-    /** ~3 s audio typique YT (~160–256 kb/s) + marge conteneur. */
-    const val HEAD_3S = 420L * 1024L
+    /** ~10 s audio typique YT (~160–256 kb/s) + marge conteneur. */
+    const val HEAD_3S = 1_400L * 1024L
     /** Tête générique Wi‑Fi (~1.5 Mo ≈ ~45–60 s audio). */
-    private const val HEAD_WIFI = 1_500 * 1024L
+    private const val HEAD_WIFI = 1_800 * 1024L
     /** Titre suivant Wi‑Fi. */
     private const val HEAD_NEXT_WIFI = 4_500 * 1024L
     /** +2 / +3 Wi‑Fi. */
     private const val HEAD_NEAR_WIFI = 2_200 * 1024L
-    /** Suite lointaine Wi‑Fi — au minimum ~3 s. */
-    private const val HEAD_FAR_WIFI = 900 * 1024L
+    /** Suite lointaine Wi‑Fi — au minimum ~10 s. */
+    private const val HEAD_FAR_WIFI = 1_400 * 1024L
 
     private const val HEAD_METERED = HEAD_3S
-    private const val HEAD_NEXT_METERED = 1_200 * 1024L
+    private const val HEAD_NEXT_METERED = 1_600 * 1024L
 
-    private const val MAX_WARM = 8
-    private const val AHEAD_WIFI = 3
-    private const val AHEAD_METERED = 2
+    private const val MAX_WARM = 12
+    private const val AHEAD_WIFI = 6
+    private const val AHEAD_METERED = 3
     private const val DISK_CACHE_MB = 24L
     private val JSON = "application/json; charset=utf-8".toMediaType()
 

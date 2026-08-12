@@ -13,7 +13,8 @@ export type PlaylistMeta = {
   id: string;
   title: string;
   author?: string;
-  trackCount?: string;
+  /** Nombre de titres (entier) — jamais le sous-titre YTM « 180K views - 27 tracks… ». */
+  trackCount?: number;
   thumbnails: { url: string; width?: number; height?: number }[];
   description?: string;
 };

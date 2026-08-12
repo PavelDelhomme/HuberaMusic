@@ -111,12 +111,24 @@ export function ensureRecoSchema() {
 
 ensureRecoSchema();
 
+/** Colonne player sync multi-appareils (ajoutée au fil de l’eau). */
+function ensurePlayerPrefsColumns() {
+  try {
+    db.exec(`ALTER TABLE user_prefs ADD COLUMN autoplay_suggestions INTEGER DEFAULT 1`);
+  } catch {
+    /* already exists */
+  }
+}
+ensurePlayerPrefsColumns();
+
 export type Prefs = {
   genres: string[];
   moods: string[];
   moments: string[];
   onboardingDone: boolean;
   discoveryBias: number;
+  /** Lecture auto « À suivre » (sync multi-appareils). */
+  autoplaySuggestions: boolean;
 };
 
 export function getPrefs(userId: string): Prefs {
@@ -127,10 +139,18 @@ export function getPrefs(userId: string): Prefs {
         moments: string;
         onboarding_done: number;
         discovery_bias: number;
+        autoplay_suggestions?: number | null;
       }
     | undefined;
   if (!row) {
-    return { genres: [], moods: [], moments: [], onboardingDone: false, discoveryBias: 0.1 };
+    return {
+      genres: [],
+      moods: [],
+      moments: [],
+      onboardingDone: false,
+      discoveryBias: 0.1,
+      autoplaySuggestions: true,
+    };
   }
   return {
     genres: JSON.parse(row.genres || '[]'),
@@ -138,6 +158,7 @@ export function getPrefs(userId: string): Prefs {
     moments: JSON.parse(row.moments || '[]'),
     onboardingDone: Boolean(row.onboarding_done),
     discoveryBias: row.discovery_bias ?? 0.1,
+    autoplaySuggestions: row.autoplay_suggestions == null ? true : Boolean(row.autoplay_suggestions),
   };
 }
 
@@ -152,16 +173,19 @@ export function savePrefs(
     moments: patch.moments ?? cur.moments,
     onboardingDone: patch.onboardingDone ?? cur.onboardingDone,
     discoveryBias: patch.discoveryBias ?? cur.discoveryBias,
+    autoplaySuggestions:
+      patch.autoplaySuggestions != null ? Boolean(patch.autoplaySuggestions) : cur.autoplaySuggestions,
   };
   db.prepare(
-    `INSERT INTO user_prefs (user_id, genres, moods, moments, onboarding_done, discovery_bias, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO user_prefs (user_id, genres, moods, moments, onboarding_done, discovery_bias, autoplay_suggestions, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET
        genres = excluded.genres,
        moods = excluded.moods,
        moments = excluded.moments,
        onboarding_done = excluded.onboarding_done,
        discovery_bias = excluded.discovery_bias,
+       autoplay_suggestions = excluded.autoplay_suggestions,
        updated_at = excluded.updated_at`,
   ).run(
     userId,
@@ -170,6 +194,7 @@ export function savePrefs(
     JSON.stringify(next.moments),
     next.onboardingDone ? 1 : 0,
     next.discoveryBias,
+    next.autoplaySuggestions ? 1 : 0,
     Date.now(),
   );
   return next;

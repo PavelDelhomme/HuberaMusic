@@ -27,6 +27,25 @@ import {
   setCachedMix,
 } from '../lib/mixCache';
 
+/** Sync préférence lecture auto → compte (multi-appareils). */
+function syncAutoplayPref(on: boolean) {
+  void api.savePrefs({ autoplaySuggestions: on }).catch(() => undefined);
+}
+
+/** Hydrate autoplay depuis /api/prefs (appelé au login). */
+export async function hydrateAutoplayFromPrefs() {
+  try {
+    const r = await api.prefs();
+    const v = r.prefs?.autoplaySuggestions;
+    if (typeof v === 'boolean') {
+      usePlayer.setState({ autoplay: v });
+      persistPlayer();
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 type RepeatMode = 'off' | 'all' | 'one';
 
 function refreshMediaSession() {
@@ -777,7 +796,7 @@ let autoRadioSeq = 0;
 /** Ajoute des titres en zone autoplay dès qu’un pool arrive (sans attendre les autres APIs). */
 function mergeAutoTracks(seedId: string, pool: Track[], relatedUpdate?: Track[]) {
   const state = usePlayer.getState();
-  if (state.autoplay === false) return;
+  // Toujours remplir « À suivre » (affichage) — autoplay ne contrôle que l’auto-avance en fin de file user
   // Ignore les réponses obsolètes (titre déjà changé)
   if (state.current?.id && state.current.id !== seedId) return;
   const boundary = Math.max(state.userQueueEnd || 0, state.queueIndex + 1);
@@ -880,7 +899,7 @@ function flashQueueHint(msg: string) {
 async function ensureAutoRadio(seedId: string) {
   if (isStreamDown()) return;
   const cur = usePlayer.getState();
-  if (cur.autoplay === false) return;
+  // Toujours précharger les suggestions visibles — autoplay = auto-avance seulement
   const userEnd = Math.max(cur.userQueueEnd || 0, cur.queueIndex + 1);
   const remainingUser = Math.max(0, userEnd - cur.queueIndex - 1);
   // Mix / radio déjà précalculé (~200) : pas d’extension incrémentale
@@ -1673,7 +1692,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     queueMicrotask(() => {
       if (radioGen !== playGeneration) return;
       void get().loadRelated(seedId);
-      if (!opts?.noAutoRadio && get().autoplay !== false) {
+      if (!opts?.noAutoRadio) {
         void ensureAutoRadio(seedId);
       }
       // Paroles timed en fond → aide le skip de silence de fin
@@ -1909,13 +1928,38 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     }
     let nextIndex = queueIndex + 1;
     const end = get().userQueueEnd || 0;
-    if (get().autoplay === false && nextIndex >= end) {
+    // Fin naturelle sur le dernier titre « user » : stop si lecture auto OFF (suggestions restent visibles)
+    if (
+      opts?.fromEnded &&
+      get().autoplay === false &&
+      queueIndex < end &&
+      nextIndex >= end
+    ) {
       const audio = get().audioEl;
       if (audio) audio.pause();
       set({ isPlaying: false });
       refreshMediaSession();
       persistPlayer();
       publish();
+      return;
+    }
+    // Suivant manuel au bord / hors file user : charge les suggestions si besoin
+    if (
+      !opts?.fromEnded &&
+      get().autoplay === false &&
+      nextIndex >= end &&
+      nextIndex >= queue.length
+    ) {
+      if (current?.id) {
+        await ensureAutoRadio(current.id);
+        const q = get().queue;
+        const idx = get().queueIndex;
+        if (idx + 1 < q.length) {
+          await get().playAt(idx + 1);
+        } else {
+          flashQueueHint('Suggestions en cours… réessaie suivant');
+        }
+      }
       return;
     }
     if (nextIndex >= queue.length) {
@@ -2189,7 +2233,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     persistPlayer();
     publish();
     const cur = get().current;
-    if (cur?.id && get().autoplay !== false) void ensureAutoRadio(cur.id);
+    if (cur?.id) void ensureAutoRadio(cur.id);
   },
 
   cycleRepeat: () => {
@@ -2233,30 +2277,24 @@ export const usePlayer = create<PlayerState>((set, get) => ({
 
   setAutoplay: (on) => {
     if (!on) {
-      set((s) => {
-        const end = Math.max(s.userQueueEnd || 0, s.queueIndex + 1, s.current ? 1 : 0);
-        const trimmed = s.queue.slice(0, Math.min(end, s.queue.length));
-        return {
-          autoplay: false,
-          queue: trimmed,
-          userQueueEnd: trimmed.length,
-          queueIndex: Math.min(s.queueIndex, Math.max(0, trimmed.length - 1)),
-        };
-      });
+      // Garde les suggestions visibles — coupe seulement l’auto-avance
+      set({ autoplay: false });
       persistPlayer();
       publish();
+      void syncAutoplayPref(false);
       return;
     }
     set({ autoplay: true });
     persistPlayer();
     publish();
+    void syncAutoplayPref(true);
     const cur = get().current;
     if (cur?.id) void ensureAutoRadio(cur.id);
   },
 
   topUpAutoplay: () => {
     const cur = get().current;
-    if (cur?.id && get().autoplay !== false) void ensureAutoRadio(cur.id);
+    if (cur?.id) void ensureAutoRadio(cur.id);
   },
 
   addNext: (track) => {
@@ -2410,7 +2448,6 @@ export const usePlayer = create<PlayerState>((set, get) => ({
 
   appendRelated: (tracks) => {
     set((s) => {
-      if (s.autoplay === false) return s;
       const ids = new Set(s.queue.map((t) => t.id));
       const extra = tracks.filter((t) => isPlayable(t) && !ids.has(t.id));
       // Zone auto uniquement — ne pas étendre userQueueEnd
@@ -2660,7 +2697,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         relatedLoading: false,
         relatedError: merged.length ? null : 'Aucune suggestion pour ce titre.',
       });
-      if (get().autoplay !== false && merged.length) {
+      if (merged.length) {
         mergeAutoTracks(trackId, merged, merged);
       }
     } catch (e) {

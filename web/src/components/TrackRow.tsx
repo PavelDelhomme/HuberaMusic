@@ -3,7 +3,7 @@ import type { Track } from '../api';
 import { usePlayer } from '../store/player';
 import { Heart, MoreHorizontal, Pin, Play, Radio } from 'lucide-react';
 import { useLibrary } from '../store/library';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArtistLinks } from './ArtistLinks';
 import { CoverImage } from './CoverImage';
 import { formatTrackDuration } from '../lib/time';
@@ -11,6 +11,7 @@ import { useItemActions } from '../store/itemActions';
 import { PlayingCoverOverlay } from './PlayingBars';
 import { usePins } from '../store/pins';
 import { useDownloads } from '../store/downloads';
+import { warmFormat, warmHead } from '../lib/streamPrefetch';
 
 type Props = {
   track: Track;
@@ -63,6 +64,7 @@ export function TrackRow({
   const [dragging, setDragging] = useState(false);
   const [enriched, setEnriched] = useState<Track>(track);
   const [pinBusy, setPinBusy] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const active = current?.id === track.id;
   const radioActive = sourceKind === 'radio' && sourceId === track.id;
@@ -73,6 +75,28 @@ export function TrackRow({
   useEffect(() => {
     setEnriched(track);
   }, [track]);
+
+  // Prefetch tête (~10 s) dès que la ligne entre dans le viewport (listes longues)
+  useEffect(() => {
+    if (!isPlayable(track) || track.id.length !== 11) return;
+    const el = rowRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      void warmFormat(track.id);
+      return;
+    }
+    let done = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (done || !entries.some((e) => e.isIntersecting)) return;
+        done = true;
+        void warmHead(track.id);
+        io.disconnect();
+      },
+      { rootMargin: '280px 0px', threshold: 0.01 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [track.id]);
 
   const open = () => {
     if (onPlay) {
@@ -100,10 +124,14 @@ export function TrackRow({
 
   return (
     <div
+      ref={rowRef}
       className={`group flex items-center gap-2.5 rounded-lg px-1.5 py-2 transition-colors hover:bg-yt-hover sm:gap-3 sm:px-2 ${
         active ? 'bg-yt-hover/80' : ''
       } ${dragging ? 'opacity-50' : ''} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
       draggable={Boolean(draggable && typeof queueIndex === 'number')}
+      onMouseEnter={() => {
+        if (isPlayable(track) && track.id.length === 11) void warmFormat(track.id);
+      }}
       onContextMenu={openMenu}
       onDragStart={(e) => {
         if (typeof queueIndex !== 'number') return;

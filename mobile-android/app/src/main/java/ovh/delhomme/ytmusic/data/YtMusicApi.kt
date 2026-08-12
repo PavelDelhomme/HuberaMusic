@@ -4,6 +4,7 @@ import com.squareup.moshi.JsonClass
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
@@ -89,6 +90,9 @@ data class LibrarySongResponse(val saved: Boolean, val library: LibraryResponse?
 
 @JsonClass(generateAdapter = false)
 data class CreatePlaylistBody(val name: String, val description: String? = null)
+
+@JsonClass(generateAdapter = false)
+data class UpdatePlaylistBody(val name: String? = null, val description: String? = null)
 
 @JsonClass(generateAdapter = false)
 data class PlaybackStateDto(
@@ -243,6 +247,7 @@ data class UserPrefsDto(
     val moments: List<String> = emptyList(),
     val onboardingDone: Boolean = false,
     val discoveryBias: Double = 0.1,
+    val autoplaySuggestions: Boolean = true,
 )
 
 @JsonClass(generateAdapter = false)
@@ -299,6 +304,7 @@ data class SavePrefsBody(
     val moments: List<String>? = null,
     val discoveryBias: Double? = null,
     val onboardingDone: Boolean? = null,
+    val autoplaySuggestions: Boolean? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -543,6 +549,15 @@ interface YtMusicApi {
 
     @GET("api/library/playlists/{id}")
     suspend fun libraryPlaylist(@Path("id") id: String): PlaylistDto
+
+    @PATCH("api/library/playlists/{id}")
+    suspend fun updatePlaylist(
+        @Path("id") id: String,
+        @Body body: UpdatePlaylistBody,
+    ): PlaylistDto
+
+    @DELETE("api/library/playlists/{id}")
+    suspend fun deletePlaylist(@Path("id") id: String): Map<String, @JvmSuppressWildcards Any>
 
     @POST("api/library/playlists/{id}/tracks")
     suspend fun addToPlaylist(@Path("id") id: String, @Body track: TrackDto): PlaylistDto

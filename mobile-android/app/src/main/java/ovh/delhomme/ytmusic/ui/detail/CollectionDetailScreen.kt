@@ -20,7 +20,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.LibraryAddCheck
 import androidx.compose.material.icons.filled.MoreVert
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,8 +43,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -116,6 +121,11 @@ fun CollectionDetailScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var inLib by remember { mutableStateOf(false) }
     var showAlbumMenu by remember { mutableStateOf(false) }
+    var showPlaylistMenu by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var renameDraft by remember { mutableStateOf("") }
+    var isOwnedLocalPlaylist by remember { mutableStateOf(false) }
     var offlineProgress by remember { mutableStateOf<Float?>(null) }
     var offlineDone by remember { mutableStateOf(false) }
     val dlProgressMap by container.downloadManager.progress.collectAsState()
@@ -272,6 +282,7 @@ fun CollectionDetailScreen(
                         container.api.libraryPlaylist(rawId)
                     }.getOrNull()
                     if (fromLib != null && fromLib.tracks.orEmpty().isNotEmpty()) {
+                        isOwnedLocalPlaylist = true
                         title = fromLib.displayName() ?: seed?.title ?: "Playlist"
                         subtitle = "${fromLib.resolvedTrackCount()} titres"
                         cover = seed ?: TrackDto(
@@ -284,6 +295,7 @@ fun CollectionDetailScreen(
                         )
                         tracks = fromLib.tracks.orEmpty().filter { it.isPlayable() }
                     } else {
+                        isOwnedLocalPlaylist = fromLib != null
                         val r = container.api.playlist(rawId)
                         title = r.playlist?.displayName() ?: seed?.title ?: fromLib?.displayName() ?: "Playlist"
                         subtitle = listOfNotNull(
@@ -367,13 +379,18 @@ fun CollectionDetailScreen(
 
     LaunchedEffect(tracks) {
         if (tracks.isEmpty()) return@LaunchedEffect
-        val base = ovh.delhomme.ytmusic.BuildConfig.API_BASE_URL.trimEnd('/')
+        val base = container.resolvedApiBase()
         ovh.delhomme.ytmusic.player.StreamPrefetcher.warmAround(
             base,
             tracks.map { it.id },
             0,
-            ahead = 4,
+            ahead = 10,
             behind = 0,
+        )
+        ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(
+            base,
+            tracks.map { it.id }.filter { it.length == 11 }.take(48),
+            limit = 36,
         )
     }
 
@@ -680,29 +697,47 @@ fun CollectionDetailScreen(
                                 if (kind == DetailKind.Playlist && tracks.isNotEmpty()) {
                                     val playable = tracks.filter { it.isPlayable() }
                                     val downloading = offlineProgress != null
-                                    OutlinedButton(
-                                        onClick = {
-                                            if (offlineDone || downloading || playable.isEmpty()) return@OutlinedButton
+                                    PlaylistHeroActions(
+                                        downloadProgress = offlineProgress,
+                                        downloaded = offlineDone,
+                                        onShuffle = {
+                                            recordCollectionPlay()
+                                            val shuffled = tracks.shuffled()
+                                            player?.play(
+                                                shuffled,
+                                                0,
+                                                title = title,
+                                                sourceId = id,
+                                                sourceKind = "playlist",
+                                            ) ?: onPlayNamed(shuffled, 0, title)
+                                        },
+                                        onDownload = {
+                                            if (offlineDone || downloading || playable.isEmpty()) return@PlaylistHeroActions
                                             offlineProgress = 0.02f
-                                            container.downloadManager.enqueueMany(playable)
+                                            val started = container.downloadManager.enqueueMany(playable)
+                                            val online = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
                                             Toast.makeText(
                                                 context,
-                                                "Téléchargement de ${playable.size} titres…",
+                                                when {
+                                                    !online -> "Hors-ligne — DL dès que le réseau revient (${playable.size})"
+                                                    started > 0 -> "Téléchargement de $started titres…"
+                                                    else -> "Déjà en cours ou sur l'appareil"
+                                                },
                                                 Toast.LENGTH_SHORT,
                                             ).show()
                                         },
-                                        enabled = !offlineDone && !downloading && playable.isNotEmpty(),
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
-                                        Text(
-                                            when {
-                                                offlineDone -> "Playlist sur l'appareil"
-                                                downloading ->
-                                                    "Téléchargement ${((offlineProgress ?: 0.02f) * 100).toInt()} %"
-                                                else -> "Télécharger la playlist"
-                                            },
-                                        )
-                                    }
+                                        onPlay = {
+                                            recordCollectionPlay()
+                                            player?.play(
+                                                tracks,
+                                                0,
+                                                title = title,
+                                                sourceId = id,
+                                                sourceKind = "playlist",
+                                            ) ?: onPlayNamed(tracks, 0, title)
+                                        },
+                                        onMore = { showPlaylistMenu = true },
+                                    )
                                 }
                             }
                         }
@@ -809,6 +844,353 @@ fun CollectionDetailScreen(
                 }
             },
         )
+    }
+
+    if (showPlaylistMenu && kind == DetailKind.Playlist) {
+        val rawId = id.removePrefix("local:")
+        val isLikedPl = rawId.startsWith("liked-") ||
+            title.contains("j'aime", ignoreCase = true) ||
+            title.equals("Liked songs", ignoreCase = true)
+        val canEdit = isOwnedLocalPlaylist && !isLikedPl
+        val online = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+        PlaylistOverflowSheet(
+            title = title,
+            downloadProgress = offlineProgress,
+            downloaded = offlineDone,
+            canRename = canEdit && online,
+            canDelete = canEdit && online,
+            canRadio = online,
+            canDownload = online || offlineDone,
+            canRemoveLocal = offlineDone,
+            onDismiss = { showPlaylistMenu = false },
+            onDownload = {
+                showPlaylistMenu = false
+                val playable = tracks.filter { it.isPlayable() }
+                if (offlineDone || offlineProgress != null || playable.isEmpty()) return@PlaylistOverflowSheet
+                offlineProgress = 0.02f
+                container.downloadManager.enqueueMany(playable)
+                Toast.makeText(
+                    context,
+                    if (online) "Téléchargement…" else "Enfilé — DL dès que le réseau revient",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
+            onRemoveLocal = {
+                showPlaylistMenu = false
+                scope.launch {
+                    tracks.forEach { t ->
+                        runCatching { container.offlineStore.remove(t.id) }
+                    }
+                    offlineDone = false
+                    offlineProgress = null
+                    Toast.makeText(context, "Retiré de l'appareil", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onPlayNext = {
+                showPlaylistMenu = false
+                player?.playNextMany(tracks)
+                Toast.makeText(context, "Lecture ensuite", Toast.LENGTH_SHORT).show()
+            },
+            onAddToQueue = {
+                showPlaylistMenu = false
+                player?.addManyToQueue(tracks)
+                Toast.makeText(context, "Ajouté à la file", Toast.LENGTH_SHORT).show()
+            },
+            onStartMix = {
+                showPlaylistMenu = false
+                if (!online) {
+                    Toast.makeText(context, "Mix indisponible hors-ligne", Toast.LENGTH_SHORT).show()
+                    return@PlaylistOverflowSheet
+                }
+                scope.launch {
+                    radioBusy = true
+                    try {
+                        val seedTrack = tracks.firstOrNull() ?: return@launch
+                        val mix = buildRadioQueue(
+                            container.api,
+                            "track",
+                            seedTrack.id,
+                            seedTrack,
+                            mixCache = container.mixCache,
+                        )
+                        if (mix.isNotEmpty()) {
+                            player?.play(
+                                mix,
+                                0,
+                                title = "Mix · $title",
+                                sourceId = seedTrack.id,
+                                sourceKind = "radio",
+                            ) ?: onPlayNamed(mix, 0, "Mix · $title")
+                        }
+                    } finally {
+                        radioBusy = false
+                    }
+                }
+            },
+            onRename = {
+                showPlaylistMenu = false
+                renameDraft = title
+                showRenameDialog = true
+            },
+            onDelete = {
+                showPlaylistMenu = false
+                showDeleteConfirm = true
+            },
+            onQuickAccess = {
+                showPlaylistMenu = false
+                scope.launch {
+                    val pinTrack = cover ?: TrackDto(id = id, title = title, type = "playlist")
+                    val pinned = container.quickAccess.toggle(pinTrack, container.api)
+                    Toast.makeText(
+                        context,
+                        if (pinned) "Ajouté à l'accès rapide" else "Retiré de l'accès rapide",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+        )
+    }
+
+    if (showRenameDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Renommer la playlist") },
+            text = {
+                androidx.compose.material3.OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    singleLine = true,
+                    label = { Text("Nom") },
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        val name = renameDraft.trim()
+                        if (name.isBlank()) return@TextButton
+                        showRenameDialog = false
+                        scope.launch {
+                            runCatching {
+                                container.api.updatePlaylist(
+                                    id.removePrefix("local:"),
+                                    ovh.delhomme.ytmusic.data.UpdatePlaylistBody(name = name),
+                                )
+                            }.onSuccess {
+                                title = name
+                                container.bumpLibraryEpoch()
+                                Toast.makeText(context, "Playlist renommée", Toast.LENGTH_SHORT).show()
+                            }.onFailure {
+                                Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Annuler")
+                }
+            },
+        )
+    }
+
+    if (showDeleteConfirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Supprimer la playlist ?") },
+            text = { Text("« $title » sera définitivement supprimée.") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        scope.launch {
+                            runCatching {
+                                container.api.deletePlaylist(id.removePrefix("local:"))
+                            }.onSuccess {
+                                container.bumpLibraryEpoch()
+                                Toast.makeText(context, "Playlist supprimée", Toast.LENGTH_SHORT).show()
+                                onBack()
+                            }.onFailure {
+                                Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                ) { Text("Supprimer") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("Annuler")
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaylistHeroActions(
+    downloadProgress: Float?,
+    downloaded: Boolean,
+    onShuffle: () -> Unit,
+    onDownload: () -> Unit,
+    onPlay: () -> Unit,
+    onMore: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RoundIconAction(
+            icon = Icons.Default.Shuffle,
+            label = "Aléatoire",
+            hint = "Lecture aléatoire",
+            onClick = onShuffle,
+        )
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+            tooltip = {
+                PlainTooltip {
+                    Text(
+                        when {
+                            downloaded -> "Sur l'appareil"
+                            downloadProgress != null ->
+                                "Téléchargement ${((downloadProgress) * 100).toInt()} %"
+                            else -> "Télécharger"
+                        },
+                    )
+                }
+            },
+            state = rememberTooltipState(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .clickable(
+                        enabled = !downloaded && downloadProgress == null,
+                        onClick = onDownload,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                DownloadStatusIcon(
+                    downloaded = downloaded,
+                    progress = downloadProgress,
+                    size = 28.dp,
+                    accent = Color(0xFFFF0033),
+                )
+            }
+        }
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+            tooltip = { PlainTooltip { Text("Tout lire") } },
+            state = rememberTooltipState(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .clickable(onClick = onPlay),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = "Tout lire",
+                    tint = Color.Black,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+        }
+        RoundIconAction(
+            icon = Icons.Default.MoreVert,
+            label = "Plus",
+            hint = "Plus d'options",
+            onClick = onMore,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaylistOverflowSheet(
+    title: String,
+    downloadProgress: Float?,
+    downloaded: Boolean,
+    canRename: Boolean,
+    canDelete: Boolean,
+    canRadio: Boolean,
+    canDownload: Boolean,
+    canRemoveLocal: Boolean,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit,
+    onRemoveLocal: () -> Unit,
+    onPlayNext: () -> Unit,
+    onAddToQueue: () -> Unit,
+    onStartMix: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    onQuickAccess: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(Modifier.padding(bottom = 28.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            HorizontalDivider()
+            if (canDownload && !downloaded) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = downloadProgress == null, onClick = onDownload)
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    DownloadStatusIcon(
+                        downloaded = false,
+                        progress = downloadProgress,
+                        size = 24.dp,
+                        accent = Color(0xFFFF0033),
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        if (downloadProgress != null) {
+                            "Téléchargement ${(downloadProgress * 100).toInt()} %"
+                        } else {
+                            "Télécharger toute la playlist"
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            }
+            if (canRemoveLocal) {
+                AlbumMenuRow(Icons.Default.Delete, "Supprimer de l'appareil", onRemoveLocal)
+            }
+            AlbumMenuRow(Icons.Default.SkipNext, "Lire ensuite", onPlayNext)
+            AlbumMenuRow(Icons.Default.QueueMusic, "Ajouter à la file d'attente", onAddToQueue)
+            if (canRadio) {
+                AlbumMenuRow(MixIcon, "Démarrer un mix", onStartMix)
+            }
+            AlbumMenuRow(Icons.Outlined.PushPin, "Ajouter à l'accès rapide", onQuickAccess)
+            if (canRename) {
+                AlbumMenuRow(Icons.Default.Edit, "Renommer", onRename)
+            }
+            if (canDelete) {
+                AlbumMenuRow(Icons.Default.Delete, "Supprimer la playlist", onDelete)
+            }
+        }
     }
 }
 

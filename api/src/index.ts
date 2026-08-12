@@ -1454,6 +1454,10 @@ app.put('/api/prefs', accountRequired, (req, res) => {
       req.body?.discoveryBias != null ? Number(req.body.discoveryBias) : undefined,
     onboardingDone:
       req.body?.onboardingDone != null ? Boolean(req.body.onboardingDone) : undefined,
+    autoplaySuggestions:
+      req.body?.autoplaySuggestions != null
+        ? Boolean(req.body.autoplaySuggestions)
+        : undefined,
   });
   res.json({ prefs });
 });

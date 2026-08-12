@@ -210,8 +210,8 @@ fun NowPlayingScreen(
     // Remplit « À suivre » — ne PAS clear/rebuild à chaque ouverture du plein écran
     // (sinon setMediaItems+prepare → coupe l’audio). Clear seulement si le seed change.
     var lastAutoplaySeed by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(ui.track?.id, ui.autoplaySuggestions, ui.sourceKind, ui.userQueueEnd, ui.queueIndex) {
-        if (!ui.autoplaySuggestions) return@LaunchedEffect
+    LaunchedEffect(ui.track?.id, ui.sourceKind, ui.userQueueEnd, ui.queueIndex) {
+        // Toujours remplir « À suivre » pour l’affichage — autoplay = auto-avance seulement
         val seed = ui.track?.id ?: return@LaunchedEffect
         val remainingUser = (ui.userQueueEnd - ui.queueIndex - 1).coerceAtLeast(0)
         if (ovh.delhomme.ytmusic.data.isPrecomputedMixSource(ui.sourceKind, remainingUser)) {
@@ -1176,11 +1176,20 @@ fun NowPlayingScreen(
                                 )
                             }
                         }
-                        if (ui.autoplaySuggestions) {
-                            itemsIndexed(
-                                ui.queue.drop(boundary),
-                                key = { i, t -> "ia-${t.id}-${boundary + i}" },
-                            ) { i, item ->
+                        if (!ui.autoplaySuggestions) {
+                            item {
+                                Text(
+                                    "Lecture auto désactivée — stop en fin de file ; Suivant charge la suite",
+                                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = PlayerMuted,
+                                )
+                            }
+                        }
+                        itemsIndexed(
+                            ui.queue.drop(boundary),
+                            key = { i, t -> "ia-${t.id}-${boundary + i}" },
+                        ) { i, item ->
                                 val abs = boundary + i
                                 QueueTrackRow(
                                     track = item,
@@ -1201,7 +1210,6 @@ fun NowPlayingScreen(
                                     },
                                 )
                             }
-                        }
                         item { Spacer(Modifier.height(40.dp)) }
                     }
                 }
@@ -1540,7 +1548,7 @@ private fun QueueExpandedBody(
     } else {
         emptyList()
     }
-    val autoTracks = if (ui.autoplaySuggestions) ui.queue.drop(boundary) else emptyList()
+    val autoTracks = ui.queue.drop(boundary)
 
     var similarTracks by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
     var similarLoading by remember { mutableStateOf(false) }
@@ -1790,7 +1798,7 @@ private fun QueueExpandedBody(
                 if (!ui.autoplaySuggestions) {
                     item {
                         Text(
-                            "Lecture auto désactivée",
+                            "Lecture auto désactivée — stop en fin de file ; Suivant charge la suite",
                             Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             style = MaterialTheme.typography.bodySmall,
                             color = PlayerMuted,
