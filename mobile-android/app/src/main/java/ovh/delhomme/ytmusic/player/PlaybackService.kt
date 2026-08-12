@@ -115,6 +115,13 @@ class PlaybackService : MediaSessionService() {
                 streamFailStreak.set(0)
                 StreamPrefetcher.markStreamOk()
             }
+            // Fin propre du dernier item (sans erreur googlevideo) → suivant ou fill « À suivre »
+            if (
+                events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
+                player.playbackState == Player.STATE_ENDED
+            ) {
+                handleNaturalEnd(player)
+            }
             if (
                 events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED) &&
                 !player.playWhenReady
@@ -787,6 +794,49 @@ class PlaybackService : MediaSessionService() {
                 refreshMediaButtons()
             }
         }
+    }
+
+    /**
+     * EOS propre (STATE_ENDED) : Exo ne saute pas tout seul s’il n’y a plus d’item.
+     * — suivant en file → seek + play
+     * — fin de file user + auto OFF → stop + toast
+     * — sinon → [Holder.onSkipAtEnd] (fill suggestions puis avance)
+     */
+    private fun handleNaturalEnd(exo: Player) {
+        val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+        val end = Holder.userQueueEnd
+        val nextIdx = curIdx + 1
+        AppLog.i(
+            "PlaybackService",
+            "STATE_ENDED idx=$curIdx next=$nextIdx count=${exo.mediaItemCount} auto=${Holder.autoplaySuggestions} userEnd=$end",
+        )
+        if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
+            exo.playWhenReady = false
+            runCatching { exo.pause() }
+            android.os.Handler(mainLooper).post {
+                android.widget.Toast.makeText(
+                    this,
+                    "Fin de la file — active « À suivre » pour continuer",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+            return
+        }
+        val exoPlayer = exo as? ExoPlayer ?: player
+        if (nextIdx < exo.mediaItemCount) {
+            runCatching {
+                if (exoPlayer != null) promoteUpcomingToLocal(exoPlayer, nextIdx)
+                exo.seekTo(nextIdx, C.TIME_UNSET)
+                exo.playWhenReady = true
+                exo.play()
+                Holder.index = nextIdx
+            }
+            warmUpcoming(nextIdx)
+            if (exoPlayer != null) enqueueOfflineAhead(nextIdx)
+            return
+        }
+        // Plus de média préparé → fill autoplay côté UI / PlayerController
+        Holder.onSkipAtEnd?.invoke()
     }
 
     /**
