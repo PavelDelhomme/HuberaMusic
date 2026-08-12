@@ -31,6 +31,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.MainActivity
 import ovh.delhomme.ytmusic.R
@@ -63,9 +64,12 @@ class PlaybackService : MediaSessionService() {
     /** Snapshot pour détecter une fin de piste trop tôt (stream tronqué / cache). */
     @Volatile private var lastPlayingId: String = ""
     @Volatile private var lastPlayingPosMs: Long = 0L
+    /** Durée Exo du titre courant — le catalogue YTM est souvent trop long (faux early_end). */
+    @Volatile private var lastPlayingDurationMs: Long = 0L
     @Volatile private var prevPlayingId: String = ""
     @Volatile private var prevPlayingPosMs: Long = 0L
     @Volatile private var earlyEndRetries: Int = 0
+    @Volatile private var serviceFillInFlight: Boolean = false
 
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
@@ -76,14 +80,27 @@ class PlaybackService : MediaSessionService() {
                         prevPlayingId = lastPlayingId
                         prevPlayingPosMs = lastPlayingPosMs
                         lastPlayingId = id
+                        lastPlayingDurationMs = 0L
                         if (earlyEndRetries > 0 && id != prevPlayingId) {
                             // Nouveau titre « normal » après reprise
                             earlyEndRetries = 0
                         }
                     } else {
                         lastPlayingPosMs = player.currentPosition.coerceAtLeast(0L)
+                        val d = player.duration
+                        if (d > 0L && d != C.TIME_UNSET) {
+                            lastPlayingDurationMs = d
+                        }
                     }
                 }
+            }
+            // Précharge « À suivre » même sans Activity / Now Playing (BG, lecteur fermé)
+            if (
+                events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+                (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
+                    player.playbackState == Player.STATE_READY)
+            ) {
+                ensureServiceAutoplayAhead(player)
             }
             if (
                 events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED) ||
@@ -135,9 +152,10 @@ class PlaybackService : MediaSessionService() {
             // Snapshot AVANT promote / next-item events (sinon pos≈0 du nouveau titre → faux early_end)
             val snapPrevId = lastPlayingId
             val snapPrevPos = lastPlayingPosMs
+            val snapPrevDur = lastPlayingDurationMs
             promoteUpcomingToLocal(exo, exo.currentMediaItemIndex + 1)
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-                maybeRecoverEarlyEnd(exo, snapPrevId, snapPrevPos)
+                maybeRecoverEarlyEnd(exo, snapPrevId, snapPrevPos, snapPrevDur)
                 // Stop en fin de file user si lecture auto OFF (suggestions restent dans la file)
                 val idx = exo.currentMediaItemIndex
                 val end = Holder.userQueueEnd
@@ -213,8 +231,9 @@ class PlaybackService : MediaSessionService() {
                     enqueueOfflineAhead(nextIdx)
                     return
                 }
-                // Fin de file Exo → laisser l’UI remplir « À suivre »
-                Holder.onSkipAtEnd?.invoke()
+                // Fin de file Exo → fill UI ou service (BG)
+                val uiFill = Holder.onSkipAtEnd
+                if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
                 return
             }
 
@@ -838,18 +857,98 @@ class PlaybackService : MediaSessionService() {
             if (exoPlayer != null) enqueueOfflineAhead(nextIdx)
             return
         }
-        // Plus de média préparé → fill autoplay côté UI / PlayerController
-        Holder.onSkipAtEnd?.invoke()
+        // Plus de média préparé → fill UI si dispo, sinon service (= BG / lecteur fermé)
+        val uiFill = Holder.onSkipAtEnd
+        if (uiFill != null) {
+            uiFill.invoke()
+        } else {
+            fillAutoplayFromService(advanceAfterFill = true)
+        }
+    }
+
+    /** Précharge « À suivre » depuis le FGS — indépendant de Now Playing / Activity. */
+    private fun ensureServiceAutoplayAhead(exo: Player) {
+        if (!Holder.autoplaySuggestions) return
+        if (serviceFillInFlight) return
+        val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
+        val remaining = (exo.mediaItemCount - idx - 1).coerceAtLeast(0)
+        if (remaining >= 6) return
+        fillAutoplayFromService(advanceAfterFill = false)
+    }
+
+    /**
+     * Fill related côté service : marche app en arrière-plan et lecteur plein écran fermé.
+     */
+    fun requestAutoplayFill(advanceAfterFill: Boolean) {
+        fillAutoplayFromService(advanceAfterFill)
+    }
+
+    private fun fillAutoplayFromService(advanceAfterFill: Boolean) {
+        if (!Holder.autoplaySuggestions) return
+        if (serviceFillInFlight) return
+        val exo = player ?: return
+        val seed = exo.currentMediaItem?.mediaId
+            ?: Holder.queue.getOrNull(Holder.index)?.id
+            ?: return
+        if (seed.length != 11) return
+        serviceFillInFlight = true
+        scope.launch {
+            try {
+                val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return@launch
+                runCatching { container.ensureFreshToken() }
+                val tracks = ovh.delhomme.ytmusic.data.fetchAutoplayTracksFast(container.api, seed)
+                if (tracks.isEmpty()) {
+                    AppLog.w("PlaybackService", "autoplay fill vide seed=$seed")
+                    return@launch
+                }
+                val existing = Holder.queue.map { it.id }.toHashSet()
+                val toAdd = tracks.filter { it.isPlayable() && it.id !in existing }.take(12)
+                if (toAdd.isEmpty()) return@launch
+                val base = { id: String -> container.remoteStreamUrl(id) }
+                withContext(Dispatchers.Main.immediate) {
+                    val p = player ?: return@withContext
+                    val startCount = p.mediaItemCount
+                    Holder.queue = Holder.queue + toAdd
+                    toAdd.forEach { t ->
+                        p.addMediaItem(mediaItemFor(t, base, Holder.queueTitle))
+                    }
+                    AppLog.i(
+                        "PlaybackService",
+                        "autoplay fill +${toAdd.size} (service) seed=$seed count=$startCount→${p.mediaItemCount}",
+                    )
+                    if (advanceAfterFill && p.playbackState == Player.STATE_ENDED) {
+                        val next = p.currentMediaItemIndex + 1
+                        if (next < p.mediaItemCount) {
+                            promoteUpcomingToLocal(p, next)
+                            p.seekTo(next, C.TIME_UNSET)
+                            p.playWhenReady = true
+                            p.play()
+                            Holder.index = next
+                            warmUpcoming(next)
+                        }
+                    } else {
+                        warmUpcoming(p.currentMediaItemIndex)
+                    }
+                }
+            } finally {
+                serviceFillInFlight = false
+            }
+        }
     }
 
     /**
      * Si Exo passe au suivant alors que le titre précédent n’a pas atteint ~85 %
      * de sa durée connue → stream tronqué / cache empoisonné : on revient et on retente.
      *
-     * Important : [snapPrevId]/[snapPrevPos] sont capturés au moment de la transition
-     * (pas via lastPlayingId déjà basculé sur le nouveau titre — sinon faux positifs pos≈10ms).
+     * Important : snapshots capturés à la transition. On préfère la durée Exo au catalogue YTM
+     * (souvent trop long → faux early_end à 70–84 %, mails spam).
      */
-    private fun maybeRecoverEarlyEnd(exo: Player, snapPrevId: String, snapPrevPos: Long) {
+    private fun maybeRecoverEarlyEnd(
+        exo: Player,
+        snapPrevId: String,
+        snapPrevPos: Long,
+        snapPrevDur: Long,
+    ) {
         val prevId = snapPrevId.trim()
         val pos = snapPrevPos.coerceAtLeast(0L)
         if (prevId.isBlank() || earlyEndRetries >= 2) return
@@ -862,7 +961,17 @@ class PlaybackService : MediaSessionService() {
             return
         }
         val track = Holder.queue.firstOrNull { it.id == prevId } ?: return
-        val expected = track.durationMsOrNull()?.takeIf { it >= 45_000L } ?: return
+        val exoDur = snapPrevDur.takeIf { it >= 45_000L }
+        val catalog = track.durationMsOrNull()?.takeIf { it >= 45_000L }
+        // Fin naturelle selon le conteneur réel → pas un early_end
+        if (exoDur != null && pos.toDouble() / exoDur.toDouble() >= 0.90) {
+            AppLog.d(
+                "PlaybackService",
+                "early_end ignoré (EOS Exo) id=$prevId pos=$pos exoDur=$exoDur catalog=$catalog",
+            )
+            return
+        }
+        val expected = exoDur ?: catalog ?: return
         val ratio = pos.toDouble() / expected.toDouble()
         if (ratio >= 0.85) return
         // Sous 25 % : souvent skip / rebuild file, pas un stream tronqué « mid-track »
@@ -1046,6 +1155,10 @@ class PlaybackService : MediaSessionService() {
         /** Auto-avance dans « À suivre » (sinon stop en fin de file user). */
         @Volatile var autoplaySuggestions: Boolean = true
 
+        fun fillAtEnd(advance: Boolean = true) {
+            service?.requestAutoplayFill(advance)
+        }
+
         fun resolvedApiBase(): String {
             val override = service
                 ?.getSharedPreferences("ytm_api", android.content.Context.MODE_PRIVATE)
@@ -1150,8 +1263,9 @@ private class YtmForwardingPlayer(
                 }
             }
             else -> {
-                // Ne pas relancer le même titre — déléguer au fill autoplay
-                PlaybackService.Holder.onSkipAtEnd?.invoke()
+                // Ne pas relancer le même titre — fill UI ou service (BG)
+                val ui = PlaybackService.Holder.onSkipAtEnd
+                if (ui != null) ui.invoke() else PlaybackService.Holder.fillAtEnd(advance = true)
             }
         }
         if (wasOne) exo.repeatMode = Player.REPEAT_MODE_ONE

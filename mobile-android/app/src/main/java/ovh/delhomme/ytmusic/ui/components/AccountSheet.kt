@@ -223,33 +223,32 @@ fun AccountSheet(
             AccountRow(
                 icon = { Icon(Icons.Default.Download, contentDescription = null) },
                 title = "Mettre à jour l'app",
-                subtitle = updateHint ?: "Vérifier une nouvelle version sur le serveur",
+                subtitle = updateHint ?: "Vérifier / installer depuis le serveur (in-app)",
                 onClick = {
                     scope.launch {
                         runCatching {
-                            container.ensureFreshToken()
-                            val info = container.api.apkInfo()
-                            val remoteCode = info.versionCode ?: 0
-                            val localCode = BuildConfig.VERSION_CODE
-                            if (info.ready != true) {
-                                Toast.makeText(context, "APK pas encore publiée", Toast.LENGTH_SHORT).show()
-                                return@launch
-                            }
-                            if (remoteCode <= localCode) {
-                                updateHint = "À jour (v$localCode)"
-                                Toast.makeText(context, "Déjà à jour", Toast.LENGTH_SHORT).show()
-                                return@launch
-                            }
-                            updateHint = "v$remoteCode disponible"
-                            val url = info.downloadUrl?.takeIf {
-                                it.startsWith("https://") || it.startsWith("http://")
-                            } ?: "${container.apiBaseUrl.trimEnd('/')}/api/deploy/apk"
-                            val intent = android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse(url),
+                            val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
+                                context.applicationContext,
+                                container,
                             )
-                            context.startActivity(intent)
+                            updateHint = "Vérification…"
+                            val check = updater.check(force = true)
+                            if (!check.available) {
+                                updateHint = check.message ?: "À jour"
+                                Toast.makeText(
+                                    context,
+                                    check.message ?: "Déjà à jour",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                return@launch
+                            }
+                            updateHint = check.message ?: "Téléchargement…"
+                            Toast.makeText(context, "Téléchargement de la mise à jour…", Toast.LENGTH_SHORT).show()
+                            val msg = updater.downloadAndInstall(check.info)
+                            updateHint = msg
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }.onFailure {
+                            updateHint = it.message
                             Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
                         }
                     }
