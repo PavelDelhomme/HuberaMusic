@@ -102,7 +102,9 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | B4.1 | « Titre suivant » crash / fail intermittent | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.2 | Toute erreur app → **email immédiat** (télémétrie / crash) pour traitement | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.3 | Erreurs « connexion perdue » au chargement pages → cause + fix | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B4.4 | Lecteur multimédia + scroll NP fluide | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.5 | Clic zone vide barre noire lecteur **web** → toggle expand / collapse Now Playing (hors play/pause/next/seek) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.6 | Web : retry « Lecture impossible / nouvel essai auto » **ne boucle pas** ; message clair + bouton après N essais ; détecter 502 stream | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.7 | Prod streams 502 (IP VPS YouTube) → **STREAM_UPSTREAM** maison (`make link-home-stream` / `scripts/link-home-stream.sh`) obligatoire tant que VPS bloqué | ✅ | 🔧 | 🧪 | ⬜ | — | ✅ | 🧪 |
 
 ### B5 — Réglages / logs
 

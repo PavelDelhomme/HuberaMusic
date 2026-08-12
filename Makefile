@@ -32,6 +32,7 @@ SAMPLE_SECS ?= 15
 	battery-go battery-go-calm battery-suite \
 	battery-test battery-test-short battery-report battery-report-mail \
 	update-apps status status-watch \
+	link-home-stream link-home-stream-status link-home-stream-stop \
 	logs logs-tail logs-watch logs-history logs-archive \
 	db-status db-backup \
 	ports kill-dev push-dev push-prod deploy-hint \
@@ -65,6 +66,7 @@ help: ## Affiche cette aide colorée
 	@printf "  $(C_DIM)Dev local    : make up-full  ·  make logs  ·  make android$(C_RESET)\n"
 	@printf "  $(C_DIM)ADB dual     : make adb-both  (Samsung DEV + Nothing PROD)$(C_RESET)\n"
 	@printf "  $(C_DIM)Batterie     : make battery-go  (ensure Wi‑Fi → 30 min → rapport)$(C_RESET)\n"
+	@printf "  $(C_DIM)Prod stream : make link-home-stream  (tunnel maison si VPS bloqué YT)$(C_RESET)\n"
 	@printf "  $(C_DIM)Suivi        : STATUS.md  ·  TESTS.md  ·  make status-watch$(C_RESET)\n"
 	@printf "  $(C_DIM)Branches     : feat/* depuis dev → merge prod$(C_RESET)\n"
 	@printf "  $(C_DIM)Version      : d+X.Y.Z (local/dev) · p+X.Y.Z (prod) — make bump-patch|minor|major$(C_RESET)\n"
@@ -527,6 +529,18 @@ status: ## Statut coloré API / Vite / process locaux / Docker / ADB
 status-watch: ## Rafraîchit make status en boucle (INTERVAL=4)
 	@chmod +x $(ROOT)/scripts/status-watch.sh 2>/dev/null || true
 	@INTERVAL="$(or $(INTERVAL),4)" CLEAR="$(or $(CLEAR),1)" bash $(ROOT)/scripts/status-watch.sh
+
+link-home-stream: ## Relais streams prod → API maison (IP résidentielle YouTube)
+	@chmod +x $(ROOT)/scripts/link-home-stream.sh
+	@bash $(ROOT)/scripts/link-home-stream.sh start
+
+link-home-stream-status: ## Statut tunnel STREAM_UPSTREAM
+	@chmod +x $(ROOT)/scripts/link-home-stream.sh
+	@bash $(ROOT)/scripts/link-home-stream.sh status
+
+link-home-stream-stop: ## Stoppe le tunnel maison
+	@chmod +x $(ROOT)/scripts/link-home-stream.sh
+	@bash $(ROOT)/scripts/link-home-stream.sh stop
 
 logs: ## Logs colorés + suivi temps réel (Docker ou local) — Ctrl+C
 	@chmod +x $(ROOT)/scripts/ops/logs.sh $(ROOT)/scripts/ops/color-logs.sh

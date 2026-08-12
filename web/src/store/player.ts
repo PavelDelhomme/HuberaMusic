@@ -1306,6 +1306,8 @@ function attachAudioRuntime(
     resetSilenceSkip(get().current?.id);
   });
   let recovering = false;
+  /** Limite les relances auto après erreur média (évite boucle 502 infinie). */
+  let mediaAutoRetry = 0;
   el.addEventListener('error', () => {
     void (async () => {
       if (recovering) return;
@@ -1352,6 +1354,7 @@ function attachAudioRuntime(
         if (gen !== playGeneration || get().current?.id !== track.id) return;
         await el.play();
         markStreamOk();
+        mediaAutoRetry = 0;
         set({ isPlaying: true, isLoading: false, playError: null });
         refreshMediaSession();
       } catch {
@@ -1363,13 +1366,24 @@ function attachAudioRuntime(
           } catch {
             /* ignore */
           }
+          mediaAutoRetry += 1;
+          const maxAuto = 3;
+          if (mediaAutoRetry > maxAuto) {
+            set({
+              isPlaying: false,
+              isLoading: false,
+              playError:
+                'Stream indisponible (502 / réseau). Réessaie manuellement ou change de titre.',
+            });
+            refreshMediaSession();
+            persistPlayer();
+            publish();
+            return;
+          }
           set({
             isPlaying: false,
             isLoading: false,
-            playError:
-              typeof navigator !== 'undefined' && navigator.onLine === false
-                ? 'Hors ligne — titres en cache disponibles'
-                : 'Connexion / lecture impossible. Nouvel essai automatique…',
+            playError: `Connexion / lecture impossible — nouvel essai ${mediaAutoRetry}/${maxAuto}…`,
           });
           refreshMediaSession();
           persistPlayer();
@@ -1689,17 +1703,20 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         if (gen !== playGeneration) return;
         console.error(err);
         markStreamFailure(err instanceof Error ? err.message : 'play');
-        const msg =
+        const raw =
           err instanceof Error
             ? err.message
             : typeof err === 'string'
               ? err
               : 'Lecture impossible';
+        const msg = /502|unavailable|deadline|Impossible de streamer/i.test(raw)
+          ? 'Stream serveur indisponible (502) — nouvel essai…'
+          : raw;
         if (attempt < 2) {
           set({
             isLoading: true,
             isPlaying: false,
-            playError: `${msg} — nouvel essai…`,
+            playError: `${msg} (${attempt + 1}/2)`,
           });
           publish();
           const delay = attempt === 0 ? 2_000 : 5_000;
@@ -1709,7 +1726,13 @@ export const usePlayer = create<PlayerState>((set, get) => ({
           markStreamOk();
           return attemptPlay(attempt + 1);
         }
-        set({ isLoading: false, isPlaying: false, playError: msg });
+        set({
+          isLoading: false,
+          isPlaying: false,
+          playError: /502|unavailable|deadline/i.test(raw)
+            ? 'Stream indisponible. Réessaie ou change de titre.'
+            : msg,
+        });
         publish();
         end(`fail:${playTrack.id}`);
       }

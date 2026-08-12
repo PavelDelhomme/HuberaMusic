@@ -285,7 +285,10 @@ export function PlayerBar({
       ref={footerRef}
       className="fixed bottom-0 left-0 right-0 z-50 border-t border-yt-border bg-[#0a0a0a]/95 backdrop-blur-md"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-      onClick={() => expand('queue')}
+      onClick={() => {
+        if (expanded) onCollapse?.();
+        else expand('queue');
+      }}
       onTouchStart={(e) => {
         if (expanded) return;
         swipeY0.current = e.touches[0]?.clientY ?? null;

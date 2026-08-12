@@ -199,6 +199,9 @@ Style YouTube Music (« Forgotten favorites ») :
 - [ ] Next intermittent / crash → fix
 - [ ] Toute erreur → email immédiat (télémétrie)
 - [ ] Toast « connexion perdue » : cause + fix
+- [ ] **Web** : clic zone vide barre noire → toggle Now Playing (hors contrôles)
+- [ ] **Web** : retry auto plafonné (pas de boucle « nouvel essai » infinie sur 502)
+- [ ] **Ops** : prod streams via tunnel maison si IP VPS bloquée YouTube (`scripts/link-home-stream.sh`)
 
 ### Réglages / logs
 

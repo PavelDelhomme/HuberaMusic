@@ -75,6 +75,7 @@ export default defineConfig(({ mode }) => {
       },
       workbox: {
         navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {
             // Streams audio : jamais CacheFirst (sinon un prefetch Range empoisonne la piste)
