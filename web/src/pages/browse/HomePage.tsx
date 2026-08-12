@@ -18,6 +18,8 @@ const HOME_CACHE_KEY = 'ytm_home_v1';
 type HomeCache = {
   shelves: Shelf[];
   radios: { id: string; title: string }[];
+  /** Previews 4 titres pour mosaïque Mixés pour toi (évite lettres vides au boot). */
+  radioPreviews?: Record<string, Track[]>;
   seeds: string[];
   hasMore: boolean;
   at: number;
@@ -103,6 +105,9 @@ export function HomePage() {
     for (const s of cached.shelves) seenTitles.current.add(s.title);
     setShelves(cached.shelves);
     setRadios(cached.radios || []);
+    if (cached.radioPreviews && Object.keys(cached.radioPreviews).length) {
+      setRadioPreviews(cached.radioPreviews);
+    }
     setSeeds(cached.seeds || []);
     setHasMore(cached.hasMore !== false);
     setLoading(false);
@@ -128,24 +133,34 @@ export function HomePage() {
         setRadios(cats);
         setPage(0);
         setLoading(false);
-        writeHomeCache({
-          shelves: r.shelves,
-          radios: cats,
-          seeds: r.seeds || [],
-          hasMore: r.hasMore !== false,
-        });
         // Previews mix : d’abord les 2 premiers (visibles), puis le reste
         const loadPreview = async (cat: { id: string }) => {
           try {
             const mix = await api.recoRadio(cat.id, { preview: true });
             const tracks = (mix.tracks || []).slice(0, 4);
             if (tracks.length) {
-              setRadioPreviews((prev) => ({ ...prev, [cat.id]: tracks }));
+              setRadioPreviews((prev) => {
+                const next = { ...prev, [cat.id]: tracks };
+                writeHomeCache({
+                  shelves: r.shelves,
+                  radios: cats,
+                  radioPreviews: next,
+                  seeds: r.seeds || [],
+                  hasMore: r.hasMore !== false,
+                });
+                return next;
+              });
             }
           } catch {
             /* ignore */
           }
         };
+        writeHomeCache({
+          shelves: r.shelves,
+          radios: cats,
+          seeds: r.seeds || [],
+          hasMore: r.hasMore !== false,
+        });
         for (const cat of cats.slice(0, 2)) {
           await loadPreview(cat);
         }
