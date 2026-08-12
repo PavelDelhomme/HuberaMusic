@@ -169,7 +169,7 @@ export function InstallBanner() {
   const isPhone = platform === 'ios' || platform === 'android';
 
   return (
-    <div className="fixed bottom-[92px] left-3 right-3 z-40 mx-auto max-w-lg animate-fade-up md:left-auto md:right-4">
+    <div className="fixed bottom-[calc(var(--ytm-player-h,5.5rem)+var(--ytm-nav-h,0px)+0.75rem)] left-3 right-3 z-40 mx-auto max-w-lg animate-fade-up md:left-auto md:right-4">
       <div className="rounded-2xl border border-yt-border bg-yt-surface/95 p-4 shadow-2xl backdrop-blur-md">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl">

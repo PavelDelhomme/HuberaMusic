@@ -20,7 +20,7 @@ export function PerfHud() {
   if (!on) return null;
 
   return (
-    <div className="pointer-events-auto fixed bottom-24 right-3 z-[80] w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-white/15 bg-black/85 p-2 text-[10px] text-white shadow-2xl backdrop-blur sm:bottom-28">
+    <div className="pointer-events-auto fixed bottom-[calc(var(--ytm-player-h,5.5rem)+var(--ytm-nav-h,0px)+0.75rem)] right-3 z-[80] w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-white/15 bg-black/85 p-2 text-[10px] text-white shadow-2xl backdrop-blur sm:bottom-[calc(var(--ytm-player-h,5.5rem)+1rem)]">
       <div className="mb-1 flex items-center justify-between gap-2 px-1">
         <span className="font-semibold tracking-wide text-white/90">Perf</span>
         <div className="flex gap-1">
