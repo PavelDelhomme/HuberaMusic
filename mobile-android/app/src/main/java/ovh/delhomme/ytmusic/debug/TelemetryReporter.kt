@@ -43,12 +43,28 @@ object TelemetryReporter {
                 mutex.withLock {
                     val container = runCatching { YtMusicApp.instance.container }.getOrNull()
                         ?: return@withLock
+                    val logs = AppLog.recentLogText(24_000)
+                    val crumbs = AppLog.breadcrumbSnapshot()
+                    val effectiveStack = when {
+                        !stack.isNullOrBlank() -> stack
+                        else -> buildString {
+                            appendLine("(pas de Throwable — diagnostic AppLog)")
+                            appendLine("kind=$kind level=$level")
+                            appendLine("message=${message ?: ""}")
+                            appendLine()
+                            appendLine("--- breadcrumbs ---")
+                            crumbs.takeLast(40).forEach { appendLine(it) }
+                            appendLine()
+                            appendLine("--- recent logs ---")
+                            append(logs.take(20_000))
+                        }
+                    }
                     val body = mutableMapOf<String, Any?>(
                         "env" to container.apiEnvKind(),
                         "level" to level,
                         "kind" to kind,
                         "message" to message,
-                        "stack" to stack,
+                        "stack" to effectiveStack,
                         "deviceId" to container.deviceId,
                         "userAgent" to (
                             "PLM-Android/${BuildConfig.VERSION_NAME} " +
@@ -63,6 +79,9 @@ object TelemetryReporter {
                             "manufacturer" to Build.MANUFACTURER,
                             "model" to Build.MODEL,
                             "sdk" to Build.VERSION.SDK_INT,
+                            "session" to AppLog.sessionId(),
+                            "breadcrumbs" to (meta["breadcrumbs"] ?: crumbs.takeLast(40)),
+                            "recentLogs" to (meta["recentLogs"] ?: logs),
                         ),
                     )
                     container.api.telemetry(body)

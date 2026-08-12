@@ -624,6 +624,7 @@ app.post(
       return s.length > n ? s.slice(0, n) + `\n…[truncated ${s.length - n} chars]` : s;
     };
     let meta = b.meta;
+    const metaForAlert = b.meta;
     try {
       const raw = JSON.stringify(meta ?? null);
       // Crashes Android : breadcrumbs + recentLogs peuvent être gros
@@ -643,7 +644,21 @@ app.post(
     const level = trunc(b.level || 'info', 32);
     const kind = trunc(b.kind || 'client', 64);
     const message = b.message ? trunc(b.message, 8_000) : undefined;
-    const stack = b.stack ? trunc(b.stack, 48_000) : undefined;
+    let stack = b.stack ? trunc(b.stack, 48_000) : undefined;
+    // Si pas de stack Throwable : fabriquer un diagnostic depuis meta (logs / breadcrumbs)
+    if (!stack) {
+      const m = metaForAlert && typeof metaForAlert === 'object' ? (metaForAlert as any) : {};
+      const crumbs = Array.isArray(m.breadcrumbs)
+        ? m.breadcrumbs.map(String).slice(-40).join('\n')
+        : '';
+      const logs = typeof m.recentLogs === 'string' ? m.recentLogs.slice(-20_000) : '';
+      if (crumbs || logs) {
+        stack = trunc(
+          [`(pas de Throwable — diagnostic meta)`, `kind=${kind}`, '', '--- breadcrumbs ---', crumbs || '(aucun)', '', '--- recent logs ---', logs || '(aucun)'].join('\n'),
+          48_000,
+        );
+      }
+    }
     const env = b.env || getAppEnv();
     const deviceId = trunc(String(req.headers['x-device-id'] || b.deviceId || ''), 120);
     const userId = req.user && !req.user.isGuest ? req.userId : undefined;
@@ -665,6 +680,7 @@ app.post(
       perf: b.perf,
     });
     // Fire-and-forget : email admin sur error/fatal (throttle côté telemetryAlert)
+    // metaForAlert = payload brut (logs complets) pour PDF / corps mail
     void import('./platform/telemetryAlert.js')
       .then(({ maybeAlertTelemetryError }) =>
         maybeAlertTelemetryError({
@@ -678,7 +694,7 @@ app.post(
           userAgent,
           userId,
           deviceId,
-          meta,
+          meta: metaForAlert ?? meta,
         }),
       )
       .catch((err) => console.error('[telemetry] alert', err));
