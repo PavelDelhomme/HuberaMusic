@@ -219,11 +219,16 @@ export function PlayerBar({
   if (!current) {
     if (compactEmpty) {
       return (
-        <footer className="pointer-events-none fixed bottom-0 left-0 right-0 z-40 hidden h-0 lg:block" aria-hidden />
+        <footer
+          className="pointer-events-none fixed bottom-[var(--ytm-nav-h,0px)] left-0 right-0 z-40 hidden h-0 lg:bottom-0 lg:block"
+          aria-hidden
+        />
       );
     }
     return (
-      <footer className="fixed bottom-0 left-0 right-0 z-50 border-t border-yt-border bg-black px-4 py-4 text-center text-sm text-yt-muted">
+      <footer
+        className="fixed bottom-[var(--ytm-nav-h,0px)] left-0 right-0 z-40 border-t border-yt-border bg-black px-4 py-4 text-center text-sm text-yt-muted lg:bottom-0"
+      >
         Sélectionne un titre pour commencer
       </footer>
     );
@@ -283,8 +288,8 @@ export function PlayerBar({
   return (
     <footer
       ref={footerRef}
-      className="fixed bottom-0 left-0 right-0 z-50 border-t border-yt-border bg-[#0a0a0a]/95 backdrop-blur-md"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      className="fixed bottom-[var(--ytm-nav-h,0px)] left-0 right-0 z-40 border-t border-yt-border bg-[#0a0a0a]/95 backdrop-blur-md lg:bottom-0"
+      style={{ paddingBottom: 0 }}
       onClick={() => {
         if (expanded) onCollapse?.();
         else expand('queue');

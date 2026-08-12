@@ -86,7 +86,7 @@ export function QueuePanel() {
   const autoStart = playingUser ? boundary : queueIndex + 1;
 
   return (
-    <aside className="fixed bottom-[88px] right-0 top-0 z-30 flex w-full max-w-xl flex-col border-l border-yt-border bg-yt-surface shadow-2xl md:static md:bottom-auto md:z-10 md:max-w-lg lg:max-w-xl">
+    <aside className="fixed bottom-[calc(var(--ytm-player-h,5.5rem)+var(--ytm-nav-h,0px))] right-0 top-0 z-30 flex w-full max-w-xl flex-col border-l border-yt-border bg-yt-surface shadow-2xl md:static md:bottom-auto md:z-10 md:max-w-lg lg:max-w-xl">
       <div className="flex items-center justify-between gap-2 border-b border-yt-border px-4 py-3">
         <div className="min-w-0 flex-1">
           {showLyrics ? (
