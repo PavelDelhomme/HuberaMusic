@@ -268,10 +268,15 @@ export function NowPlaying({
   const setMode = (mode: 'cover' | 'video') => {
     sessionMediaMode = mode;
     setMediaMode(mode);
+    usePlayer.getState().setMediaPresentation(mode);
   };
 
   useEffect(() => {
-    if (open) setTab(initialTab);
+    if (open) {
+      setTab(initialTab);
+      setMediaMode(sessionMediaMode);
+      usePlayer.getState().setMediaPresentation(sessionMediaMode);
+    }
   }, [open, initialTab]);
 
   useEffect(() => {
@@ -371,7 +376,7 @@ export function NowPlaying({
     v.muted = true;
     const sync = () => {
       if (!Number.isFinite(audioEl.currentTime)) return;
-      if (Math.abs(v.currentTime - audioEl.currentTime) > 0.35) {
+      if (Math.abs(v.currentTime - audioEl.currentTime) > 0.25) {
         try {
           v.currentTime = audioEl.currentTime;
         } catch {
@@ -398,7 +403,7 @@ export function NowPlaying({
     audioEl.addEventListener('pause', onPause);
     audioEl.addEventListener('seeked', onSeek);
     audioEl.addEventListener('timeupdate', sync);
-    const iv = window.setInterval(sync, 500);
+    const iv = window.setInterval(sync, 250);
     return () => {
       audioEl.removeEventListener('play', onPlay);
       audioEl.removeEventListener('pause', onPause);
@@ -425,10 +430,7 @@ export function NowPlaying({
   const canLoadMoreQueue = autoVisible.length < Math.min(autoList.length, QUEUE_MAX);
   const relatedArtists = uniqueArtists(related);
   const relatedForQueue = related.filter((t) => !queue.some((q) => q.id === t.id)).slice(0, 20);
-  const saveTracks = queue.slice(
-    0,
-    Math.max(boundary, playingUser ? queueIndex + 1 : Math.max(boundary, queueIndex + 1)),
-  );
+  const saveTracks = queue; // joués + courant + suite déjà en mémoire (pas le futur non chargé)
 
   const onQueueScroll = () => {
     const el = queueScrollRef.current;

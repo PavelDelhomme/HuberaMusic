@@ -77,7 +77,7 @@ export function QueuePanel() {
   );
   const playingUser = queueIndex < boundary;
   const playedBefore = queueIndex > 0 ? queue.slice(0, queueIndex) : [];
-  const userTracks = queue.slice(0, boundary);
+  const userTracks = queue; // déjà joués + courant + suite déjà chargée/affichée
   const userUpcoming = playingUser ? queue.slice(queueIndex + 1, boundary) : [];
   // « À suivre » = suite auto uniquement (pas le titre courant)
   const autoTracks = autoplay

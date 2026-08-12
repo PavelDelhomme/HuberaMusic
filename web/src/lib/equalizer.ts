@@ -32,6 +32,7 @@ type EqRuntime = {
   source: MediaElementAudioSourceNode;
   filters: BiquadFilterNode[];
   output: GainNode;
+  analyser: AnalyserNode;
   wired: boolean;
   audio: HTMLAudioElement;
 };
@@ -85,9 +86,15 @@ export function getEqState(): EqState {
   };
 }
 
-/** True si l’EQ est branché → stream same-origin requis (CORS). */
+/** True si l’EQ ou le détecteur de silence de fin exige un stream same-origin (CORS). */
+let meterPreferred = true;
+
+export function setMeterPreferred(on: boolean) {
+  meterPreferred = on;
+}
+
 export function eqNeedsSameOrigin(): boolean {
-  return Boolean(state.enabled && runtime?.wired);
+  return Boolean(state.enabled || meterPreferred);
 }
 
 function applyGains() {
@@ -111,7 +118,29 @@ export async function wireEqualizer(audio: HTMLAudioElement | null) {
   await ensureEqWired(audio);
 }
 
-async function ensureEqWired(audio: HTMLAudioElement) {
+/**
+ * Branche le graphe (EQ éventuel + analyseur) pour mesurer le RMS de fin de titre.
+ */
+export async function ensureAudioGraphForMeter(audio: HTMLAudioElement) {
+  pendingAudio = audio;
+  await ensureEqWired(audio, { forcePassthrough: true });
+}
+
+/** RMS 0..1 approximatif, ou null si graphe indisponible. */
+export function sampleAudioRms(): number | null {
+  const a = runtime?.analyser;
+  if (!a) return null;
+  const buf = new Uint8Array(a.fftSize);
+  a.getByteTimeDomainData(buf);
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = (buf[i]! - 128) / 128;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / buf.length);
+}
+
+async function ensureEqWired(audio: HTMLAudioElement, opts?: { forcePassthrough?: boolean }) {
   if (runtime?.wired && runtime.audio === audio) {
     applyGains();
     if (runtime.ctx.state === 'suspended') {
@@ -123,6 +152,7 @@ async function ensureEqWired(audio: HTMLAudioElement) {
     applyGains();
     return;
   }
+  if (!state.enabled && !opts?.forcePassthrough) return;
   try {
     const ctx = new AudioContext();
     const source = ctx.createMediaElementSource(audio);
@@ -136,6 +166,9 @@ async function ensureEqWired(audio: HTMLAudioElement) {
     });
     const output = ctx.createGain();
     output.gain.value = 1;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.5;
 
     let node: AudioNode = source;
     for (const f of filters) {
@@ -143,11 +176,12 @@ async function ensureEqWired(audio: HTMLAudioElement) {
       node = f;
     }
     node.connect(output);
-    output.connect(ctx.destination);
+    output.connect(analyser);
+    analyser.connect(ctx.destination);
 
-    runtime = { ctx, source, filters, output, wired: true, audio };
+    runtime = { ctx, source, filters, output, analyser, wired: true, audio };
     if (ctx.state === 'suspended') {
-      await ctx.resume().catch(() => undefined);
+      await runtime.ctx.resume().catch(() => undefined);
     }
     applyGains();
   } catch (err) {

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -138,7 +139,7 @@ fun HistorySheet(
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
                             )
                         }
-                        items(history.take(60), key = { "hist-${it.id}-${it.title}" }) { track ->
+                        itemsIndexed(history.take(60), key = { i, t -> "hist-${t.id}-$i" }) { _, track ->
                             TrackRow(
                                 track = track,
                                 onClick = {

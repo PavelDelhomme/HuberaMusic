@@ -122,7 +122,7 @@ fun DebugLogsScreen(
             Spacer(Modifier.height(10.dp))
             Text("URL API", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
             Text(
-                "Samsung = DEV (LAN). Bascule PROD pour tester ytmusic.delhomme.ovh sans rebuilder.",
+                "Samsung = DEV (LAN). Bascule PROD via PUBLIC_API_URL (.env) sans rebuilder.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -196,7 +196,10 @@ fun DebugLogsScreen(
                 ) { Text("DEV LAN") }
                 Button(
                     onClick = {
-                        val u = "https://ytmusic.delhomme.ovh"
+                        val u = BuildConfig.PUBLIC_API_URL.trimEnd('/').ifBlank {
+                            Toast.makeText(context, "PUBLIC_API_URL manquant (.env)", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
                         val prevKind = container.apiEnvKind()
                         container.setApiBaseOverride(u)
                         apiUrl = u

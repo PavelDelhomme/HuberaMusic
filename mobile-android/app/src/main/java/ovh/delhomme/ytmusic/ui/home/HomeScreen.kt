@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import ovh.delhomme.ytmusic.ui.util.isLandscape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -215,10 +216,11 @@ fun HomeScreen(
                                 val loading = state.radioLoadingId == radio.id
                                 val preview = state.radioPreviews[radio.id].orEmpty()
                                 val saved = state.savedMixIds.contains(radio.id)
-                                Column(Modifier.width(140.dp).padding(4.dp)) {
+                                val tile = if (isLandscape()) 104.dp else 132.dp
+                                Column(Modifier.width(tile + 8.dp).padding(4.dp)) {
                                     Box(
                                         Modifier
-                                            .size(132.dp)
+                                            .size(tile)
                                             .clip(RoundedCornerShape(8.dp))
                                             .clickable(enabled = !loading) {
                                                 onOpenDetail(
@@ -233,7 +235,7 @@ fun HomeScreen(
                                     ) {
                                         MixCollageCover(
                                             tracks = preview,
-                                            size = 132.dp,
+                                            size = tile,
                                             titleFallback = radio.title,
                                             mixId = radio.id,
                                         )
@@ -400,9 +402,10 @@ fun HomeScreen(
                                 key = { index, track -> "${track.id}-$index" },
                             ) { _, track ->
                                 val isPinned = track.id in pinIds
+                                val tile = if (isLandscape()) 104.dp else 132.dp
                                 Column(
                                     Modifier
-                                        .width(140.dp)
+                                        .width(tile + 8.dp)
                                         .combinedClickable(
                                             onClick = { playItem(track, items) },
                                             onLongClick = { onMore(track) },
@@ -412,7 +415,7 @@ fun HomeScreen(
                                     Box {
                                         MediaCover(
                                             track,
-                                            132.dp,
+                                            tile,
                                             circle = track.isArtist(),
                                         )
                                         if (isPinned) {
@@ -691,10 +694,14 @@ private fun QuickAccessPinCard(
     onLongClick: () -> Unit,
     onUnpin: () -> Unit,
 ) {
+    val landscape = isLandscape()
     Box(
         Modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
+            .then(
+                if (landscape) Modifier.height(100.dp)
+                else Modifier.aspectRatio(1f),
+            )
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
@@ -762,10 +769,14 @@ private fun QuickAccessShuffleCard(
     busy: Boolean,
     onClick: () -> Unit,
 ) {
+    val landscape = isLandscape()
     Box(
         Modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
+            .then(
+                if (landscape) Modifier.height(100.dp)
+                else Modifier.aspectRatio(1f),
+            )
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
             .clickable(enabled = !busy, onClick = onClick),

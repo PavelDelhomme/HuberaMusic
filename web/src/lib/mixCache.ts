@@ -56,6 +56,17 @@ export function setCachedMix(key: string, tracks: Track[], meta?: { generatedAt?
   }
 }
 
+/** Invalide un mix mis en cache (like / dislike → nouvelles propositions). */
+export function clearCachedMix(key: string) {
+  const s = storage();
+  if (!s) return;
+  try {
+    s.removeItem(PREFIX + key);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Mix précalculé assez long → pas besoin d’autoplay incrémental. */
 export function isPrecomputedMixSource(
   sourceKind: string | null | undefined,

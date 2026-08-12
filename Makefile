@@ -60,7 +60,7 @@ help: ## Affiche cette aide colorée
 	@grep -E '^(install|build|start|deploy-local|docker-|icons|clean-vite|env-check|push-|deploy-hint|update-apps|test-|bump-|version):.*?##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-20s$(C_RESET) %s\n", $$1, $$2}'
 	@echo ""
-	@printf "  $(C_DIM)Domaine prod : https://ytmusic.delhomme.ovh$(C_RESET)\n"
+	@printf "  $(C_DIM)Prod        : voir PUBLIC_API_URL / DEPLOY_URL dans .env$(C_RESET)\n"
 	@printf "  $(C_DIM)Dev local    : make up-full  ·  make logs  ·  make android$(C_RESET)\n"
 	@printf "  $(C_DIM)Batterie     : make battery-go  (ensure 2 Wi‑Fi → 30 min → rapport)$(C_RESET)\n"
 	@printf "  $(C_DIM)Branches     : feat/* depuis dev → merge prod$(C_RESET)\n"
@@ -194,7 +194,8 @@ mobile-hint: ## Affiche comment installer l’app mobile (APK + PWA)
 	@echo "  -----------------------------"
 	@echo "  App Kotlin native (Compose + ExoPlayer) :"
 	@echo "    make android                      # API locale :8787"
-	@echo "    make android-prod                 # API ytmusic.delhomme.ovh"
+	@echo "    make android                      # APK DEV (LAN) → package .dev"
+	@echo "    make android-prod                 # APK PROD → package principal + publish"
 	@echo "    API_BASE_URL=http://IP:8787 make android-install"
 	@echo ""
 	@echo "  Legacy Capacitor (WebView) : make android-capacitor"
@@ -206,7 +207,7 @@ mobile-qr: ## Liste les URLs d’accès LAN pour le mobile
 	@echo "  http://localhost:5173  (via make mobile-install-adb + adb reverse)"
 	@IP=$$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($$i=="src") {print $$(i+1); exit}}'); \
 	if [ -n "$$IP" ]; then echo "  http://$$IP:5173  (Wi‑Fi LAN)"; fi
-	@echo "  https://ytmusic.delhomme.ovh  (prod)"
+	@echo "  prod : \$$PUBLIC_API_URL / \$$DEPLOY_URL (.env)"
 	@echo ""
 	@echo "Préféré USB : make mobile-install-adb DEVICE=$(DEVICE)"
 
@@ -241,8 +242,8 @@ android-publish: ## Compile APK + publie pour /api/deploy/apk (Admin QR)
 
 android-upload-apk: ## Build APK prod + upload vers Portainer (Admin QR en ligne)
 	@chmod +x $(ROOT)/scripts/publish-apk-remote.sh $(ROOT)/scripts/android-publish-apk.sh
-	@API_BASE_URL="$(or $(API_BASE_URL),https://ytmusic.delhomme.ovh)" \
-	 DEPLOY_URL="$(or $(DEPLOY_URL),$(or $(APP_URL),https://ytmusic.delhomme.ovh))" \
+	@API_BASE_URL="$(or $(API_BASE_URL),$(PUBLIC_API_URL))" \
+	 DEPLOY_URL="$(or $(DEPLOY_URL),$(or $(PUBLIC_API_URL),$(APP_URL)))" \
 	 bash $(ROOT)/scripts/publish-apk-remote.sh
 
 android: ## Raccourci : ensure-api + APK Kotlin native
@@ -358,18 +359,23 @@ battery-report-mail: ## Email le dernier rapport batterie → BATTERY_REPORT_TO 
 	@chmod +x $(ROOT)/scripts/battery-mail-report.mjs
 	@cd $(ROOT) && node --env-file=.env scripts/battery-mail-report.mjs
 
-android-prod: ## APK → API prod (APP_URL / ANDROID_API_BASE_URL / ytmusic.delhomme.ovh) + ADB + publish
+android-prod: ## APK → API prod (PUBLIC_API_URL / DEPLOY_URL / ANDROID_API_BASE_URL) + ADB + publish
 	@chmod +x $(ROOT)/scripts/kotlin-android-install.sh $(ROOT)/scripts/android-publish-apk.sh
 	@API_URL="$$( \
 	  if [ -n "$(API_BASE_URL)" ]; then echo "$(API_BASE_URL)"; \
 	  else \
-	    v=$$(grep -E '^ANDROID_API_BASE_URL=' $(ROOT)/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' '); \
+	    v=$$(grep -E '^PUBLIC_API_URL=' $(ROOT)/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' '); \
 	    if [ -n "$$v" ]; then echo "$$v"; \
 	    else \
-	      v=$$(grep -E '^APP_URL=' $(ROOT)/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' '); \
-	      case "$$v" in *127.0.0.1*|*localhost*|"" ) echo "https://ytmusic.delhomme.ovh" ;; *) echo "$$v" ;; esac; \
+	      v=$$(grep -E '^ANDROID_API_BASE_URL=' $(ROOT)/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' '); \
+	      if [ -n "$$v" ]; then echo "$$v"; \
+	      else \
+	        v=$$(grep -E '^DEPLOY_URL=' $(ROOT)/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' '); \
+	        case "$$v" in *127.0.0.1*|*localhost*|"" ) echo "" ;; *) echo "$$v" ;; esac; \
+	      fi; \
 	    fi; \
 	  fi)"; \
+	 if [ -z "$$API_URL" ]; then echo "❌ Définis PUBLIC_API_URL ou DEPLOY_URL dans .env" >&2; exit 1; fi; \
 	 echo "==> android-prod API=$$API_URL"; \
 	 DEVICE="$(DEVICE)" API_BASE_URL="$$API_URL" bash $(ROOT)/scripts/kotlin-android-install.sh install; \
 	 API_BASE_URL="$$API_URL" bash $(ROOT)/scripts/android-publish-apk.sh
@@ -379,9 +385,11 @@ android-capacitor: ## Legacy : APK Capacitor (WebView) + API locale
 	@bash $(ROOT)/scripts/ensure-api.sh
 	@DEVICE="$(DEVICE)" VITE_API_ORIGIN="$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787)" bash $(ROOT)/scripts/android-install.sh install
 
-android-capacitor-prod: ## Legacy Capacitor → API prod
+android-capacitor-prod: ## Legacy Capacitor → API PUBLIC_API_URL / DEPLOY_URL
 	@chmod +x $(ROOT)/scripts/android-install.sh
-	@DEVICE="$(DEVICE)" VITE_API_ORIGIN="https://ytmusic.delhomme.ovh" bash $(ROOT)/scripts/android-install.sh install
+	@API_URL="$$(grep -E '^(PUBLIC_API_URL|DEPLOY_URL)=' $(ROOT)/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' ')"; \
+	 if [ -z "$$API_URL" ]; then echo "❌ PUBLIC_API_URL / DEPLOY_URL manquant" >&2; exit 1; fi; \
+	 DEVICE="$(DEVICE)" VITE_API_ORIGIN="$$API_URL" bash $(ROOT)/scripts/android-install.sh install
 
 test-register-adb: ## Recrée compte + email validation + ouvre le lien sur Android
 	@cd $(ROOT) && \
@@ -533,7 +541,7 @@ deploy-hint: ## Guide déploiement Portainer / NPM / mobile
 	@echo ""
 	@echo "  Déploiement perso (détail : DEPLOY.md)"
 	@echo "  --------------------------------------"
-	@echo "  DNS  ytmusic.delhomme.ovh → IP VPS"
+	@echo "  DNS  (DEPLOY_URL / PUBLIC_API_URL) → IP VPS"
 	@echo ""
 	@echo "  WEB  Admin localhost → Mise en prod → Web (git → image)"
 	@echo "       Redeploy CE (pas de webhook Pro) :"

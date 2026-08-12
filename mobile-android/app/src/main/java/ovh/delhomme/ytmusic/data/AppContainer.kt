@@ -315,23 +315,25 @@ class AppContainer(context: Context) {
      * @return true si l’URL API a changé.
      */
     suspend fun ensureReachableApiOrFallbackToProd(
-        prodUrl: String = "https://ytmusic.delhomme.ovh",
+        prodUrl: String = ovh.delhomme.ytmusic.BuildConfig.PUBLIC_API_URL,
     ): Boolean {
         val current = resolvedApiBase()
         if (apiEnvKind(current) == "prod") {
-            // Prod déjà : ping court — ne change rien si KO (avion / DNS), validateSession gère.
             return false
         }
         val ok = probeApiHealth(current, timeoutSec = 2).isSuccess
         if (ok) return false
-        val prod = prodUrl.trimEnd('/')
+        val prod = prodUrl.trim().trimEnd('/')
+        if (prod.isBlank() || !prod.startsWith("https://")) {
+            AppLog.w("api", "PUBLIC_API_URL vide — pas de fallback prod")
+            return false
+        }
         if (probeApiHealth(prod, timeoutSec = 4).isFailure) {
-            // Ni LAN ni prod → laisser tel quel (mode dégradé / offline)
             return false
         }
         setApiBaseOverride(prod)
         tokenStore.clear()
-        AppLog.breadcrumb("api-fallback", "LAN down → $prod (session reset)")
+        AppLog.breadcrumb("api-fallback", "LAN down → public API (session reset)")
         return true
     }
 

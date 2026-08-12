@@ -58,10 +58,16 @@ class OfflineDownloadManager(
                     }
                     .getOrThrow()
                 runCatching { notifyServer(track.id) }
-            } catch (e: Exception) {
-                if (e !is kotlinx.coroutines.CancellationException) {
-                    _errors.update { it + (track.id to (e.message ?: "Échec téléchargement")) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                runCatching {
+                    java.io.File(
+                        ovh.delhomme.ytmusic.YtMusicApp.instance.filesDir,
+                        "offline/${track.id}.part",
+                    ).delete()
                 }
+                throw e
+            } catch (e: Exception) {
+                _errors.update { it + (track.id to (e.message ?: "Échec téléchargement")) }
             } finally {
                 _progress.update { cur ->
                     val next = cur.toMutableMap()

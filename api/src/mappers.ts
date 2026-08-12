@@ -62,9 +62,34 @@ export function sanitizeTrack(track: Track): Track {
     durationSeconds = durationSeconds ?? Math.floor(raw.duration);
     duration = formatDurationClock(raw.duration);
   } else if (typeof raw.duration === 'string' && raw.duration.trim()) {
-    duration = normalizeDurationText(raw.duration.trim());
+    const cleaned = normalizeDurationText(raw.duration.trim());
+    // Garde uniquement une horloge lisible (évite TextRuns / labels bruts)
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(cleaned) || /^\d+$/.test(cleaned)) {
+      duration = cleaned;
+    } else {
+      const m = cleaned.match(/\b(\d{1,2}:\d{2}(?::\d{2})?)\b/);
+      duration = m ? normalizeDurationText(m[1]) : undefined;
+    }
+  } else if (raw.duration && typeof raw.duration === 'object') {
+    const t = asText(raw.duration).trim();
+    if (t) {
+      const cleaned = normalizeDurationText(t);
+      if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(cleaned)) duration = cleaned;
+      else {
+        const m = cleaned.match(/\b(\d{1,2}:\d{2}(?::\d{2})?)\b/);
+        duration = m ? normalizeDurationText(m[1]) : undefined;
+      }
+    }
   } else if (durationSeconds != null) {
     duration = formatDurationClock(durationSeconds);
+  }
+  if (duration && durationSeconds == null) {
+    const parts = duration.split(':').map((p) => Number(p));
+    if (parts.length === 2 && parts.every((n) => Number.isFinite(n))) {
+      durationSeconds = parts[0] * 60 + parts[1];
+    } else if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+      durationSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }
   }
 
   return {
@@ -717,7 +742,7 @@ export function mapListItem(item: any, fallbackThumbs?: Thumb[]): Track | null {
   if (!title) title = '';
 
   const durationTextRaw =
-    item.duration?.text ||
+    asText(item.duration?.text) ||
     asText(item.duration) ||
     asText(item.lengthText) ||
     asText(item.length_text) ||

@@ -12,12 +12,14 @@ import {
   pinFullTrack,
   clearPinnedFull,
 } from '../lib/streamPrefetch';
-import { eqNeedsSameOrigin } from '../lib/equalizer';
+import { eqNeedsSameOrigin, setMeterPreferred } from '../lib/equalizer';
+import { resetSilenceSkip, shouldSkipTrailingSilence } from '../lib/silenceSkip';
 import { trackDurationSeconds, formatClock } from '../lib/time';
 import { perfStart } from '../lib/perf';
 import { useSession } from './session';
 import { useLibrary } from './library';
 import {
+  clearCachedMix,
   getCachedMix,
   isPrecomputedMixSource,
   mixCacheKey,
@@ -50,12 +52,19 @@ type PlayerState = {
   isPlaying: boolean;
   isLoading: boolean;
   shuffle: boolean;
+  /**
+   * Ordre « naturel » de la suite (après le titre courant) quand le shuffle est actif.
+   * Permet de restaurer l’ordre initial à la désactivation, y compris les ajouts autoplay.
+   */
+  shuffleNatural: Track[] | null;
   repeat: RepeatMode;
   volume: number;
   progress: number;
   duration: number;
   showQueue: boolean;
   showLyrics: boolean;
+  /** Mode présentation Now Playing : cover = skip silence de fin ; video = laisse finir. */
+  mediaPresentation: 'cover' | 'video';
   lyrics: string | null;
   lyricsTimed: { startMs: number; text: string }[] | null;
   related: Track[];
@@ -105,9 +114,12 @@ type PlayerState = {
   setDuration: (n: number) => void;
   setVolume: (n: number) => void;
   toggleShuffle: () => void;
+  /** Like / dislike : réoriente les futures propositions sans toucher à la file déjà chargée. */
+  refreshRecoAfterFeedback: (trackId: string, verdict: 'good' | 'bad') => void;
   cycleRepeat: () => void;
   toggleQueue: () => void;
   toggleLyrics: () => void;
+  setMediaPresentation: (mode: 'cover' | 'video') => void;
   toggleAutoplay: () => void;
   setAutoplay: (on: boolean) => void;
   /** Relance le remplissage de la zone « À suivre ». */
@@ -788,6 +800,10 @@ function mergeAutoTracks(seedId: string, pool: Track[], relatedUpdate?: Track[])
   const patch: Partial<PlayerState> = {};
   if (extra.length) {
     patch.queue = [...state.queue, ...extra];
+    // Conserve l’ordre naturel pour restore shuffle (ajouts autoplay inclus)
+    if (state.shuffle) {
+      patch.shuffleNatural = [...(state.shuffleNatural || state.queue.slice(state.queueIndex + 1)), ...extra];
+    }
   }
   if (relatedUpdate?.length) {
     patch.related = relatedUpdate;
@@ -1266,6 +1282,29 @@ function attachAudioRuntime(
       set({ isPlaying: false, sleepLabel: null, sleepUntilEnd: false, sleepUntilQueueEnd: false });
     }
   });
+  // Coupe les silences de fin (mode titre uniquement — pas en mode vidéo)
+  el.addEventListener('timeupdate', () => {
+    if (get().audioEl !== el) return;
+    const s = get();
+    if (!s.isPlaying || !s.current?.id) return;
+    const lastLyricMs =
+      s.lyricsTimed?.length
+        ? Math.max(...s.lyricsTimed.map((l) => l.startMs || 0))
+        : null;
+    if (
+      shouldSkipTrailingSilence(el, {
+        videoMode: s.mediaPresentation === 'video',
+        trackId: s.current.id,
+        isPlaying: s.isPlaying,
+        lastLyricMs,
+      })
+    ) {
+      void get().next({ fromEnded: true });
+    }
+  });
+  el.addEventListener('loadeddata', () => {
+    resetSilenceSkip(get().current?.id);
+  });
   let recovering = false;
   el.addEventListener('error', () => {
     void (async () => {
@@ -1364,12 +1403,14 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   isPlaying: false,
   isLoading: false,
   shuffle: false,
+  shuffleNatural: null,
   repeat: 'off',
   volume: 0.9,
   progress: 0,
   duration: 0,
   showQueue: false,
   showLyrics: false,
+  mediaPresentation: 'cover',
   lyrics: null,
   lyricsTimed: null,
   related: [],
@@ -1585,6 +1626,8 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       lyrics: null,
       lyricsTimed: null,
       playError: null,
+      // Nouvelle file → oublie l’ordre shuffle précédent
+      ...(keepBoundary ? {} : { shuffleNatural: null, ...(opts?.forceRestart ? { shuffle: false } : {}) }),
       // Garde les suggestions jusqu’au remplacement (évite trou « Chargement… » sur Similaires)
       relatedLoading: true,
       relatedError: null,
@@ -1612,12 +1655,24 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     // Similaires dès le play (fast ~10) — indépendant de l’onglet ouvert
     const seedId = playTrack.id;
     const radioGen = gen;
+    resetSilenceSkip(seedId);
     queueMicrotask(() => {
       if (radioGen !== playGeneration) return;
       void get().loadRelated(seedId);
       if (!opts?.noAutoRadio && get().autoplay !== false) {
         void ensureAutoRadio(seedId);
       }
+      // Paroles timed en fond → aide le skip de silence de fin
+      void api
+        .lyrics(seedId)
+        .then((r) => {
+          if (get().current?.id !== seedId) return;
+          set({
+            lyrics: r.lyrics || get().lyrics,
+            lyricsTimed: r.timed || null,
+          });
+        })
+        .catch(() => undefined);
     });
 
     const attemptPlay = async (attempt: number): Promise<void> => {
@@ -2027,25 +2082,91 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   toggleShuffle: () => {
     const turningOn = !get().shuffle;
     if (turningOn) {
-      // Réordonne uniquement la suite — le titre en cours ne bouge pas
+      // Réordonne uniquement la suite — snapshot naturel pour restore
       set((s) => {
         const qi = s.queueIndex;
         const head = s.queue.slice(0, qi + 1);
         const rest = s.queue.slice(qi + 1);
-        for (let i = rest.length - 1; i > 0; i--) {
+        const natural = rest.map((t) => t);
+        const shuffled = [...rest];
+        for (let i = shuffled.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
-          const tmp = rest[i]!;
-          rest[i] = rest[j]!;
-          rest[j] = tmp;
+          const tmp = shuffled[i]!;
+          shuffled[i] = shuffled[j]!;
+          shuffled[j] = tmp;
         }
-        return { shuffle: true, queue: [...head, ...rest] };
+        return { shuffle: true, queue: [...head, ...shuffled], shuffleNatural: natural };
       });
     } else {
-      set({ shuffle: false });
+      set((s) => {
+        const qi = s.queueIndex;
+        const head = s.queue.slice(0, qi + 1);
+        const rest = s.queue.slice(qi + 1);
+        const natural = s.shuffleNatural || [];
+        const restIds = new Set(rest.map((t) => t.id));
+        const byId = new Map(rest.map((t) => [t.id, t] as const));
+        const restored: Track[] = [];
+        for (const t of natural) {
+          if (restIds.has(t.id) && byId.has(t.id)) {
+            restored.push(byId.get(t.id)!);
+            restIds.delete(t.id);
+          }
+        }
+        for (const t of rest) {
+          if (restIds.has(t.id)) restored.push(t);
+        }
+        return { shuffle: false, queue: [...head, ...restored], shuffleNatural: null };
+      });
     }
     if (!isActivePlayer()) sendCmd({ action: 'shuffle', value: get().shuffle });
     else publish();
     persistPlayer();
+    schedulePrefetch(get().queue, get().queueIndex);
+  },
+
+  refreshRecoAfterFeedback: (trackId, verdict) => {
+    autoRadioSeq += 1;
+    autoRadioInflight = null;
+    try {
+      clearCachedMix(mixCacheKey('track', trackId));
+      const curId = get().current?.id;
+      if (curId && curId !== trackId) clearCachedMix(mixCacheKey('track', curId));
+    } catch {
+      /* ignore */
+    }
+    set((s) => {
+      let queue = s.queue;
+      let userQueueEnd = s.userQueueEnd;
+      let shuffleNatural = s.shuffleNatural;
+      // Dislike : retire le titre des propositions déjà en file (pas le courant)
+      if (verdict === 'bad' && trackId) {
+        const qi = s.queueIndex;
+        const nextQ = s.queue.filter((t, i) => i <= qi || t.id !== trackId);
+        if (nextQ.length !== s.queue.length) {
+          const removedBeforeEnd = s.queue
+            .slice(0, Math.max(s.userQueueEnd || 0, 0))
+            .filter((t, i) => i > qi && t.id === trackId).length;
+          queue = nextQ;
+          userQueueEnd = Math.max(qi + 1, (s.userQueueEnd || 0) - removedBeforeEnd);
+          userQueueEnd = Math.min(userQueueEnd, queue.length);
+          if (shuffleNatural?.length) {
+            shuffleNatural = shuffleNatural.filter((t) => t.id !== trackId);
+          }
+        }
+      }
+      return {
+        queue,
+        userQueueEnd,
+        shuffleNatural,
+        // Force un nouveau fetch de suggestions pour la suite (file déjà chargée intacte)
+        related: [],
+        relatedSeedId: null,
+      };
+    });
+    persistPlayer();
+    publish();
+    const cur = get().current;
+    if (cur?.id && get().autoplay !== false) void ensureAutoRadio(cur.id);
   },
 
   cycleRepeat: () => {
@@ -2058,6 +2179,13 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   },
 
   toggleQueue: () => set((s) => ({ showQueue: !s.showQueue, showLyrics: false })),
+
+  setMediaPresentation: (mode) => {
+    set({ mediaPresentation: mode });
+    // Mode vidéo : pas de skip silence → on peut re-autoriser les URLs directes
+    setMeterPreferred(mode !== 'video');
+    resetSilenceSkip(get().current?.id);
+  },
 
   toggleLyrics: async () => {
     const { showLyrics, current } = get();
@@ -2428,41 +2556,28 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       const nextKind =
         kind === 'track' ? ('radio' as const) : kind === 'album' ? ('album' as const) : ('artist' as const);
 
-      const state = get();
-      const hasSession = Boolean(state.current && state.queue.length > 0);
-      if (hasSession) {
-        // Soft : insert après le courant sans couper la lecture / position
-        const curId = state.current!.id;
-        const toAdd = mix.filter((t) => t.id !== curId).slice(0, 24);
-        // addNext empile après index+1 → reverse pour garder l’ordre
-        for (let i = toAdd.length - 1; i >= 0; i--) {
-          get().addNext(toAdd[i]);
-        }
-        set({
-          showQueue: true,
-          showLyrics: false,
-          autoplay: true,
-          sourceId: kind === 'track' ? seedTrack.id : id,
-          sourceKind: nextKind,
-        });
-        schedulePrefetch(get().queue, get().queueIndex);
-        persistPlayer();
-        publish();
-        return { added: toAdd.length, soft: true as const };
-      }
-
+      // Radio explicite = hard-start : nouvelle base, file remplacée, déjà joués abandonnés
+      autoRadioSeq += 1;
+      autoRadioInflight = null;
       await get().play(seedTrack, mix, {
         preserveQueue: true,
+        forceRestart: true,
         noAutoRadio: upcoming.length >= 12,
         sourceId: kind === 'track' ? seedTrack.id : id,
         sourceKind: nextKind,
       });
-      set({ showQueue: true, showLyrics: false, autoplay: upcoming.length < 12 });
+      set({
+        showQueue: true,
+        showLyrics: false,
+        autoplay: upcoming.length < 12,
+        shuffle: false,
+        shuffleNatural: null,
+      });
       return { added: upcoming.length, soft: false as const };
     } catch (err) {
       console.error('startRadio', err);
       if (seed && isPlayable(seed)) {
-        await get().play(seed, [seed], { preserveQueue: true });
+        await get().play(seed, [seed], { preserveQueue: true, forceRestart: true });
       }
       return { added: 0, soft: false as const };
     } finally {

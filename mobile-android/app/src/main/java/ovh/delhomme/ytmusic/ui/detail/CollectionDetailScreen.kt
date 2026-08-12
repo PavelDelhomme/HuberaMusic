@@ -225,20 +225,27 @@ fun CollectionDetailScreen(
                 }
                 DetailKind.Playlist -> {
                     val rawId = id.removePrefix("local:")
-                    if (id.startsWith("local:")) {
-                        val lib = container.api.library()
-                        val pl = lib.playlists.firstOrNull { it.id == rawId }
-                        title = pl?.displayName() ?: seed?.title ?: "Playlist"
-                        subtitle = "${pl?.tracks?.size ?: 0} titres"
+                    val fromLib = runCatching {
+                        if (id.startsWith("local:")) {
+                            container.api.library().playlists.firstOrNull { it.id == rawId }
+                        } else {
+                            // IDs biblio (UUID / liked-*) : endpoint dédié avant YouTube
+                            runCatching { container.api.libraryPlaylist(rawId) }.getOrNull()
+                                ?: container.api.library().playlists.firstOrNull { it.id == rawId }
+                        }
+                    }.getOrNull()
+                    if (fromLib != null) {
+                        title = fromLib.displayName() ?: seed?.title ?: "Playlist"
+                        subtitle = "${fromLib.tracks?.size ?: 0} titres"
                         cover = seed ?: TrackDto(
                             id = id,
                             title = title,
-                            thumbnails = pl?.cover()?.let {
+                            thumbnails = fromLib.cover()?.let {
                                 listOf(ovh.delhomme.ytmusic.data.Thumb(it))
                             },
                             type = "playlist",
                         )
-                        tracks = pl?.tracks.orEmpty().filter { it.isPlayable() }
+                        tracks = fromLib.tracks.orEmpty().filter { it.isPlayable() }
                     } else {
                         val r = container.api.playlist(rawId)
                         title = r.playlist?.displayName() ?: seed?.title ?: "Playlist"
@@ -769,8 +776,96 @@ private fun AlbumHeroHeader(
     onMore: () -> Unit,
 ) {
     val screenW = LocalConfiguration.current.screenWidthDp.dp
-    // ~moitié moins large qu’avant (~0.72 → ~0.36), lisible sans plein écran
-    val coverSize = (screenW * 0.36f).coerceIn(140.dp, 176.dp)
+    val screenH = LocalConfiguration.current.screenHeightDp.dp
+    val landscape = screenW > screenH
+    val coverSize = (minOf(screenW.value, screenH.value).dp * if (landscape) 0.55f else 0.42f)
+        .coerceIn(100.dp, if (landscape) 148.dp else 176.dp)
+
+    @Composable
+    fun CoverBlock() {
+        Box(contentAlignment = Alignment.Center) {
+            cover?.let {
+                Box {
+                    MediaCover(it, coverSize)
+                    if (pinned) {
+                        PinnedBadge(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(8.dp),
+                            size = 30.dp,
+                            onClick = onTogglePin,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun ActionsRow() {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = if (landscape) 4.dp else 12.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RoundIconAction(
+                icon = Icons.Default.Shuffle,
+                label = "Aléatoire",
+                hint = "Lecture aléatoire de l'album",
+                onClick = onShuffle,
+            )
+            RoundIconAction(
+                icon = if (inLibrary) Icons.Default.LibraryAddCheck else Icons.Default.LibraryAdd,
+                label = if (inLibrary) "Bibliothèque" else "Enregistrer",
+                hint = if (inLibrary) {
+                    "Déjà dans ta bibliothèque — appuie pour retirer"
+                } else {
+                    "Enregistrer l'album dans ta bibliothèque"
+                },
+                onClick = onToggleLibrary,
+                tint = if (inLibrary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+            TooltipBox(
+                positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                tooltip = {
+                    PlainTooltip { Text("Tout lire") }
+                },
+                state = rememberTooltipState(),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(if (landscape) 56.dp else 68.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .clickable(onClick = onPlay),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = "Tout lire",
+                        tint = Color.Black,
+                        modifier = Modifier.size(if (landscape) 32.dp else 40.dp),
+                    )
+                }
+            }
+            RoundIconAction(
+                icon = MixIcon,
+                label = "",
+                hint = "Lancer un mix radio à partir de cet album",
+                onClick = onRadio,
+                enabled = !radioBusy,
+                tint = Color(0xFFFF0033),
+            )
+            RoundIconAction(
+                icon = Icons.Default.MoreVert,
+                label = "Plus",
+                hint = "Plus d'options",
+                onClick = onMore,
+            )
+        }
+    }
 
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -819,105 +914,51 @@ private fun AlbumHeroHeader(
             Spacer(Modifier.size(56.dp))
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
 
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            cover?.let {
-                Box {
-                    MediaCover(it, coverSize)
-                    if (pinned) {
-                        PinnedBadge(
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(8.dp),
-                            size = 30.dp,
-                            onClick = onTogglePin,
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp),
-        )
-
-        Spacer(Modifier.height(14.dp))
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            RoundIconAction(
-                icon = Icons.Default.Shuffle,
-                label = "Aléatoire",
-                hint = "Lecture aléatoire de l'album",
-                onClick = onShuffle,
-            )
-            RoundIconAction(
-                icon = if (inLibrary) Icons.Default.LibraryAddCheck else Icons.Default.LibraryAdd,
-                label = if (inLibrary) "Bibliothèque" else "Enregistrer",
-                hint = if (inLibrary) {
-                    "Déjà dans ta bibliothèque — appuie pour retirer"
-                } else {
-                    "Enregistrer l'album dans ta bibliothèque"
-                },
-                onClick = onToggleLibrary,
-                tint = if (inLibrary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
-            TooltipBox(
-                positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-                tooltip = {
-                    PlainTooltip { Text("Tout lire") }
-                },
-                state = rememberTooltipState(),
+        if (landscape) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(68.dp)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .clickable(onClick = onPlay),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.PlayArrow,
-                        contentDescription = "Tout lire",
-                        tint = Color.Black,
-                        modifier = Modifier.size(40.dp),
+                CoverBlock()
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
                     )
+                    Spacer(Modifier.height(8.dp))
+                    ActionsRow()
                 }
             }
-            RoundIconAction(
-                icon = MixIcon,
-                label = "",
-                hint = "Lancer un mix radio à partir de cet album",
-                onClick = onRadio,
-                enabled = !radioBusy,
-                tint = Color(0xFFFF0033),
+        } else {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                CoverBlock()
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
             )
-            RoundIconAction(
-                icon = Icons.Default.MoreVert,
-                label = "Plus",
-                hint = "Plus d'options",
-                onClick = onMore,
-            )
+            Spacer(Modifier.height(14.dp))
+            ActionsRow()
         }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(if (landscape) 12.dp else 20.dp))
     }
 }
 

@@ -120,14 +120,14 @@ fun SyncedVideoSurface(
         }
         while (isActive) {
             val target = latestPos.coerceAtLeast(0L)
-            if (kotlin.math.abs(exo.currentPosition - target) > 400L) {
+            if (kotlin.math.abs(exo.currentPosition - target) > 250L) {
                 runCatching { exo.seekTo(target) }
             }
             when {
                 !latestPlaying && exo.isPlaying -> exo.pause()
                 latestPlaying && !exo.isPlaying && exo.playbackState == Player.STATE_READY -> exo.play()
             }
-            delay(450)
+            delay(250)
         }
     }
 

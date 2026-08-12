@@ -26,20 +26,22 @@ import java.util.concurrent.TimeUnit
  * Annulé uniquement sur pause volontaire (pas pendant un rebuffer / skip).
  */
 object StreamPrefetcher {
-    /** Tête générique Wi‑Fi (~2.5 Mo ≈ ~1–2 min audio). */
-    private const val HEAD_WIFI = 2_500 * 1024L
-    /** Titre suivant Wi‑Fi : grosse part pour skip / enchaînement fluides. */
-    private const val HEAD_NEXT_WIFI = 10_000 * 1024L
+    /** ~3 s audio typique YT (~160–256 kb/s) + marge conteneur. */
+    const val HEAD_3S = 420L * 1024L
+    /** Tête générique Wi‑Fi (~1.5 Mo ≈ ~45–60 s audio). */
+    private const val HEAD_WIFI = 1_500 * 1024L
+    /** Titre suivant Wi‑Fi. */
+    private const val HEAD_NEXT_WIFI = 4_500 * 1024L
     /** +2 / +3 Wi‑Fi. */
-    private const val HEAD_NEAR_WIFI = 5_000 * 1024L
-    /** Suite lointaine Wi‑Fi. */
-    private const val HEAD_FAR_WIFI = 1_800 * 1024L
+    private const val HEAD_NEAR_WIFI = 2_200 * 1024L
+    /** Suite lointaine Wi‑Fi — au minimum ~3 s. */
+    private const val HEAD_FAR_WIFI = 900 * 1024L
 
-    private const val HEAD_METERED = 480 * 1024L
-    private const val HEAD_NEXT_METERED = 1_600 * 1024L
+    private const val HEAD_METERED = HEAD_3S
+    private const val HEAD_NEXT_METERED = 1_200 * 1024L
 
-    private const val MAX_WARM = 10
-    private const val AHEAD_WIFI = 4
+    private const val MAX_WARM = 8
+    private const val AHEAD_WIFI = 3
     private const val AHEAD_METERED = 2
     private const val DISK_CACHE_MB = 24L
     private val JSON = "application/json; charset=utf-8".toMediaType()
@@ -230,14 +232,29 @@ object StreamPrefetcher {
         val bytes = when {
             !unmetered && distance == 0 -> HEAD_NEXT_METERED
             !unmetered && distance <= 2 -> HEAD_METERED
-            !unmetered -> return
+            !unmetered -> HEAD_3S
             distance == 0 -> HEAD_NEXT_WIFI
             distance <= 2 -> HEAD_NEAR_WIFI
             distance <= 5 -> HEAD_WIFI
-            else -> HEAD_FAR_WIFI
+            else -> maxOf(HEAD_FAR_WIFI, HEAD_3S)
         }
         val url = "${baseApi.trimEnd('/')}/api/stream/$trackId"
         PlayerCache.prefetchHead(YtMusicApp.instance, url, trackId, bytes)
+    }
+
+    /**
+     * Précharge ~3 s de tête pour une liste (file / biblio visible).
+     * Limité pour ne pas saturer le réseau.
+     */
+    fun warmHeads3s(baseApi: String, trackIds: List<String>, limit: Int = 24) {
+        if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(limit)
+        if (ids.isEmpty()) return
+        warmBatch(baseApi, ids.take(MAX_WARM))
+        ids.forEach { id ->
+            val url = "${baseApi.trimEnd('/')}/api/stream/$id"
+            PlayerCache.prefetchHead(YtMusicApp.instance, url, id, HEAD_3S)
+        }
     }
 
     fun warmMany(resolveUrls: List<String>) {

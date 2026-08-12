@@ -28,8 +28,12 @@ const GV_UA_IOS =
 function uaForGooglevideoUrl(url: string): string {
   try {
     const c = new URL(url).searchParams.get('c') || '';
+    // ANDROID_VR (Quest) ≠ ANDROID YouTube — UA classique → 403
+    if (/ANDROID_VR/i.test(c)) {
+      return 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12; vr_oculus) gzip';
+    }
     if (/ANDROID/i.test(c)) return GV_UA_ANDROID;
-    if (/IOS|TVHTML5/i.test(c)) return GV_UA_IOS;
+    if (/IOS|TVHTML5|TV/i.test(c)) return GV_UA_IOS;
   } catch {
     /* ignore */
   }
@@ -152,11 +156,24 @@ async function streamViaInnertube(videoId: string, res: Response) {
   if (res.headersSent) throw new Error('headers already sent');
 
   const innertube = await getYT();
-  const stream = await innertube.download(videoId, {
-    type: 'audio',
-    quality: 'best',
-    format: 'any',
-  });
+  let lastErr: unknown;
+  let stream: ReadableStream<Uint8Array> | null = null;
+  for (const client of ['ANDROID_VR', 'TV', 'IOS', 'WEB_EMBEDDED'] as const) {
+    try {
+      stream = await innertube.download(videoId, {
+        type: 'audio',
+        quality: 'best',
+        format: 'any',
+        client,
+      } as any);
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!stream) {
+    throw lastErr instanceof Error ? lastErr : new Error('Innertube download login/unavailable');
+  }
 
   const reader = stream.getReader();
   const first = await reader.read();
@@ -222,6 +239,8 @@ function spawnYtDlpAudioPipe(
         '--no-playlist',
         '--quiet',
         '--no-warnings',
+        '--extractor-args',
+        'youtube:player_client=android_vr,tv,ios,web_embedded',
         '--user-agent',
         GV_USER_AGENT,
         '--referer',
@@ -237,6 +256,7 @@ function spawnYtDlpAudioPipe(
     const fail = (err: Error) => {
       if (settled) return;
       settled = true;
+      clearTimeout(firstByteTimer);
       try {
         proc.kill('SIGTERM');
       } catch {
@@ -245,8 +265,14 @@ function spawnYtDlpAudioPipe(
       reject(err);
     };
 
+    // Sans 1er octet rapidement → passe au format / backend suivant (évite buffering mobile)
+    const firstByteTimer = setTimeout(() => {
+      fail(new Error('yt-dlp first-byte timeout'));
+    }, 10_000);
+
     proc.stdout.once('data', (chunk: Buffer) => {
       if (settled) return;
+      clearTimeout(firstByteTimer);
       try {
         if (res.headersSent) {
           fail(new Error('headers already sent'));
@@ -295,10 +321,12 @@ function spawnYtDlpAudioPipe(
 async function streamViaYtDlp(videoId: string, res: Response) {
   // Anonyme d’abord — cookies optionnels (jamais Premium requis)
   const cookieSets = ytDlpCookieArgSets();
+  // Peu de formats : chaque spawn peut coûter ~10 s (first-byte timeout)
+  const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, 2);
 
   let lastErr: Error | null = null;
   for (const cookieArgs of cookieSets) {
-    for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
+    for (const format of formats) {
       if (res.headersSent) throw new Error('headers already sent');
       try {
         await spawnYtDlpAudioPipe(videoId, format, cookieArgs, res);
@@ -319,6 +347,20 @@ export async function handleStream(req: Request, res: Response) {
     return;
   }
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
+  const deadlineAt = Date.now() + 22_000;
+  const ensureTime = (label: string) => {
+    if (Date.now() >= deadlineAt) throw new Error(`stream deadline (${label})`);
+  };
+  const withDeadline = async <T>(label: string, p: Promise<T>): Promise<T> => {
+    ensureTime(label);
+    const left = Math.max(500, deadlineAt - Date.now());
+    return await Promise.race([
+      p,
+      new Promise<T>((_, rej) =>
+        setTimeout(() => rej(new Error(`timeout ${label}`)), left),
+      ),
+    ]);
+  };
 
   // Cache disque = audio only — ne pas servir .m4a pour ?type=video
   if (!wantVideo) {
@@ -362,7 +404,10 @@ export async function handleStream(req: Request, res: Response) {
   }
 
   try {
-    let format = wantVideo ? await getVideoFormat(videoId) : await getAudioFormat(videoId);
+    ensureTime('format');
+    let format = wantVideo
+      ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
+      : await withDeadline('getAudioFormat', getAudioFormat(videoId));
     if (format.url) {
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).
@@ -373,13 +418,15 @@ export async function handleStream(req: Request, res: Response) {
         return;
       }
       const rangeHdr = req.headers.range ? String(req.headers.range) : undefined;
-      let upstream = await fetchGooglevideo(format.url, rangeHdr);
+      let upstream = await withDeadline('fetchGV', fetchGooglevideo(format.url, rangeHdr));
       // URL morte / anti-bot → invalide le cache format et retente 1× avant fallbacks
       if (upstream.status === 403 || upstream.status === 401 || upstream.status === 404) {
         invalidateAudioFormat(videoId);
-        format = wantVideo ? await getVideoFormat(videoId) : await getAudioFormat(videoId);
+        format = wantVideo
+          ? await withDeadline('getVideoFormat2', getVideoFormat(videoId))
+          : await withDeadline('getAudioFormat2', getAudioFormat(videoId));
         if (!format.url) throw new Error(`upstream ${wantVideo ? 'video' : 'audio'} ${upstream.status}`);
-        upstream = await fetchGooglevideo(format.url, rangeHdr);
+        upstream = await withDeadline('fetchGV2', fetchGooglevideo(format.url, rangeHdr));
       }
       // Innertube toujours 403 → URL yt-dlp (souvent OK sans cookies fichier)
       if (
@@ -387,8 +434,8 @@ export async function handleStream(req: Request, res: Response) {
         (upstream.status === 403 || upstream.status === 401 || upstream.status === 404)
       ) {
         try {
-          format = await getAudioFormatViaYtDlpOnly(videoId);
-          upstream = await fetchGooglevideo(format.url, rangeHdr);
+          format = await withDeadline('ytDlpUrl', getAudioFormatViaYtDlpOnly(videoId));
+          upstream = await withDeadline('fetchGV3', fetchGooglevideo(format.url, rangeHdr));
         } catch {
           /* fallback pipe plus bas */
         }
@@ -461,12 +508,13 @@ export async function handleStream(req: Request, res: Response) {
   }
 
   try {
-    await streamViaYtDlp(videoId, res);
+    ensureTime('ytdlp');
+    await withDeadline('ytdlpPipe', streamViaYtDlp(videoId, res));
     return;
   } catch (err) {
     if (endIfHeadersSent(res)) return;
     const msg = String((err as Error).message || err);
-    if (!/format is not available/i.test(msg)) {
+    if (!/format is not available|first-byte timeout|stream deadline|timeout /i.test(msg)) {
       console.warn('[stream] yt-dlp KO:', msg.slice(0, 160));
     }
   }

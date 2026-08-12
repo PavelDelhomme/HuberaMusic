@@ -592,37 +592,74 @@ app.post('/api/auth/2fa/disable', authRequired, (req, res) => {
 
 app.post(
   '/api/telemetry',
-  rateLimit({ windowMs: 60_000, max: 40 }),
+  rateLimit({ windowMs: 60_000, max: 80 }),
   authOptional,
   (req, res) => {
   try {
     const b = req.body || {};
     const trunc = (v: unknown, n: number) => {
       const s = v == null ? '' : String(v);
-      return s.length > n ? s.slice(0, n) : s;
+      return s.length > n ? s.slice(0, n) + `\n…[truncated ${s.length - n} chars]` : s;
     };
     let meta = b.meta;
     try {
       const raw = JSON.stringify(meta ?? null);
-      if (raw && raw.length > 8_000) meta = { truncated: true, preview: raw.slice(0, 500) };
+      // Crashes Android : breadcrumbs + recentLogs peuvent être gros
+      if (raw && raw.length > 64_000) {
+        meta = {
+          truncated: true,
+          preview: raw.slice(0, 2_000),
+          recentLogs: typeof (meta as any)?.recentLogs === 'string'
+            ? trunc((meta as any).recentLogs, 24_000)
+            : undefined,
+          breadcrumbs: (meta as any)?.breadcrumbs,
+        };
+      }
     } catch {
       meta = undefined;
     }
+    const level = trunc(b.level || 'info', 32);
+    const kind = trunc(b.kind || 'client', 64);
+    const message = b.message ? trunc(b.message, 8_000) : undefined;
+    const stack = b.stack ? trunc(b.stack, 48_000) : undefined;
+    const env = b.env || getAppEnv();
+    const deviceId = trunc(String(req.headers['x-device-id'] || b.deviceId || ''), 120);
+    const userId = req.user && !req.user.isGuest ? req.userId : undefined;
+    const userAgent = trunc(String(req.headers['user-agent'] || b.userAgent || ''), 400);
+    const url = b.url ? trunc(b.url, 500) : undefined;
     const id = insertTelemetry({
-      env: b.env || getAppEnv(),
-      level: trunc(b.level || 'info', 32),
-      kind: trunc(b.kind || 'client', 64),
-      message: b.message ? trunc(b.message, 4_000) : undefined,
-      stack: b.stack ? trunc(b.stack, 8_000) : undefined,
-      url: b.url ? trunc(b.url, 500) : undefined,
-      userAgent: trunc(String(req.headers['user-agent'] || b.userAgent || ''), 400),
-      userId: req.user && !req.user.isGuest ? req.userId : undefined,
-      deviceId: trunc(String(req.headers['x-device-id'] || b.deviceId || ''), 120),
+      env,
+      level,
+      kind,
+      message,
+      stack,
+      url,
+      userAgent,
+      userId,
+      deviceId,
       meta,
       batteryLevel: typeof b.batteryLevel === 'number' ? b.batteryLevel : null,
       batteryCharging: typeof b.batteryCharging === 'boolean' ? b.batteryCharging : null,
       perf: b.perf,
     });
+    // Fire-and-forget : email admin sur error/fatal (throttle côté telemetryAlert)
+    void import('./telemetryAlert.js')
+      .then(({ maybeAlertTelemetryError }) =>
+        maybeAlertTelemetryError({
+          id,
+          env,
+          level,
+          kind,
+          message,
+          stack,
+          url,
+          userAgent,
+          userId,
+          deviceId,
+          meta,
+        }),
+      )
+      .catch((err) => console.error('[telemetry] alert', err));
     res.json({ ok: true, id });
   } catch (err) {
     res.status(400).json({ error: String((err as Error).message || err) });
@@ -1672,7 +1709,25 @@ app.get('/api/album/:id/radio', accountRequired, async (req, res) => {
 
 app.get('/api/playlist/:id', accountRequired, async (req, res) => {
   try {
-    res.json(await getPlaylist(p(req.params.id)));
+    const id = p(req.params.id);
+    // Playlists perso / J'aime : servir depuis la biblio (pas YouTube browse)
+    const local = listPlaylists(req.userId!).find((x) => x.id === id);
+    if (local) {
+      res.json({
+        playlist: {
+          id: local.id,
+          title: local.name,
+          name: local.name,
+          description: local.description || '',
+          thumbnails: local.coverUrl
+            ? [{ url: local.coverUrl, width: 120, height: 120 }]
+            : [],
+        },
+        tracks: local.tracks || [],
+      });
+      return;
+    }
+    res.json(await getPlaylist(id));
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2135,10 +2190,56 @@ process.on('uncaughtException', (err) => {
     return;
   }
   console.error('[fatal] uncaughtException', err);
-  process.exit(1);
+  try {
+    const id = insertTelemetry({
+      env: getAppEnv(),
+      level: 'fatal',
+      kind: 'server.uncaughtException',
+      message: String(err?.message || err),
+      stack: err?.stack,
+      meta: { code },
+    });
+    void import('./telemetryAlert.js').then(({ maybeAlertTelemetryError }) =>
+      maybeAlertTelemetryError({
+        id,
+        env: getAppEnv(),
+        level: 'fatal',
+        kind: 'server.uncaughtException',
+        message: String(err?.message || err),
+        stack: err?.stack,
+        meta: { code },
+      }),
+    );
+  } catch (e) {
+    console.error('[fatal] telemetry insert failed', e);
+  }
+  // Laisse le temps d’envoyer le mail avant exit
+  setTimeout(() => process.exit(1), 1500);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  try {
+    const id = insertTelemetry({
+      env: getAppEnv(),
+      level: 'error',
+      kind: 'server.unhandledRejection',
+      message: err.message,
+      stack: err.stack,
+    });
+    void import('./telemetryAlert.js').then(({ maybeAlertTelemetryError }) =>
+      maybeAlertTelemetryError({
+        id,
+        env: getAppEnv(),
+        level: 'error',
+        kind: 'server.unhandledRejection',
+        message: err.message,
+        stack: err.stack,
+      }),
+    );
+  } catch {
+    /* ignore */
+  }
 });
 
 server.listen(PORT, '0.0.0.0', () => {

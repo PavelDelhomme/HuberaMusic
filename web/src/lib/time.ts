@@ -32,8 +32,15 @@ export function trackDurationSeconds(track: {
   if (typeof track.duration === 'number' && Number.isFinite(track.duration) && track.duration > 0) {
     return Math.floor(track.duration);
   }
+  if (track.duration != null && typeof track.duration === 'object') return null;
   const raw = String(track.duration ?? '').trim();
-  if (!raw) return null;
+  if (!raw || raw === '[object Object]') return null;
+  // Uniquement horloge pure (évite labels / garbage type « Play … by … »)
+  if (!/^\d{1,2}:\d{2}(:\d{2})?$/.test(raw) && !/^\d+$/.test(raw)) {
+    const m = raw.match(/\b(\d{1,2}:\d{2}(?::\d{2})?)\b/);
+    if (!m) return null;
+    return trackDurationSeconds({ duration: m[1] });
+  }
   if (/^\d+$/.test(raw)) {
     const n = Number(raw);
     return n > 0 ? n : null;

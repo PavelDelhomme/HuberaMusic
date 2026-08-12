@@ -65,6 +65,10 @@ object AppLog {
 
     fun e(tag: String, msg: String, t: Throwable? = null) = write("E", tag, msg, t)
 
+    fun sessionId(): String = sessionId
+
+    fun breadcrumbSnapshot(): List<String> = breadcrumbs.toList()
+
     fun crash(t: Throwable, fatal: Boolean = true) {
         val sw = StringWriter()
         t.printStackTrace(PrintWriter(sw))
@@ -81,16 +85,20 @@ object AppLog {
             appendLine(sw.toString())
         }
         e("crash", t.message ?: t.javaClass.simpleName, t)
-        writer.execute {
-            synchronized(lock) {
-                val dir = filesDir ?: return@synchronized
-                dir.mkdirs()
-                File(dir, LAST_CRASH).writeText(body)
-                val name = "crash-$sessionId-${System.currentTimeMillis()}.txt"
-                File(dir, name).writeText(body)
-                pruneCrashes(dir)
+        // Sync avant kill process (writer async trop lent pour fatal)
+        synchronized(lock) {
+            val dir = filesDir
+            if (dir != null) {
+                runCatching {
+                    dir.mkdirs()
+                    File(dir, LAST_CRASH).writeText(body)
+                    val name = "crash-$sessionId-${System.currentTimeMillis()}.txt"
+                    File(dir, name).writeText(body)
+                    pruneCrashes(dir)
+                }
             }
         }
+        runCatching { TelemetryReporter.reportCrash(t, fatal) }
     }
 
     fun logDir(): File? = filesDir

@@ -344,6 +344,18 @@ fun LibraryScreen(
                         else -> buildLibraryContent(data, selected, downloadMeta, downloadsEnriching)
                     }
                 }
+                val warmKey = remember(content.playableQueue) {
+                    content.playableQueue.take(40).joinToString(",") { it.id }
+                }
+                LaunchedEffect(selected, warmKey) {
+                    val ids = content.playableQueue.map { it.id }.filter { it.length == 11 }.take(40)
+                    if (ids.isEmpty()) return@LaunchedEffect
+                    ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(
+                        container.resolvedApiBase(),
+                        ids,
+                        limit = 32,
+                    )
+                }
                 when {
                     content.comingSoon != null -> EmptyHint(content.comingSoon!!)
                     content.loading -> {

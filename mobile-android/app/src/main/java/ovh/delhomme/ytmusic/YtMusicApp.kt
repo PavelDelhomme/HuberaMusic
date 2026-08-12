@@ -1,6 +1,7 @@
 package ovh.delhomme.ytmusic
 
 import android.app.Application
+import android.content.ComponentCallbacks2
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
@@ -12,12 +13,14 @@ import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.NetworkMonitor
 import ovh.delhomme.ytmusic.debug.CrashReporter
+import ovh.delhomme.ytmusic.player.StreamPrefetcher
 
 class YtMusicApp : Application(), ImageLoaderFactory {
     lateinit var container: AppContainer
         private set
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var imageLoader: ImageLoader? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -31,22 +34,34 @@ class YtMusicApp : Application(), ImageLoaderFactory {
         }
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            runCatching { StreamPrefetcher.cancelIdle() }
+            imageLoader?.memoryCache?.clear()
+        }
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            imageLoader?.memoryCache?.clear()
+        }
+    }
+
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
             .crossfade(true)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.14)
+                    .maxSizePercent(0.10)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("coil-covers"))
-                    .maxSizeBytes(72L * 1024L * 1024L)
+                    .maxSizeBytes(48L * 1024L * 1024L)
                     .build()
             }
             .respectCacheHeaders(false)
             .build()
+            .also { imageLoader = it }
 
     companion object {
         lateinit var instance: YtMusicApp

@@ -90,9 +90,10 @@ printf 'sdk.dir=%s\n' "$ANDROID_HOME" >"$APP/local.properties"
 
 cd "$APP"
 chmod +x ./gradlew
-./gradlew :app:assembleDebug -PAPI_BASE_URL="$API_BASE_URL" --no-daemon
+# Publication Admin QR = toujours le package prod (sans .dev)
+./gradlew :app:assembleProdDebug -PAPI_BASE_URL="$API_BASE_URL" --no-daemon
 
-APK_SRC="$APP/app/build/outputs/apk/debug/app-debug.apk"
+APK_SRC="$APP/app/build/outputs/apk/prod/debug/app-prod-debug.apk"
 if [[ ! -f "$APK_SRC" ]]; then
   echo "APK introuvable: $APK_SRC" >&2
   exit 1

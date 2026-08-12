@@ -57,6 +57,7 @@ import ovh.delhomme.ytmusic.data.buildRadioQueue
 import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.PinnedBadge
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.ui.util.isLandscape
 
 /** Page artiste style YouTube Music : tops, albums, singles, biblio, similaires. */
 @Composable
@@ -177,7 +178,7 @@ fun ArtistDetailScreen(
                         ) {
                             cover?.let {
                                 Box {
-                                    MediaCover(it, 168.dp, circle = true)
+                                    MediaCover(it, if (isLandscape()) 112.dp else 168.dp, circle = true)
                                     if (artistId in pinIds) {
                                         PinnedBadge(
                                             modifier = Modifier

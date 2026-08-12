@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Défaut sûr ; flavors prod/dev surchargent ce fichier. -->
+<!-- Prod : HTTPS uniquement (pas de cleartext). -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>

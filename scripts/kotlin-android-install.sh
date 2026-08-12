@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Build + install APK Android Kotlin natif (Compose / Media3) — sans Capacitor / WebView
+# Flavors :
+#   prod → ovh.delhomme.ytmusic     (API HTTPS distante)
+#   dev  → ovh.delhomme.ytmusic.dev (API LAN)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/mobile-android"
@@ -40,8 +43,23 @@ if [[ -z "$API_BASE_URL" || "$API_BASE_URL" == *"127.0.0.1"* || "$API_BASE_URL" 
   fi
 fi
 
+API_NORM="${API_BASE_URL%/}"
+if [[ -n "${FLAVOR:-}" ]]; then
+  CHANNEL_FLAVOR="$FLAVOR"
+elif [[ "$API_NORM" == https://* ]] && [[ "$API_NORM" != *127.0.0.1* ]] && [[ "$API_NORM" != *localhost* ]]; then
+  CHANNEL_FLAVOR=prod
+else
+  CHANNEL_FLAVOR=dev
+fi
+case "$CHANNEL_FLAVOR" in
+  prod) PKG=ovh.delhomme.ytmusic ;;
+  dev) PKG=ovh.delhomme.ytmusic.dev ;;
+  *) echo "❌ FLAVOR invalide: $CHANNEL_FLAVOR (prod|dev)" >&2; exit 1 ;;
+esac
+
 echo "==> MODE=$MODE"
 echo "==> DEVICE=$DEVICE"
+echo "==> FLAVOR=$CHANNEL_FLAVOR PKG=$PKG"
 echo "==> API_BASE_URL=$API_BASE_URL"
 echo "==> ANDROID_HOME=$ANDROID_HOME"
 echo "==> JAVA_HOME=$JAVA_HOME"
@@ -53,12 +71,15 @@ echo "==> local.properties → sdk.dir=$ANDROID_HOME"
 cd "$APP"
 chmod +x ./gradlew
 
-echo "==> Gradle assembleDebug…"
-./gradlew :app:assembleDebug -PAPI_BASE_URL="$API_BASE_URL" --no-daemon
+GRADLE_TASK=":app:assemble$(echo "${CHANNEL_FLAVOR:0:1}" | tr '[:lower:]' '[:upper:]')${CHANNEL_FLAVOR:1}Debug"
 
-APK="$APP/app/build/outputs/apk/debug/app-debug.apk"
+echo "==> Gradle $GRADLE_TASK…"
+./gradlew "$GRADLE_TASK" -PAPI_BASE_URL="$API_BASE_URL" --no-daemon
+
+APK="$APP/app/build/outputs/apk/${CHANNEL_FLAVOR}/debug/app-${CHANNEL_FLAVOR}-debug.apk"
 if [[ ! -f "$APK" ]]; then
   echo "APK introuvable: $APK" >&2
+  ls -la "$APP/app/build/outputs/apk/" 2>/dev/null || true
   exit 1
 fi
 echo "==> APK: $APK ($(du -h "$APK" | cut -f1))"
@@ -92,10 +113,10 @@ else
 fi
 
 # Efface un éventuel override prefs 127.0.0.1 (ancienne UI debug)
-adb -s "$DEVICE" shell "run-as ovh.delhomme.ytmusic sh -c 'rm -f shared_prefs/ytm_api.xml' 2>/dev/null" || true
+adb -s "$DEVICE" shell "run-as $PKG sh -c 'rm -f shared_prefs/ytm_api.xml' 2>/dev/null" || true
 
 echo "==> Install…"
 adb -s "$DEVICE" install -r "$APK"
 echo "==> Launch…"
-adb -s "$DEVICE" shell am start -n ovh.delhomme.ytmusic/.MainActivity
-echo "OK — app Kotlin native installée sur $DEVICE (API=$API_BASE_URL)"
+adb -s "$DEVICE" shell am start -n "$PKG/ovh.delhomme.ytmusic.MainActivity"
+echo "OK — app Kotlin native installée sur $DEVICE (PKG=$PKG API=$API_BASE_URL)"

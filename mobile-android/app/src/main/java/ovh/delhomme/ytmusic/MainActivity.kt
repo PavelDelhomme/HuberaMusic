@@ -104,6 +104,7 @@ import ovh.delhomme.ytmusic.ui.player.NowPlayingScreen
 import ovh.delhomme.ytmusic.ui.prefs.RecoPrefsScreen
 import ovh.delhomme.ytmusic.ui.search.SearchScreen
 import ovh.delhomme.ytmusic.ui.theme.YtMusicTheme
+import ovh.delhomme.ytmusic.ui.util.isLandscape
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 
@@ -252,7 +253,14 @@ fun YtMusicAppContent(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, player) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) player.flushPersist()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    player.flushPersist()
+                    // Économie batterie : coupe prefetch HTTP / Exo quand l’UI n’est plus visible
+                    runCatching { ovh.delhomme.ytmusic.player.StreamPrefetcher.cancelIdle() }
+                }
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
@@ -871,7 +879,8 @@ private fun MainTabs(
         if (playerSheetMounted) return@LaunchedEffect
         while (playerUi.playing && playerUi.track != null) {
             player.tick()
-            delay(500)
+            // Mini-bar : tick plus lent = moins de recompositions / batterie
+            delay(if (expanded) 500 else 900)
         }
     }
 
@@ -968,8 +977,10 @@ private fun MainTabs(
                                 .padding(16.dp),
                         )
                     }
+                    val landscapeChrome = isLandscape()
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface,
+                        modifier = if (landscapeChrome) Modifier.height(52.dp) else Modifier,
                     ) {
                         tabs.forEach { tab ->
                             NavigationBarItem(
@@ -982,7 +993,8 @@ private fun MainTabs(
                                     }
                                 },
                                 icon = { Icon(tab.icon, contentDescription = tab.label) },
-                                label = { Text(tab.label) },
+                                label = if (landscapeChrome) null else { { Text(tab.label) } },
+                                alwaysShowLabel = !landscapeChrome,
                             )
                         }
                     }

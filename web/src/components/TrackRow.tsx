@@ -200,7 +200,7 @@ export function TrackRow({
 
       <div className="flex shrink-0 items-center gap-0 sm:gap-0.5">
         <span className="mr-0.5 min-w-[2.5rem] text-right text-[11px] tabular-nums text-yt-muted sm:mr-1 sm:min-w-[2.75rem] sm:text-xs">
-          {formatTrackDuration(track) || '—'}
+          {formatTrackDuration(enriched) || '—'}
         </span>
         <button
           type="button"

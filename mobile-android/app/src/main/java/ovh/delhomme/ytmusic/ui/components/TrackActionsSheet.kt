@@ -668,13 +668,20 @@ fun TrackActionsSheet(
                 }
             }
 
-            SheetAction(Icons.Default.ThumbDown, "Je n'aime pas", "Signale au moteur de reco") {
+            SheetAction(Icons.Default.ThumbDown, "Je n'aime pas", "Signale au moteur de reco et passe au suivant") {
                 scope.launch {
                     runCatching {
                         container.api.recoFeedback(
                             RecoFeedbackBody(enriched.id, "bad", "actions_dislike"),
                         )
+                        container.mixCache.clear(container.mixCache.keyRadio("track", enriched.id))
+                        player.state.value.track?.id?.let { cur ->
+                            container.mixCache.clear(container.mixCache.keyRadio("track", cur))
+                        }
                         Toast.makeText(context, "Retour enregistré", Toast.LENGTH_SHORT).show()
+                        if (player.state.value.track?.id == enriched.id) {
+                            player.skipNext()
+                        }
                     }
                     onDismiss()
                 }

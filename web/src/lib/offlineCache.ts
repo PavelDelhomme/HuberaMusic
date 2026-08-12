@@ -127,7 +127,12 @@ export async function downloadAndCache(
     });
     onProgress?.(1);
   }
-  if (blob.size < 8_000) throw new Error('Fichier trop petit — stream incomplet');
+  if (total > 0 && blob.size < total * 0.98) {
+    throw new Error(`Téléchargement tronqué (${blob.size} / ${total} octets)`);
+  }
+  const sec = Number(track.durationSeconds || 0) || 0;
+  const minBytes = sec > 0 ? Math.max(96_000, sec * 12_000) : 96_000;
+  if (blob.size < minBytes) throw new Error('Fichier trop petit — stream incomplet');
   await cacheAudioBlob(track.id, blob, track);
   await fetch(apiUrl(`/api/download/${track.id}`), {
     method: 'POST',

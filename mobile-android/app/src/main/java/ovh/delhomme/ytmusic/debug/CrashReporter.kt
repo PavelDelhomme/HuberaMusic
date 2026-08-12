@@ -13,9 +13,9 @@ object CrashReporter {
         previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching { AppLog.crash(throwable, fatal = true) }
-            // Laisser le temps d’écrire le fichier avant le kill process
+            // Sync disque déjà fait ; POST télémétrie sync (~1.4s) dans AppLog.crash
             try {
-                Thread.sleep(250)
+                Thread.sleep(200)
             } catch (_: InterruptedException) {
             }
             previous?.uncaughtException(thread, throwable)

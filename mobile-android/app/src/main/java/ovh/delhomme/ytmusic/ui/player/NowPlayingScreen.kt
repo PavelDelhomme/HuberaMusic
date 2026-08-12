@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,11 +32,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import ovh.delhomme.ytmusic.ui.util.isLandscape
+import ovh.delhomme.ytmusic.ui.util.screenHeightDp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -576,6 +581,7 @@ fun NowPlayingScreen(
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // Lecteur « plein » : cover + contrôles + aperçu file
+                val landscapeLayout = isLandscape()
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -585,16 +591,21 @@ fun NowPlayingScreen(
                             translationY = -qp * 48f
                         },
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    userScrollEnabled = qp < 0.45f,
+                    userScrollEnabled = qp < 0.45f && !landscapeLayout,
                 ) {
                     item {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp)
-                                .graphicsLayer { translationX = mediaSlideX * 0.35f },
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
+                        val landscape = landscapeLayout
+                        val coverH = if (landscape) {
+                            (screenHeightDp() * 0.62f).dp.coerceIn(110.dp, 200.dp)
+                        } else {
+                            260.dp
+                        }
+                        val lyricsH = if (landscape) {
+                            (screenHeightDp() * 0.72f).dp.coerceIn(130.dp, 240.dp)
+                        } else {
+                            380.dp
+                        }
+                        val mediaBlock: @Composable () -> Unit = {
                             Column(
                                 Modifier
                                     .fillMaxWidth()
@@ -636,8 +647,7 @@ fun NowPlayingScreen(
                                         onSeek = { player.seek(it) },
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            // Cover remplacée : carte paroles immersive
-                                            .height(380.dp)
+                                            .height(lyricsH)
                                             .clip(RoundedCornerShape(16.dp))
                                             .background(Color.Black.copy(alpha = 0.42f)),
                                     )
@@ -650,67 +660,101 @@ fun NowPlayingScreen(
                                             active = sheetVisible && SessionMediaMode.video,
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(260.dp)
+                                                .height(coverH)
                                                 .clip(RoundedCornerShape(12.dp)),
                                         )
                                     } else {
                                         AsyncImage(
-                                            model = track.coverUrl(800),
+                                            model = track.coverUrl(if (landscape) 600 else 800),
                                             contentDescription = track.title,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .height(260.dp)
+                                                .height(coverH)
                                                 .clip(RoundedCornerShape(12.dp)),
                                         )
                                     }
-                                    Spacer(Modifier.height(18.dp))
-                                    Text(
-                                        track.title,
-                                        style = MaterialTheme.typography.headlineSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = PlayerFg,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Clip,
-                                        textAlign = TextAlign.Start,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .basicMarquee(
-                                                iterations = Int.MAX_VALUE,
-                                                initialDelayMillis = 1200,
-                                            ),
-                                    )
-                                    if (onOpenArtist != null) {
-                                        ArtistLinksText(
-                                            track = track,
-                                            onOpenArtist = onOpenArtist,
-                                            color = PlayerMuted,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            maxLines = 1,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .basicMarquee(
-                                                    iterations = Int.MAX_VALUE,
-                                                    initialDelayMillis = 1600,
-                                                ),
-                                        )
-                                    } else {
+                                    if (!landscape) {
+                                        Spacer(Modifier.height(18.dp))
                                         Text(
-                                            track.artistLine(),
-                                            color = PlayerMuted,
+                                            track.title,
+                                            style = MaterialTheme.typography.headlineSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PlayerFg,
                                             maxLines = 1,
                                             overflow = TextOverflow.Clip,
+                                            textAlign = TextAlign.Start,
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .basicMarquee(
                                                     iterations = Int.MAX_VALUE,
-                                                    initialDelayMillis = 1600,
+                                                    initialDelayMillis = 1200,
                                                 ),
                                         )
+                                        if (onOpenArtist != null) {
+                                            ArtistLinksText(
+                                                track = track,
+                                                onOpenArtist = onOpenArtist,
+                                                color = PlayerMuted,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                maxLines = 1,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .basicMarquee(
+                                                        iterations = Int.MAX_VALUE,
+                                                        initialDelayMillis = 1600,
+                                                    ),
+                                            )
+                                        } else {
+                                            Text(
+                                                track.artistLine(),
+                                                color = PlayerMuted,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Clip,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .basicMarquee(
+                                                        iterations = Int.MAX_VALUE,
+                                                        initialDelayMillis = 1600,
+                                                    ),
+                                            )
+                                        }
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(10.dp))
+                        }
+                        val metaAndControls: @Composable () -> Unit = {
+                            if (landscape && !showLyrics) {
+                                Text(
+                                    track.title,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PlayerFg,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                if (onOpenArtist != null) {
+                                    ArtistLinksText(
+                                        track = track,
+                                        onOpenArtist = onOpenArtist,
+                                        color = PlayerMuted,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                } else {
+                                    Text(
+                                        track.artistLine(),
+                                        color = PlayerMuted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                                Spacer(Modifier.height(6.dp))
+                            }
+                            if (!landscape) Spacer(Modifier.height(10.dp))
                             ui.sleepLabel?.let { label ->
                                 Row(
                                     Modifier
@@ -834,7 +878,7 @@ fun NowPlayingScreen(
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
                             val seekInteraction = remember { MutableInteractionSource() }
                             val bufferedFrac = if (ui.durationMs > 0) {
                                 (ui.bufferedMs.toFloat() / ui.durationMs).coerceIn(0f, 1f)
@@ -847,7 +891,6 @@ fun NowPlayingScreen(
                                 inactiveTrackColor = PlayerFg.copy(alpha = 0.18f),
                             )
                             Box(Modifier.fillMaxWidth()) {
-                                // Buffer gris derrière le slider
                                 Box(
                                     Modifier
                                         .fillMaxWidth()
@@ -864,35 +907,35 @@ fun NowPlayingScreen(
                                     )
                                 }
                                 Slider(
-                                value = progress,
-                                onValueChange = { scrub = it },
-                                onValueChangeFinished = {
-                                    player.seek((scrub * duration).toLong())
-                                    scrub = -1f
-                                },
-                                colors = seekColors,
-                                interactionSource = seekInteraction,
-                                thumb = {
-                                    SliderDefaults.Thumb(
-                                        interactionSource = seekInteraction,
-                                        colors = seekColors,
-                                        enabled = true,
-                                        thumbSize = if (scrub >= 0f) DpSize(14.dp, 14.dp) else DpSize(10.dp, 10.dp),
-                                    )
-                                },
-                                track = { sliderState ->
-                                    SliderDefaults.Track(
-                                        sliderState = sliderState,
-                                        colors = seekColors,
-                                        enabled = true,
-                                        modifier = Modifier.height(2.dp),
-                                        thumbTrackGapSize = 0.dp,
-                                        drawStopIndicator = null,
-                                    )
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(28.dp),
+                                    value = progress,
+                                    onValueChange = { scrub = it },
+                                    onValueChangeFinished = {
+                                        player.seek((scrub * duration).toLong())
+                                        scrub = -1f
+                                    },
+                                    colors = seekColors,
+                                    interactionSource = seekInteraction,
+                                    thumb = {
+                                        SliderDefaults.Thumb(
+                                            interactionSource = seekInteraction,
+                                            colors = seekColors,
+                                            enabled = true,
+                                            thumbSize = if (scrub >= 0f) DpSize(14.dp, 14.dp) else DpSize(10.dp, 10.dp),
+                                        )
+                                    },
+                                    track = { sliderState ->
+                                        SliderDefaults.Track(
+                                            sliderState = sliderState,
+                                            colors = seekColors,
+                                            enabled = true,
+                                            modifier = Modifier.height(2.dp),
+                                            thumbTrackGapSize = 0.dp,
+                                            drawStopIndicator = null,
+                                        )
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(if (landscape) 24.dp else 28.dp),
                                 )
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
@@ -905,7 +948,7 @@ fun NowPlayingScreen(
                                     color = PlayerMuted,
                                 )
                             }
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
                             Row(
                                 Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -934,7 +977,7 @@ fun NowPlayingScreen(
                                                 Icons.Default.SkipPrevious,
                                                 slot.label,
                                                 tint = PlayerFg,
-                                                modifier = Modifier.size(40.dp),
+                                                modifier = Modifier.size(if (landscape) 34.dp else 40.dp),
                                             )
                                         }
                                         PlayerChromeAction.PlayPause -> IconButton(onClick = player::toggle) {
@@ -942,7 +985,7 @@ fun NowPlayingScreen(
                                                 if (ui.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                                                 slot.label,
                                                 tint = PlayerFg,
-                                                modifier = Modifier.size(56.dp),
+                                                modifier = Modifier.size(if (landscape) 48.dp else 56.dp),
                                             )
                                         }
                                         PlayerChromeAction.Next -> HoldSeekIconButton(
@@ -953,7 +996,7 @@ fun NowPlayingScreen(
                                                 Icons.Default.SkipNext,
                                                 slot.label,
                                                 tint = PlayerFg,
-                                                modifier = Modifier.size(40.dp),
+                                                modifier = Modifier.size(if (landscape) 34.dp else 40.dp),
                                             )
                                         }
                                         PlayerChromeAction.Repeat -> IconButton(onClick = player::cycleRepeat) {
@@ -973,139 +1016,121 @@ fun NowPlayingScreen(
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(16.dp))
+                            if (!landscape) Spacer(Modifier.height(16.dp))
                         }
-                    }
 
-                    item {
-                        QueueSectionHeader(
-                            title = "File d'attente",
-                            canClear = ui.queue.size > 1,
-                            onExpand = { expandQueue() },
-                            onSave = { showSaveQueue = true },
-                            onClear = {
-                                player.clearUpcomingFromQueue()
-                                Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
-                            },
-                            onStartMix = {
-                                val t = ui.track ?: return@QueueSectionHeader
-                                scope.launch {
-                                    val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
-                                    if (mix.isNotEmpty()) {
-                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = if (landscape) 12.dp else 20.dp)
+                                .graphicsLayer { translationX = mediaSlideX * 0.35f },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            if (landscape) {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = (screenHeightDp() - 52).dp),
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(Modifier.weight(0.40f)) { mediaBlock() }
+                                    Column(
+                                        Modifier
+                                            .weight(0.60f)
+                                            .fillMaxHeight()
+                                            .verticalScroll(rememberScrollState()),
+                                    ) {
+                                        metaAndControls()
                                     }
                                 }
-                            },
-                            onQueueDrag = ::onQueueDrag,
-                            onQueueDragEnd = { settleQueue(it) },
-                        )
+                            } else {
+                                mediaBlock()
+                                metaAndControls()
+                            }
+                        }
                     }
 
-                    val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
-                    val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
-                    if (playedBefore.isNotEmpty()) {
+                    // Portrait : aperçu file sous le lecteur. Paysage : file via panneau glissé.
+                    if (!landscapeLayout) {
                         item {
-                            Text(
-                                "Déjà joués",
-                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = PlayerMuted,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                        itemsIndexed(
-                            playedBefore,
-                            key = { i, t -> "played-c-${t.id}-$i" },
-                        ) { index, item ->
-                            QueueTrackRow(
-                                track = item,
-                                index = index,
-                                highlighted = false,
-                                onClick = { player.playAt(index) },
-                                onLongClick = { onMore?.invoke(item) },
-                                onMove = { from, to -> player.moveInQueue(from, to) },
-                                onMore = onMore?.let { { it(item) } },
-                                onMix = {
+                            QueueSectionHeader(
+                                title = "File d'attente",
+                                canClear = ui.queue.size > 1,
+                                onExpand = { expandQueue() },
+                                onSave = { showSaveQueue = true },
+                                onClear = {
+                                    player.clearUpcomingFromQueue()
+                                    Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
+                                },
+                                onStartMix = {
+                                    val t = ui.track ?: return@QueueSectionHeader
                                     scope.launch {
-                                        val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
+                                        val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
                                         if (mix.isNotEmpty()) {
                                             player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
                                             Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
                                         }
                                     }
                                 },
-                                radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                                onQueueDrag = ::onQueueDrag,
+                                onQueueDragEnd = { settleQueue(it) },
                             )
                         }
-                    }
-                    item {
-                        Text(
-                            "En cours",
-                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = PlayerMuted,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    // Aperçu : titre courant + suite user (pas seulement à partir du courant sans label)
-                    val previewFrom = ui.queueIndex.coerceIn(0, boundary)
-                    itemsIndexed(
-                        ui.queue.subList(previewFrom, boundary),
-                        key = { i, t -> "iu-${t.id}-${previewFrom + i}" },
-                    ) { index, item ->
-                        val abs = previewFrom + index
-                        QueueTrackRow(
-                            track = item,
-                            index = abs,
-                            highlighted = abs == ui.queueIndex,
-                            onClick = { player.playAt(abs) },
-                            onLongClick = { onMore?.invoke(item) },
-                            onMove = { from, to -> player.moveInQueue(from, to) },
-                            onMore = onMore?.let { { it(item) } },
-                            onMix = {
-                                scope.launch {
-                                    val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
-                                    if (mix.isNotEmpty()) {
-                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            },
-                            radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
-                        )
-                    }
-                    item {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("À suivre", fontWeight = FontWeight.SemiBold, color = PlayerFg)
+
+                        val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
+                        val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
+                        if (playedBefore.isNotEmpty()) {
+                            item {
                                 Text(
-                                    "Lecture automatique",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    "Déjà joués",
+                                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = PlayerMuted,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
                             }
-                            Switch(
-                                checked = ui.autoplaySuggestions,
-                                onCheckedChange = { player.toggleAutoplaySuggestions() },
-                                colors = SwitchDefaults.colors(
-                                    checkedTrackColor = SeekRed,
-                                    checkedThumbColor = Color.White,
-                                ),
+                            itemsIndexed(
+                                playedBefore,
+                                key = { i, t -> "played-c-${t.id}-$i" },
+                            ) { index, item ->
+                                QueueTrackRow(
+                                    track = item,
+                                    index = index,
+                                    highlighted = false,
+                                    onClick = { player.playAt(index) },
+                                    onLongClick = { onMore?.invoke(item) },
+                                    onMove = { from, to -> player.moveInQueue(from, to) },
+                                    onMore = onMore?.let { { it(item) } },
+                                    onMix = {
+                                        scope.launch {
+                                            val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
+                                            if (mix.isNotEmpty()) {
+                                                player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                                                Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    },
+                                    radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                                )
+                            }
+                        }
+                        item {
+                            Text(
+                                "En cours",
+                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = PlayerMuted,
+                                fontWeight = FontWeight.SemiBold,
                             )
                         }
-                    }
-                    if (ui.autoplaySuggestions) {
+                        // Aperçu : titre courant + suite user (pas seulement à partir du courant sans label)
+                        val previewFrom = ui.queueIndex.coerceIn(0, boundary)
                         itemsIndexed(
-                            ui.queue.drop(boundary),
-                            key = { i, t -> "ia-${t.id}-${boundary + i}" },
-                        ) { i, item ->
-                            val abs = boundary + i
+                            ui.queue.subList(previewFrom, boundary),
+                            key = { i, t -> "iu-${t.id}-${previewFrom + i}" },
+                        ) { index, item ->
+                            val abs = previewFrom + index
                             QueueTrackRow(
                                 track = item,
                                 index = abs,
@@ -1123,10 +1148,62 @@ fun NowPlayingScreen(
                                         }
                                     }
                                 },
+                                radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
                             )
                         }
+                        item {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("À suivre", fontWeight = FontWeight.SemiBold, color = PlayerFg)
+                                    Text(
+                                        "Lecture automatique",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = PlayerMuted,
+                                    )
+                                }
+                                Switch(
+                                    checked = ui.autoplaySuggestions,
+                                    onCheckedChange = { player.toggleAutoplaySuggestions() },
+                                    colors = SwitchDefaults.colors(
+                                        checkedTrackColor = SeekRed,
+                                        checkedThumbColor = Color.White,
+                                    ),
+                                )
+                            }
+                        }
+                        if (ui.autoplaySuggestions) {
+                            itemsIndexed(
+                                ui.queue.drop(boundary),
+                                key = { i, t -> "ia-${t.id}-${boundary + i}" },
+                            ) { i, item ->
+                                val abs = boundary + i
+                                QueueTrackRow(
+                                    track = item,
+                                    index = abs,
+                                    highlighted = abs == ui.queueIndex,
+                                    onClick = { player.playAt(abs) },
+                                    onLongClick = { onMore?.invoke(item) },
+                                    onMove = { from, to -> player.moveInQueue(from, to) },
+                                    onMore = onMore?.let { { it(item) } },
+                                    onMix = {
+                                        scope.launch {
+                                            val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
+                                            if (mix.isNotEmpty()) {
+                                                player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                                                Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        item { Spacer(Modifier.height(40.dp)) }
                     }
-                    item { Spacer(Modifier.height(40.dp)) }
                 }
 
                 // File plein écran (suit le doigt via queueProgress)

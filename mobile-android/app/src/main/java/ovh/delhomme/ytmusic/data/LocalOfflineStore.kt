@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import ovh.delhomme.ytmusic.debug.AppLog
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -46,11 +47,20 @@ class LocalOfflineStore(
         .followRedirects(true)
         .build()
 
+    init {
+        // Nettoie les .part orphelins (kill app / cancel mid-download)
+        dir.listFiles()?.forEach { f ->
+            if (f.name.endsWith(".part")) f.delete()
+        }
+    }
+
     fun audioFile(trackId: String): File = File(dir, "$trackId.m4a")
 
     fun has(trackId: String): Boolean {
         val f = audioFile(trackId)
-        return f.isFile && f.length() > 8_000L
+        if (!f.isFile) return false
+        val meta = synchronized(this) { readMetaUnlocked()[trackId] }
+        return isFileComplete(f, meta)
     }
 
     fun playUri(trackId: String): Uri? {
@@ -59,12 +69,18 @@ class LocalOfflineStore(
     }
 
     fun listIds(): List<String> = synchronized(this) {
+        val meta = readMetaUnlocked()
         dir.listFiles()
             ?.mapNotNull { f ->
-                val name = f.name
-                if (!name.endsWith(".m4a")) return@mapNotNull null
-                val id = name.removeSuffix(".m4a")
-                id.takeIf { f.length() > 8_000L }
+                if (!f.name.endsWith(".m4a")) return@mapNotNull null
+                val id = f.name.removeSuffix(".m4a")
+                if (!isFileComplete(f, meta[id])) {
+                    // Purge les tronqués (évite fins anticipées hors-ligne)
+                    AppLog.w("offline", "purge incomplet $id size=${f.length()}")
+                    f.delete()
+                    return@mapNotNull null
+                }
+                id
             }
             ?.sorted()
             .orEmpty()
@@ -81,6 +97,7 @@ class LocalOfflineStore(
         mutex.withLock {
             audioFile(trackId).delete()
             File(dir, "$trackId.part").delete()
+            sizeHintFile(trackId).delete()
             val meta = readMetaUnlocked().toMutableMap()
             meta.remove(trackId)
             writeMetaUnlocked(meta)
@@ -90,7 +107,7 @@ class LocalOfflineStore(
 
     /**
      * Télécharge le flux **audio** (`/api/stream/{id}`) vers le stockage local.
-     * Mutex uniquement pour meta/rename — le HTTP reste libre (progress UI).
+     * Vérifie Content-Length / taille min (évite les .m4a tronqués qui coupent la lecture).
      */
     suspend fun download(
         track: TrackDto,
@@ -98,7 +115,7 @@ class LocalOfflineStore(
         onProgress: ((Float) -> Unit)? = null,
     ): Result<File> = withContext(Dispatchers.IO) {
         val dest = audioFile(track.id)
-        if (dest.isFile && dest.length() > 8_000L) {
+        if (dest.isFile && isFileComplete(dest, track)) {
             mutex.withLock {
                 upsertMetaUnlocked(track)
                 bump()
@@ -106,9 +123,26 @@ class LocalOfflineStore(
             onProgress?.invoke(1f)
             return@withContext Result.success(dest)
         }
+        var lastError: Throwable? = null
+        repeat(2) { attempt ->
+            val result = downloadOnce(track, streamUrl, onProgress, attempt)
+            if (result.isSuccess) return@withContext result
+            lastError = result.exceptionOrNull()
+            AppLog.w("offline", "DL retry ${attempt + 1} ${track.id}: ${lastError?.message}")
+        }
+        Result.failure(lastError ?: Exception("Échec téléchargement"))
+    }
+
+    private suspend fun downloadOnce(
+        track: TrackDto,
+        streamUrl: String,
+        onProgress: ((Float) -> Unit)?,
+        attempt: Int,
+    ): Result<File> {
+        val dest = audioFile(track.id)
         val part = File(dir, "${track.id}.part")
         part.delete()
-        runCatching {
+        return runCatching {
             val req = Request.Builder().url(streamUrl).get().build()
             http.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) error("HTTP ${resp.code}")
@@ -140,10 +174,16 @@ class LocalOfflineStore(
                         output.flush()
                     }
                 }
-                if (part.length() < 8_000L) {
+                val minBytes = minBytesFor(track)
+                if (part.length() < minBytes) {
                     part.delete()
-                    error("Fichier trop petit — stream incomplet")
+                    error("Fichier trop petit (${part.length()} < $minBytes) — stream incomplet")
                 }
+                if (total > 0 && readTotal < (total * 98 / 100)) {
+                    part.delete()
+                    error("Téléchargement tronqué ($readTotal / $total octets)")
+                }
+                // Persiste meta + taille attendue
                 mutex.withLock {
                     if (dest.exists()) dest.delete()
                     if (!part.renameTo(dest)) {
@@ -151,14 +191,44 @@ class LocalOfflineStore(
                         part.delete()
                     }
                     upsertMetaUnlocked(track)
+                    writeSizeHint(track.id, if (total > 0) total else dest.length())
                     bump()
                 }
                 onProgress?.invoke(1f)
+                AppLog.i("offline", "DL ok ${track.id} ${dest.length()}b attempt=$attempt")
                 dest
             }
         }.onFailure {
             part.delete()
         }
+    }
+
+    private fun sizeHintFile(trackId: String) = File(dir, "$trackId.size")
+
+    private fun writeSizeHint(trackId: String, bytes: Long) {
+        runCatching { sizeHintFile(trackId).writeText(bytes.toString()) }
+    }
+
+    private fun readSizeHint(trackId: String): Long? =
+        runCatching { sizeHintFile(trackId).readText().trim().toLong() }.getOrNull()?.takeIf { it > 0 }
+
+    private fun isFileComplete(file: File, track: TrackDto?): Boolean {
+        if (!file.isFile) return false
+        val len = file.length()
+        val minBytes = minBytesFor(track)
+        if (len < minBytes) return false
+        val hinted = readSizeHint(file.nameWithoutExtension)
+        if (hinted != null && hinted > minBytes && len < hinted * 98 / 100) return false
+        return true
+    }
+
+    /** ~96 kb/s floor × durée, ou 96 Ko minimum absolu. */
+    private fun minBytesFor(track: TrackDto?): Long {
+        val sec = track?.durationMsOrNull()?.div(1000)?.toInt()
+            ?: track?.durationSeconds
+            ?: 0
+        if (sec > 0) return maxOf(96_000L, sec * 12_000L)
+        return 96_000L
     }
 
     private fun readMetaUnlocked(): Map<String, TrackDto> {

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import ovh.delhomme.ytmusic.ui.util.isLandscape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -179,7 +180,19 @@ fun TrackRow(
                 )
             }
         }
-        val durationLabel = trailing ?: track.duration?.takeIf { it.isNotBlank() }
+        val durationLabel = trailing ?: run {
+            val ms = track.durationMsOrNull()
+            when {
+                ms != null && ms > 0L -> {
+                    val totalSec = (ms / 1000L).toInt()
+                    val m = totalSec / 60
+                    val s = totalSec % 60
+                    "%d:%02d".format(m, s)
+                }
+                !track.duration.isNullOrBlank() && track.duration!!.contains(':') -> track.duration
+                else -> null
+            }
+        }
         if (durationLabel != null) {
             Text(
                 durationLabel,
@@ -240,6 +253,10 @@ fun MiniPlayerBar(
         onSeek(ratio)
     }
 
+    val landscape = isLandscape()
+    val barH = if (landscape) 48.dp else 64.dp
+    val coverSz = if (landscape) 36.dp else 48.dp
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -252,7 +269,7 @@ fun MiniPlayerBar(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp),
+                .padding(horizontal = 10.dp, vertical = if (landscape) 0.dp else 0.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -266,7 +283,7 @@ fun MiniPlayerBar(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(14.dp)
+                    .height(if (landscape) 10.dp else 14.dp)
                     .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
                     .pointerInput(track.id, onSeek) {
                         detectTapGestures { offset ->
@@ -308,7 +325,7 @@ fun MiniPlayerBar(
                                 y = 0,
                             )
                         }
-                        .size(8.dp)
+                        .size(if (landscape) 6.dp else 8.dp)
                         .align(Alignment.CenterStart)
                         .clip(CircleShape)
                         .background(SeekRed),
@@ -318,7 +335,7 @@ fun MiniPlayerBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
+                .height(barH)
                 .clickable(onClick = onOpen)
                 .pointerInput(onDismiss, onOpen) {
                     var total = 0f
@@ -349,7 +366,7 @@ fun MiniPlayerBar(
         ) {
             MediaCover(
                 track,
-                48.dp,
+                coverSz,
                 modifier = Modifier
                     .clip(RoundedCornerShape(6.dp))
                     .clickable(onClick = onOpen),

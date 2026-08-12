@@ -593,15 +593,7 @@ export function PlayerBar({
             type="button"
             onClick={(e) => {
               stop(e);
-              const willLike = !isLiked(current.id);
               void toggleLike(current);
-              void api
-                .recoFeedback({
-                  trackId: current.id,
-                  verdict: willLike ? 'good' : 'bad',
-                  context: 'player_bar_like',
-                })
-                .catch(() => undefined);
             }}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-yt-muted hover:bg-white/10 hover:text-white"
             title="J'aime"
@@ -619,6 +611,8 @@ export function PlayerBar({
               void api
                 .recoFeedback({ trackId: current.id, verdict: 'bad', context: 'player_bar' })
                 .catch(() => undefined);
+              usePlayer.getState().refreshRecoAfterFeedback(current.id, 'bad');
+              void usePlayer.getState().next();
             }}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-yt-muted hover:bg-white/10 hover:text-white"
             title="Je n'aime pas"

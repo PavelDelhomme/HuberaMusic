@@ -143,6 +143,20 @@ export const useLibrary = create<LibraryState>((set, get) => ({
             : s.liked.filter((t) => t.id !== track.id),
         }));
       }
+      // Réoriente les futures propositions (file déjà chargée intacte)
+      try {
+        const { usePlayer } = await import('./player');
+        usePlayer.getState().refreshRecoAfterFeedback(track.id, r.liked ? 'good' : 'bad');
+        void api
+          .recoFeedback({
+            trackId: track.id,
+            verdict: r.liked ? 'good' : 'bad',
+            context: 'like_toggle',
+          })
+          .catch(() => undefined);
+      } catch {
+        /* ignore */
+      }
       return r.liked;
     } catch {
       set((s) => ({

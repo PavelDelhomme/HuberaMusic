@@ -150,13 +150,11 @@ export function ArtistPage() {
   return (
     <div className="animate-fade-up">
       <BackButton />
-      <div className="mb-8 flex flex-col items-start gap-6 sm:flex-row sm:items-end">
-        <div className="h-40 w-40 shrink-0 shadow-2xl sm:h-52 sm:w-52">
-          <CoverImage item={data.artist} size={800} rounded="full" />
-        </div>
-        <div>
-          <p className="text-xs uppercase tracking-widest text-yt-muted">Artiste</p>
-          <h1 className="font-display text-4xl font-semibold tracking-tight sm:text-5xl">{data.artist.name}</h1>
+      <div className="mb-8 flex min-w-0 flex-col gap-5">
+        <div className="min-w-0">
+          <h1 className="font-display text-3xl font-semibold tracking-tight break-words sm:text-5xl">
+            {data.artist.name}
+          </h1>
           {subscribersLabel ? <p className="mt-2 text-sm text-yt-muted">{subscribersLabel}</p> : null}
           {bio && (
             <div className="mt-3 max-w-2xl">
@@ -308,6 +306,10 @@ export function ArtistPage() {
               {radioToast}
             </p>
           )}
+        </div>
+        {/* Image sous les actions — lisible même avec la file ouverte à droite */}
+        <div className="mx-auto h-44 w-44 shrink-0 shadow-2xl sm:mx-0 sm:h-56 sm:w-56">
+          <CoverImage item={data.artist} size={800} rounded="full" />
         </div>
       </div>
 

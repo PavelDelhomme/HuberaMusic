@@ -18,7 +18,14 @@ API="${API_BASE_URL:-${DEPLOY_URL:-https://ytmusic.delhomme.ovh}}"
 API="${API%/}"
 EMAIL="${SEED_EMAIL:-${VITE_DEV_EMAIL:-}}"
 PASS="${SEED_PASSWORD:-${VITE_DEV_PASSWORD:-}}"
-PKG=ovh.delhomme.ytmusic
+# prod = ovh.delhomme.ytmusic · dev (LAN) = ovh.delhomme.ytmusic.dev
+if [[ -z "${PKG:-}" ]]; then
+  if [[ "$API" == https://* ]] && [[ "$API" != *127.0.0.1* ]] && [[ "$API" != *localhost* ]]; then
+    PKG=ovh.delhomme.ytmusic
+  else
+    PKG=ovh.delhomme.ytmusic.dev
+  fi
+fi
 ADB="${ADB_BIN:-adb}"
 DEVICE="${DEVICE:-$($ADB devices | awk '/\tdevice$/{print $1; exit}')}"
 
@@ -31,7 +38,7 @@ if [[ -z "$EMAIL" || -z "$PASS" ]]; then
   exit 1
 fi
 
-echo "==> API=$API device=$DEVICE"
+echo "==> API=$API device=$DEVICE pkg=$PKG"
 
 eval "$(
   EMAIL="$EMAIL" PASS="$PASS" API="$API" node <<'NODE'
@@ -62,7 +69,7 @@ fi
 echo "==> token_len=${#TOKEN} — injection session (debug extras)"
 
 $ADB -s "$DEVICE" shell am force-stop "$PKG" || true
-$ADB -s "$DEVICE" shell am start -n "$PKG/.MainActivity" \
+$ADB -s "$DEVICE" shell am start -n "$PKG/ovh.delhomme.ytmusic.MainActivity" \
   --es ytm_access_token "$TOKEN" \
   --es ytm_refresh_token "$REFRESH" \
   --es ytm_user_email "$USER_EMAIL" >/dev/null

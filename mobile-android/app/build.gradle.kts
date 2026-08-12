@@ -112,6 +112,33 @@ android {
         buildConfigField("String", "APP_VERSION", "\"${esc(semver)}\"")
         buildConfigField("String", "APP_CHANNEL", "\"$channel\"")
         buildConfigField("String", "APP_VERSION_LABEL", "\"${esc(versionName!!)}\"")
+        // URL publique (DEPLOY_URL / PUBLIC_API_URL) — fallback LAN→prod, bouton Debug
+        val publicApi = listOfNotNull(
+            rootEnv["PUBLIC_API_URL"],
+            rootEnv["DEPLOY_URL"],
+            rootEnv["ANDROID_API_BASE_URL"],
+        ).map { it.trim().trimEnd('/') }
+            .firstOrNull { it.startsWith("https://") && !it.contains("127.0.0.1") && !it.contains("localhost") }
+            ?: ""
+        buildConfigField("String", "PUBLIC_API_URL", "\"${esc(publicApi)}\"")
+    }
+
+    // Deux APK côte à côte sur le même téléphone :
+    //   prod → ovh.delhomme.ytmusic      (PLM)
+    //   dev  → ovh.delhomme.ytmusic.dev  (PLM Dev)
+    flavorDimensions += "channel"
+    productFlavors {
+        create("prod") {
+            dimension = "channel"
+            resValue("string", "app_name", "PLM")
+            manifestPlaceholders["usesCleartext"] = "false"
+        }
+        create("dev") {
+            dimension = "channel"
+            applicationIdSuffix = ".dev"
+            resValue("string", "app_name", "PLM Dev")
+            manifestPlaceholders["usesCleartext"] = "true"
+        }
     }
 
     buildTypes {

@@ -24,6 +24,8 @@ import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.isPrecomputedMixSource
 import ovh.delhomme.ytmusic.YtMusicApp
 import ovh.delhomme.ytmusic.debug.CrashReporter
+import ovh.delhomme.ytmusic.debug.AppLog
+import ovh.delhomme.ytmusic.ui.player.SessionMediaMode
 import android.widget.Toast
 
 enum class RepeatMode { Off, All, One }
@@ -79,7 +81,14 @@ class PlayerController(
     private var sleepLabel: String? = null
     private var queueTitle: String = "File d'attente"
     private var shuffleEnabled: Boolean = false
+    /** Ordre naturel de la suite pendant le shuffle (restore OFF + ajouts autoplay). */
+    private var shuffleNatural: MutableList<TrackDto>? = null
     private var repeatMode: RepeatMode = RepeatMode.Off
+    private var silenceActiveTrackId: String? = null
+    private var silenceSkipTrackId: String? = null
+    /** Fin de dernière lyric (ms) pour le titre courant. */
+    private var lastLyricEndMs: Long = -1L
+    private var lyricsFetchTrackId: String? = null
     private var userQueueEnd: Int = 0
     private var sourceId: String? = null
     private var sourceKind: String? = null
@@ -254,6 +263,11 @@ class PlayerController(
         if (toAdd.isEmpty()) return
         if (userQueueEnd <= 0) userQueueEnd = (_state.value.queueIndex + 1).coerceAtMost(queue.size)
         queue.addAll(toAdd)
+        if (shuffleEnabled) {
+            val natural = shuffleNatural ?: queue.drop(curIdx + 1).dropLast(toAdd.size).toMutableList()
+            natural.addAll(toAdd)
+            shuffleNatural = natural
+        }
         PlaybackService.Holder.queue = queue
         toAdd.forEach { c.addMediaItem(mediaItem(it)) }
         warmAround(queue, c.currentMediaItemIndex.coerceAtLeast(0))
@@ -692,17 +706,51 @@ class PlayerController(
             val queue = PlaybackService.Holder.queue.toMutableList()
             if (idx < queue.lastIndex) {
                 val head = queue.take(idx + 1)
-                val rest = queue.drop(idx + 1).shuffled()
-                val newQ = head + rest
+                val rest = queue.drop(idx + 1)
+                shuffleNatural = rest.toMutableList()
+                val shuffled = rest.shuffled()
+                val newQ = head + shuffled
                 PlaybackService.Holder.queue = newQ
                 while (c.mediaItemCount > idx + 1) c.removeMediaItem(idx + 1)
-                rest.forEach { c.addMediaItem(mediaItem(it)) }
+                shuffled.forEach { c.addMediaItem(mediaItem(it)) }
+            } else {
+                shuffleNatural = mutableListOf()
             }
-            // Ordre géré manuellement — pas le shuffle ExoPlayer (qui changerait le « next »)
+            // Ordre géré manuellement — pas le shuffle ExoPlayer
             c.shuffleModeEnabled = false
             syncFrom(c)
             _state.value = _state.value.copy(shuffle = true)
+        } else if (c != null && !turningOn) {
+            val idx = c.currentMediaItemIndex.coerceAtLeast(0)
+            val queue = PlaybackService.Holder.queue.toMutableList()
+            val head = queue.take(idx + 1)
+            val rest = queue.drop(idx + 1)
+            val natural = shuffleNatural
+            val restored = if (natural != null) {
+                val byId = rest.associateBy { it.id }
+                val restIds = rest.map { it.id }.toMutableSet()
+                val out = mutableListOf<TrackDto>()
+                for (t in natural) {
+                    if (t.id in restIds) {
+                        byId[t.id]?.let { out.add(it) }
+                        restIds.remove(t.id)
+                    }
+                }
+                for (t in rest) if (t.id in restIds) out.add(t)
+                out
+            } else {
+                rest
+            }
+            shuffleNatural = null
+            val newQ = head + restored
+            PlaybackService.Holder.queue = newQ
+            while (c.mediaItemCount > idx + 1) c.removeMediaItem(idx + 1)
+            restored.forEach { c.addMediaItem(mediaItem(it)) }
+            c.shuffleModeEnabled = false
+            syncFrom(c)
+            _state.value = _state.value.copy(shuffle = false)
         } else {
+            shuffleNatural = null
             c?.let {
                 it.shuffleModeEnabled = false
                 syncFrom(it)
@@ -743,7 +791,75 @@ class PlayerController(
                 clearSleepTimer()
             }
         }
+        maybeSkipTrailingSilence(p)
         syncFrom(p)
+    }
+
+    /**
+     * Mode titre : coupe les fins « vides » sans casser le pipeline audio.
+     * - Si la durée YTM (métadonnées) est nettement plus courte que le flux → skip après meta+grâce
+     * - Sinon fallback paroles timed (dernière lyric + grâce)
+     * Mode vidéo : ne coupe pas.
+     */
+    private fun maybeSkipTrailingSilence(p: Player) {
+        if (SessionMediaMode.video) return
+        if (!p.isPlaying) return
+        if (p.playbackState != Player.STATE_READY) return
+        if (StreamPrefetcher.isStreamDown()) return
+
+        val dur = p.duration
+        val pos = p.currentPosition
+        if (dur <= 0L || dur == androidx.media3.common.C.TIME_UNSET || pos < 0L) return
+        if (dur < 40_000L) return
+        // Jamais pendant les 40 % premiers
+        if (pos.toDouble() / dur < 0.40) return
+        if (dur - pos < 800L) return
+
+        val trackId = p.currentMediaItem?.mediaId ?: return
+        if (silenceSkipTrackId == trackId) return
+        if (silenceActiveTrackId != trackId) {
+            silenceActiveTrackId = trackId
+            lastLyricEndMs = -1L
+            prefetchLyricsEnd(trackId)
+        }
+
+        val track = PlaybackService.Holder.queue.firstOrNull { it.id == trackId }
+        val metaMs = track?.durationMsOrNull()?.takeIf { it >= 40_000L }
+        // Flux souvent plus long que la durée YTM (silence / outro vidéo)
+        val paddedEnd =
+            metaMs != null &&
+                dur >= metaMs + 3_500L &&
+                pos >= metaMs + 1_200L
+
+        val lyricsEnd =
+            lastLyricEndMs > 0L &&
+                lastLyricEndMs.toDouble() / dur >= 0.45 &&
+                pos >= lastLyricEndMs + 2_200L &&
+                dur - pos >= 1_500L
+
+        if (!paddedEnd && !lyricsEnd) return
+
+        silenceSkipTrackId = trackId
+        AppLog.i(
+            "PlayerController",
+            "skip fin vide id=$trackId pos=$pos dur=$dur meta=$metaMs lyricEnd=$lastLyricEndMs padded=$paddedEnd lyrics=$lyricsEnd",
+        )
+        skipNext()
+    }
+
+    private fun prefetchLyricsEnd(trackId: String) {
+        if (lyricsFetchTrackId == trackId) return
+        lyricsFetchTrackId = trackId
+        scope.launch(Dispatchers.IO) {
+            val endMs = runCatching {
+                val r = YtMusicApp.instance.container.api.lyrics(trackId)
+                val timed = r.timed.orEmpty()
+                if (timed.isNotEmpty()) timed.maxOf { it.startMsLong() } else -1L
+            }.getOrDefault(-1L)
+            if (silenceActiveTrackId == trackId) {
+                lastLyricEndMs = endMs
+            }
+        }
     }
 
     fun clearSleepTimer() {
@@ -884,8 +1000,7 @@ class PlayerController(
     }
 
     /**
-     * Radio / Mix : si un titre joue déjà → insère la suite juste après (sans couper).
-     * Sinon → hard-start classique.
+     * Radio / Mix : hard-start — remplace toute la file, part du seed, abandonne les déjà joués.
      */
     fun playRadioOrEnqueue(
         mix: List<TrackDto>,
@@ -902,25 +1017,8 @@ class PlayerController(
             } else {
                 title
             }
-        val c = player()
-        val currentId = c?.currentMediaItem?.mediaId
-        val hasSession = c != null &&
-            PlaybackService.Holder.queue.isNotEmpty() &&
-            !currentId.isNullOrBlank()
-        if (hasSession) {
-            // Continuité : garde le titre en cours + sa position ; mix juste après
-            val toInsert = playable.filter { it.id != currentId }.take(24)
-            enqueueAfterCurrent(
-                toInsert,
-                replaceRest = false,
-                cap = 24,
-                title = displayTitle,
-                sourceId = sourceId ?: if (sourceKind == "radio") seed.id else currentId,
-                sourceKind = sourceKind,
-            )
-            setAutoplaySuggestions(true)
-            return
-        }
+        shuffleEnabled = false
+        shuffleNatural = null
         play(
             playable,
             0,

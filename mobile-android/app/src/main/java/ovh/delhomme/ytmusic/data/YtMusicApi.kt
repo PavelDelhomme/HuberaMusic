@@ -432,6 +432,9 @@ interface YtMusicApi {
     @POST("api/auth/logout")
     suspend fun logout(@Body body: RefreshBody = RefreshBody(null)): Map<String, Any>
 
+    @POST("api/telemetry")
+    suspend fun telemetry(@Body body: Map<String, @JvmSuppressWildcards Any?>): Map<String, Any>
+
     @POST("api/telemetry/battery-report")
     suspend fun batteryReport(@Body body: Map<String, @JvmSuppressWildcards Any?>): Map<String, Any>
 

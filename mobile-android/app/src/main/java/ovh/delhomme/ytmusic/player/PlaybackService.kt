@@ -60,9 +60,31 @@ class PlaybackService : MediaSessionService() {
 
     private val recoverGen = AtomicInteger(0)
     private val streamFailStreak = AtomicInteger(0)
+    /** Snapshot pour détecter une fin de piste trop tôt (stream tronqué / cache). */
+    @Volatile private var lastPlayingId: String = ""
+    @Volatile private var lastPlayingPosMs: Long = 0L
+    @Volatile private var prevPlayingId: String = ""
+    @Volatile private var prevPlayingPosMs: Long = 0L
+    @Volatile private var earlyEndRetries: Int = 0
 
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
+            if (player.playbackState == Player.STATE_READY || player.isPlaying) {
+                val id = player.currentMediaItem?.mediaId.orEmpty()
+                if (id.isNotBlank()) {
+                    if (id != lastPlayingId) {
+                        prevPlayingId = lastPlayingId
+                        prevPlayingPosMs = lastPlayingPosMs
+                        lastPlayingId = id
+                        if (earlyEndRetries > 0 && id != prevPlayingId) {
+                            // Nouveau titre « normal » après reprise
+                            earlyEndRetries = 0
+                        }
+                    } else {
+                        lastPlayingPosMs = player.currentPosition.coerceAtLeast(0L)
+                    }
+                }
+            }
             if (
                 events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED) ||
                 events.contains(Player.EVENT_REPEAT_MODE_CHANGED) ||
@@ -77,7 +99,6 @@ class PlaybackService : MediaSessionService() {
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
                 warmUpcoming(player.currentMediaItemIndex)
                 enqueueOfflineAhead(player.currentMediaItemIndex)
-                // OEM (Nothing/Samsung) : notif compacte parfois vide tant que le bitmap n’est pas là
                 scope.launch {
                     delay(120)
                     refreshMediaButtons()
@@ -94,13 +115,18 @@ class PlaybackService : MediaSessionService() {
                 streamFailStreak.set(0)
                 StreamPrefetcher.markStreamOk()
             }
-            // Pause volontaire uniquement — pas pendant rebuffer / skip
-            // (sinon on tue le prefetch du titre suivant).
             if (
                 events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED) &&
                 !player.playWhenReady
             ) {
                 StreamPrefetcher.cancelIdle()
+            }
+        }
+
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                val exo = player ?: return
+                maybeRecoverEarlyEnd(exo)
             }
         }
 
@@ -116,18 +142,74 @@ class PlaybackService : MediaSessionService() {
             AppLog.w(
                 "PlaybackService",
                 "onPlayerError code=${error.errorCode} network=$networkish local=$localFile streak=$streak id=$id",
+                error,
             )
+            runCatching {
+                ovh.delhomme.ytmusic.debug.TelemetryReporter.reportPlayerError(
+                    code = error.errorCode,
+                    trackId = id,
+                    networkish = networkish,
+                    local = localFile,
+                    streak = streak,
+                    detail = error.stackTraceToString().take(4_000),
+                )
+            }
 
-            // Fichier local : un échec n’est pas un « serveur KO » — saute au suivant offline
+            // Fichier local corrompu / manquant : purge + retenter le stream (même titre).
             if (localFile) {
-                streamFailStreak.set(0)
                 val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
+                AppLog.w("PlaybackService", "fichier local invalide → purge id=$id")
+                val online = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+                if (online && container != null) {
+                    streamFailStreak.set(0)
+                    val attempt = recoverGen.incrementAndGet()
+                    scope.launch {
+                        runCatching { container.offlineStore.remove(id) }
+                        runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
+                        if (attempt != recoverGen.get()) return@launch
+                        if (exo.currentMediaItem?.mediaId != id) return@launch
+                        val track = Holder.queue.firstOrNull { it.id == id } ?: return@launch
+                        val rebuilt = mediaItemFor(
+                            track,
+                            { tid -> container.remoteStreamUrl(tid) },
+                            Holder.queueTitle,
+                        )
+                        runCatching {
+                            val pos = exo.currentPosition.coerceAtLeast(0L)
+                            exo.replaceMediaItem(exo.currentMediaItemIndex, rebuilt)
+                            exo.seekTo(exo.currentMediaItemIndex, pos)
+                            exo.prepare()
+                            exo.playWhenReady = true
+                            exo.play()
+                        }
+                    }
+                    android.os.Handler(mainLooper).post {
+                        android.widget.Toast.makeText(
+                            this@PlaybackService,
+                            "Fichier local KO — reprise en streaming…",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    return
+                }
+
+                streamFailStreak.set(0)
+                scope.launch {
+                    runCatching { container?.offlineStore?.remove(id) }
+                }
                 val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
                 val nextOfflineIdx = (curIdx + 1 until Holder.queue.size).firstOrNull { i ->
                     container?.offlineStore?.has(Holder.queue[i].id) == true
                 }
                 if (nextOfflineIdx != null) {
                     rematerializeOfflineFrom(exo, nextOfflineIdx, container)
+                    android.os.Handler(mainLooper).post {
+                        android.widget.Toast.makeText(
+                            this@PlaybackService,
+                            "Fichier local KO — suite hors ligne",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                     return
                 }
                 android.os.Handler(mainLooper).post {
@@ -140,7 +222,8 @@ class PlaybackService : MediaSessionService() {
                 return
             }
 
-            // Réseau / serveur : tenter fichier local, sinon skip vers un titre déjà téléchargé
+            // Réseau / serveur : rester sur LE MÊME titre autant que possible
+            // (ne plus skip auto mid-song vers le prochain DL — ça « changeait de musique »).
             if (networkish) {
                 val offline = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
                 val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
@@ -168,24 +251,24 @@ class PlaybackService : MediaSessionService() {
                     }
                     return
                 }
-                // Cherche le prochain titre déjà sur l'appareil
-                val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
-                val nextOfflineIdx = (curIdx + 1 until Holder.queue.size).firstOrNull { i ->
-                    container?.offlineStore?.has(Holder.queue[i].id) == true
-                }
-                if (nextOfflineIdx != null) {
-                    streamFailStreak.set(0)
-                    rematerializeOfflineFrom(exo, nextOfflineIdx, container)
-                    android.os.Handler(mainLooper).post {
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "Hors ligne — suite sur titres téléchargés",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                    return
-                }
+                // Vraiment hors-ligne sans fichier local pour ce titre → suite offline
                 if (offline) {
+                    val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                    val nextOfflineIdx = (curIdx + 1 until Holder.queue.size).firstOrNull { i ->
+                        container?.offlineStore?.has(Holder.queue[i].id) == true
+                    }
+                    if (nextOfflineIdx != null) {
+                        streamFailStreak.set(0)
+                        rematerializeOfflineFrom(exo, nextOfflineIdx, container)
+                        android.os.Handler(mainLooper).post {
+                            android.widget.Toast.makeText(
+                                this@PlaybackService,
+                                "Hors ligne — suite sur titres téléchargés",
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        return
+                    }
                     StreamPrefetcher.markStreamDown()
                     StreamPrefetcher.cancelIdle()
                     recoverGen.incrementAndGet()
@@ -202,17 +285,16 @@ class PlaybackService : MediaSessionService() {
                     }
                     return
                 }
-                // Encore « online » mais glitch / handover : 1–2 reprepare avant d’abandonner
-                if (streak <= 2) {
+                // Encore « online » : glitch / handover — retenter le MÊME titre (pas de skip)
+                if (streak <= 4) {
                     val attempt = recoverGen.incrementAndGet()
                     scope.launch {
                         runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
-                        delay(350L * streak)
+                        delay(400L * streak)
                         if (attempt != recoverGen.get()) return@launch
                         if (exo.currentMediaItem?.mediaId != id) return@launch
                         runCatching {
                             val pos = exo.currentPosition.coerceAtLeast(0L)
-                            // Re-résout l’URL (peut basculer file:// si DL fini entre-temps)
                             val track = Holder.queue.firstOrNull { it.id == id }
                             val nextItem = if (track != null && container != null) {
                                 mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle)
@@ -224,7 +306,7 @@ class PlaybackService : MediaSessionService() {
                             exo.playWhenReady = true
                         }
                     }
-                    if (streak == 1) {
+                    if (streak == 1 || streak == 3) {
                         android.os.Handler(mainLooper).post {
                             android.widget.Toast.makeText(
                                 this@PlaybackService,
@@ -235,7 +317,7 @@ class PlaybackService : MediaSessionService() {
                     }
                     return
                 }
-                // Échecs réseau répétés alors que le device se dit en ligne → API / stream KO
+                // Échecs réseau répétés alors que le device se dit en ligne → pause (pas de skip)
                 StreamPrefetcher.markStreamDown()
                 StreamPrefetcher.cancelIdle()
                 recoverGen.incrementAndGet()
@@ -275,9 +357,9 @@ class PlaybackService : MediaSessionService() {
                     android.widget.Toast.makeText(
                         this@PlaybackService,
                         if (localApi) {
-                            "Lecture impossible — vérifie que l’API locale tourne (port 8787)"
+                            "Lecture impossible — API locale (8787) ou flux YouTube"
                         } else {
-                            "Lecture impossible — Admin web → Cookies YouTube (VPS bloqué)"
+                            "Lecture impossible — réessaie ou vérifie le réseau"
                         },
                         android.widget.Toast.LENGTH_LONG,
                     ).show()
@@ -617,6 +699,68 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * Si Exo passe au suivant alors que le titre précédent n’a pas atteint ~85 %
+     * de sa durée connue → stream tronqué / cache empoisonné : on revient et on retente.
+     */
+    private fun maybeRecoverEarlyEnd(exo: Player) {
+        val prevId = prevPlayingId.ifBlank { lastPlayingId }
+        val pos = if (prevPlayingId.isNotBlank()) prevPlayingPosMs else lastPlayingPosMs
+        if (prevId.isBlank() || earlyEndRetries >= 2) return
+        val track = Holder.queue.firstOrNull { it.id == prevId } ?: return
+        val expected = track.durationMsOrNull()?.takeIf { it >= 45_000L } ?: return
+        if (pos >= (expected * 0.85).toLong()) return
+        val prevIdx = Holder.queue.indexOfFirst { it.id == prevId }
+        if (prevIdx < 0) return
+        earlyEndRetries += 1
+        AppLog.w(
+            "PlaybackService",
+            "fin trop tôt id=$prevId pos=${pos}ms expected=${expected}ms → retry #$earlyEndRetries",
+        )
+        runCatching {
+            ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                level = "error",
+                kind = "android.player.early_end",
+                message = "early end $prevId pos=$pos expected=$expected",
+                meta = mapOf(
+                    "trackId" to prevId,
+                    "positionMs" to pos,
+                    "expectedMs" to expected,
+                    "retry" to earlyEndRetries,
+                ),
+            )
+        }
+        val container = runCatching { YtMusicApp.instance.container }.getOrNull()
+        scope.launch {
+            runCatching { PlayerCache.invalidate(this@PlaybackService, prevId) }
+            if (container?.offlineStore?.has(prevId) == true) {
+                runCatching { container.offlineStore.remove(prevId) }
+            }
+            val rebuilt = mediaItemFor(
+                track,
+                { tid -> container?.remoteStreamUrl(tid) ?: Holder.resolvedApiBase() + "/api/stream/$tid" },
+                Holder.queueTitle,
+            )
+            runCatching {
+                exo.replaceMediaItem(prevIdx, rebuilt)
+                exo.seekTo(prevIdx, pos.coerceAtLeast(0L))
+                exo.prepare()
+                exo.playWhenReady = true
+                exo.play()
+                Holder.index = prevIdx
+                lastPlayingId = prevId
+                lastPlayingPosMs = pos
+            }
+        }
+        android.os.Handler(mainLooper).post {
+            android.widget.Toast.makeText(
+                this,
+                "Reprise du titre (fin anticipée évitée)",
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
     private fun warmUpcoming(fromIndex: Int) {
         if (StreamPrefetcher.isStreamDown()) return
         val queue = Holder.queue
@@ -626,8 +770,14 @@ class PlaybackService : MediaSessionService() {
             base,
             queue.map { it.id },
             fromIndex,
-            ahead = 4,
+            ahead = 5,
             behind = 1,
+        )
+        // Toute la fenêtre visible de la file : au moins ~3 s de tête
+        StreamPrefetcher.warmHeads3s(
+            base,
+            queue.drop(fromIndex.coerceAtLeast(0)).take(12).map { it.id },
+            limit = 12,
         )
         CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 3, behind = 1)
         enqueueOfflineAhead(fromIndex)
@@ -830,7 +980,8 @@ fun mediaItemFor(
         .setArtworkUri(cover?.let { android.net.Uri.parse(it) })
         .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
         .setIsPlayable(true)
-    t.durationMsOrNull()?.let { meta.setDurationMs(it) }
+    // Ne pas figer durationMs depuis YTM : un écart vs le flux réel fausse la barre
+    // et masque les fins anticipées. Exo lit la durée dans le conteneur.
     return MediaItem.Builder()
         .setMediaId(t.id)
         .setUri(baseStreamUrl(t.id))
