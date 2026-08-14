@@ -51,11 +51,12 @@
 ### E3 — Reco radio seed « chill » vide
 | | |
 |--|--|
-| **Status** | `open` |
-| **Surfaces** | local + prod |
-| **Mesure** | `GET /api/reco/radio?seed=chill&preview=1` → `tracks: []` en <50 ms |
-| **Impact** | Mixes type nouveauté / seed texte peuvent rester vides (lié B2.5) |
-| **STATUS** | **B2.5** |
+| **Status** | `wontfix` (faux positif smoke) — 2026-08-14 |
+| **Surfaces** | smoke script |
+| **Cause** | Smoke appelait `GET /api/reco/radio?seed=chill` (404/HTML) au lieu de `/api/reco/radio/chill?preview=1` |
+| **Mesure correcte** | `/api/reco/radio/chill?preview=1` → **12 tracks** local + prod |
+| **Fix** | `scripts/test/smoke-load-test.mjs` chemin corrigé |
+| **STATUS** | B2.5 hors scope (endpoint catégorie OK) |
 
 ### E4 — Library GET encore lourd (~2.4–3.2 s)
 | | |
