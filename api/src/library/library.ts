@@ -1060,6 +1060,25 @@ export async function repairLibraryTrackMeta(userId: string) {
   };
 }
 
+/** Throttle repair hors chemin critique GET /api/library (E4). */
+const libraryRepairAt = new Map<string, number>();
+const LIBRARY_REPAIR_TTL_MS = Math.max(
+  60_000,
+  Number(process.env.LIBRARY_REPAIR_TTL_MS || 10 * 60_000) || 10 * 60_000,
+);
+const libraryRepairInflight = new Set<string>();
+
+export function scheduleLibraryRepair(userId: string): void {
+  const last = libraryRepairAt.get(userId) || 0;
+  if (Date.now() - last < LIBRARY_REPAIR_TTL_MS) return;
+  if (libraryRepairInflight.has(userId)) return;
+  libraryRepairAt.set(userId, Date.now());
+  libraryRepairInflight.add(userId);
+  void repairLibraryTrackMeta(userId)
+    .catch((err) => console.warn('[library] background repair', (err as Error).message))
+    .finally(() => libraryRepairInflight.delete(userId));
+}
+
 export function removeFromPlaylist(userId: string, playlistId: string, trackId: string) {
   const pl = db
     .prepare('SELECT id FROM playlists WHERE id = ? AND user_id = ?')

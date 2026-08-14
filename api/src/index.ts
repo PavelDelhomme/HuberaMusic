@@ -75,6 +75,7 @@ import {
   listPlaylists,
   playlistIdsContainingTrack,
   repairLibraryTrackMeta,
+  scheduleLibraryRepair,
 } from './library/library.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream } from './media/stream.js';
 import { streamHeadStats } from './media/streamHeadCache.js';
@@ -1710,17 +1711,25 @@ app.get('/api/artist/:id', accountRequired, async (req, res) => {
 app.get('/api/artist/:id/radio', accountRequired, async (req, res) => {
   try {
     const wantFull =
-      String(req.query.full || '') !== '0' && String(req.query.full || '') !== 'false';
-    const ranked = await artistSimilarForUser(req.userId!, p(req.params.id), { full: wantFull });
+      String(req.query.full || '') === '1' || String(req.query.full || '') === 'true';
+    const artistId = p(req.params.id);
+    const ranked = await artistSimilarForUser(req.userId!, artistId, { full: wantFull });
     const tracks = ranked.tracks.length
       ? ranked.tracks
-      : await getArtistRadio(p(req.params.id));
+      : await getArtistRadio(artistId);
     res.json({
       tracks,
       cached: ranked.cached ?? false,
-      target: ranked.target ?? MIX_TARGET,
+      target: ranked.target ?? (wantFull ? MIX_TARGET : 12),
       generatedAt: ranked.generatedAt,
+      preview: !wantFull,
     });
+    // Remplit le mix ~200 en fond pour les prochains appels / skips longs
+    if (!wantFull && !(ranked.cached && (ranked.target ?? 0) >= MIX_TARGET)) {
+      void artistSimilarForUser(req.userId!, artistId, { full: true }).catch((err) => {
+        console.warn('[artist-radio] full warm', (err as Error).message);
+      });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -1747,17 +1756,24 @@ app.get('/api/album/:id', accountRequired, async (req, res) => {
 app.get('/api/album/:id/radio', accountRequired, async (req, res) => {
   try {
     const wantFull =
-      String(req.query.full || '') !== '0' && String(req.query.full || '') !== 'false';
-    const ranked = await albumSimilarForUser(req.userId!, p(req.params.id), { full: wantFull });
+      String(req.query.full || '') === '1' || String(req.query.full || '') === 'true';
+    const albumId = p(req.params.id);
+    const ranked = await albumSimilarForUser(req.userId!, albumId, { full: wantFull });
     const tracks = ranked.tracks.length
       ? ranked.tracks
-      : await getAlbumRadio(p(req.params.id));
+      : await getAlbumRadio(albumId);
     res.json({
       tracks,
       cached: ranked.cached ?? false,
-      target: ranked.target ?? MIX_TARGET,
+      target: ranked.target ?? (wantFull ? MIX_TARGET : 12),
       generatedAt: ranked.generatedAt,
+      preview: !wantFull,
     });
+    if (!wantFull && !(ranked.cached && (ranked.target ?? 0) >= MIX_TARGET)) {
+      void albumSimilarForUser(req.userId!, albumId, { full: true }).catch((err) => {
+        console.warn('[album-radio] full warm', (err as Error).message);
+      });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -1842,9 +1858,10 @@ app.get('/api/library/playlists/containing/:trackId', accountRequired, (req, res
 
 app.get('/api/library', accountRequired, async (req, res) => {
   try {
-    // Auto-répare les « Sans titre » encore en cache (playlists / likes)
-    const repaired = await repairLibraryTrackMeta(req.userId!);
-    res.json(repaired.library);
+    // Réponse immédiate — repair méta / albums en fond (E4 : ne plus bloquer 2–3 s)
+    const library = getFullLibrary(req.userId!);
+    res.json(library);
+    scheduleLibraryRepair(req.userId!);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

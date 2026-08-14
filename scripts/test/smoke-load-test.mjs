@@ -137,7 +137,7 @@ async function runEnv({ name, base }) {
     const liked = lib.json?.liked?.length ?? 0;
     const pls = lib.json?.playlists?.length ?? 0;
     console.log(`  library ${lib.ms}ms songs=${songs} liked=${liked} playlists=${pls}`);
-    if (lib.ms > 5000) note('warn', name, 'library', `library lent ${lib.ms}ms`, `songs=${songs}`);
+    if (lib.ms > 1500) note('warn', name, 'library', `library lent ${lib.ms}ms`, `songs=${songs}`);
     // playlists light check
     const heavy = (lib.json?.playlists || []).filter((p) => (p.tracks || []).length > 0);
     if (heavy.length) {
@@ -178,11 +178,16 @@ async function runEnv({ name, base }) {
       const n = (ar.json?.songs || ar.json?.tracks || []).length;
       console.log(`    artist ${ar.ms}ms songs≈${n}`);
       if (ar.ms > 10000) note('warn', name, 'artist', `artist ${a.q} lent ${ar.ms}ms`);
-      // radio
+      // radio — preview par défaut (E2) ; full=1 reste dispo pour fill long
       const radio = await req(base, `/api/artist/${encodeURIComponent(aid)}/radio`, { headers: H });
       rows.push({ env: name, op: `artistRadio:${a.q}`, status: radio.status, ms: radio.ms });
       if (!radio.ok) note('warn', name, 'radio', `artist radio ${a.q} ${radio.status}`);
-      else console.log(`    radio ${radio.ms}ms tracks=${radio.json?.tracks?.length ?? 0}`);
+      else {
+        const n = radio.json?.tracks?.length ?? 0;
+        console.log(`    radio ${radio.ms}ms tracks=${n} preview=${radio.json?.preview !== false}`);
+        if (radio.ms > 8000) note('warn', name, 'radio', `artist radio ${a.q} lent ${radio.ms}ms`);
+        if (n < 5) note('warn', name, 'radio', `artist radio ${a.q} trop peu de tracks (${n})`);
+      }
     }
   }
 
@@ -244,7 +249,10 @@ async function runEnv({ name, base }) {
     });
     rows.push({ env: name, op: 'warm', status: warm.status, ms: warm.ms });
     if (!warm.ok) note('warn', name, 'warm', `warm ${warm.status}`);
-    else console.log(`  warm ${warm.ms}ms`);
+    else {
+      console.log(`  warm ${warm.ms}ms queued=${warm.json?.queued === true}`);
+      if (warm.ms > 2000) note('warn', name, 'warm', `warm lent ${warm.ms}ms`);
+    }
   }
 
   // Playlists
