@@ -340,6 +340,48 @@ export function Layout() {
   const allowGuestPage = isVerifyRoute;
   /** Hauteur barre lecteur (+ nav bas mobile) — pour ne pas masquer Compte / Admin */
   const playerPad = hasPlayback ? 'pb-40' : 'pb-24';
+  const bottomNavRef = useRef<HTMLElement | null>(null);
+  const showBottomNav = !nowPlayingOpen && !navOpen;
+
+  // Nav bas sous le lecteur → publie sa hauteur pour surélever le PlayerBar (mobile only)
+  useEffect(() => {
+    const root = document.documentElement;
+    const clear = () => root.style.setProperty('--ytm-nav-h', '0px');
+    if (!showBottomNav) {
+      clear();
+      return;
+    }
+    let ro: ResizeObserver | null = null;
+    let cancelled = false;
+    let onResize: (() => void) | null = null;
+    const attach = () => {
+      if (cancelled) return;
+      const el = bottomNavRef.current;
+      if (!el) {
+        requestAnimationFrame(attach);
+        return;
+      }
+      const publish = () => {
+        if (window.matchMedia('(min-width: 1024px)').matches) {
+          root.style.setProperty('--ytm-nav-h', '0px');
+          return;
+        }
+        root.style.setProperty('--ytm-nav-h', `${el.offsetHeight}px`);
+      };
+      onResize = publish;
+      publish();
+      ro = new ResizeObserver(publish);
+      ro.observe(el);
+      window.addEventListener('resize', publish);
+    };
+    attach();
+    return () => {
+      cancelled = true;
+      ro?.disconnect();
+      if (onResize) window.removeEventListener('resize', onResize);
+      clear();
+    };
+  }, [showBottomNav, hasPlayback]);
 
   const closeNavIfMobile = () => {
     if (window.matchMedia('(max-width: 1023px)').matches) setNavOpen(false);
@@ -782,10 +824,10 @@ export function Layout() {
 
           <main
             className={`min-h-0 flex-1 overflow-y-auto px-4 pt-4 md:px-8 ${
-              // Mobile : lecteur + nav bas (~3.25rem) ; desktop/lg : lecteur seul (pas de nav bas)
+              // Mobile : lecteur + nav bas (nav sous le lecteur) ; desktop/lg : lecteur seul
               hasPlayback
-                ? 'pb-[calc(var(--ytm-player-h,8rem)+3.5rem)] lg:pb-[calc(var(--ytm-player-h,5.5rem)+1.25rem)]'
-                : 'pb-24 lg:pb-28'
+                ? 'pb-[calc(var(--ytm-player-h,8rem)+var(--ytm-nav-h,3.5rem)+0.75rem)] lg:pb-[calc(var(--ytm-player-h,5.5rem)+1.25rem)]'
+                : 'pb-[calc(var(--ytm-nav-h,3.5rem)+1.5rem)] lg:pb-28'
             }`}
           >
             {!authLoaded && <p className="text-yt-muted">Chargement…</p>}
@@ -831,15 +873,12 @@ export function Layout() {
         {!nowPlayingOpen && <QueuePanel />}
       </div>
 
-      {/* Nav bas : uniquement < lg — au-dessus du lecteur, jamais sur grand écran (drawer gauche) */}
+      {/* Nav bas : uniquement < lg — sous le lecteur (tout en bas), jamais sur grand écran */}
       {!nowPlayingOpen && !navOpen && (
         <nav
-          className="fixed inset-x-0 z-40 flex border-t border-yt-border bg-yt-surface lg:hidden"
-          style={{
-            bottom: 'var(--ytm-player-h, 0px)',
-            // Safe-area seulement sans lecteur (sinon déjà géré par PlayerBar)
-            paddingBottom: hasPlayback ? 0 : 'env(safe-area-inset-bottom)',
-          }}
+          ref={bottomNavRef}
+          className="fixed inset-x-0 bottom-0 z-50 flex border-t border-yt-border bg-yt-surface lg:hidden"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           aria-label="Navigation principale"
         >
           {links.map(({ to, label, icon: Icon }) => (

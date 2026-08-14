@@ -272,11 +272,15 @@ async function runEnv({ name, base }) {
     }
   }
 
-  // Mix / reco sample
-  const mix = await req(base, '/api/reco/radio?seed=chill&preview=1', { headers: H });
+  // Mix / reco sample (route réelle : /api/reco/radio/:category — pas ?seed=)
+  const mix = await req(base, '/api/reco/radio/chill?preview=1', { headers: H });
   rows.push({ env: name, op: 'recoRadio', status: mix.status, ms: mix.ms });
   if (!mix.ok) note('warn', name, 'mix', `reco radio ${mix.status}`, mix.text);
-  else console.log(`  reco radio ${mix.ms}ms tracks=${mix.json?.tracks?.length ?? 0}`);
+  else {
+    const n = mix.json?.tracks?.length ?? 0;
+    console.log(`  reco radio ${mix.ms}ms tracks=${n}`);
+    if (n === 0) note('warn', name, 'mix', 'reco radio chill vide');
+  }
 }
 
 for (const b of bases) {
