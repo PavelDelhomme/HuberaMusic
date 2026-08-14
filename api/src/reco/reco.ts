@@ -914,28 +914,28 @@ async function expandWithTasteAndSearch(opts: {
 /**
  * Radio / similaires album : vibe de l’album (pas juste le 1er titre),
  * + related/radio YT, + goûts biblio, + search « songs like ».
+ * `full: true` = mix ~200 (lenteur OK en fond) ; défaut / preview = rapide.
  */
 export async function albumSimilarForUser(
   userId: string,
   albumId: string,
   opts?: { full?: boolean },
 ) {
-  const full = opts?.full !== false;
+  const full = opts?.full === true;
   const cacheKey = mixKeyRadio('album', albumId);
-  if (full) {
-    const hit = getMixCache(userId, cacheKey);
-    if (hit?.tracks?.length) {
-      return {
-        tracks: hit.tracks.slice(0, MIX_TARGET),
-        seed: hit.seed || null,
-        album: null as Awaited<ReturnType<typeof getAlbum>>['album'] | null,
-        related: hit.tracks,
-        radio: hit.tracks,
-        cached: true as const,
-        generatedAt: hit.generatedAt,
-        target: MIX_TARGET,
-      };
-    }
+  const hit = getMixCache(userId, cacheKey);
+  if (hit?.tracks?.length) {
+    const slice = hit.tracks.slice(0, full ? MIX_TARGET : MIX_PREVIEW);
+    return {
+      tracks: slice,
+      seed: hit.seed || null,
+      album: null as Awaited<ReturnType<typeof getAlbum>>['album'] | null,
+      related: hit.tracks,
+      radio: hit.tracks,
+      cached: true as const,
+      generatedAt: hit.generatedAt,
+      target: full ? MIX_TARGET : MIX_PREVIEW,
+    };
   }
 
   const { album, tracks } = await getAlbum(albumId);
@@ -955,6 +955,28 @@ export async function albumSimilarForUser(
     ...radio,
     ...related,
   ].filter((t) => !isRemixSpamOfSeed(t, seed!));
+
+  // Preview : ancre album + related, sans 2ᵉ hop / searches (rapide)
+  if (!full) {
+    const ranked = await hybridRank({
+      userId,
+      candidates: pool,
+      seed,
+      mode: 'album-style',
+      softExcludePlayed: false,
+    });
+    const out = ranked.slice(0, MIX_PREVIEW);
+    return {
+      tracks: out,
+      seed,
+      album,
+      related,
+      radio,
+      cached: false as const,
+      generatedAt: Date.now(),
+      target: MIX_PREVIEW,
+    };
+  }
 
   // 2ᵉ ancre différente pour élargir la vibe album
   const mid = playable[Math.min(4, Math.max(0, playable.length - 1))];
@@ -991,31 +1013,29 @@ export async function albumSimilarForUser(
     libraryMax: 22,
   });
 
-  if (full) {
-    const hopSeeds = dedupeTracks([seed, mid, ...playable, ...radio].filter(Boolean) as Track[]).slice(
-      0,
-      12,
-    );
-    pool = await expandPoolMultiSeed(hopSeeds, pool, seed.id, 12);
-    pool = await growPoolToTarget(
-      userId,
-      seed,
-      pool,
-      queries,
-      seed.id,
-      MIX_TARGET,
-    );
-  }
+  const hopSeeds = dedupeTracks([seed, mid, ...playable, ...radio].filter(Boolean) as Track[]).slice(
+    0,
+    12,
+  );
+  pool = await expandPoolMultiSeed(hopSeeds, pool, seed.id, 12);
+  pool = await growPoolToTarget(
+    userId,
+    seed,
+    pool,
+    queries,
+    seed.id,
+    MIX_TARGET,
+  );
 
   const ranked = await hybridRank({
     userId,
     candidates: pool,
     seed,
     mode: 'album-style',
-    softExcludePlayed: full,
+    softExcludePlayed: true,
   });
-  const out = ranked.slice(0, full ? MIX_TARGET : 40);
-  if (full && out.length) {
+  const out = ranked.slice(0, MIX_TARGET);
+  if (out.length) {
     setMixCache(userId, cacheKey, {
       tracks: out,
       seed,
@@ -1031,34 +1051,34 @@ export async function albumSimilarForUser(
     radio,
     cached: false as const,
     generatedAt: Date.now(),
-    target: full ? MIX_TARGET : out.length,
+    target: MIX_TARGET,
   };
 }
 
 /**
  * Radio / similaires artiste : tops + related + artistes similaires + biblio.
+ * `full: true` = mix ~200 (coûteux) ; défaut = preview rapide (~12).
  */
 export async function artistSimilarForUser(
   userId: string,
   artistId: string,
   opts?: { full?: boolean },
 ) {
-  const full = opts?.full !== false;
+  const full = opts?.full === true;
   const cacheKey = mixKeyRadio('artist', artistId);
-  if (full) {
-    const hit = getMixCache(userId, cacheKey);
-    if (hit?.tracks?.length) {
-      return {
-        tracks: hit.tracks.slice(0, MIX_TARGET),
-        seed: hit.seed || null,
-        artist: null as Awaited<ReturnType<typeof getArtist>>['artist'] | null,
-        related: hit.tracks,
-        radio: hit.tracks,
-        cached: true as const,
-        generatedAt: hit.generatedAt,
-        target: MIX_TARGET,
-      };
-    }
+  const hit = getMixCache(userId, cacheKey);
+  if (hit?.tracks?.length) {
+    const slice = hit.tracks.slice(0, full ? MIX_TARGET : MIX_PREVIEW);
+    return {
+      tracks: slice,
+      seed: hit.seed || null,
+      artist: null as Awaited<ReturnType<typeof getArtist>>['artist'] | null,
+      related: hit.tracks,
+      radio: hit.tracks,
+      cached: true as const,
+      generatedAt: hit.generatedAt,
+      target: full ? MIX_TARGET : MIX_PREVIEW,
+    };
   }
 
   const { artist, songs, similar } = await getArtist(artistId);
@@ -1076,6 +1096,33 @@ export async function artistSimilarForUser(
   const { related, radio } = await getRelated(seed.id);
   let pool: Track[] = [...radio, ...related, ...playable.slice(0, 14)];
 
+  const queries = [
+    `${artist.name || ''} similar artists mix`.trim(),
+    styleSearchQuery(seed),
+  ].filter(Boolean);
+
+  // Preview : pas de fan-out search/multi-seed (E2 — UX < ~3–5 s)
+  if (!full) {
+    const ranked = await hybridRank({
+      userId,
+      candidates: pool,
+      seed,
+      mode: 'artist-radio',
+      softExcludePlayed: false,
+    });
+    const out = ranked.slice(0, MIX_PREVIEW);
+    return {
+      tracks: out,
+      seed,
+      artist,
+      related,
+      radio,
+      cached: false as const,
+      generatedAt: Date.now(),
+      target: MIX_PREVIEW,
+    };
+  }
+
   // Artistes similaires YTM → quelques titres via search
   const simArtists = (similar || [])
     .map((s) => String(s.title || s.artists?.[0]?.name || '').trim())
@@ -1090,11 +1137,6 @@ export async function artistSimilarForUser(
     }
   }
 
-  const queries = [
-    `${artist.name || ''} similar artists mix`.trim(),
-    styleSearchQuery(seed),
-  ].filter(Boolean);
-
   pool = await expandWithTasteAndSearch({
     userId,
     seed,
@@ -1104,28 +1146,26 @@ export async function artistSimilarForUser(
     libraryMax: 20,
   });
 
-  if (full) {
-    const hopSeeds = dedupeTracks([seed, ...playable, ...radio]).slice(0, 12);
-    pool = await expandPoolMultiSeed(hopSeeds, pool, seed.id, 12);
-    pool = await growPoolToTarget(
-      userId,
-      seed,
-      pool,
-      queries,
-      seed.id,
-      MIX_TARGET,
-    );
-  }
+  const hopSeeds = dedupeTracks([seed, ...playable, ...radio]).slice(0, 12);
+  pool = await expandPoolMultiSeed(hopSeeds, pool, seed.id, 12);
+  pool = await growPoolToTarget(
+    userId,
+    seed,
+    pool,
+    queries,
+    seed.id,
+    MIX_TARGET,
+  );
 
   const ranked = await hybridRank({
     userId,
     candidates: pool,
     seed,
     mode: 'artist-radio',
-    softExcludePlayed: full,
+    softExcludePlayed: true,
   });
-  const out = ranked.slice(0, full ? MIX_TARGET : 40);
-  if (full && out.length) {
+  const out = ranked.slice(0, MIX_TARGET);
+  if (out.length) {
     setMixCache(userId, cacheKey, {
       tracks: out,
       seed,
@@ -1141,7 +1181,7 @@ export async function artistSimilarForUser(
     radio,
     cached: false as const,
     generatedAt: Date.now(),
-    target: full ? MIX_TARGET : out.length,
+    target: MIX_TARGET,
   };
 }
 

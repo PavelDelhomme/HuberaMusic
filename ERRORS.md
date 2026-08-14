@@ -41,12 +41,11 @@
 ### E2 — Radio artiste extrêmement lente (~50–75 s)
 | | |
 |--|--|
-| **Status** | `open` |
-| **Surfaces** | API local **et** prod |
-| **Mesure** | `/api/artist/:id/radio` → 200 titres en **47–75 s** (Stromae, Daft Punk, Sia, Bo Burnham, Suzane) |
-| **Impact** | Mix / radio depuis page artiste = UX bloquante |
-| **Piste** | Preview rapide + fill progressif (comme mixes) ; cache ; plafonner workers YT |
-| **STATUS** | nouveau → **B7.2** |
+| **Status** | `fixed` (2026-08-14) |
+| **Surfaces** | API local + prod · web · Android |
+| **Cause** | `/api/artist/:id/radio` construisait le mix **full ~200** par défaut (multi-seed + searches) |
+| **Fix** | Défaut = **preview ~12** (related + tops) ; `?full=1` pour le mix long ; fill full en fond + cache |
+| **Tests** | smoke artist radio &lt; 8 s · tracks ≥ 5 |
 
 ### E3 — Reco radio seed « chill » vide
 | | |
@@ -61,19 +60,20 @@
 ### E4 — Library GET encore lourd (~2.4–3.2 s)
 | | |
 |--|--|
-| **Status** | `open` (amélioré playlists light, reste songs/liked) |
-| **Surfaces** | local 2422 ms (155 songs) · prod 3222 ms (189 songs) |
-| **Piste** | pagination / endpoint songs light + hydrate détail ; cache ETag |
-| **STATUS** | **B1.1** |
+| **Status** | `fixed` (2026-08-14) |
+| **Surfaces** | API local + prod |
+| **Cause** | `GET /api/library` attendait `repairLibraryTrackMeta` (hydrate YT + expand albums) |
+| **Fix** | Réponse sync `getFullLibrary` ; repair throttlé en fond (`scheduleLibraryRepair`, TTL 10 min) |
+| **Tests** | smoke library typiquement ≪ 1,5 s (payload JSON selon taille biblio) |
 
 ### E5 — Warm batch stream lent sous charge (prod)
 | | |
 |--|--|
-| **Status** | `open` |
-| **Surfaces** | prod |
-| **Mesure** | `POST /api/stream/warm` 5 ids → **~16 s** après rafale streams |
-| **Piste** | file d’attente warm côté API, timeout court, ne pas bloquer UI |
-| **STATUS** | **B7.3** |
+| **Status** | `fixed` (2026-08-14) |
+| **Surfaces** | API prod (surtout) |
+| **Cause** | `POST /api/stream/warm` attendait `Promise.all` de tous les `getAudioFormat` avant de répondre |
+| **Fix** | Réponse immédiate `{ queued: true }` + file workers (concurrence 2, cap 12) ; `wait=1` pour legacy |
+| **Tests** | smoke warm ≪ 2 s + `queued=true` |
 
 ### E6 — Badge version web parfois stale (SW)
 | | |

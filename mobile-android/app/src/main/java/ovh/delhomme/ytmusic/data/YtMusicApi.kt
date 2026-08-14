@@ -582,7 +582,10 @@ interface YtMusicApi {
     suspend fun album(@Path("id") id: String): AlbumDetailResponse
 
     @GET("api/album/{id}/radio")
-    suspend fun albumRadio(@Path("id") id: String): TracksResponse
+    suspend fun albumRadio(
+        @Path("id") id: String,
+        @Query("full") full: Int? = null,
+    ): TracksResponse
 
     @GET("api/artist/{id}")
     suspend fun artist(@Path("id") id: String): ArtistDetailResponse
@@ -594,7 +597,10 @@ interface YtMusicApi {
     ): ArtistSongsResponse
 
     @GET("api/artist/{id}/radio")
-    suspend fun artistRadio(@Path("id") id: String): TracksResponse
+    suspend fun artistRadio(
+        @Path("id") id: String,
+        @Query("full") full: Int? = null,
+    ): TracksResponse
 
     @GET("api/session")
     suspend fun session(): SessionSnapshot
