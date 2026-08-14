@@ -1,0 +1,242 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 3259 >>
+stream
+BT
+/F1 9 Tf
+40 802 Td
+11 TL
+(PLM — Rapport de session 12/08/2026 23:30:34) Tj
+T* () Tj
+T* (## 1. Périmètre) Tj
+T* () Tj
+T* (Période couverte : 12 août 2026, ~18h00–23h30 \(Europe/Paris\).) Tj
+T* (Appareils : Samsung SM-G990B2 \(DEV, API LAN\) + Nothing A059 \(PROD\).) Tj
+T* (Boîte analysée : IMAP ssl0.ovh.net / dev@delhomme.ovh \(63 mails PLM, 49 depuis 18h\).) Tj
+T* (Versions actuelles installées : d+1.3.18 \(Samsung\) · p+1.3.18 \(Nothing\) · VPS p+1.3.18.) Tj
+T* (IMPORTANT : tous les mails early_end de ce soir portent encore appVersion 1.3.17 \(avant) Tj
+T* (correctif\).) Tj
+T* () Tj
+T* (## 2. Synthèse des erreurs mail \(depuis 18h\)) Tj
+T* () Tj
+T* (Mails PLM liés à la session : 49) Tj
+T* (Répartition par kind :) Tj
+T* (  - [dev] android.player.early_end ×23) Tj
+T* (  - [prod] android.player.early_end ×12) Tj
+T* (  - [dev] android.player ×8) Tj
+T* (  - [prod] android.player ×4) Tj
+T* (  - [local] android.test.telemetry_mail ×1) Tj
+T* () Tj
+T* (Tracks early_end les plus fréquentes :) Tj
+T* (  - [dev] abiWZq7YKEc ×22) Tj
+T* (  - [prod] psuRGfAaju4 ×6) Tj
+T* (  - [prod] oXSw8DGjf5E ×3) Tj
+T* (  - [prod] cKE4wJMcAkc ×1) Tj
+T* (  - [dev] lFQdcPTTzSg ×1) Tj
+T* (  - [prod] MqpPW8u3MwA ×1) Tj
+T* (  - [prod] aaAHLP-XOx8 ×1) Tj
+T* () Tj
+T* (Versions app dans les mails d’erreur :) Tj
+T* (  - d+1.3.17 ×34) Tj
+T* (  - p+1.3.17 ×10) Tj
+T* (  - ? ×4) Tj
+T* () Tj
+T* (Cas signalés manuellement :) Tj
+T* (  - prod oXSw8DGjf5E pos≈134350 expected=160000 retry=1 · p+1.3.17) Tj
+T* (  - dev  abiWZq7YKEc  pos≈105k expected=149000 retry=1 · d+1.3.17 \(plusieurs mails\)) Tj
+T* (  → Faux positifs : durée catalogue YTM > durée réelle du flux \(~70–84 %\).) Tj
+T* () Tj
+T* (## 3. Problèmes détectés → résolution) Tj
+T* () Tj
+T* (A\) Autoplay / Welcome to the Internet ne passe pas au suivant) Tj
+T* (  Cause : STATE_ENDED sans suivant ; fill surtout si Now Playing ouvert.) Tj
+T* (  Fix : STATE_ENDED + ensureAutoplayAhead + fill PlaybackService FGS \(lecteur fermé / BG\) en) Tj
+T* (1.3.18.) Tj
+T* (  Test Nothing : Welcome ~274s → avance BG vers Get Lucky — OK.) Tj
+T* () Tj
+T* (B\) Faux android.player.early_end \(spam mails, stack vide\)) Tj
+T* (  Cause : compare catalogue trop long ; error dès retry=1 ; pas de stack.) Tj
+T* (  Fix : durée Exo préférée ; ignore EOS Exo / pos trop tôt / ratio bas ;) Tj
+T* (        retry1=warn \(pas d’email\) ; retry≥2=error + breadcrumbs/logs \(+ PDF si gros\).) Tj
+T* (  Les mails cités \(1.3.17\) = ancienne build. Devices maintenant en 1.3.18.) Tj
+T* () Tj
+T* (C\) Skips qui bouclaient sur 4–5 titres) Tj
+T* (  Cause : autoplay/related courte qui recycle.) Tj
+T* (  Action : playlist QA Endurance Diversité \(100 titres\) ; 50 skips / 50 uniques — OK.) Tj
+T* () Tj
+T* (D\) Télémétrie mails sans stack / PDF) Tj
+T* (  Fix API telemetryAlert + textPdf ; TelemetryReporter diagnostic AppLog.) Tj
+T* () Tj
+T* (E\) Nav web mobile au-dessus du lecteur) Tj
+T* (  Fix PR#63 : nav sous le lecteur \(--ytm-nav-h\). Mergé dans dev.) Tj
+T* () Tj
+T* (F\) MàJ APK in-app) Tj
+T* (  Check quotidien + Compte→Mettre à jour ; JWT pour /api/deploy/apk ; APK p+1.3.18 publiée.) Tj
+T* () Tj
+ET
+BT
+/F1 8 Tf
+40 24 Td
+(PLM telemetry · page 1/3) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Length 4325 >>
+stream
+BT
+/F1 9 Tf
+40 802 Td
+11 TL
+(## 4. Chrono travaux / tests) Tj
+T* () Tj
+T* (~19h–21h : investigation early_end endurance ; mails Nothing/Samsung.) Tj
+T* (~21h : playlist QA 100 titres ; sync Nothing ; test diversité skips.) Tj
+T* (~21h–22h : correctifs 1.3.18 \(Exo-duration, autoplay BG, OTA\) ; PR#61/#62 ; redeploy ;) Tj
+T* (install devices.) Tj
+T* (~22h–23h : stress Welcome EOS/−2s/BG ; skips ; smoke Samsung.) Tj
+T* (~23h : nav web sous lecteur \(PR#63\).) Tj
+T* (~23h20+ : scan IMAP + catalogue docs/reports + ce rapport PDF.) Tj
+T* () Tj
+T* (## 5. État appareils / infra) Tj
+T* () Tj
+T* (Samsung DEV : ovh.delhomme.ytmusic.dev · d+1.3.18 · API LAN :8787) Tj
+T* (Nothing PROD : ovh.delhomme.ytmusic · p+1.3.18 · https://ytmusic.delhomme.ovh) Tj
+T* (VPS : health OK p+1.3.18 ; OTA APK ready versionCode 10318.) Tj
+T* () Tj
+T* (## 6. Reste à faire) Tj
+T* () Tj
+T* (- Surveiller 24–48h : 0 mail early_end retry=1 sous 1.3.18.) Tj
+T* (- Si early_end avec durée Exo réellement courte : streams tronqués \(abiWZ / oXSw / psuRG\).) Tj
+T* (- Promo prod nav web si image VPS pas encore à jour pour le front.) Tj
+T* (- Smoke OTA forcé \(bump 1.3.19\) sans ADB.) Tj
+T* (- Relancer endurance 1h Nothing en 1.3.18 et comparer volume mails.) Tj
+T* (- Continuer triage android.player \(hors early_end\) restants.) Tj
+T* () Tj
+T* (## 7. Extrait événements mail \(session\)) Tj
+T* () Tj
+T* (  2026-08-12 19:24:33 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105020 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:28:14 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105073 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:29:53 | prod | android.player.early_end | ver=p+1.3.17 | track=oXSw8DGjf5E |) Tj
+T* (pos=134331 expected=160000 retry=1) Tj
+T* (  2026-08-12 19:31:55 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105093 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:34:01 | prod | android.player.early_end | ver=p+1.3.17 | track=oXSw8DGjf5E |) Tj
+T* (pos=134350 expected=160000 retry=1) Tj
+T* (  2026-08-12 19:38:09 | prod | android.player.early_end | ver=p+1.3.17 | track=oXSw8DGjf5E |) Tj
+T* (pos=134350 expected=160000 retry=1) Tj
+T* (  2026-08-12 19:39:17 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105133 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:42:59 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105220 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:46:39 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105232 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:50:15 | prod | android.player.early_end | ver=p+1.3.17 | track=MqpPW8u3MwA |) Tj
+T* (pos=108768 expected=147000 retry=1) Tj
+T* (  2026-08-12 19:50:20 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105283 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:54:01 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105332 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:57:41 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105348 expected=149000 retry=1) Tj
+T* (  2026-08-12 19:58:02 | prod | android.player.early_end | ver=p+1.3.17 | track=psuRGfAaju4 |) Tj
+T* (pos=176945 expected=233000 retry=1) Tj
+T* (  2026-08-12 20:02:18 | prod | android.player.early_end | ver=p+1.3.17 | track=psuRGfAaju4 |) Tj
+T* (pos=176959 expected=233000 retry=1) Tj
+T* (  2026-08-12 20:05:03 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105454 expected=149000 retry=1) Tj
+T* (  2026-08-12 20:06:09 | prod | android.player.early_end | ver=p+1.3.17 | track=psuRGfAaju4 |) Tj
+T* (pos=177062 expected=233000 retry=1) Tj
+T* (  2026-08-12 20:08:43 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105590 expected=149000 retry=1) Tj
+T* (  2026-08-12 20:10:17 | prod | android.player.early_end | ver=p+1.3.17 | track=psuRGfAaju4 |) Tj
+T* (pos=177075 expected=233000 retry=1) Tj
+T* (  2026-08-12 20:12:24 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105604 expected=149000 retry=1) Tj
+ET
+BT
+/F1 8 Tf
+40 24 Td
+(PLM telemetry · page 2/3) Tj
+ET
+endstream
+endobj
+4 0 obj
+<< /Length 1757 >>
+stream
+BT
+/F1 9 Tf
+40 802 Td
+11 TL
+(  2026-08-12 20:14:28 | prod | android.player.early_end | ver=p+1.3.17 | track=psuRGfAaju4 |) Tj
+T* (pos=177075 expected=233000 retry=1) Tj
+T* (  2026-08-12 20:16:04 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105623 expected=149000 retry=1) Tj
+T* (  2026-08-12 20:18:19 | prod | android.player.early_end | ver=p+1.3.17 | track=psuRGfAaju4 |) Tj
+T* (pos=177075 expected=233000 retry=1) Tj
+T* (  2026-08-12 20:19:44 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105627 expected=149000 retry=1) Tj
+T* (  2026-08-12 20:23:24 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105636 expected=149000 retry=1) Tj
+T* (  2026-08-12 20:27:04 | dev | android.player.early_end | ver=d+1.3.17 | track=abiWZq7YKEc |) Tj
+T* (pos=105650 expected=149000 retry=1) Tj
+T* (  2026-08-12 20:31:30 | local | android.test.telemetry_mail | ver=? | track=- | pos=-) Tj
+T* (expected=- retry=-) Tj
+T* (  2026-08-12 20:56:20 | prod | android.player.early_end | ver=? | track=aaAHLP-XOx8 |) Tj
+T* (pos=104639 expected=174000 retry=2) Tj
+T* (  2026-08-12 21:17:43 | prod | android.player | ver=? | track=- | pos=355190 expected=-) Tj
+T* (retry=1) Tj
+T* (  2026-08-12 21:23:27 | dev | android.player | ver=? | track=- | pos=105650 expected=149000) Tj
+T* (retry=1) Tj
+T* () Tj
+T* (## 8. Verdict) Tj
+T* () Tj
+T* (Les early_end oXSw8DGjf5E / abiWZq7YKEc de ce soir = build 1.3.17 \(faux positifs catalogue\).) Tj
+T* (Correctif 1.3.18 déployé Samsung + Nothing + VPS. Autoplay EOS Welcome validé en BG.) Tj
+T* (Prochaine preuve : période calme sans spam early_end retry=1 en 1.3.18.) Tj
+T* () Tj
+ET
+BT
+/F1 8 Tf
+40 24 Td
+(PLM telemetry · page 3/3) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 8 0 R /MediaBox [0 0 595 842] /Contents 2 0 R /Resources << /Font << /F1 1 0 R >> >> >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 8 0 R /MediaBox [0 0 595 842] /Contents 3 0 R /Resources << /Font << /F1 1 0 R >> >> >>
+endobj
+7 0 obj
+<< /Type /Page /Parent 8 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 1 0 R >> >> >>
+endobj
+8 0 obj
+<< /Type /Pages /Kids [5 0 R 6 0 R 7 0 R] /Count 3 >>
+endobj
+9 0 obj
+<< /Type /Catalog /Pages 8 0 R >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000003390 00000 n 
+0000007767 00000 n 
+0000009576 00000 n 
+0000009702 00000 n 
+0000009828 00000 n 
+0000009954 00000 n 
+0000010023 00000 n 
+trailer
+<< /Size 10 /Root 9 0 R >>
+startxref
+10072
+%%EOF

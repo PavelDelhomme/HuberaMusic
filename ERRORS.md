@@ -14,7 +14,7 @@
 ### E13 — Fin de titre → « réseau instable » / file stoppée (prod mobile)
 | | |
 |--|--|
-| **Status** | `fixed` (code) — à revalider DEV Samsung + PROD Samsung/Nothing + web |
+| **Status** | `fixed` — revalidé 2026-08-14 Samsung DEV + Nothing PROD (`d+/p+1.3.18`) |
 | **Surfaces** | Android prod (surtout) · web |
 | **Cause** | En fin de piste, googlevideo coupe souvent la connexion → Exo/`audio.error` classé **network** → toast « Réseau instable » / « Connexion perdue » + circuit-breaker → **pas de titre suivant** alors que le Wi‑Fi est OK |
 | **Fix** | Si `pos/dur ≥ 88 %` (ou &lt; 5 s restantes) : traiter comme **EOS**, enchaîner le suivant, **sans** incrémenter le streak réseau. Mid-piste : toast « Reprise du flux… » + re-resolve `/url` + proxy frais |
@@ -130,7 +130,7 @@
 ### E12 — Saut anticipé en fin de titre (+ erreurs)
 | | |
 |--|--|
-| **Status** | `fixed` (code) — à revalider web + Android |
+| **Status** | `fixed` — revalidé 2026-08-14 Android DEV/PROD (`1.3.18`) ; web à surveiller |
 | **Cause** | Silence/lyrics-end skip trop agressif ; durée méta courte ; stream tronqué → `ended` sans retry |
 | **Fix** | Skip seulement si ≤18 s restantes + RMS ; lyrics-end assoupli ; retry 1× si fin &lt; 88 % durée méta (web) |
 | **Tests** | TESTS.md **R14** · LOCAL §4 · DEV D4 · PROD P4 |

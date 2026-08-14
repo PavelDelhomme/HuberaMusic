@@ -1,0 +1,67 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 1305 >>
+stream
+BT
+/F1 9 Tf
+40 802 Td
+11 TL
+(PLM — Complément Nothing PROD 14/08/2026 14:16:56) Tj
+T* () Tj
+T* (## Nothing PROD USB — PASS) Tj
+T* () Tj
+T* (Device: 00145153K001434 \(USB\)) Tj
+T* (Version: p+1.3.18 \(10318\)) Tj
+T* (Offline: 19 .m4a) Tj
+T* (Airplane play: true) Tj
+T* (Skips offline \(5\): Unstoppable, Bezos II, Shit, Je me barre, Brittle Bones Nicky 2) Tj
+T* (Skips online \(10\): All Time Low, Bezos I, Don't Wanna Know, Welcome to The Internet,) Tj
+T* (Nightvision, Brittle Bones Nicky 3, Content, Unpaid Intern…) Tj
+T* (Fatals: 0 · network_restored=true) Tj
+T* (Notes: offline_count_after=19 | online play OK title=Brittle Bones Nicky 2 | online unique) Tj
+T* (titles among skips=10 offline_unique=5 | seek skipped \(not playing\) | battery_soft_check) Tj
+T* (log=/tmp/plm-battery-offline-nothing-2026-08-14.log | STATUS=PASS ok=true) Tj
+T* (airplane_play_ok=true fatals=0) Tj
+T* () Tj
+T* (## Rappel Samsung DEV) Tj
+T* () Tj
+T* (PASS d+1.3.18 · offline 95 · airplane true) Tj
+T* () Tj
+T* (## Note méthode) Tj
+T* () Tj
+T* (Le 1er essai Wi‑Fi ADB + mode avion avait coupé le téléphone. Relance en USB = ADB stable) Tj
+T* (pendant airplane. Pour les prochains tests offline wireless : script on-device ou câble USB.) Tj
+T* () Tj
+ET
+BT
+/F1 8 Tf
+40 24 Td
+(PLM telemetry · page 1/1) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Type /Page /Parent 4 0 R /MediaBox [0 0 595 842] /Contents 2 0 R /Resources << /Font << /F1 1 0 R >> >> >>
+endobj
+4 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+5 0 obj
+<< /Type /Catalog /Pages 4 0 R >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000001436 00000 n 
+0000001562 00000 n 
+0000001619 00000 n 
+trailer
+<< /Size 6 /Root 5 0 R >>
+startxref
+1668
+%%EOF
