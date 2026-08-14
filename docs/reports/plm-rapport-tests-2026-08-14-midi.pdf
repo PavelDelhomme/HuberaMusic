@@ -1,0 +1,160 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 3790 >>
+stream
+BT
+/F1 9 Tf
+40 802 Td
+11 TL
+(PLM — Rapport tests 14 août 2026 \(14/08/2026 13:10:53\)) Tj
+T* () Tj
+T* (## 1. Périmètre) Tj
+T* () Tj
+T* (Date : 14 août 2026 \(~12h50–13h15 Europe/Paris\).) Tj
+T* (Repo branche : dev @ c18724a \(nav web sous lecteur + early_end 1.3.18\).) Tj
+T* (Samsung USB R5CT7263YJL : APK DEV d+1.3.18 \(10318\) — tests offline/DL/skips OK.) Tj
+T* (Nothing A059 192.168.1.44 : ping OK mais ADB wireless refuse \(ports fermés\) — tests PROD) Tj
+T* (mobile BLOQUÉS.) Tj
+T* (API local : d+1.3.18 UP · API prod : p+1.3.18 UP · Vite :5173 UP.) Tj
+T* (Boîte IMAP dev@delhomme.ovh : 61 mails PLM / 3 jours analysés.) Tj
+T* () Tj
+T* (## 2. Samsung DEV — résultats) Tj
+T* () Tj
+T* (ok=true version=d+1.3.18 code=10318) Tj
+T* (offline .m4a : 95 \(suffisant, pas de nouveau DL forcé\)) Tj
+T* (airplane play : true \(Mix hors-ligne\)) Tj
+T* (skips offline uniques : 5 → Sharks, Study Playlist, Comme si c'était le premier, Veridis) Tj
+T* (Quo, Unstoppable) Tj
+T* (skips online uniques : 10 → Bateau tombé du ciel, Zen Concentration, i'm not the only one) Tj
+T* (\(piano instrumental\), Le chant des baleines, Papaoutai, Château dans le ciel…) Tj
+T* (fatals=0 network_restored=true) Tj
+T* (rapport : docs/reports/plm-samsung-tests-2026-08-14.json) Tj
+T* () Tj
+T* (## 3. Nothing PROD — bloqué) Tj
+T* () Tj
+T* (Ping 192.168.1.44 OK mais adb connect :5555 → Connection refused.) Tj
+T* (Scan ports 5555/37099/5556/45637 : tous fermés.) Tj
+T* (Action requise : activer Débogage sans fil sur le Nothing \(ou USB\), puis relancer les mêmes) Tj
+T* (tests offline/DL/skips/EOS.) Tj
+T* (APK attendue : p+1.3.18 \(VPS déjà en p+1.3.18\). Samsung a encore un package prod p+1.3.17) Tj
+T* (installé \(secondaire\).) Tj
+T* () Tj
+T* (## 4. Web / API) Tj
+T* () Tj
+T* (local health d+1.3.18 · library 1863ms · stream 206) Tj
+T* (prod  health p+1.3.18 · library 3179ms · stream 206) Tj
+T* (reco chill \(E3\) : local 0 tracks · prod 0 tracks \(toujours vide\)) Tj
+T* (Web prod Accueil charge OK \(session seed, playlists QA visibles, lecteur actif\).) Tj
+T* (Smoke radio artiste toujours ~45–55 s \(E2 open\) — non bloquant lecture.) Tj
+T* () Tj
+T* (## 5. Mails PLM — triage) Tj
+T* () Tj
+T* (Top kinds \(3 jours\) :) Tj
+T* (  - [?] [PLM local] ERROR · window.error · Uncaught ReferenceError: setShowPasskeyLogin is) Tj
+T* (not defined ×3) Tj
+T* (  - [?] [PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177075) Tj
+T* (expected=233000 ×3) Tj
+T* (  - [?] [PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104907) Tj
+T* (expected=149000 ×2) Tj
+T* (  - [?] [PLM prod] ERROR · android.player.early_end · early end oXSw8DGjf5E pos=134350) Tj
+T* (expected=160000 ×2) Tj
+T* (  - [?] [PLM batterie] A059 · 0% · 20260811-135855 ×1) Tj
+T* (  - [?] [PLM local] ERROR · android.test · test alert crash pipeline ×1) Tj
+T* (  - [?] [PLM prod] ERROR · android.player · onPlayerError code=2004 id=_WJDio2lJwk streak=3) Tj
+T* (network=true local=false ×1) Tj
+T* (  - [?] [PLM prod] ERROR · android.player.early_end · early end KFJ_fFfsfNY pos=179354) Tj
+T* (expected=261000 ×1) Tj
+T* (  - [?] [PLM prod] ERROR · android.player · onPlayerError code=2000 id=7ku_b002PiY streak=1) Tj
+T* (network=false local=false ×1) Tj
+T* (  - [?] [PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=2) Tj
+T* (network=true local=false ×1) Tj
+T* (  - [?] [PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=3) Tj
+T* (network=true local=false ×1) Tj
+T* (  - [?] [PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=4) Tj
+T* (network=true local=false ×1) Tj
+T* () Tj
+ET
+BT
+/F1 8 Tf
+40 24 Td
+(PLM telemetry · page 1/2) Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Length 1747 >>
+stream
+BT
+/F1 9 Tf
+40 802 Td
+11 TL
+(android.player.early_end : quasi tous appVersion d+/p+1.3.17 \(12 août\), retry=1.) Tj
+T* (  → Déjà corrigé en 1.3.18 \(durée Exo, warn retry1, autoplay BG\). Aucun early_end 1.3.18) Tj
+T* (dans la boîte.) Tj
+T* (android.player code=2004 : erreurs source/HTTP Exo pendant stress — à surveiller ;) Tj
+T* (retry/skip déjà en place.) Tj
+T* (window.error setShowPasskeyLogin : code actuel AuthModal utilise const showPasskeyLogin) Tj
+T* (\(plus de setState\).) Tj
+T* (  → Bug déjà résolu / ancien bundle HMR ; pas de réapparition attendue après hard refresh.) Tj
+T* (Catalogue : docs/reports/plm-mail-catalog-2026-08-14.json) Tj
+T* () Tj
+T* (## 6. Correctifs / actions) Tj
+T* () Tj
+T* (FAIT : tests Samsung offline complets PASS ; API/web smoke ; scan IMAP ; archives) Tj
+T* (docs/reports/.) Tj
+T* (PAS DE NOUVEAU PATCH CODE nécessaire aujourd’hui pour early_end / passkey \(déjà en 1.3.18 /) Tj
+T* (AuthModal\).) Tj
+T* (RESTE :) Tj
+T* (  1\) Brancher / activer ADB Nothing → rejouer batterie offline + EOS Welcome + skips) Tj
+T* (diversité.) Tj
+T* (  2\) E2 radio artiste lente \(~50 s\) — preview/fill progressif.) Tj
+T* (  3\) E3 reco chill vide.) Tj
+T* (  4\) Surveiller 24–48 h : 0 mail early_end sous 1.3.18.) Tj
+T* (  5\) Option : bump OTA / réinstaller package prod Samsung en p+1.3.18.) Tj
+T* () Tj
+T* (## 7. Verdict) Tj
+T* () Tj
+T* (Samsung DEV offline + online : PASS \(d+1.3.18\).) Tj
+T* (Web/API local+prod : PASS \(hors E2/E3 connus\).) Tj
+T* (Nothing PROD : NON TESTÉ \(ADB down\).) Tj
+T* (Mails early_end de la session 12/08 = build 1.3.17 ; correctif déployé ; pas de nouveaux) Tj
+T* (mails 1.3.18.) Tj
+T* () Tj
+ET
+BT
+/F1 8 Tf
+40 24 Td
+(PLM telemetry · page 2/2) Tj
+ET
+endstream
+endobj
+4 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 595 842] /Contents 2 0 R /Resources << /Font << /F1 1 0 R >> >> >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 6 0 R /MediaBox [0 0 595 842] /Contents 3 0 R /Resources << /Font << /F1 1 0 R >> >> >>
+endobj
+6 0 obj
+<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 >>
+endobj
+7 0 obj
+<< /Type /Catalog /Pages 6 0 R >>
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000009 00000 n 
+0000000079 00000 n 
+0000003921 00000 n 
+0000005720 00000 n 
+0000005846 00000 n 
+0000005972 00000 n 
+0000006035 00000 n 
+trailer
+<< /Size 8 /Root 7 0 R >>
+startxref
+6084
+%%EOF

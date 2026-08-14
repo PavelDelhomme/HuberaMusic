@@ -1,0 +1,1280 @@
+{
+  "ok": true,
+  "plm_count": 61,
+  "by_kind": [
+    {
+      "env": "?",
+      "kind": "[PLM local] ERROR · window.error · Uncaught ReferenceError: setShowPasskeyLogin is not defined",
+      "count": 3
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177075 expected=233000",
+      "count": 3
+    },
+    {
+      "env": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104907 expected=149000",
+      "count": 2
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end oXSw8DGjf5E pos=134350 expected=160000",
+      "count": 2
+    },
+    {
+      "env": "?",
+      "kind": "[PLM batterie] A059 · 0% · 20260811-135855",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM local] ERROR · android.test · test alert crash pipeline",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=_WJDio2lJwk streak=3 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end KFJ_fFfsfNY pos=179354 expected=261000",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2000 id=7ku_b002PiY streak=1 network=false local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=2 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=3 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=4 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=5 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=5 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=3 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=4 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end cKE4wJMcAkc pos=80 expected=214000",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=3 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=4 network=true local=false",
+      "count": 1
+    },
+    {
+      "env": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=5 network=true local=false",
+      "count": 1
+    }
+  ],
+  "by_version_errors": [
+    {
+      "version": "?",
+      "count": 58
+    }
+  ],
+  "early_tracks": [
+    {
+      "env": "?",
+      "track": "-",
+      "count": 40
+    }
+  ],
+  "events": [
+    {
+      "id": "415",
+      "date": "Tue, 11 Aug 2026 11:58:57 +0000",
+      "subj": "[PLM batterie] A059 · 0% · 20260811-135855",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM batterie] A059 · 0% · 20260811-135855",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-9892804f7a1bc4cc-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "416",
+      "date": "Tue, 11 Aug 2026 12:08:48 +0000",
+      "subj": "[PLM local] ERROR · android.test · test alert crash pipeline",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM local] ERROR · android.test · test alert crash pipeline",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-e8d246518e1243eb-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "417",
+      "date": "Wed, 12 Aug 2026 13:30:09 +0000",
+      "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=_WJDio2lJwk streak=3 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=_WJDio2lJwk streak=3 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-1d641f23bbeff6f3-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "418",
+      "date": "Wed, 12 Aug 2026 15:11:46 +0000",
+      "subj": "[PLM local] ERROR · window.error · Uncaught ReferenceError: setShowPasskeyLogin is not defined",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM local] ERROR · window.error · Uncaught ReferenceError: setShowPasskeyLogin is not defined",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-f86da3b967bba865-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "419",
+      "date": "Wed, 12 Aug 2026 15:11:56 +0000",
+      "subj": "[PLM local] ERROR · window.error · Uncaught ReferenceError: setShowPasskeyLogin is not defined",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM local] ERROR · window.error · Uncaught ReferenceError: setShowPasskeyLogin is not defined",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-9841db802c7046dd-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "420",
+      "date": "Wed, 12 Aug 2026 15:12:41 +0000",
+      "subj": "[PLM local] ERROR · window.error · Uncaught ReferenceError: setShowPasskeyLogin is not defined",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM local] ERROR · window.error · Uncaught ReferenceError: setShowPasskeyLogin is not defined",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-5f15c0830c4fcee1-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "421",
+      "date": "Wed, 12 Aug 2026 15:35:49 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end KFJ_fFfsfNY pos=179354 expected=261000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end KFJ_fFfsfNY pos=179354 expected=261000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-55a4b20610335560-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "422",
+      "date": "Wed, 12 Aug 2026 15:51:49 +0000",
+      "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2000 id=7ku_b002PiY streak=1 network=false local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2000 id=7ku_b002PiY streak=1 network=false local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-079ba138631e4543-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "423",
+      "date": "Wed, 12 Aug 2026 16:12:58 +0000",
+      "subj": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=2 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=2 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-3f4749779477c76c-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "424",
+      "date": "Wed, 12 Aug 2026 16:13:06 +0000",
+      "subj": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=3 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=3 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-93d5602f72ff8d11-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "425",
+      "date": "Wed, 12 Aug 2026 16:13:16 +0000",
+      "subj": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=4 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=4 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-a8733bcb0d3647b2-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "426",
+      "date": "Wed, 12 Aug 2026 16:13:26 +0000",
+      "subj": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=5 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=obWLTestVu4 streak=5 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-74aa30733ffcbad5-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "427",
+      "date": "Wed, 12 Aug 2026 16:14:23 +0000",
+      "subj": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=5 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=5 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-9b9c925f9aba3107-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "428",
+      "date": "Wed, 12 Aug 2026 16:14:04 +0000",
+      "subj": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=3 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=3 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-fd30b940d68d79be-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "429",
+      "date": "Wed, 12 Aug 2026 16:14:13 +0000",
+      "subj": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=4 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2004 id=6EOiMrrHwVw streak=4 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-8d2812d67ea9efe9-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "430",
+      "date": "Wed, 12 Aug 2026 18:26:02 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end cKE4wJMcAkc pos=80 expected=214000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end cKE4wJMcAkc pos=80 expected=214000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-48454c72e56305cb-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "431",
+      "date": "Wed, 12 Aug 2026 18:26:13 +0000",
+      "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=3 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=3 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-f01201a5bd0cf287-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "432",
+      "date": "Wed, 12 Aug 2026 18:26:18 +0000",
+      "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=4 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=4 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-4ea6768b939cefad-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "433",
+      "date": "Wed, 12 Aug 2026 18:26:22 +0000",
+      "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=5 network=true local=false",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=cKE4wJMcAkc streak=5 network=true local=false",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-21de5660caae2dfb-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "434",
+      "date": "Wed, 12 Aug 2026 18:51:59 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end lFQdcPTTzSg pos=10 expected=224000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end lFQdcPTTzSg pos=10 expected=224000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-2df4c5b764069960-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "435",
+      "date": "Wed, 12 Aug 2026 18:55:43 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104579 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104579 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-a2050119ffd06dd7-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "436",
+      "date": "Wed, 12 Aug 2026 18:58:41 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104582 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104582 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-5aaeca0d2d16cdaf-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "437",
+      "date": "Wed, 12 Aug 2026 19:06:06 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104899 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104899 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-4e297ad8dd17a380-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "438",
+      "date": "Wed, 12 Aug 2026 19:09:47 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104907 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104907 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-871dda47e0bd5f73-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "439",
+      "date": "Wed, 12 Aug 2026 19:17:10 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104907 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104907 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-ace5192c82e7aea6-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "440",
+      "date": "Wed, 12 Aug 2026 19:20:51 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104917 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=104917 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-308042f965ab7d4d-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "441",
+      "date": "Wed, 12 Aug 2026 19:24:33 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105020 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105020 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-da5ac320ea08b88d-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "442",
+      "date": "Wed, 12 Aug 2026 19:28:14 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105073 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105073 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-614b648c4c47c0e7-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "443",
+      "date": "Wed, 12 Aug 2026 19:29:53 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end oXSw8DGjf5E pos=134331 expected=160000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end oXSw8DGjf5E pos=134331 expected=160000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-e02ba7498a8572a1-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "444",
+      "date": "Wed, 12 Aug 2026 19:31:55 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105093 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105093 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-c786185593949a5a-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "445",
+      "date": "Wed, 12 Aug 2026 19:34:01 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end oXSw8DGjf5E pos=134350 expected=160000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end oXSw8DGjf5E pos=134350 expected=160000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-48fe0e9e87b6e0ab-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "446",
+      "date": "Wed, 12 Aug 2026 19:38:09 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end oXSw8DGjf5E pos=134350 expected=160000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end oXSw8DGjf5E pos=134350 expected=160000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-fb292c3c92fccbdc-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "447",
+      "date": "Wed, 12 Aug 2026 19:39:17 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105133 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105133 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-87ca29fe942a362f-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "448",
+      "date": "Wed, 12 Aug 2026 19:42:59 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105220 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105220 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-41789a80f623c505-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "449",
+      "date": "Wed, 12 Aug 2026 19:46:39 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105232 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105232 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-ad803bbbb91f5943-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "450",
+      "date": "Wed, 12 Aug 2026 19:50:15 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end MqpPW8u3MwA pos=108768 expected=147000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end MqpPW8u3MwA pos=108768 expected=147000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-5cd3dd59d0a427ce-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "451",
+      "date": "Wed, 12 Aug 2026 19:50:20 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105283 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105283 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-716f8234d2d98275-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "452",
+      "date": "Wed, 12 Aug 2026 19:54:01 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105332 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105332 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-3414d0faa6c67d7f-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "453",
+      "date": "Wed, 12 Aug 2026 19:57:41 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105348 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105348 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-c2d8331a8844c267-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "454",
+      "date": "Wed, 12 Aug 2026 19:58:02 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=176945 expected=233000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=176945 expected=233000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-c5786b6de3b54690-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "455",
+      "date": "Wed, 12 Aug 2026 20:02:18 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=176959 expected=233000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=176959 expected=233000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-ec8e4a3fb15c930d-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "456",
+      "date": "Wed, 12 Aug 2026 20:05:03 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105454 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105454 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-364e04f827b8b3ef-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "457",
+      "date": "Wed, 12 Aug 2026 20:06:09 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177062 expected=233000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177062 expected=233000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-558f3f8325048194-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "458",
+      "date": "Wed, 12 Aug 2026 20:08:43 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105590 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105590 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-f5a4620a3c7d1d52-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "459",
+      "date": "Wed, 12 Aug 2026 20:10:17 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177075 expected=233000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177075 expected=233000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-f5e31b8e3ada7cc2-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "460",
+      "date": "Wed, 12 Aug 2026 20:12:24 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105604 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105604 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-4fd9f128729f8097-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "461",
+      "date": "Wed, 12 Aug 2026 20:14:28 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177075 expected=233000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177075 expected=233000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-e06ee21f4c796feb-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "462",
+      "date": "Wed, 12 Aug 2026 20:16:04 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105623 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105623 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-e31a6adef1e66740-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "463",
+      "date": "Wed, 12 Aug 2026 20:18:19 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177075 expected=233000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end psuRGfAaju4 pos=177075 expected=233000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-9579daad5166a5b6-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "464",
+      "date": "Wed, 12 Aug 2026 20:19:44 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105627 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105627 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-3648b942cfdfb4a8-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "465",
+      "date": "Wed, 12 Aug 2026 20:23:24 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105636 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105636 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-d6ea5bfdd55ff6a9-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "466",
+      "date": "Wed, 12 Aug 2026 20:26:38 +0000",
+      "subj": "[PLM] Endurance mobile 1h — OK — 21 transitions",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM] Endurance mobile 1h — OK — 21 transitions",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-8ce2d6ca8deff286-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-8ce2d6ca8deff286-Part_2\"\r"
+      ]
+    },
+    {
+      "id": "467",
+      "date": "Wed, 12 Aug 2026 20:27:04 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105650 expected=149000",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end abiWZq7YKEc pos=105650 expected=149000",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-b629fc95e82480cc-Part_1\r",
+        "Content-Type: text/plain; charset=utf-8\r",
+        "Content-Transfer-Encoding: quoted-printable\r"
+      ]
+    },
+    {
+      "id": "468",
+      "date": "Wed, 12 Aug 2026 20:31:30 +0000",
+      "subj": "[PLM local] ERROR · android.test.telemetry_mail · test email stack + PDF PJ (early-end fix verification)",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM local] ERROR · android.test.telemetry_mail · test email stack + PDF PJ (early-end fix verification)",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-53f0dafe84da7fac-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-53f0dafe84da7fac-Part_2\"\r"
+      ]
+    },
+    {
+      "id": "469",
+      "date": "Wed, 12 Aug 2026 20:56:20 +0000",
+      "subj": "[PLM prod] ERROR · android.player.early_end · early end aaAHLP-XOx8 pos=104639 expected=174000 ratio=0.60",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player.early_end · early end aaAHLP-XOx8 pos=104639 expected=174000 ratio=0.60",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-c9670d2eb3c5c761-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-c9670d2eb3c5c761-Part_2\"\r"
+      ]
+    },
+    {
+      "id": "470",
+      "date": "Wed, 12 Aug 2026 21:17:43 +0000",
+      "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2008 id=CLW3FnDa1nQ streak=1 network=false local=true",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM prod] ERROR · android.player · onPlayerError code=2008 id=CLW3FnDa1nQ streak=1 network=false local=true",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-03d3d2948ff13fff-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-03d3d2948ff13fff-Part_2\"\r"
+      ]
+    },
+    {
+      "id": "471",
+      "date": "Wed, 12 Aug 2026 21:23:27 +0000",
+      "subj": "[PLM dev] ERROR · android.player · onPlayerError code=2000 id=_og4C4aMtJ4 streak=1 network=false local=true",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player · onPlayerError code=2000 id=_og4C4aMtJ4 streak=1 network=false local=true",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-110c24ce45865d45-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-110c24ce45865d45-Part_2\"\r"
+      ]
+    },
+    {
+      "id": "472",
+      "date": "Wed, 12 Aug 2026 21:30:01 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end _og4C4aMtJ4 pos=362334 expected=439679 ratio=0.82",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end _og4C4aMtJ4 pos=362334 expected=439679 ratio=0.82",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-0453b15faf1c00ef-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-0453b15faf1c00ef-Part_2\"\r"
+      ]
+    },
+    {
+      "id": "473",
+      "date": "Wed, 12 Aug 2026 21:30:34 +0000",
+      "subj": "[PLM] Rapport session 12 août — early_end 1.3.17→1.3.18, autoplay BG, tests",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM] Rapport session 12 août — early_end 1.3.17→1.3.18, autoplay BG, tests",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-5849b6702e7a973f-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-5849b6702e7a973f-Part_2\"\r"
+      ]
+    },
+    {
+      "id": "474",
+      "date": "Wed, 12 Aug 2026 21:47:19 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end sXTgPnRfEzo pos=39969 expected=117000 ratio=0.34",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end sXTgPnRfEzo pos=39969 expected=117000 ratio=0.34",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-5403aad98a40bb8e-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-5403aad98a40bb8e-Part_2\"\r"
+      ]
+    },
+    {
+      "id": "475",
+      "date": "Wed, 12 Aug 2026 21:53:30 +0000",
+      "subj": "[PLM dev] ERROR · android.player.early_end · early end IULND32Yn4U pos=39783 expected=124022 ratio=0.32",
+      "env": "?",
+      "level": "?",
+      "kind": "[PLM dev] ERROR · android.player.early_end · early end IULND32Yn4U pos=39783 expected=124022 ratio=0.32",
+      "trackId": null,
+      "pos": null,
+      "expected": null,
+      "retry": null,
+      "appVersion": null,
+      "model": null,
+      "message": [
+        "----_NmP-7f9567d28bdf21ac-Part_1\r",
+        "Content-Type: multipart/alternative;\r",
+        " boundary=\"--_NmP-7f9567d28bdf21ac-Part_2\"\r"
+      ]
+    }
+  ]
+}

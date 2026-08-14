@@ -1,0 +1,81 @@
+{
+  "ts": "2026-08-14T13:09:47+0200",
+  "envs": {
+    "local": {
+      "base": "http://127.0.0.1:8787",
+      "health": {
+        "ok": true,
+        "appVersion": "d+1.3.18",
+        "ms": 8
+      },
+      "login": {
+        "ok": true,
+        "ms": 34
+      },
+      "library": {
+        "ok": true,
+        "ms": 1863,
+        "liked": 30,
+        "songs": 157
+      },
+      "stream": {
+        "ok": true,
+        "status": 206,
+        "ms": 1,
+        "ct": "audio/mp4"
+      },
+      "img": {
+        "ok": true,
+        "ms": 0
+      },
+      "reco_chill": {
+        "ok": true,
+        "ms": 1,
+        "tracks": 0
+      },
+      "related": {
+        "ok": true,
+        "ms": 1,
+        "tracks": 0
+      }
+    },
+    "prod": {
+      "base": "https://ytmusic.delhomme.ovh",
+      "health": {
+        "ok": true,
+        "appVersion": "p+1.3.18",
+        "ms": 71
+      },
+      "login": {
+        "ok": true,
+        "ms": 124
+      },
+      "library": {
+        "ok": true,
+        "ms": 3179,
+        "liked": 13,
+        "songs": 206
+      },
+      "stream": {
+        "ok": true,
+        "status": 206,
+        "ms": 121,
+        "ct": "audio/mp4"
+      },
+      "img": {
+        "ok": true,
+        "ms": 89
+      },
+      "reco_chill": {
+        "ok": true,
+        "ms": 70,
+        "tracks": 0
+      },
+      "related": {
+        "ok": true,
+        "ms": 63,
+        "tracks": 0
+      }
+    }
+  }
+}

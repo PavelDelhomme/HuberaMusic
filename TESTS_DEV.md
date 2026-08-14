@@ -8,6 +8,7 @@
 
 | Date | Commit / version | Résultat | Notes |
 |------|------------------|----------|-------|
+| 2026-08-14 | `c18724a` / `d+1.3.18` | **Samsung DEV OK** | Offline airplane Mix+5 skips ; online 10 skips ; 95 DL ; 0 fatal ; rapport `docs/reports/plm-samsung-tests-2026-08-14.json` |
 | 2026-08-12 | `54f6aff` / `d+1.3.17` | **Samsung DEV OK** | APK réinstallé post-E13 ; API LAN ; fix EOS≠réseau + ROOT yt-dlp |
 | 2026-08-12 | WIP / `d+1.3.17` | **Samsung DEV OK** | APK `ovh.delhomme.ytmusic.dev` → LAN ; login seed ; Accueil/Biblio ; **Papaoutai PLAYING** ; Compte → passkey visible ; gzip + stream RAM **2–3 ms** après warm ; related audio-first (0 « Officiel ») ; fix ROOT post-réorg (`yt-dlp`/`data/`) |
 | 2026-08-12 | (WIP) R1–R12 / E7–E10 | À revalider | À suivre, trackCount, prefetch, UI playlist, drawer, DL ack, passkeys, paroles, membership |
