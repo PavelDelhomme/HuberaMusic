@@ -638,14 +638,18 @@ export const api = {
       generatedAt?: number;
     }>(`/api/track/${id}/related${qs ? `?${qs}` : ''}`);
   },
-  albumRadio: (id: string) =>
-    req<{ tracks: Track[]; cached?: boolean; target?: number; generatedAt?: number }>(
-      `/api/album/${id}/radio`,
-    ),
-  artistRadio: (id: string) =>
-    req<{ tracks: Track[]; cached?: boolean; target?: number; generatedAt?: number }>(
-      `/api/artist/${id}/radio`,
-    ),
+  albumRadio: (id: string, opts?: { full?: boolean }) => {
+    const q = opts?.full ? '?full=1' : '';
+    return req<{ tracks: Track[]; cached?: boolean; target?: number; generatedAt?: number; preview?: boolean }>(
+      `/api/album/${id}/radio${q}`,
+    );
+  },
+  artistRadio: (id: string, opts?: { full?: boolean }) => {
+    const q = opts?.full ? '?full=1' : '';
+    return req<{ tracks: Track[]; cached?: boolean; target?: number; generatedAt?: number; preview?: boolean }>(
+      `/api/artist/${id}/radio${q}`,
+    );
+  },
   artistSongs: (id: string, limit?: number) =>
     req<{
       artist: { id: string; name: string; subscribers?: string; thumbnails: Track['thumbnails']; description?: string };

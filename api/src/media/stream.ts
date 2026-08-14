@@ -685,7 +685,46 @@ export async function handleStreamUrl(req: Request, res: Response) {
   }
 }
 
-/** Warm batch : déchiffre plusieurs formats + lazy head RAM (prefetch file). */
+/** Warm batch : file limitée, réponse immédiate (E5 — ne pas bloquer l’UI 16 s). */
+const warmQueue: string[] = [];
+const warmQueued = new Set<string>();
+let warmWorkers = 0;
+const WARM_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.STREAM_WARM_CONCURRENCY || 2) || 2));
+const WARM_BATCH_CAP = Math.max(4, Math.min(24, Number(process.env.STREAM_WARM_BATCH_CAP || 12) || 12));
+
+async function runWarmWorker() {
+  if (warmWorkers >= WARM_CONCURRENCY) return;
+  warmWorkers += 1;
+  try {
+    while (warmQueue.length) {
+      const id = warmQueue.shift();
+      if (!id) break;
+      warmQueued.delete(id);
+      try {
+        const format = await getAudioFormat(id);
+        if (format?.url) {
+          await warmStreamHead(id, (range) => fetchGooglevideo(format.url, range));
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+  } finally {
+    warmWorkers -= 1;
+    if (warmQueue.length) void runWarmWorker();
+  }
+}
+
+function enqueueStreamWarm(ids: string[]) {
+  for (const id of ids) {
+    if (warmQueued.has(id)) continue;
+    warmQueued.add(id);
+    warmQueue.push(id);
+  }
+  const start = Math.min(WARM_CONCURRENCY, warmQueue.length);
+  for (let i = 0; i < start; i++) void runWarmWorker();
+}
+
 export async function handleStreamWarm(req: Request, res: Response) {
   const raw = Array.isArray(req.body?.ids) ? req.body.ids : [];
   const ids = [
@@ -694,24 +733,36 @@ export async function handleStreamWarm(req: Request, res: Response) {
         .map((x: unknown) => String(x || ''))
         .filter((id: string): id is string => /^[a-zA-Z0-9_-]{11}$/.test(id)),
     ),
-  ].slice(0, 32) as string[];
+  ].slice(0, WARM_BATCH_CAP) as string[];
   if (!ids.length) {
     res.status(400).json({ error: 'ids requis' });
     return;
   }
-  const results = await Promise.allSettled(ids.map((id: string) => getAudioFormat(id)));
-  const ok = results.filter((r) => r.status === 'fulfilled').length;
-  res.json({ ok: true, requested: ids.length, warmed: ok });
-
-  // Lazy : seulement les premiers titres (fenêtre courte) — têtes RAM pour TTFB ≪ 100 ms
-  warmStreamHeadsLazy(
-    ids,
-    async (id) => {
-      const format = await getAudioFormat(id);
-      return (range) => fetchGooglevideo(format.url, range);
-    },
-    6,
-  );
+  // Mode legacy (tests) : attendre les formats si wait=1
+  const wait =
+    String(req.query.wait || req.body?.wait || '') === '1' ||
+    String(req.query.wait || req.body?.wait || '') === 'true';
+  if (wait) {
+    const results = await Promise.allSettled(ids.map((id: string) => getAudioFormat(id)));
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    res.json({ ok: true, requested: ids.length, warmed: ok, waited: true });
+    warmStreamHeadsLazy(
+      ids,
+      async (id) => {
+        const format = await getAudioFormat(id);
+        return (range) => fetchGooglevideo(format.url, range);
+      },
+      Math.min(6, ids.length),
+    );
+    return;
+  }
+  enqueueStreamWarm(ids);
+  res.json({
+    ok: true,
+    requested: ids.length,
+    queued: true,
+    pending: warmQueue.length + warmWorkers,
+  });
 }
 
 /**
