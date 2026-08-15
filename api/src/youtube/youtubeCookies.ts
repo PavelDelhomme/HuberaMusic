@@ -234,7 +234,7 @@ export function youtubeCookiesStatus(): YoutubeCookiesStatus {
       ? 'Session navigateur optionnelle (anti-bot). Pas de Premium requis — stream OK aussi sans cookies.'
       : appEnv === 'local' || appEnv === 'development'
         ? 'Aucun cookie YouTube — normal. Stream via yt-dlp/Innertube sans Premium.'
-        : 'Aucun cookie — OK. Préfère STREAM_UPSTREAM (PC maison) ; cookies navigateur optionnels, jamais Premium.',
+        : 'Aucun cookie — pousse une session youtube.com connectée : bash scripts/deploy/push-youtube-cookies.sh prod (navigateur Flatpak Brave OK).',
   };
 }
 

@@ -77,8 +77,17 @@ export function cachePath(videoId: string) {
   return join(CACHE_DIR, `${videoId}.m4a`);
 }
 
-/** Base URL de l’API maison (env ou fichier volume). */
+/** Base URL de l’API maison (env ou fichier volume).
+ *  Prod : désactivé sauf ALLOW_STREAM_UPSTREAM=1 — la prod doit tourner VPS-only.
+ */
 export function resolveStreamUpstream(): string | null {
+  const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || '').toLowerCase();
+  const allow =
+    process.env.ALLOW_STREAM_UPSTREAM === '1' ||
+    process.env.ALLOW_STREAM_UPSTREAM === 'true';
+  const isProd = appEnv === 'production' || appEnv === 'prod';
+  if (isProd && !allow) return null;
+
   const env = (process.env.STREAM_UPSTREAM || '').trim().replace(/\/$/, '');
   if (env) return env;
   try {
@@ -463,8 +472,27 @@ export async function handleStream(req: Request, res: Response) {
       return;
     } catch (err) {
       if (endIfHeadersSent(res)) return;
-      console.warn('[stream] STREAM_UPSTREAM KO, fallback local VPS:', (err as Error).message);
-      // continue → résolution VPS (yt-dlp/Innertube, cookies optionnels)
+      const msg = String((err as Error).message || err);
+      console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
+      // Par défaut PAS de fallback VPS : IP datacenter → getAudioFormat deadline / 502
+      // en cascade + mails télémétrie. Opt-in : STREAM_UPSTREAM_FALLBACK=1.
+      if (process.env.STREAM_UPSTREAM_FALLBACK !== '1') {
+        const isDown =
+          /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
+            msg,
+          );
+        const homeStatus = /home stream (\d{3})/.exec(msg);
+        const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
+        res.status(status).json({
+          error: 'Impossible de streamer audio',
+          detail: msg.slice(0, 240),
+          hint: isDown
+            ? 'Relais maison KO — sur le PC : bash scripts/deploy/link-home-stream.sh (laisser allumé).'
+            : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
+        });
+        return;
+      }
+      console.warn('[stream] STREAM_UPSTREAM fallback local VPS (STREAM_UPSTREAM_FALLBACK=1)');
     }
   }
 
@@ -472,7 +500,7 @@ export async function handleStream(req: Request, res: Response) {
     ensureTime('format');
     let format = wantVideo
       ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
-      : await withDeadline('getAudioFormat', getAudioFormat(videoId));
+      : await withDeadline('getAudioFormat', getAudioFormat(videoId, { userId: (req as any).userId }));
     if (format.url) {
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).
@@ -490,7 +518,10 @@ export async function handleStream(req: Request, res: Response) {
         invalidateStreamHead(videoId);
         format = wantVideo
           ? await withDeadline('getVideoFormat2', getVideoFormat(videoId))
-          : await withDeadline('getAudioFormat2', getAudioFormat(videoId));
+          : await withDeadline(
+              'getAudioFormat2',
+              getAudioFormat(videoId, { userId: (req as any).userId }),
+            );
         if (!format.url) throw new Error(`upstream ${wantVideo ? 'video' : 'audio'} ${upstream.status}`);
         upstream = await withDeadline('fetchGV2', fetchGooglevideo(format.url, rangeHdr));
       }

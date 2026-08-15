@@ -20,8 +20,16 @@ function alertRecipients(): string {
 }
 
 function fingerprint(level: string, kind: string, message: string, stack?: string): string {
+  // 502 stream / early_end répétés : même empreinte (évite 1 mail / piste pendant une panne relais)
+  const msg = message || '';
+  if (/Response code:\s*502|HTTP 502|home stream 502|STREAM_UPSTREAM/i.test(msg + (stack || ''))) {
+    return `${level}|${kind}|stream-502`;
+  }
+  if (/early end\s+\S+/i.test(msg) && /unavailable|502|Source error/i.test(stack || msg)) {
+    return `${level}|${kind}|early-end-stream`;
+  }
   // Inclut l’id piste / code erreur pour ne pas écraser des alertes distinctes
-  const tip = (message || '').slice(0, 120);
+  const tip = msg.slice(0, 120);
   const stackTip = (stack || '').split('\n').slice(0, 2).join('|').slice(0, 120);
   return `${level}|${kind}|${tip}|${stackTip}`;
 }

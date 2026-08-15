@@ -366,7 +366,7 @@ class PlayerController(
             } else {
                 userWantsPlaying = true
                 pendingAutoplay = true
-                exo.play()
+                resumeOrPlay(exo)
             }
             syncFrom(exo)
             return
@@ -379,9 +379,53 @@ class PlayerController(
         } else {
             userWantsPlaying = true
             pendingAutoplay = true
-            p.play()
+            resumeOrPlay(p)
         }
         syncFrom(p)
+    }
+
+    /**
+     * Après restore (autoplay=false) ou échec stream, Exo peut être IDLE / ENDED
+     * avec des URI mortes : un simple play() ne recharge rien.
+     * On re-prépare le titre courant (URL proxy fraîche) puis on lance.
+     */
+    private fun resumeOrPlay(p: Player) {
+        val state = p.playbackState
+        val needRebuild =
+            p.mediaItemCount == 0 ||
+                state == Player.STATE_IDLE ||
+                state == Player.STATE_ENDED
+        val id = p.currentMediaItem?.mediaId
+        val queue = PlaybackService.Holder.queue
+        val idx = p.currentMediaItemIndex.coerceAtLeast(0)
+        if (needRebuild || (id.isNullOrBlank() && queue.isNotEmpty())) {
+            val tracks = queue.ifEmpty { _state.value.queue }
+            if (tracks.isEmpty()) {
+                p.play()
+                return
+            }
+            val start = idx.coerceIn(0, tracks.lastIndex)
+            val pos = p.currentPosition.coerceAtLeast(_state.value.positionMs).coerceAtLeast(0L)
+            playNow(p, tracks, start, autoplay = true, startPositionMs = pos)
+            return
+        }
+        // URI stream encore là mais pas de buffer (souvent après kill / toast « Reprise du flux »)
+        if (p.bufferedPosition <= p.currentPosition + 500L && !id.isNullOrBlank()) {
+            val track = queue.firstOrNull { it.id == id } ?: _state.value.queue.firstOrNull { it.id == id }
+            if (track != null) {
+                val pos = p.currentPosition.coerceAtLeast(0L)
+                runCatching {
+                    val item = mediaItemFor(track, streamUrl, queueTitle)
+                    p.replaceMediaItem(p.currentMediaItemIndex, item)
+                    p.seekTo(p.currentMediaItemIndex, pos)
+                    p.prepare()
+                    p.play()
+                }
+                return
+            }
+        }
+        runCatching { p.prepare() }
+        p.play()
     }
 
     fun pause() {
@@ -1135,7 +1179,7 @@ class PlayerController(
             val ahead = window.drop(idx + 1).take(3)
             YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
         }
-        ensureAudibleMediaVolume(YtMusicApp.instance)
+        // Ne jamais toucher au volume STREAM_MUSIC système : garder celui déjà réglé.
         player.volume = 1f
         val playingSame =
             autoplay &&

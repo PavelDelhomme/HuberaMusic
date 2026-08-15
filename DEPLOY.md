@@ -241,6 +241,11 @@ Puis **Pull and redeploy**. Au boot l’API aligne le hash mot de passe.
 Sans ça : login OK mais **aucune lecture** (« Sign in to confirm you’re not a bot »).  
 En local ça marche souvent ; sur un VPS YouTube bloque l’IP.
 
+**Chemin recommandé (prod, sans PC allumé) :** OAuth appareil Google TV —  
+voir [`docs/STREAM-VPS-OAUTH.md`](docs/STREAM-VPS-OAUTH.md).
+
+Complément cookies (souvent insuffisant seul sur Contabo) :
+
 1. Navigateur (fenêtre privée) → connecte-toi sur **https://www.youtube.com**  
 2. F12 → **Network** → clique une requête `youtube.com` → Request Headers → copie **Cookie**  
 3. Ouvre **https://ytmusic.delhomme.ovh/admin** (connecté admin)  

@@ -32,6 +32,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.MainActivity
 import ovh.delhomme.ytmusic.R
@@ -66,6 +67,8 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var lastPlayingPosMs: Long = 0L
     /** Durée Exo du titre courant — le catalogue YTM est souvent trop long (faux early_end). */
     @Volatile private var lastPlayingDurationMs: Long = 0L
+    /** Fin de buffer Exo — si pos ≈ buffer et catalogue plus long, ce n’est pas un early_end. */
+    @Volatile private var lastPlayingBufferedMs: Long = 0L
     @Volatile private var prevPlayingId: String = ""
     @Volatile private var prevPlayingPosMs: Long = 0L
     @Volatile private var earlyEndRetries: Int = 0
@@ -81,12 +84,14 @@ class PlaybackService : MediaSessionService() {
                         prevPlayingPosMs = lastPlayingPosMs
                         lastPlayingId = id
                         lastPlayingDurationMs = 0L
+                        lastPlayingBufferedMs = 0L
                         if (earlyEndRetries > 0 && id != prevPlayingId) {
                             // Nouveau titre « normal » après reprise
                             earlyEndRetries = 0
                         }
                     } else {
                         lastPlayingPosMs = player.currentPosition.coerceAtLeast(0L)
+                        lastPlayingBufferedMs = player.bufferedPosition.coerceAtLeast(0L)
                         val d = player.duration
                         if (d > 0L && d != C.TIME_UNSET) {
                             lastPlayingDurationMs = d
@@ -153,9 +158,10 @@ class PlaybackService : MediaSessionService() {
             val snapPrevId = lastPlayingId
             val snapPrevPos = lastPlayingPosMs
             val snapPrevDur = lastPlayingDurationMs
+            val snapPrevBuf = lastPlayingBufferedMs
             promoteUpcomingToLocal(exo, exo.currentMediaItemIndex + 1)
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-                maybeRecoverEarlyEnd(exo, snapPrevId, snapPrevPos, snapPrevDur)
+                maybeRecoverEarlyEnd(exo, snapPrevId, snapPrevPos, snapPrevDur, snapPrevBuf)
                 // Stop en fin de file user si lecture auto OFF (suggestions restent dans la file)
                 val idx = exo.currentMediaItemIndex
                 val end = Holder.userQueueEnd
@@ -390,14 +396,17 @@ class PlaybackService : MediaSessionService() {
                     val resumePos = exo.currentPosition.coerceAtLeast(0L)
                     scope.launch {
                         runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
-                        // Bust format côté API (URL googlevideo morte / 403)
-                        runCatching {
-                            container?.api?.streamResolveUrl(id)
-                        }
-                        delay(350L * streak)
+                        // Bust format côté API (URL googlevideo morte / 403) — timeout court
+                        // pour éviter toast « Reprise… » après 1+ min alors que rien n’a repris
+                        val resolveOk = runCatching {
+                            withTimeout(8_000L) {
+                                container?.api?.streamResolveUrl(id)
+                            }
+                        }.isSuccess
+                        delay(250L * streak)
                         if (attempt != recoverGen.get()) return@launch
                         if (exo.currentMediaItem?.mediaId != id) return@launch
-                        runCatching {
+                        val rebuilt = runCatching {
                             val track = Holder.queue.firstOrNull { it.id == id }
                             val nextItem = if (track != null && container != null) {
                                 // remoteStreamUrl = proxy API frais (pas cache Exo empoisonné)
@@ -412,16 +421,30 @@ class PlaybackService : MediaSessionService() {
                             exo.setMediaItem(nextItem, resumePos)
                             exo.prepare()
                             exo.playWhenReady = true
-                        }
-                    }
-                    // Toast honnête : le device est online — c’est le flux, pas « Wi‑Fi mort »
-                    if (streak == 1 || streak == 3) {
+                            exo.play()
+                            true
+                        }.getOrDefault(false)
                         android.os.Handler(mainLooper).post {
-                            android.widget.Toast.makeText(
-                                this@PlaybackService,
-                                "Reprise du flux…",
-                                android.widget.Toast.LENGTH_SHORT,
-                            ).show()
+                            when {
+                                rebuilt && resolveOk && streak == 1 -> {
+                                    android.widget.Toast.makeText(
+                                        this@PlaybackService,
+                                        "Reprise du flux…",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                                !rebuilt || !resolveOk -> {
+                                    android.widget.Toast.makeText(
+                                        this@PlaybackService,
+                                        if (streak >= 3) {
+                                            "Flux audio KO — réessaie dans un instant"
+                                        } else {
+                                            "Flux audio indisponible"
+                                        },
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
                         }
                     }
                     return
@@ -948,6 +971,7 @@ class PlaybackService : MediaSessionService() {
         snapPrevId: String,
         snapPrevPos: Long,
         snapPrevDur: Long,
+        snapPrevBuf: Long = 0L,
     ) {
         val prevId = snapPrevId.trim()
         val pos = snapPrevPos.coerceAtLeast(0L)
@@ -963,11 +987,25 @@ class PlaybackService : MediaSessionService() {
         val track = Holder.queue.firstOrNull { it.id == prevId } ?: return
         val exoDur = snapPrevDur.takeIf { it >= 45_000L }
         val catalog = track.durationMsOrNull()?.takeIf { it >= 45_000L }
+        val bufEnd = snapPrevBuf.takeIf { it >= 45_000L }
         // Fin naturelle selon le conteneur réel → pas un early_end
         if (exoDur != null && pos.toDouble() / exoDur.toDouble() >= 0.90) {
             AppLog.d(
                 "PlaybackService",
                 "early_end ignoré (EOS Exo) id=$prevId pos=$pos exoDur=$exoDur catalog=$catalog",
+            )
+            return
+        }
+        // Catalogue YTM trop long vs buffer réel (durée metadata gonflée)
+        if (
+            exoDur == null &&
+            bufEnd != null &&
+            pos.toDouble() / bufEnd.toDouble() >= 0.92 &&
+            (catalog == null || catalog > bufEnd * 1.15)
+        ) {
+            AppLog.d(
+                "PlaybackService",
+                "early_end ignoré (EOS buffer) id=$prevId pos=$pos buf=$bufEnd catalog=$catalog",
             )
             return
         }
@@ -1026,20 +1064,38 @@ class PlaybackService : MediaSessionService() {
             if (container?.offlineStore?.has(prevId) == true) {
                 runCatching { container.offlineStore.remove(prevId) }
             }
+            // Bust format côté API (URL/CDN morte) puis URI avec cache-buster Exo
+            runCatching {
+                withTimeout(8_000L) {
+                    container?.api?.streamResolveUrl(prevId)
+                }
+            }
+            val bust = System.currentTimeMillis()
             val rebuilt = mediaItemFor(
                 track,
-                { tid -> container?.remoteStreamUrl(tid) ?: Holder.resolvedApiBase() + "/api/stream/$tid" },
+                { tid ->
+                    val base = container?.remoteStreamUrl(tid)
+                        ?: (Holder.resolvedApiBase() + "/api/stream/$tid")
+                    val sep = if (base.contains('?')) '&' else '?'
+                    "$base${sep}r=$bust"
+                },
                 Holder.queueTitle,
             )
+            // 2ᵉ essai : repartir un peu avant la coupure (évite trou buffer)
+            val resumeAt = if (earlyEndRetries >= 2) {
+                (pos - 4_000L).coerceAtLeast(0L)
+            } else {
+                pos.coerceAtLeast(0L)
+            }
             runCatching {
                 exo.replaceMediaItem(prevIdx, rebuilt)
-                exo.seekTo(prevIdx, pos.coerceAtLeast(0L))
+                exo.seekTo(prevIdx, resumeAt)
                 exo.prepare()
                 exo.playWhenReady = true
                 exo.play()
                 Holder.index = prevIdx
                 lastPlayingId = prevId
-                lastPlayingPosMs = pos
+                lastPlayingPosMs = resumeAt
             }
         }
         // Toast seulement sur 2ᵉ tentative (vrai problème persistant)
@@ -1306,20 +1362,6 @@ fun ExoPlayer.playTracks(baseStreamUrl: (String) -> String, tracks: List<TrackDt
     volume = 1f
     prepare()
     playWhenReady = true
-}
-
-/** Si le volume média Android est à 0, le remonte un peu (sinon « pas de son » jusqu’aux touches volume). */
-fun ensureAudibleMediaVolume(context: android.content.Context) {
-    val am = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
-        ?: return
-    val stream = android.media.AudioManager.STREAM_MUSIC
-    val cur = am.getStreamVolume(stream)
-    if (cur > 0) return
-    val max = am.getStreamMaxVolume(stream).coerceAtLeast(1)
-    val target = (max * 0.35f).toInt().coerceIn(1, max)
-    runCatching {
-        am.setStreamVolume(stream, target, android.media.AudioManager.FLAG_SHOW_UI)
-    }
 }
 
 fun mediaItemFor(

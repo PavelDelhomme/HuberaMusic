@@ -103,6 +103,12 @@ import {
   youtubeCookiesStatus,
 } from './youtube/youtubeCookies.js';
 import {
+  clearStreamOauthTokens,
+  getStreamDeviceOauthStatus,
+  startStreamDeviceOauth,
+  streamOauthConfigured,
+} from './youtube/streamAuth.js';
+import {
   beginAuthentication,
   beginRegistration,
   deletePasskey,
@@ -1092,6 +1098,30 @@ app.delete('/api/admin/youtube-cookies', requireAdmin, (_req, res) => {
   const status = clearYoutubeCookieHeader();
   resetYT();
   res.json({ ok: true, ...status });
+});
+
+/** OAuth TV une fois — streams musique sur VPS sans PC / sans proxy payant. */
+app.get('/api/admin/youtube-stream-oauth', requireAdmin, (_req, res) => {
+  res.json({
+    ...getStreamDeviceOauthStatus(),
+    configured: streamOauthConfigured(),
+    hint: 'POST /api/admin/youtube-stream-oauth/start → ouvre google.com/device → entre le code',
+  });
+});
+
+app.post('/api/admin/youtube-stream-oauth/start', requireAdmin, async (_req, res) => {
+  try {
+    const started = await startStreamDeviceOauth();
+    res.json({ ok: true, ...started });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: String((err as Error).message || err) });
+  }
+});
+
+app.delete('/api/admin/youtube-stream-oauth', requireAdmin, (_req, res) => {
+  clearStreamOauthTokens();
+  resetYT();
+  res.json({ ok: true, ...getStreamDeviceOauthStatus(), configured: false });
 });
 
 function apkDownloadAuthorized(req: import('express').Request) {
