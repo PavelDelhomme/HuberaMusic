@@ -1,0 +1,342 @@
+[
+  {
+    "date": "Fri, 14 Aug 2026 11:07:13 +0000",
+    "subj": "[PLM dev] ERROR · android.player.early_end · early end 57qEv7BWUm4 pos=105814 expected=134000 ratio=0.79",
+    "kind": "android.player.early_end",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": "57qEv7BWUm4",
+    "retry": 2,
+    "ratio": 0.79
+  },
+  {
+    "date": "Fri, 14 Aug 2026 11:25:06 +0000",
+    "subj": "[PLM dev] ERROR · android.player.early_end · early end XP9PjN92goE pos=105101 expected=173754 ratio=0.60",
+    "kind": "android.player.early_end",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": "XP9PjN92goE",
+    "retry": 2,
+    "ratio": 0.6
+  },
+  {
+    "date": "Fri, 14 Aug 2026 12:14:56 +0000",
+    "subj": "[PLM dev] ERROR · android.player.early_end · early end PZ2pAo9HntI pos=169518 expected=255693 ratio=0.66",
+    "kind": "android.player.early_end",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": "PZ2pAo9HntI",
+    "retry": 2,
+    "ratio": 0.66
+  },
+  {
+    "date": "Fri, 14 Aug 2026 12:18:26 +0000",
+    "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2000 id=nuFlUUq0EXA streak=1 network=false local=true",
+    "kind": "android.player",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": null,
+    "retry": null,
+    "ratio": null
+  },
+  {
+    "date": "Fri, 14 Aug 2026 12:20:19 +0000",
+    "subj": "[PLM prod] ERROR · android.player · onPlayerError code=3003 id=aaAHLP-XOx8 streak=1 network=false local=true",
+    "kind": "android.player",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": null,
+    "retry": null,
+    "ratio": null
+  },
+  {
+    "date": "Fri, 14 Aug 2026 12:23:16 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end aaAHLP-XOx8 pos=90081 expected=173480 ratio=0.52",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "aaAHLP-XOx8",
+    "retry": 2,
+    "ratio": 0.52
+  },
+  {
+    "date": "Fri, 14 Aug 2026 12:23:58 +0000",
+    "subj": "[PLM dev] ERROR · android.player.early_end · early end YX4fT4pg9z4 pos=132864 expected=157093 ratio=0.85",
+    "kind": "android.player.early_end",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": "YX4fT4pg9z4",
+    "retry": 2,
+    "ratio": 0.85
+  },
+  {
+    "date": "Fri, 14 Aug 2026 12:25:59 +0000",
+    "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2000 id=rO-i3CqAs1M streak=1 network=false local=true",
+    "kind": "android.player",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": null,
+    "retry": null,
+    "ratio": 0.52
+  },
+  {
+    "date": "Fri, 14 Aug 2026 12:30:38 +0000",
+    "subj": "[PLM dev] ERROR · android.player.early_end · early end k1BneeJTDcU pos=236287 expected=280590 ratio=0.84",
+    "kind": "android.player.early_end",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.84
+  },
+  {
+    "date": "Fri, 14 Aug 2026 12:59:31 +0000",
+    "subj": "[PLM dev] ERROR · android.player.early_end · early end dKJfJMMsqX4 pos=169986 expected=238097 ratio=0.71",
+    "kind": "android.player.early_end",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": "dKJfJMMsqX4",
+    "retry": 2,
+    "ratio": 0.71
+  },
+  {
+    "date": "Fri, 14 Aug 2026 13:07:33 +0000",
+    "subj": "[PLM dev] ERROR · android.player.early_end · early end 6QWpHhHgTD4 pos=169997 expected=248560 ratio=0.68",
+    "kind": "android.player.early_end",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": "6QWpHhHgTD4",
+    "retry": 2,
+    "ratio": 0.68
+  },
+  {
+    "date": "Fri, 14 Aug 2026 13:13:49 +0000",
+    "subj": "[PLM dev] ERROR · android.player.early_end · early end XliiLpld6No pos=41824 expected=124524 ratio=0.34",
+    "kind": "android.player.early_end",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": "XliiLpld6No",
+    "retry": 2,
+    "ratio": 0.34
+  },
+  {
+    "date": "Fri, 14 Aug 2026 14:18:53 +0000",
+    "subj": "[PLM] Marathon mobile 1h — FAIL (39/53)",
+    "kind": null,
+    "pkg_guess": null,
+    "url": null,
+    "trackId": null,
+    "retry": null,
+    "ratio": null
+  },
+  {
+    "date": "Fri, 14 Aug 2026 14:23:28 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234332 expected=280590 ratio=0.84",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.84
+  },
+  {
+    "date": "Fri, 14 Aug 2026 14:38:12 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234441 expected=280590 ratio=0.84",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.84
+  },
+  {
+    "date": "Fri, 14 Aug 2026 14:55:04 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234436 expected=280590 ratio=0.84",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.84
+  },
+  {
+    "date": "Fri, 14 Aug 2026 15:30:03 +0000",
+    "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=RJSmeWCNMMA streak=2 network=true local=false",
+    "kind": "android.player",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": null,
+    "retry": null,
+    "ratio": null
+  },
+  {
+    "date": "Fri, 14 Aug 2026 15:30:07 +0000",
+    "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=RJSmeWCNMMA streak=3 network=true local=false",
+    "kind": "android.player",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": null,
+    "retry": null,
+    "ratio": null
+  },
+  {
+    "date": "Fri, 14 Aug 2026 15:30:11 +0000",
+    "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=RJSmeWCNMMA streak=4 network=true local=false",
+    "kind": "android.player",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": null,
+    "retry": null,
+    "ratio": null
+  },
+  {
+    "date": "Fri, 14 Aug 2026 15:30:16 +0000",
+    "subj": "[PLM prod] ERROR · android.player · onPlayerError code=2004 id=RJSmeWCNMMA streak=5 network=true local=false",
+    "kind": "android.player",
+    "pkg_guess": "dev",
+    "url": "android://ovh.delhomme.ytmusic.dev",
+    "trackId": null,
+    "retry": null,
+    "ratio": null
+  },
+  {
+    "date": "Fri, 14 Aug 2026 15:38:26 +0000",
+    "subj": "[PLM] Marathon v2 profond — FAIL (43 pass / 11 fail)",
+    "kind": null,
+    "pkg_guess": null,
+    "url": null,
+    "trackId": null,
+    "retry": null,
+    "ratio": null
+  },
+  {
+    "date": "Fri, 14 Aug 2026 15:52:31 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234219 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 16:10:12 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234232 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 16:42:26 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234196 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 16:59:21 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234258 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 17:16:55 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234277 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 17:33:49 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234228 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 17:50:43 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234218 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 18:07:36 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234498 expected=280590 ratio=0.84",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.84
+  },
+  {
+    "date": "Fri, 14 Aug 2026 18:39:49 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234227 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 19:12:01 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234483 expected=280590 ratio=0.84",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.84
+  },
+  {
+    "date": "Fri, 14 Aug 2026 19:28:57 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234492 expected=280590 ratio=0.84",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.84
+  },
+  {
+    "date": "Fri, 14 Aug 2026 19:45:52 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234208 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  },
+  {
+    "date": "Fri, 14 Aug 2026 20:02:46 +0000",
+    "subj": "[PLM prod] ERROR · android.player.early_end · early end k1BneeJTDcU pos=234209 expected=280590 ratio=0.83",
+    "kind": "android.player.early_end",
+    "pkg_guess": "prod",
+    "url": "android://ovh.delhomme.ytmusic",
+    "trackId": "k1BneeJTDcU",
+    "retry": 2,
+    "ratio": 0.83
+  }
+]

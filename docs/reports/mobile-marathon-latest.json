@@ -1,0 +1,83 @@
+{
+  "startedAt": "2026-08-14T22:31:02.673135+00:00",
+  "device": "R5CT7263YJL",
+  "pkg": "ovh.delhomme.ytmusic.dev",
+  "api": "http://192.168.1.134:8787",
+  "checks": [
+    {
+      "name": "version",
+      "ok": true,
+      "detail": "d+1.3.18",
+      "ts": 1786746669.71429
+    },
+    {
+      "name": "nav:coords",
+      "ok": true,
+      "detail": "accueil/recherche/biblio taps envoyés",
+      "ts": 1786746675.7810867
+    },
+    {
+      "name": "playback:start",
+      "ok": true,
+      "detail": "PLAYING q=8 Lakeside Songbook, Heaven Pierce Her, Ultrakill: P btn=True",
+      "ts": 1786746681.2868671
+    },
+    {
+      "name": "pause",
+      "ok": true,
+      "detail": "PAUSED",
+      "ts": 1786746682.598372
+    },
+    {
+      "name": "play",
+      "ok": true,
+      "detail": "PLAYING",
+      "ts": 1786746683.965188
+    },
+    {
+      "name": "progress",
+      "ok": true,
+      "detail": "2479->5548",
+      "ts": 1786746687.5247598
+    },
+    {
+      "name": "skips:20",
+      "ok": true,
+      "detail": "unique=20/20",
+      "ts": 1786746726.8852181
+    },
+    {
+      "name": "previous",
+      "ok": true,
+      "detail": "At Doom's Gate, Mick Gordon, DOOM (Original Game S",
+      "ts": 1786746728.5566013
+    },
+    {
+      "name": "offline:inventory",
+      "ok": true,
+      "detail": "m4a=172",
+      "ts": 1786746728.761138
+    },
+    {
+      "name": "endurance:alive",
+      "ok": true,
+      "detail": "36/36",
+      "ts": 1786747649.5386055
+    },
+    {
+      "name": "no-fatal",
+      "ok": true,
+      "detail": "fatals=0",
+      "ts": 1786747651.282309
+    }
+  ],
+  "ok": true,
+  "scope": "samsung-only-media",
+  "endedAt": "2026-08-14T22:47:31.282468+00:00",
+  "elapsedSec": 988.6,
+  "summary": {
+    "passed": 11,
+    "failed": 0,
+    "total": 11
+  }
+}
