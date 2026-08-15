@@ -27,6 +27,22 @@ EXPECTED_SERIALS=(
   "00145153K001434:Nothing"
 )
 
+# IPs LAN connues (Débogage sans fil = port dynamique ≠ 5555)
+KNOWN_LAN_IPS=(
+  "R5CT7263YJL:192.168.1.184"
+  "00145153K001434:192.168.1.44"
+)
+
+# Indices model/product pour status / discovery
+is_nothing_fingerprint() {
+  local blob="$1"
+  echo "$blob" | grep -qiE 'A059|Asteroids|Nothing|00145153K001434'
+}
+is_samsung_fingerprint() {
+  local blob="$1"
+  echo "$blob" | grep -qiE 'SM-G990B2|SM_G990B2|r9q|R5CT7263YJL'
+}
+
 # Au moins 1 appareil suffit (Samsung optionnel). REQUIRE_BOTH=1 pour exiger les 2.
 MIN_DEVICES="${MIN_DEVICES:-1}"
 REQUIRE_BOTH="${REQUIRE_BOTH:-0}"
@@ -207,11 +223,7 @@ cmd_enable_one() {
   fi
   local hw
   hw="$(hw_serial_of "$s")"
-  local tmp="$STATE_DIR/endpoints.txt.tmp"
-  touch "$STATE_DIR/endpoints.txt"
-  grep -v " $ip $PORT\$" "$STATE_DIR/endpoints.txt" 2>/dev/null | grep -v "^${hw:-$s} " >"$tmp" || true
-  echo "${hw:-$s} $ip $PORT" >>"$tmp"
-  mv "$tmp" "$STATE_DIR/endpoints.txt"
+  remember_endpoint "${hw:-$s}" "$ip" "$PORT"
   log "   → connect $ip:$PORT"
   "$ADB" connect "$ip:$PORT" || true
   sleep 1
@@ -326,6 +338,105 @@ cmd_disconnect() {
 
 cmd_status() { cmd_doctor || true; }
 
+remember_endpoint() {
+  local hw="$1" ip="$2" port="$3"
+  [[ -n "$hw" && -n "$ip" && -n "$port" ]] || return 0
+  local tmp="$STATE_DIR/endpoints.txt.tmp"
+  touch "$STATE_DIR/endpoints.txt"
+  # une seule ligne active par hw + par ip
+  grep -v "^${hw} " "$STATE_DIR/endpoints.txt" 2>/dev/null | grep -v " ${ip} " >"$tmp" || true
+  echo "${hw} ${ip} ${port}" >>"$tmp"
+  mv "$tmp" "$STATE_DIR/endpoints.txt"
+}
+
+# Débogage sans fil Android : le port change à chaque activation.
+# On scanne l’IP connue + on tente adb connect jusqu’à retrouver le serial HW.
+discover_and_connect_lan() {
+  local hw="$1" ip="$2"
+  local t port cand ports=()
+
+  # Déjà connecté sur cette IP ?
+  for t in $(wifi_serials); do
+    case "$t" in
+      "${ip}:"*)
+        if [[ "$(hw_serial_of "$t")" == "$hw" ]]; then
+          ok "déjà connecté $hw via $t"
+          remember_endpoint "$hw" "$ip" "${t##*:}"
+          return 0
+        fi
+        ;;
+    esac
+  done
+
+  # Ports mémorisés
+  if [[ -f "$STATE_DIR/endpoints.txt" ]]; then
+    while read -r _serial _ip _port; do
+      [[ "${_ip:-}" == "$ip" && -n "${_port:-}" ]] && ports+=("$_port")
+    done <"$STATE_DIR/endpoints.txt"
+  fi
+  ports+=("$PORT" 5555)
+
+  # Scan rapide ports ouverts (nmap si dispo, sinon plages typiques wireless debug)
+  if command -v nmap >/dev/null 2>&1; then
+    while read -r port; do
+      [[ -n "$port" ]] && ports+=("$port")
+    done < <(nmap -Pn -p 30000-65000 --open --min-rate 3000 "$ip" 2>/dev/null | awk '/\/tcp/{split($1,a,"/"); print a[1]}')
+  else
+    # fallback : quelques ports récents déjà vus + probing léger
+    for port in 36893 37000 38000 39000 40000 41000 42000 43000 44000 44585 45000 46000 47000 48000 49000 50000 51000 51692 52000 53000 53601 54000 55000 56000 57000 58000 59000 60000 61000 62000 63000 64000 64660; do
+      if timeout 0.15 bash -c "echo >/dev/tcp/${ip}/${port}" 2>/dev/null; then
+        ports+=("$port")
+      fi
+    done
+  fi
+
+  # unique preserve order
+  local seen="|" uniq=()
+  for port in "${ports[@]}"; do
+    [[ "$seen" == *"|$port|"* ]] && continue
+    seen+="${port}|"
+    uniq+=("$port")
+  done
+
+  log "==> discovery ADB Wi‑Fi $hw @ $ip (${#uniq[@]} ports candidats)"
+  for port in "${uniq[@]}"; do
+    cand="${ip}:${port}"
+    # ignore offline stuck
+    "$ADB" disconnect "$cand" >/dev/null 2>&1 || true
+    if "$ADB" connect "$cand" 2>/dev/null | grep -qi 'connected\|already'; then
+      sleep 0.4
+      if [[ "$(hw_serial_of "$cand")" == "$hw" ]]; then
+        # drop other offline siblings on same IP
+        for t in $(wifi_serials); do
+          case "$t" in
+            "${ip}:"*)
+              [[ "$t" == "$cand" ]] && continue
+              [[ "$("$ADB" devices | awk -v s="$t" '$1==s{print $2}')" == "offline" ]] && "$ADB" disconnect "$t" >/dev/null 2>&1 || true
+              ;;
+          esac
+        done
+        remember_endpoint "$hw" "$ip" "$port"
+        ok "connecté $hw → $cand"
+        return 0
+      fi
+      "$ADB" disconnect "$cand" >/dev/null 2>&1 || true
+    fi
+  done
+  warn "aucun port ADB valide pour $hw @ $ip — active Débogage sans fil ou USB"
+  return 1
+}
+
+lan_ip_for_hw() {
+  local hw="$1" entry
+  for entry in "${KNOWN_LAN_IPS[@]}"; do
+    if [[ "${entry%%:*}" == "$hw" ]]; then
+      echo "${entry#*:}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 cmd_ensure() {
   # INCLUDE_NOTHING=1 (défaut) : reconnecte Samsung + Nothing.
   # INCLUDE_NOTHING=0 : Samsung seulement — ne déconnecte PAS Nothing s’il est déjà là.
@@ -334,16 +445,23 @@ cmd_ensure() {
   if [[ -f "$STATE_DIR/endpoints.txt" ]]; then
     cmd_connect || true
   fi
-  # Samsung LAN d’abord
-  "$ADB" connect 192.168.1.184:5555 >/dev/null 2>&1 || true
+
+  # Discovery LAN (ports dynamiques Débogage sans fil)
+  local hw ip
+  for hw in R5CT7263YJL; do
+    ip="$(lan_ip_for_hw "$hw" || true)"
+    [[ -n "$ip" ]] && discover_and_connect_lan "$hw" "$ip" || true
+  done
   if [[ "$include_nothing" == "1" ]]; then
-    "$ADB" connect 192.168.1.44:5555 >/dev/null 2>&1 || true
+    hw=00145153K001434
+    ip="$(lan_ip_for_hw "$hw" || true)"
+    [[ -n "$ip" ]] && discover_and_connect_lan "$hw" "$ip" || true
   else
     log "==> skip reconnect Nothing (INCLUDE_NOTHING=0) — session existante conservée"
   fi
 
   # Bascule USB→Wi‑Fi pour Samsung (et Nothing si INCLUDE_NOTHING)
-  local s hw entry t
+  local s entry t
   for s in $(usb_serials); do
     hw="$(hw_serial_of "$s")"
     for entry in "${EXPECTED_SERIALS[@]}"; do
@@ -377,6 +495,12 @@ cmd_ensure() {
         fi
       done
     done
+    if [[ "$include_nothing" == "1" ]]; then
+      ip="$(lan_ip_for_hw 00145153K001434 || true)"
+      [[ -n "$ip" ]] && discover_and_connect_lan 00145153K001434 "$ip" || true
+    fi
+    ip="$(lan_ip_for_hw R5CT7263YJL || true)"
+    [[ -n "$ip" ]] && discover_and_connect_lan R5CT7263YJL "$ip" || true
     wifi_n="$(count_expected_wifi)"
     if (( wifi_n >= MIN_DEVICES )); then
       ok "ensure OK — ${wifi_n} appareil(s) en Wi‑Fi"

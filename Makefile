@@ -503,24 +503,8 @@ status: ## Statut coloré API / Vite / process locaux / Docker / ADB
 	@echo ""
 	@echo "📱 ADB (Samsung=DEV · Nothing=PROD) — make adb-both :"
 	@echo ""
-	@ADB_OUT=$$(adb devices -l 2>/dev/null || true); \
-	print_dev() { \
-	  local role="$$1" label="$$2" serial="$$3" ip="$$4"; \
-	  local line; \
-	  line=$$(printf '%s\n' "$$ADB_OUT" | awk -v s="$$serial" -v ip="$$ip" '$$2=="device" && (index($$0,s)||index($$0,ip)){print; exit}'); \
-	  if [ -n "$$line" ]; then \
-	    printf "  \033[1;32m✅ %s\033[0m %-10s %s\n" "$$role" "$$label" "$$line"; \
-	  else \
-	    printf "  \033[1;31m❌ %s\033[0m %-10s manquant  → make adb-both  (%s / %s)\n" "$$role" "$$label" "$$serial" "$$ip"; \
-	  fi; \
-	}; \
-	print_dev "DEV " "Samsung" "R5CT7263YJL" "192.168.1.184:5555"; \
-	print_dev "PROD" "Nothing" "00145153K001434" "192.168.1.44:5555"; \
-	printf '%s\n' "$$ADB_OUT" | awk 'NR>1 && NF && $$2!="device"{ \
-	  if($$2=="unauthorized") printf "  \033[1;33m⚠ unauthorized\033[0m %s  → accepte la popup USB\n", $$1; \
-	  else if($$2=="offline") printf "  \033[1;31m❌ offline\033[0m %s\n", $$1; \
-	  else printf "  \033[0;90m· %s\033[0m\n", $$0; \
-	}'
+	@chmod +x $(ROOT)/scripts/adb/adb-status-snippet.sh
+	@bash $(ROOT)/scripts/adb/adb-status-snippet.sh
 	@echo ""
 	@LAN=$$(hostname -I 2>/dev/null | awk '{print $$1}'); \
 	if [ -n "$$LAN" ]; then echo "  LAN → http://$$LAN:5173  ·  API http://$$LAN:8787"; fi
