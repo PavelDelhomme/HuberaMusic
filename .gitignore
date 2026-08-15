@@ -25,3 +25,15 @@ mobile-android/local.properties
 *.apk
 *.aab
 .venv-cookies/
+
+# Runtime API (local / volume) — ne jamais committer
+api/data/yt-cache/
+api/data/youtube-cookies.txt
+api/data/youtube-cookies.header
+api/data/youtube-stream-oauth.enc
+api/data/stream-upstream.url
+api/data/cache/
+api/data/yt-cache-stream/
+
+# Dumps marathon ADB (ui/logcat) — garder seulement les JSON/PDF à la racine de docs/reports/
+docs/reports/*/
