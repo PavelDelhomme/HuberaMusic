@@ -1,6 +1,6 @@
 # Streams prod VPS — session Google TV (sans PC, sans proxy payant)
 
-**Statut :** à reprendre après le 16/08/2026.  
+**Statut :** OAuth TV **connecté** (17/08/2026). La prod stream la musique (HTTP 206) via session signée + interpréteur JS youtubei.js (`api/src/youtube/youtubeiEval.ts`).  
 **But :** que la **prod** (`ytmusic.delhomme.ovh` + APK) stream la musique **sans** laisser un PC allumé (`link-home-stream`) et **sans** proxy résidentiel payant.
 
 ---
@@ -30,8 +30,9 @@ En résumé : **Premium = option Google que tu peux couper.** **OAuth TV = 2 min
 
 Fichiers clés :
 
+- `api/src/youtube/youtubeiEval.ts` — interpréteur JS (youtubei.js ≥ 16 n’en embarque plus)
 - `api/src/youtube/streamAuth.ts` — start / status / tokens stream
-- `api/src/youtube/yt.ts` — priorise la session signée
+- `api/src/youtube/yt.ts` — priorise la session signée (MWEB + cookies + OAuth)
 - `POST /api/admin/youtube-stream-oauth/start`
 - `GET /api/admin/youtube-stream-oauth`
 - `DELETE /api/admin/youtube-stream-oauth`
