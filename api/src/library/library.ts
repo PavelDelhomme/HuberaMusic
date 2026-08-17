@@ -144,6 +144,18 @@ export function getFullLibrary(userId: string) {
   };
 }
 
+/** Compteurs légers (pas tout le payload) — statut Google / sync. */
+export function libraryCounts(userId: string) {
+  const n = (sql: string) => Number((db.prepare(sql).get(userId) as { n: number } | undefined)?.n || 0);
+  return {
+    liked: n('SELECT COUNT(*) AS n FROM liked_tracks WHERE user_id = ?'),
+    songs: n('SELECT COUNT(*) AS n FROM library_tracks WHERE user_id = ?'),
+    albums: n('SELECT COUNT(*) AS n FROM library_albums WHERE user_id = ?'),
+    artists: n('SELECT COUNT(*) AS n FROM library_artists WHERE user_id = ?'),
+    playlists: n('SELECT COUNT(*) AS n FROM liked_playlists WHERE user_id = ?'),
+  };
+}
+
 export function toggleLikeTrack(userId: string, track: Track) {
   upsertTrack(track);
   const existing = db

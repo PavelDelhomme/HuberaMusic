@@ -5,6 +5,7 @@ import {
   addToPlaylist,
   createPlaylist,
   getFullLibrary,
+  libraryCounts,
   isTrackInLibrary,
   isTrackLiked,
   listPlaylists,
@@ -116,8 +117,17 @@ export function overlayYtmSync(userId: string, account: YtmAccountPublic) {
   const job = syncJobs.get(userId);
   const running = Boolean(job && !job.done);
   const syncError = job?.done ? job.error || null : null;
+  const c = libraryCounts(userId);
+  const totals =
+    `${c.liked} j’aime · ${c.songs} titres · ${c.albums} albums · ${c.playlists} playlists`;
+  const delta = account.lastSyncSummary;
+  const lastSyncSummary =
+    delta && !/^\+0 likes, 0 titres/.test(delta)
+      ? `${delta} · en biblio : ${totals}`
+      : `En biblio : ${totals}`;
   return {
     ...account,
+    lastSyncSummary,
     syncRunning: running,
     syncError,
     hint: running
@@ -459,9 +469,11 @@ export async function syncYtmLibrary(userId: string): Promise<{
 
   setSyncStage(userId, 'Finalisation…');
 
+  const c = libraryCounts(userId);
   const summary =
-    `+${stats.songs} likes, ${stats.librarySongs} titres biblio, ${stats.albums} albums, ` +
-    `${stats.artists} artistes, ${stats.playlists} playlists, ${stats.history} récents`;
+    `+${stats.songs} likes, ${stats.librarySongs} titres, ${stats.albums} albums, ` +
+    `${stats.artists} artistes, ${stats.playlists} playlists, ${stats.history} récents` +
+    ` · biblio ${c.liked} j’aime / ${c.songs} titres / ${c.albums} albums`;
   markYtmSynced(userId, summary);
   return { stats, library: getFullLibrary(userId) };
 }
