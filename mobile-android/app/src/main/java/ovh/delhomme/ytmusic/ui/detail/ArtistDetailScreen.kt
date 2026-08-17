@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.LibraryAddCheck
@@ -100,6 +102,9 @@ fun ArtistDetailScreen(
     var following by remember { mutableStateOf(false) }
     var radioBusy by remember { mutableStateOf(false) }
     var showFullBio by remember { mutableStateOf(false) }
+    val listState = rememberSaveable(artistId, saver = LazyListState.Saver) {
+        LazyListState()
+    }
 
     LaunchedEffect(artistId, reloadToken) {
         loading = true
@@ -122,6 +127,7 @@ fun ArtistDetailScreen(
             featured = r.featured.orEmpty()
             similar = r.similar.orEmpty().map { it.copy(type = "artist") }
             playlists = r.playlists.orEmpty().map { it.copy(type = it.type ?: "playlist") }
+            loading = false
 
             val lib = container.api.library()
             inLib = lib.artists.any { it.id == artistId }
@@ -174,7 +180,7 @@ fun ArtistDetailScreen(
                 Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(24.dp))
             }
             else -> {
-                LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
+                LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 32.dp)) {
                     item {
                         Column(
                             Modifier

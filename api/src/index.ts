@@ -78,6 +78,7 @@ import {
   playlistIdsContainingTrack,
   repairLibraryTrackMeta,
   scheduleLibraryRepair,
+  libraryMembership,
 } from './library/library.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream } from './media/stream.js';
 import { streamHeadStats } from './media/streamHeadCache.js';
@@ -269,6 +270,7 @@ function isAllowedOrigin(origin: string | undefined): boolean {
     ].filter(Boolean),
   );
   if (allow.has(origin)) return true;
+  if (origin.startsWith('android:apk-key-hash:')) return true;
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
   if (env === 'local' || env === 'development') {
     return /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/i.test(
@@ -871,7 +873,7 @@ app.post('/api/auth/passkeys/register/options', authRequired, async (req, res) =
       res.status(400).json({ error: 'Compte requis pour enregistrer une passkey' });
       return;
     }
-    const rpID = getRpID(req.hostname);
+    const rpID = getRpID(req.hostname, String(req.headers.origin || ''));
     const options = await beginRegistration(
       req.userId!,
       req.user!.email,
@@ -891,8 +893,8 @@ app.post('/api/auth/passkeys/register/verify', authRequired, async (req, res) =>
     const rawOrigin = String(req.headers.origin || getOrigin(host, proto));
     const origin = rawOrigin;
     const rpID = rawOrigin.startsWith('android:')
-      ? getRpID(host)
-      : getRpID(new URL(rawOrigin).hostname);
+      ? getRpID(host, rawOrigin)
+      : getRpID(new URL(rawOrigin).hostname, rawOrigin);
     const result = await finishRegistration(
       req.userId!,
       req.body?.credential || req.body,
@@ -915,9 +917,9 @@ app.post('/api/auth/passkeys/login/options', async (req, res) => {
   try {
     const origin = String(req.headers.origin || '');
     const rpID = origin.startsWith('android:')
-      ? getRpID(req.hostname)
+      ? getRpID(req.hostname, origin)
       : origin
-        ? getRpID(new URL(origin).hostname)
+        ? getRpID(new URL(origin).hostname, origin)
         : getRpID(req.hostname);
     const options = await beginAuthentication(rpID, req.body?.email ? String(req.body.email) : undefined);
     res.json(options);
@@ -932,8 +934,8 @@ app.post('/api/auth/passkeys/login/verify', async (req, res) => {
     const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http');
     const rawOrigin = String(req.headers.origin || getOrigin(host, proto));
     const rpID = rawOrigin.startsWith('android:')
-      ? getRpID(host)
-      : getRpID(new URL(rawOrigin).hostname);
+      ? getRpID(host, rawOrigin)
+      : getRpID(new URL(rawOrigin).hostname, rawOrigin);
     const userId = await finishAuthentication(req.body?.credential || req.body, rpID, rawOrigin);
     const user = findUserById(userId);
     if (!user) {
@@ -2019,6 +2021,17 @@ app.get('/api/library/playlists/containing/:trackId', accountRequired, (req, res
   try {
     const trackId = p(req.params.trackId);
     res.json({ playlistIds: playlistIdsContainingTrack(req.userId!, trackId) });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+/** J’aime / biblio / album — SQL immédiat (ne pas attendre GET /api/library). */
+app.get('/api/library/contains', accountRequired, (req, res) => {
+  try {
+    const trackId = String(req.query.trackId || '').trim();
+    const albumId = String(req.query.albumId || '').trim();
+    res.json(libraryMembership(req.userId!, trackId || undefined, albumId || undefined));
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

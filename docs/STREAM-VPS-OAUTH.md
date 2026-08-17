@@ -41,6 +41,21 @@ En prod, `STREAM_UPSTREAM` / fichier `stream-upstream.url` est **ignoré** sauf 
 
 ---
 
+## Cookies YouTube vs compte Google (Android / Nothing)
+
+**Écouter de la musique dans PLM ≠ coller des cookies.**
+
+| Besoin | Quoi faire |
+|---|---|
+| Jouer titres / file / mix | Compte PLM (email / passkey) + OAuth TV **serveur** (déjà connecté). Rien à coller sur le téléphone. |
+| Importer likes / playlists **YouTube Music** | Cookies `music.youtube.com` (une fois, depuis le web ou l’écran Import). Google bloque OAuth pour `getLibrary`. |
+| Pubs / Premium | PLM lit un **flux audio** proxifié. Pas l’app YTM officielle, pas les pubs vidéo. Premium **non requis**. |
+
+Si Nothing (ou Samsung) affiche « lie tes cookies » : c’est **uniquement** l’import bibliothèque YTM. Tu peux fermer cet écran et écouter quand même.
+
+---
+---
+
 ## Inscription prod + liaison Google (par utilisateur)
 
 **Pas de Premium.** L’inscription se **ouvre / ferme depuis Admin → Inscription** (`PUT /api/admin/settings`, pas besoin de Portainer). Quand elle est ouverte :
@@ -139,4 +154,4 @@ BROWSER=brave bash scripts/deploy/push-youtube-cookies.sh prod
 - [x] **B4.24** toggle inscription Admin + prompt liaison Google (comptes existants inclus)
 - [x] **B4.22 / B4.23** tampon télémétrie digest + playAt plus réactif (à valider Samsung)
 
-**Note 17/08/2026 :** OAuth TV admin **connecté** ; image `ce4eb72` ; APK `p+1.3.18` installée Nothing + Samsung. Ne **pas** relancer `/start` tant que `status: connected`. Premium toujours **non requis**.
+**Note 17/08/2026 :** OAuth TV admin **connecté** ; image `ce4eb72` ; APK cible `p+1.3.19` (branche `feat/android-player-library`). Ne **pas** relancer `/start` tant que `status: connected`. Premium toujours **non requis**. Cookies = import biblio YTM seulement, pas la lecture.

@@ -135,12 +135,12 @@ object PlayerCache {
         }
     }
 
-    /** Si contentLength ≈ taille demandée au prefetch → longueur suspecte, on l’efface. */
+    /** Après un prefetch partiel, ne jamais figer contentLength (Exo croirait le titre fini). */
     private fun unsetBogusContentLength(cache: SimpleCache, cacheKey: String, requestedBytes: Long) {
         runCatching {
             val meta = cache.getContentMetadata(cacheKey)
             val len = ContentMetadata.getContentLength(meta)
-            if (len != C.LENGTH_UNSET.toLong() && len > 0 && len <= requestedBytes + 8_192L) {
+            if (len != C.LENGTH_UNSET.toLong() && len > 0) {
                 val mutations = ContentMetadataMutations()
                 ContentMetadataMutations.setContentLength(mutations, C.LENGTH_UNSET.toLong())
                 cache.applyContentMetadataMutations(cacheKey, mutations)

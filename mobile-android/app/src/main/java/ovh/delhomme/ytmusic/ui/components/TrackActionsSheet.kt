@@ -126,6 +126,8 @@ fun TrackActionsSheet(
     var wasDownloading by remember { mutableStateOf(false) }
     var albumInLibrary by remember { mutableStateOf(false) }
     var songInLibrary by remember { mutableStateOf(false) }
+    var albumTracks by remember(track.id) { mutableStateOf<List<TrackDto>>(emptyList()) }
+    var albumAllLiked by remember(track.id) { mutableStateOf(false) }
     var playlistContainedIds by remember(track.id) { mutableStateOf<Set<String>>(emptySet()) }
     var liked by remember(track.id) { mutableStateOf(track.id in likedIds) }
     var receiveRemoteSync by remember { mutableStateOf(container.receiveRemoteSync()) }
@@ -170,50 +172,51 @@ fun TrackActionsSheet(
     LaunchedEffect(track.id) {
         enriched = track
         pinned = container.quickAccess.isPinned(track.id)
-        songInLibrary = false
+        liked = track.id in likedIds
+        songInLibrary = track.id in likedIds
         albumInLibrary = false
-        // Membership playlists en premier (valeur fiable avant ouverture du sous-sheet)
+        downloaded = container.offlineStore.has(track.id)
+        val albumIdHint = track.album?.id ?: track.id.takeIf { track.isAlbum() }
+        // Membership d’abord (SQL) — ne pas attendre track() / library()
         launch {
             playlistContainedIds = runCatching {
                 container.api.playlistsContaining(track.id).playlistIds.toSet()
             }.getOrDefault(emptySet())
         }
-        runCatching {
-            container.ensureFreshToken()
-            if (track.isPlayable()) {
-                runCatching { container.api.track(track.id).track }.getOrNull()?.let { meta ->
-                    enriched = track.copy(
-                        artists = when {
-                            !meta.artists.isNullOrEmpty() -> meta.artists
-                            else -> track.artists
-                        },
-                        album = meta.album ?: track.album,
-                        thumbnails = track.thumbnails?.takeIf { it.isNotEmpty() } ?: meta.thumbnails,
-                        duration = track.duration ?: meta.duration,
-                    )
-                }
+        launch {
+            val c = runCatching {
+                container.api.libraryContains(track.id, albumIdHint)
+            }.getOrNull() ?: return@launch
+            liked = c.liked
+            songInLibrary = c.inLibrary
+            albumInLibrary = c.albumInLibrary
+            if (c.liked != (track.id in likedIds)) {
+                onLikedChanged(if (c.liked) likedIds + track.id else likedIds - track.id)
             }
-            val lib = runCatching { container.api.library() }.getOrNull()
-            downloaded = container.offlineStore.has(track.id) ||
-                (lib?.downloaded?.contains(track.id) == true)
-            if (lib != null) {
-                val serverLiked = lib.liked.any { it.id == track.id }
-                // Ne réécrit liked que si désync (évite flash)
-                if (serverLiked != (track.id in likedIds)) {
-                    liked = serverLiked
-                    onLikedChanged(
-                        if (serverLiked) likedIds + track.id else likedIds - track.id,
-                    )
+        }
+        launch {
+            if (!track.isAlbum()) return@launch
+            val tracks = runCatching { container.api.album(track.id).tracks }.getOrDefault(emptyList())
+                .filter { it.isPlayable() }
+            albumTracks = tracks
+            albumAllLiked = tracks.isNotEmpty() && tracks.all { it.id in likedIds }
+        }
+        launch {
+            runCatching {
+                container.ensureFreshToken()
+                if (track.isPlayable()) {
+                    runCatching { container.api.track(track.id).track }.getOrNull()?.let { meta ->
+                        enriched = track.copy(
+                            artists = when {
+                                !meta.artists.isNullOrEmpty() -> meta.artists
+                                else -> track.artists
+                            },
+                            album = meta.album ?: track.album,
+                            thumbnails = track.thumbnails?.takeIf { it.isNotEmpty() } ?: meta.thumbnails,
+                            duration = track.duration ?: meta.duration,
+                        )
+                    }
                 }
-                songInLibrary = lib.songs.any { it.id == track.id } ||
-                    (lib.songs.isEmpty() && lib.liked.any { it.id == track.id })
-                val albumId = enriched.album?.id ?: enriched.id.takeIf { enriched.isAlbum() }
-                albumInLibrary = albumId != null && lib.albums.any { it.id == albumId }
-                if (track.type?.equals("mix", ignoreCase = true) == true) {
-                    songInLibrary = lib.mixes.any { it.id == track.id }
-                }
-            } else {
-                downloaded = container.offlineStore.has(track.id)
             }
         }
     }
@@ -744,7 +747,87 @@ fun TrackActionsSheet(
                 ).show()
                 onDismiss()
             }
-        } else if (enriched.isAlbum() || enriched.isPlaylist() || enriched.isArtist()) {
+        } else if (enriched.isAlbum()) {
+            SheetAction(Icons.Default.PlayArrow, "Écouter l’album") {
+                scope.launch {
+                    val tracks = albumTracks.ifEmpty {
+                        runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
+                            .filter { it.isPlayable() }
+                    }
+                    if (tracks.isEmpty()) {
+                        Toast.makeText(context, "Aucun titre jouable", Toast.LENGTH_SHORT).show()
+                    } else {
+                        player.play(tracks, 0, title = enriched.title, sourceId = enriched.id, sourceKind = "album")
+                    }
+                    onDismiss()
+                }
+            }
+            SheetAction(
+                if (albumInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
+                if (albumInLibrary) "Dans la bibliothèque" else "Ajouter l’album à la bibliothèque",
+            ) {
+                scope.launch {
+                    runCatching {
+                        if (albumInLibrary) {
+                            container.api.removeAlbum(enriched.id)
+                            albumInLibrary = false
+                        } else {
+                            container.api.saveAlbum(enriched.copy(type = "album"))
+                            albumInLibrary = true
+                        }
+                        container.bumpLibraryEpoch()
+                        Toast.makeText(context, "Bibliothèque mise à jour", Toast.LENGTH_SHORT).show()
+                    }.onFailure {
+                        Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                    }
+                    onDismiss()
+                }
+            }
+            SheetAction(
+                if (albumAllLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                if (albumAllLiked) "Titres déjà en J’aime" else "Ajouter tous les titres aux J’aime",
+            ) {
+                scope.launch {
+                    val tracks = albumTracks.ifEmpty {
+                        runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
+                            .filter { it.isPlayable() }
+                    }
+                    var n = 0
+                    var ids = likedIds
+                    for (t in tracks) {
+                        if (t.id in ids) continue
+                        runCatching { container.api.like(t) }.onSuccess {
+                            n++
+                            ids = ids + t.id
+                        }
+                    }
+                    onLikedChanged(ids)
+                    albumAllLiked = true
+                    Toast.makeText(
+                        context,
+                        if (n > 0) "$n titres ajoutés aux J’aime" else "Déjà en J’aime",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    onDismiss()
+                }
+            }
+            SheetAction(Icons.Default.Download, "Télécharger l’album") {
+                val tracks = albumTracks.ifEmpty { emptyList() }
+                if (tracks.isEmpty()) {
+                    scope.launch {
+                        val fetched = runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
+                            .filter { it.isPlayable() }
+                        container.downloadManager.enqueueMany(fetched)
+                        Toast.makeText(context, "Téléchargement de ${fetched.size} titres…", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    }
+                } else {
+                    container.downloadManager.enqueueMany(tracks)
+                    Toast.makeText(context, "Téléchargement de ${tracks.size} titres…", Toast.LENGTH_SHORT).show()
+                    onDismiss()
+                }
+            }
+        } else if (enriched.isPlaylist() || enriched.isArtist()) {
             SheetAction(
                 if (inLibrary || albumInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                 if (inLibrary || albumInLibrary) "Dans la bibliothèque" else "Enregistrer dans la bibliothèque",
@@ -752,21 +835,8 @@ fun TrackActionsSheet(
                 scope.launch {
                     runCatching {
                         when {
-                            enriched.isAlbum() -> {
-                                if (albumInLibrary) {
-                                    container.api.removeAlbum(enriched.id)
-                                    albumInLibrary = false
-                                } else {
-                                    container.api.saveAlbum(enriched.copy(type = "album"))
-                                    albumInLibrary = true
-                                }
-                            }
                             enriched.isArtist() -> container.api.saveArtist(enriched.copy(type = "artist"))
-                            enriched.isPlaylist() -> {
-                                // Aimer la playlist seulement — ne pas liker comme un titre
-                                container.api.likePlaylist(enriched.copy(type = "playlist"))
-                            }
-                            else -> container.api.toggleLibrarySong(enriched)
+                            else -> container.api.likePlaylist(enriched.copy(type = "playlist"))
                         }
                         Toast.makeText(context, "Bibliothèque mise à jour", Toast.LENGTH_SHORT).show()
                     }.onFailure {

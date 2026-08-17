@@ -721,22 +721,10 @@ fun CollectionDetailScreen(
                                     }
                                 }
                                 if (kind == DetailKind.Playlist && tracks.isNotEmpty()) {
-                                    val playable = tracks.filter { it.isPlayable() }
                                     val downloading = offlineProgress != null
                                     PlaylistHeroActions(
                                         downloadProgress = offlineProgress,
                                         downloaded = offlineDone,
-                                        onShuffle = {
-                                            recordCollectionPlay()
-                                            val shuffled = tracks.shuffled()
-                                            player?.play(
-                                                shuffled,
-                                                0,
-                                                title = title,
-                                                sourceId = id,
-                                                sourceKind = "playlist",
-                                            ) ?: onPlayNamed(shuffled, 0, title)
-                                        },
                                         onDownload = {
                                             val playable = tracks.filter { it.isPlayable() }
                                             if (offlineDone || playable.isEmpty()) return@PlaylistHeroActions
@@ -762,16 +750,6 @@ fun CollectionDetailScreen(
                                                 },
                                                 Toast.LENGTH_SHORT,
                                             ).show()
-                                        },
-                                        onPlay = {
-                                            recordCollectionPlay()
-                                            player?.play(
-                                                tracks,
-                                                0,
-                                                title = title,
-                                                sourceId = id,
-                                                sourceKind = "playlist",
-                                            ) ?: onPlayNamed(tracks, 0, title)
                                         },
                                         onMore = { showPlaylistMenu = true },
                                     )
@@ -1104,9 +1082,7 @@ fun CollectionDetailScreen(
 private fun PlaylistHeroActions(
     downloadProgress: Float?,
     downloaded: Boolean,
-    onShuffle: () -> Unit,
     onDownload: () -> Unit,
-    onPlay: () -> Unit,
     onMore: () -> Unit,
 ) {
     Row(
@@ -1116,12 +1092,6 @@ private fun PlaylistHeroActions(
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RoundIconAction(
-            icon = Icons.Default.Shuffle,
-            label = "Aléatoire",
-            hint = "Lecture aléatoire",
-            onClick = onShuffle,
-        )
         TooltipBox(
             positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
             tooltip = {
@@ -1131,7 +1101,7 @@ private fun PlaylistHeroActions(
                             downloaded -> "Sur l'appareil"
                             downloadProgress != null ->
                                 "Annuler (${((downloadProgress) * 100).toInt()} %)"
-                            else -> "Télécharger"
+                            else -> "Télécharger la playlist"
                         },
                     )
                 }
@@ -1140,7 +1110,7 @@ private fun PlaylistHeroActions(
         ) {
             Box(
                 modifier = Modifier
-                    .size(48.dp)
+                    .size(56.dp)
                     .clip(CircleShape)
                     .clickable(
                         enabled = !downloaded,
@@ -1151,29 +1121,8 @@ private fun PlaylistHeroActions(
                 DownloadStatusIcon(
                     downloaded = downloaded,
                     progress = downloadProgress,
-                    size = 28.dp,
+                    size = 32.dp,
                     accent = Color(0xFFFF0033),
-                )
-            }
-        }
-        TooltipBox(
-            positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
-            tooltip = { PlainTooltip { Text("Tout lire") } },
-            state = rememberTooltipState(),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(64.dp)
-                    .clip(CircleShape)
-                    .background(Color.White)
-                    .clickable(onClick = onPlay),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = "Tout lire",
-                    tint = Color.Black,
-                    modifier = Modifier.size(36.dp),
                 )
             }
         }

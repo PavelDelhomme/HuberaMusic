@@ -81,12 +81,12 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 
 | ID | Demande | SPEC | CODE | LOCAL | DEV | PR | DEPLOY | PROD |
 |----|---------|:----:|:----:|:-----:|:---:|:--:|:------:|:----:|
-| B2.1 | Section **Podcasts** sur Accueil | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B2.2 | Section / chips navigables Accueil : Albums, Livres audio, Podcasts (style filtres biblio) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B2.3 | **Explorer** : covers vides + noms chelous → fix images + libellés | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B2.4 | Mixes Accueil : vignettes/noms **rapides** (cache + chargement sélectif premier visible) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B2.5 | Mix **Nouveauté** ne marche pas → diagnostiquer + corriger | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B2.6 | Mixes : nouveautés **et** mixes basés sur déjà écouté / artistes suivis | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B2.1 | Section **Podcasts** sur Accueil | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B2.2 | Section / chips navigables Accueil : Albums, Livres audio, Podcasts (style filtres biblio) | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B2.3 | **Explorer** : covers vides + noms chelous → fix images + libellés | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B2.4 | Mixes Accueil : vignettes/noms **rapides** (cache + chargement sélectif premier visible) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B2.5 | Mix **Nouveauté** ne marche pas → diagnostiquer + corriger | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B2.6 | Mixes : nouveautés **et** mixes basés sur déjà écouté / artistes suivis | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B3 — Téléchargements
 
@@ -128,17 +128,17 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 
 | ID | Demande | SPEC | CODE | LOCAL | DEV | PR | DEPLOY | PROD |
 |----|---------|:----:|:----:|:-----:|:---:|:--:|:------:|:----:|
-| B5.1 | Pages Crash / Perf / Logs : **page entière scrollable** + journal scrollable (zone trop petite) | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B5.2 | Page Réglages trop basse — récupérer l’espace en haut | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B5.1 | Pages Crash / Perf / Logs : **page entière scrollable** + journal scrollable (zone trop petite) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B5.2 | Page Réglages trop basse — récupérer l’espace en haut | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B6 — Page artiste / albums
 
 | ID | Demande | SPEC | CODE | LOCAL | DEV | PR | DEPLOY | PROD |
 |----|---------|:----:|:----:|:-----:|:---:|:--:|:------:|:----:|
-| B6.1 | Listes albums / singles / playlists artiste en **cartes** + perf | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B6.2 | Garder l’état scroll / listes quand on quitte / revient page artiste | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B6.3 | Chargement page artiste trop lent → cache + chargement sélectif | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B6.4 | Appui long **album** = même sheet que titre : biblio album, écouter album, j’aime tous les titres (cœur plein/vide), ajout titres individuels sans duplicata biblio | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B6.1 | Listes albums / singles / playlists artiste en **cartes** + perf | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B6.2 | Garder l’état scroll / listes quand on quitte / revient page artiste | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B6.3 | Chargement page artiste trop lent → cache + chargement sélectif | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B6.4 | Appui long **album** = même sheet que titre : biblio album, écouter album, j’aime tous les titres (cœur plein/vide), ajout titres individuels sans duplicata biblio | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B7 — Cache / perf globale
 

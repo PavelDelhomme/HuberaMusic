@@ -2148,7 +2148,7 @@ private fun InlineSyncedLyrics(
         loading = true
         userOffsetMs = syncPrefs.getLong(track.id, 0L)
         // Cache local paroles (karaoké hors-ligne)
-        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v1")
+        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v2")
         val cachedText = lyricsCache.getString("t_${track.id}", null)
         val cachedTimed = lyricsCache.getString("l_${track.id}", null)
         if (!cachedText.isNullOrBlank()) {
@@ -2195,8 +2195,8 @@ private fun InlineSyncedLyrics(
         loading = false
     }
 
-    // Lead 500 ms − lag LRCLIB 2 s − offset user
-    val leadMs = 500L
+    // Lead 0 (youtube) : le +500 ms faisait défiler trop tôt (karaoké). LRCLIB : lag 2 s.
+    val leadMs = if (lyricsSource == "lrclib" || lyricsSource == "lrc") 500L else 0L
     val sourceLagMs =
         if (lyricsSource == "lrclib" || lyricsSource == "lrc") 2000L else 0L
     val active = if (timed.isEmpty()) -1

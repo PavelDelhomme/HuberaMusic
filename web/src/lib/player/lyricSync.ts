@@ -1,7 +1,7 @@
 /** Sync paroles : lead karaoké + offset utilisateur persisté (par titre). */
 
 /** Avance souhaitée pour chanter en même temps (~0,5 s). */
-export const LYRIC_LEAD_SEC = 0.5;
+export const LYRIC_LEAD_SEC = 0;
 
 /**
  * Lag de base pour LRCLIB (souvent un peu en avance vs le flux YouTube).

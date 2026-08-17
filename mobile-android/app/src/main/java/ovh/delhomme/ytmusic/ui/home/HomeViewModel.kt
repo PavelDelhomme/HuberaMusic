@@ -90,6 +90,19 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     page = 0,
                     radioPreviews = _state.value.radioPreviews,
                 )
+                val spokenShelves = buildList {
+                    runCatching { container.api.exploreSpoken("podcast") }.getOrNull()
+                        ?.items?.takeIf { it.isNotEmpty() }
+                        ?.let { add(ShelfDto("Podcasts", it.take(12))) }
+                    runCatching { container.api.exploreSpoken("audiobook") }.getOrNull()
+                        ?.items?.takeIf { it.isNotEmpty() }
+                        ?.let { add(ShelfDto("Livres audio", it.take(12))) }
+                }
+                if (spokenShelves.isNotEmpty()) {
+                    _state.value = _state.value.copy(
+                        shelves = (_state.value.shelves + spokenShelves).distinctBy { it.title },
+                    )
+                }
                 // Mosaïques mix (preview) : d’abord les 2 visibles, puis le reste
                 val previews = mutableMapOf<String, List<TrackDto>>()
                 home.radios.take(2).forEach { radio ->
