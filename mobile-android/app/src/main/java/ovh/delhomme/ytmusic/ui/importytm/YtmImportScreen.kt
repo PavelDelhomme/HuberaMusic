@@ -200,6 +200,13 @@ fun YtmImportScreen(
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
                 )
+                if (acc?.syncRunning == true) {
+                    Text(
+                        acc.hint ?: "Import de la bibliothèque en cours…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 acc?.lastSyncSummary?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
