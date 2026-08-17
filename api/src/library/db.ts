@@ -291,6 +291,15 @@ export function publicUser(u: UserRow) {
     email_verified?: number;
     totp_enabled?: number;
   };
+  let ytmLinked = false;
+  try {
+    const ytm = db.prepare('SELECT oauth_enc, cookie_enc FROM ytm_accounts WHERE user_id = ?').get(u.id) as
+      | { oauth_enc: string | null; cookie_enc: string | null }
+      | undefined;
+    ytmLinked = Boolean(ytm?.oauth_enc || ytm?.cookie_enc);
+  } catch {
+    ytmLinked = false;
+  }
   return {
     id: u.id,
     email: u.email,
@@ -301,6 +310,7 @@ export function publicUser(u: UserRow) {
     isAdmin: isAdminUser(u),
     emailVerified: Boolean(row.email_verified) || Boolean(u.google_id) || u.email.includes('@local.ytmusic'),
     totpEnabled: Boolean(row.totp_enabled),
+    ytmLinked,
   };
 }
 

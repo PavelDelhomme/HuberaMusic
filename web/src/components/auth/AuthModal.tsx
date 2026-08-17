@@ -23,7 +23,7 @@ const isProdHost =
   !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
 
 export function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { login, register, loginGoogle, googleEnabled, googleClientId, user, init } = useAuth();
+  const { login, register, loginGoogle, googleEnabled, googleClientId, user, init, allowRegister } = useAuth();
   const refresh = useLibrary((s) => s.refresh);
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState(() =>
@@ -418,16 +418,24 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
           </button>
         </form>
 
+        {allowRegister || mode === 'register' ? (
         <button
           type="button"
           className="mt-4 w-full text-center text-sm text-yt-muted hover:text-white"
           onClick={() => {
+            if (!allowRegister) {
+              setMode('login');
+              return;
+            }
             setMode((m) => (m === 'login' ? 'register' : 'login'));
             setNeeds2fa(false);
           }}
         >
           {mode === 'login' ? 'Créer un compte' : 'Déjà un compte ? Connexion'}
         </button>
+        ) : (
+          <p className="mt-4 text-center text-xs text-yt-muted">Inscription fermée — demande un accès à l’admin.</p>
+        )}
       </div>
     </div>
   );

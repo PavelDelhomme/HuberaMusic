@@ -15,7 +15,7 @@
 | Est-ce que l’OAuth TV = Premium déguisé, ou des pubs YTM ? | **Non.** Tu restes dans **PLM** (notre lecteur). Pas l’app YouTube Music officielle, pas les pubs vidéo Google. On proxifie un flux **audio**. |
 | Est-ce que ça m’inscrit à Premium / me facture ? | **Non.** Tu autorises seulement le **VPS** à parler à YouTube **en ton nom** (compte gratuit OK). Aucun prélèvement lié à cette étape. |
 | À quoi sert l’OAuth alors ? | YouTube **bloque souvent les IP datacenter** (Contabo) si la requête est anonyme → `LOGIN_REQUIRED` → **HTTP 502** sur la musique. Un login appareil (gratuit) signe les requêtes. Ce n’est pas « acheter Premium ». |
-| Dois-tu le faire tout de suite ? | **Oui si la prod 502** (mails `onPlayerError` 2004 / 2002). Sans cette autorisation **gratuite**, la musique prod reste cassée — **même sans Premium**, **même avec Premium**. Premium ne débloque pas l’IP du VPS. |
+| Dois-tu le faire tout de suite ? | **Ops admin : déjà fait** (17/08). **Users :** seulement quand l’inscription prod sera ouverte → liaison Google **par compte** (B4.24), toujours sans Premium. |
 
 En résumé : **Premium = option Google que tu peux couper.** **OAuth TV = 2 min une fois, compte gratuit, pour que le serveur ait le droit de résoudre l’audio.** Les deux n’ont rien à voir.
 
@@ -24,7 +24,7 @@ En résumé : **Premium = option Google que tu peux couper.** **OAuth TV = 2 min
 ## Contexte technique
 
 1. **IP VPS Contabo** = datacenter → YouTube laisse passer certains titres (ex. Rickroll) mais **bloque souvent la musique** (`LOGIN_REQUIRED`, formats vides).
-2. **Tunnel PC** (`scripts/deploy/link-home-stream.sh`) marche (IP résidentielle) mais **dépend du PC allumé** → rejeté pour la prod au quotidien.
+2. **Tunnel PC** (`scripts/deploy/link-home-stream.sh`) marche **en DEV** (IP résidentielle) mais **dépend du PC allumé**. En prod on **ne s’en sert pas** : le VPS + OAuth TV suffisent. Si le PC est éteint, la musique prod continue.
 3. **Cookies navigateur** aident un peu (anti-bot) mais **ne suffisent pas** seuls depuis cette IP pour la musique.
 4. **Solution logicielle retenue :** OAuth **appareil / TV** une fois → tokens chiffrés sur le volume Docker → Innertube signé pour `getAudioFormat`.
 
@@ -41,7 +41,28 @@ En prod, `STREAM_UPSTREAM` / fichier `stream-upstream.url` est **ignoré** sauf 
 
 ---
 
-## Procédure (quand on reprend)
+## Inscription prod + liaison Google (par utilisateur)
+
+**Pas de Premium.** L’inscription se **ouvre / ferme depuis Admin → Inscription** (`PUT /api/admin/settings`, pas besoin de Portainer). Quand elle est ouverte :
+
+1. **Crée un compte PLM** (email / mot de passe) — c’est *notre* app, pas YouTube.
+2. Est **invité** à **lier un compte Google** (OAuth appareil, `google.com/device`). Compte Google **gratuit**. Les comptes **déjà existants** sans liaison sont listés dans Admin et reçoivent le même prompt.
+
+Ça n’inscrit personne à YouTube Premium, ne met pas de pubs YTM dans PLM, et ne facture rien.
+
+| Qui | Quoi | Quand |
+|-----|------|--------|
+| **Ops (toi)** | OAuth TV **serveur** (`/api/admin/youtube-stream-oauth`) | **Fait** (17/08/2026) — filet VPS, PC éteint OK |
+| **Chaque user** | OAuth **son** Google → `/api/ytm/connect/oauth` | Après signup / au login si pas encore lié |
+| **Premium** | Rien | Jamais requis |
+
+`getSignedStreamYT(userId)` utilise d’abord les credentials **user**, puis le filet VPS.
+
+**APK :** le QR Admin n’est plus une URL fixe. Chaque « Nouveau lien » / ouverture d’inscription émet un ticket **one-shot** (`?t=`, 30 min, 1 GET). Après téléchargement ou erreur, le lien meurt. Les comptes déjà connectés (JWT) peuvent encore mettre à jour l’app in-app.
+
+---
+
+## Procédure ops (admin VPS — déjà jouée)
 
 ### 1. Déployer le code API sur prod
 
@@ -109,12 +130,13 @@ BROWSER=brave bash scripts/deploy/push-youtube-cookies.sh prod
 
 ---
 
-## Reprise prévue
+## Reprise / checklist
 
-- [ ] Déployer image prod avec `streamAuth`
-- [ ] `youtube-stream-oauth/start` + code sur google.com/device
-- [ ] Probe 206 sur titres musique (pas seulement dQw4w9WgXcQ)
-- [ ] Smoke Samsung (DEV LAN puis PROD) : play + pas de spam `early_end` / 502
-- [ ] Commit/doc à jour si la procédure change
+- [x] Déployer image prod avec `streamAuth` + `youtubeiEval`
+- [x] `youtube-stream-oauth/start` + code sur google.com/device → `connected`
+- [x] Probe 206 sur titres musique (pas seulement dQw4w9WgXcQ)
+- [x] Smoke Samsung PROD : play musical + pas de spam `early_end` / 502 *(curl 206 17/08 ; smoke device à rejouer)*
+- [x] **B4.24** toggle inscription Admin + prompt liaison Google (comptes existants inclus)
+- [x] **B4.22 / B4.23** tampon télémétrie digest + playAt plus réactif (à valider Samsung)
 
-**Note 15/08/2026 :** correctifs lecteur Android (volume système, `resumeOrPlay`, reprise `early_end`) installés en sideload sur Nothing ; API stream OAuth hot-copiée une fois sur le conteneur — à **rejouer via image** à la reprise.
+**Note 17/08/2026 :** OAuth TV admin **connecté** ; evaluator JS en image `cc62556`. Ne **pas** relancer `/start` tant que `status: connected`. Premium toujours **non requis**.

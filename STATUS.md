@@ -4,10 +4,10 @@
 > Mis à jour à chaque session. Détail produit : [`docs/FEATURES-BACKLOG.md`](./docs/FEATURES-BACKLOG.md).  
 > Campagnes : [`TESTS.md`](./TESTS.md).
 
-**Branche courante** : `feat/samsung-resume-stream-ux`  
-**Version APK / API locale** : `1.3.18` (`d+` / `p+`) · prod live encore fragile sur streams 502  
+**Branche courante** : `misc/notes-offline-mail-resume-google`  
+**Version APK / API locale** : `1.3.18` (`d+` / `p+`) · prod streams musicaux **206** (OAuth TV VPS connecté 17/08)  
 **Dernière MAJ STATUS** : 2026-08-17  
-**Erreurs ouvertes** : [`ERRORS.md`](./ERRORS.md) (E14 investigating · E6 open · E15–E20 code à revalider)
+**Erreurs ouvertes** : [`ERRORS.md`](./ERRORS.md) (E6 open · **E21** mails hors-ligne · **E22** play après kill · E14/E15–E20 à revalider Samsung)
 
 ---
 
@@ -102,7 +102,7 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | ID | Demande | SPEC | CODE | LOCAL | DEV | PR | DEPLOY | PROD |
 |----|---------|:----:|:----:|:-----:|:---:|:--:|:------:|:----:|
 | B4.1 | « Titre suivant » crash / fail intermittent | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B4.2 | Toute erreur app → **email immédiat** + pré-diagnostic FR | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.2 | Toute erreur app → email + pré-diag FR (**hors-ligne → digest B4.22**, pas drop) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.3 | Erreurs « connexion perdue » au chargement pages / 502 stream → cause + fix | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.5 | Clic zone vide barre noire lecteur **web** → toggle expand / collapse Now Playing (hors play/pause/next/seek) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.6 | Web : retry « Lecture impossible / nouvel essai auto » **ne boucle pas** ; message clair + bouton après N essais ; détecter 502 stream | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
@@ -119,7 +119,10 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | B4.18 | Shuffle biblio fluide + retries rapides 5xx puis skip (E16) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.19 | Radio artiste : seed immédiat + append mix (E18) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.20 | Boutons booléens plein vs creux (biblio / follow / ⋮) (E19) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B4.21 | OAuth TV VPS pour tuer les 502 prod (E14) — **action user** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.21 | OAuth TV VPS pour tuer les 502 prod (E14) — **ops admin** (google.com/device) | ✅ | ✅ | ✅ | ⬜ | ✅ | ✅ | 🧪 |
+| B4.22 | Télémétrie hors-ligne : **file compacte** → **un** digest dès que le réseau revient (E21) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.23 | Force-stop → rouvrir → file visible mais **Play / Suivant ne lancent pas** l’audio (E22) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.24 | Inscription prod ouverte → **liaison Google** (compte gratuit, pas Premium) pour signer les streams user (E14) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B5 — Réglages / logs
 
@@ -183,11 +186,38 @@ Chaque session a des **sous-catégories** : Auth, Batterie, Pages/scroll, Lecteu
 
 ---
 
+## Spec courte — items 17/08 (à coder ensuite, pas maintenant)
+
+### B4.22 / E21 — mails d’erreur si l’appareil est hors-ligne
+
+Aujourd’hui `TelemetryReporter` POST tout de suite ; si ça échoue, **l’événement est perdu** (pas de mail).
+
+| Règle | Détail |
+|-------|--------|
+| Persister | Disque (prefs / petit fichier), **pas** une file de coroutines en RAM |
+| Soft | Invisible : pas de toast, pas de notif, pas de job qui se réveille toutes les 30 s |
+| Pas la file N×1 | **Interdit** d’enchaîner N envois qui s’attendent. Au retour réseau : **un** flush |
+| Budget | Ring **≤ 20** events, fichier **≤ ~64 Ko**, coalescer `kind+trackId+http` → `count++` ; drop oldest |
+| Payload flush | Digest compact (ts, kind, message court, ids) + **au plus 1** stack récente — pas 20 dumps AppLog |
+| Serveur | Un POST batch → **un** mail « N erreurs cumulées hors-ligne » (pas N mails) |
+| Déclencheur | WorkManager `NetworkType.CONNECTED` **unique** (ou ConnectivityManager one-shot), pas une chaîne |
+
+### B4.23 / E22 — kill app → Play ne part pas
+
+La file **est** déjà dans `LocalPlaybackStore` (mini-lecteur + titres OK). Le trou : après force-stop, Play (titre courant) **et** Suivant **ne lancent pas** l’audio. À tester Samsung DEV puis PROD (R18 / D13 / P13). Piste : restore `autoplay=false` sans MediaItems Exo / `Holder.queue` vs UI.
+
+### B4.24 — inscription prod + Google (pas Premium)
+
+Quand `AUTH_ALLOW_REGISTER=1` sur le **conteneur prod** : après création de compte PLM, demander la **liaison Google** (OAuth appareil, compte **gratuit**) pour que YouTube ne voie pas les streams comme anonymes depuis l’IP VPS. Voir [`docs/STREAM-VPS-OAUTH.md`](./docs/STREAM-VPS-OAUTH.md) §Inscription. **Ce n’est pas YouTube Premium.**
+
+---
+
 ## Prochaine action recommandée
 
-1. Traiter **[`ERRORS.md`](./ERRORS.md)** : **E2** radio artiste lente, **E3**/B2.5 mixes vides, **E4**/B1.1 biblio  
-2. Redeploy web pour **E1/B4.16** (compteur drawer) + revalider PROD  
-3. Continuer backlog B1.8, B2.*, B5, B6  
+1. **B4.23 / E22** — repro + fix Play après force-stop (Samsung)  
+2. **B4.22 / E21** — file télémétrie compacte + mail digest  
+3. **B4.24** — onboarding liaison Google si inscription prod ouverte  
+4. Revalider **E14** lecture musicale Samsung PROD (OAuth VPS déjà `connected`, curl 206)  
 
 **Smoke charge** : `node scripts/test/smoke-load-test.mjs both` (rapport `logs/smoke-*.json`).
 

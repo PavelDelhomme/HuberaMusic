@@ -15,6 +15,7 @@ import {
 import { createEmailToken, createRefreshToken, markEmailVerified } from '../platform/platform.js';
 import { sendVerificationEmail } from '../platform/mail.js';
 import { checkUserTotp, userRequiresTotp } from './totp.js';
+import { allowRegisterOverride } from '../platform/runtimeSettings.js';
 
 const rawJwtSecret = process.env.JWT_SECRET || '';
 const appEnv = process.env.APP_ENV || 'local';
@@ -144,6 +145,8 @@ export function authPrivateMode() {
 }
 
 export function authAllowRegister() {
+  const override = allowRegisterOverride();
+  if (override !== null) return override;
   if (!authPrivateMode()) {
     const v = (process.env.AUTH_ALLOW_REGISTER || '1').trim().toLowerCase();
     return !(v === '0' || v === 'false' || v === 'off');

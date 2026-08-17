@@ -24,6 +24,19 @@ export function AdminPage() {
   const [selectedUrl, setSelectedUrl] = useState('');
   const [copied, setCopied] = useState(false);
   const [mobileTab, setMobileTab] = useState<'pwa' | 'apk'>('apk');
+  const [apkTicketUrl, setApkTicketUrl] = useState('');
+  const [apkTicketBusy, setApkTicketBusy] = useState(false);
+  const [users, setUsers] = useState<{
+    users: Array<{
+      id: string;
+      email: string;
+      name: string;
+      ytmLinked: boolean;
+      isAdmin: boolean;
+    }>;
+    missingGoogle: number;
+  } | null>(null);
+  const [allowRegister, setAllowRegister] = useState<boolean | null>(null);
   const [apkTarget, setApkTarget] = useState('auto');
   const [apkCustom, setApkCustom] = useState('');
   const [telemetry, setTelemetry] = useState<{ stats: any; events: any[] } | null>(null);
@@ -55,6 +68,8 @@ export function AdminPage() {
       .then((s) => {
         setStatus(s);
         setSelectedUrl((prev) => prev || s.urls?.find((u: string) => !u.includes('localhost')) || s.urls?.[0] || '');
+        if (s.apkTicket?.url) setApkTicketUrl(s.apkTicket.url);
+        if (typeof s.settings?.allowRegister === 'boolean') setAllowRegister(s.settings.allowRegister);
       })
       .catch((e) => setErr(String(e.message || e)));
     void api
@@ -88,6 +103,14 @@ export function AdminPage() {
           if (row.mode) setRecoMode(row.mode);
         }
       })
+      .catch(() => undefined);
+    void api
+      .adminUsers()
+      .then(setUsers)
+      .catch(() => undefined);
+    void api
+      .adminSettings()
+      .then((s) => setAllowRegister(s.allowRegister))
       .catch(() => undefined);
   }, [levelFilter, recoMode, user?.email]);
 
@@ -135,6 +158,63 @@ export function AdminPage() {
       </div>
 
       {err && <p className="mb-4 text-sm text-red-400">{err}</p>}
+
+      <section className="mb-6 rounded-2xl border border-yt-border bg-yt-surface p-5">
+        <h3 className="font-display text-lg font-semibold">Inscription & comptes</h3>
+        <p className="mt-1 mb-4 text-sm text-yt-muted">
+          Ouvre ou ferme l’inscription sans toucher Portainer. Les nouveaux comptes (et ceux déjà
+          créés sans Google) sont invités à lier un compte <strong className="text-white">gratuit</strong>
+          — pas YouTube Premium. L’OAuth TV serveur reste le filet si le PC est éteint.
+        </p>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <span className="text-sm">
+            Inscription :{' '}
+            <strong className={allowRegister ? 'text-emerald-400' : 'text-amber-400'}>
+              {allowRegister ? 'ouverte' : 'fermée'}
+            </strong>
+          </span>
+          <button
+            type="button"
+            className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
+            onClick={() => {
+              const next = !allowRegister;
+              void api.adminSetSettings(next).then((r) => {
+                setAllowRegister(r.allowRegister);
+                if (r.apkTicket?.url) setApkTicketUrl(r.apkTicket.url);
+              });
+            }}
+          >
+            {allowRegister ? 'Fermer l’inscription' : 'Ouvrir l’inscription'}
+          </button>
+        </div>
+        {users && (
+          <div className="overflow-x-auto text-sm">
+            <p className="mb-2 text-yt-muted">
+              {users.missingGoogle} compte{users.missingGoogle > 1 ? 's' : ''} sans liaison Google / YTM
+            </p>
+            <table className="w-full text-left">
+              <thead className="text-xs uppercase text-yt-muted">
+                <tr>
+                  <th className="py-1 pr-3">Email</th>
+                  <th className="py-1 pr-3">Google / YTM</th>
+                  <th className="py-1">Admin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.users.map((u) => (
+                  <tr key={u.id} className="border-t border-yt-border/60">
+                    <td className="py-1.5 pr-3">
+                      {u.name} <span className="text-yt-muted">{u.email}</span>
+                    </td>
+                    <td className="py-1.5 pr-3">{u.ytmLinked ? 'lié' : 'à lier'}</td>
+                    <td className="py-1.5">{u.isAdmin ? 'oui' : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       <section className="mb-6 rounded-2xl border border-yt-red/40 bg-yt-surface p-5">
         <div className="mb-3 flex items-center gap-2">
@@ -851,19 +931,36 @@ bash scripts/deploy/link-home-stream.sh
             <div className="mx-auto text-center">
               <div className="rounded-3xl bg-white p-4 shadow-2xl">
                 <QRCodeSVG
-                  value={status?.apk?.downloadUrl || 'https://localhost'}
+                  value={apkTicketUrl || 'https://localhost'}
                   size={200}
                   level="M"
                 />
               </div>
               <p className="mt-2 max-w-[220px] truncate text-xs text-yt-muted">
-                {status?.apk?.downloadUrl || 'Compile d’abord'}
+                {apkTicketUrl || 'Génère un lien one-shot'}
               </p>
+              <p className="mt-1 max-w-[240px] text-[11px] text-yt-muted">
+                Lien unique, 30 min, 1 téléchargement. Après usage ou erreur → régénère.
+              </p>
+              <button
+                type="button"
+                disabled={apkTicketBusy || !status?.apk?.ready}
+                className="mt-2 rounded-full bg-white px-3 py-1 text-xs font-medium text-black disabled:opacity-40"
+                onClick={() => {
+                  setApkTicketBusy(true);
+                  void api
+                    .adminApkTicket(allowRegister ? 'register' : 'download')
+                    .then((t) => setApkTicketUrl(t.url))
+                    .finally(() => setApkTicketBusy(false));
+                }}
+              >
+                {apkTicketBusy ? '…' : 'Nouveau lien APK'}
+              </button>
               <button
                 type="button"
                 className="mt-2 inline-flex items-center gap-2 text-xs text-yt-muted hover:text-white"
                 onClick={() => {
-                  const u = status?.apk?.downloadUrl;
+                  const u = apkTicketUrl;
                   if (!u) return;
                   void navigator.clipboard.writeText(u).then(() => {
                     setCopied(true);

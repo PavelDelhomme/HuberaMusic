@@ -7,6 +7,7 @@ type AuthState = {
   user: User | null;
   googleEnabled: boolean;
   googleClientId: string | null;
+  allowRegister: boolean;
   loaded: boolean;
   init: () => Promise<void>;
   login: (email: string, password: string, totp?: string) => Promise<void>;
@@ -29,6 +30,7 @@ export const useAuth = create<AuthState>((set) => ({
   user: null,
   googleEnabled: false,
   googleClientId: null,
+  allowRegister: false,
   loaded: false,
 
   init: async () => {
@@ -40,6 +42,7 @@ export const useAuth = create<AuthState>((set) => ({
       set({
         googleEnabled: cfg.googleEnabled,
         googleClientId: cfg.googleClientId,
+        allowRegister: Boolean(cfg.allowRegister),
       });
       try {
         const me = await api.me();

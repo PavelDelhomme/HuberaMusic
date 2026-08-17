@@ -11,6 +11,8 @@ data class UserDto(
     val isGuest: Boolean? = false,
     val isAdmin: Boolean? = false,
     val emailVerified: Boolean? = false,
+    val ytmLinked: Boolean? = false,
+    val hasGoogle: Boolean? = false,
 )
 
 @JsonClass(generateAdapter = false)
@@ -25,6 +27,13 @@ data class AuthResponse(
 
 @JsonClass(generateAdapter = false)
 data class MeResponse(val user: UserDto?)
+
+@JsonClass(generateAdapter = false)
+data class AuthConfigResponse(
+    val allowRegister: Boolean? = false,
+    val googleEnabled: Boolean? = false,
+    val privateMode: Boolean? = false,
+)
 
 @JsonClass(generateAdapter = false)
 data class LoginBody(

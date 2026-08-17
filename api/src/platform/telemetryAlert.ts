@@ -265,3 +265,66 @@ export async function maybeAlertTelemetryError(ev: {
     return { sent: false, reason: 'mail-failed' };
   }
 }
+
+type DigestItem = {
+  id: string;
+  level: string;
+  kind: string;
+  message?: string;
+  count?: number;
+  trackId?: string;
+  http?: number;
+  ts?: number;
+};
+
+/**
+ * Un seul mail pour N erreurs cumulées hors-ligne (pas N mails).
+ */
+export async function maybeAlertTelemetryDigest(opts: {
+  env?: string;
+  deviceId?: string;
+  userId?: string;
+  userAgent?: string;
+  events: DigestItem[];
+}): Promise<{ sent: boolean; reason?: string }> {
+  const events = opts.events.filter((e) => {
+    const lv = String(e.level || '').toLowerCase();
+    return lv === 'error' || lv === 'fatal';
+  });
+  if (!events.length) return { sent: false, reason: 'empty' };
+  if (process.env.TELEMETRY_ALERT_DISABLE === '1' || process.env.TELEMETRY_ALERT_DISABLE === 'true') {
+    return { sent: false, reason: 'disabled' };
+  }
+  const to = alertRecipients();
+  if (!to) return { sent: false, reason: 'no-recipients' };
+
+  const env = opts.env || getAppEnv();
+  const n = events.reduce((acc, e) => acc + (Number(e.count) || 1), 0);
+  const lines = events.slice(0, 20).map((e) => {
+    const c = Number(e.count) > 1 ? ` ×${e.count}` : '';
+    const extra = [e.trackId, e.http ? `http ${e.http}` : ''].filter(Boolean).join(' · ');
+    return `• ${e.kind}${c} — ${(e.message || '').slice(0, 160)}${extra ? ` (${extra})` : ''}`;
+  });
+  const subject = `[PLM ${env}] ${n} erreur${n > 1 ? 's' : ''} cumulée${n > 1 ? 's' : ''} hors-ligne`;
+  const text = [
+    `Digest télémétrie (appareil hors-ligne puis reconnecté).`,
+    `device=${opts.deviceId || '—'} user=${opts.userId || '—'}`,
+    `ua=${opts.userAgent || '—'}`,
+    '',
+    ...lines,
+  ].join('\n');
+  const html = `<div style="font-family:system-ui,sans-serif;max-width:640px">
+  <h2>${esc(subject)}</h2>
+  <p>Événements tamponnés sur l’appareil, envoyés <strong>en un seul mail</strong> au retour réseau.</p>
+  <p>device=${esc(opts.deviceId || '—')} · user=${esc(opts.userId || '—')}</p>
+  <ul>${lines.map((l) => `<li>${esc(l.replace(/^• /, ''))}</li>`).join('')}</ul>
+</div>`;
+  try {
+    await sendMail({ to, subject, html, text });
+    console.info(`[telemetry-alert] digest sent n=${n} to=${to}`);
+    return { sent: true };
+  } catch (err) {
+    console.error('[telemetry-alert] digest mail failed', err);
+    return { sent: false, reason: 'mail-failed' };
+  }
+}

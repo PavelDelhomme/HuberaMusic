@@ -93,6 +93,9 @@ import {
   startApkBuild,
   startBuild,
 } from './platform/admin.js';
+import { consumeApkTicket, issueApkTicket, latestLiveApkTicket } from './platform/apkTickets.js';
+import { listAdminUsers } from './platform/adminUsers.js';
+import { loadRuntimeSettings, saveRuntimeSettings } from './platform/runtimeSettings.js';
 import {
   deployAdminHints,
   getDeployJob,
@@ -131,8 +134,10 @@ import {
 import {
   accountRequired,
   authAllowGuest,
+  authAllowRegister,
   authConfig,
   authOptional,
+  authPrivateMode,
   authRequired,
   issueSession,
   loginGoogle,
@@ -713,6 +718,77 @@ app.post(
   }
 });
 
+app.post(
+  '/api/telemetry/batch',
+  rateLimit({ windowMs: 60_000, max: 12 }),
+  authOptional,
+  (req, res) => {
+    try {
+      const b = req.body || {};
+      const raw = Array.isArray(b.events) ? b.events : [];
+      const trunc = (v: unknown, n: number) => {
+        const s = v == null ? '' : String(v);
+        return s.length > n ? s.slice(0, n) + `\n…[truncated ${s.length - n} chars]` : s;
+      };
+      const env = b.env || getAppEnv();
+      const deviceId = trunc(String(req.headers['x-device-id'] || b.deviceId || ''), 120);
+      const userId = req.user && !req.user.isGuest ? req.userId : undefined;
+      const userAgent = trunc(String(req.headers['user-agent'] || b.userAgent || ''), 400);
+      const digestItems: Array<{
+        id: string;
+        level: string;
+        kind: string;
+        message?: string;
+        count?: number;
+        trackId?: string;
+        http?: number;
+      }> = [];
+      for (const ev of raw.slice(0, 20)) {
+        if (!ev || typeof ev !== 'object') continue;
+        const e = ev as Record<string, unknown>;
+        const level = trunc(e.level || 'error', 32);
+        const kind = trunc(e.kind || 'client', 64);
+        const message = e.message ? trunc(e.message, 800) : undefined;
+        const id = insertTelemetry({
+          env,
+          level,
+          kind,
+          message,
+          stack: e.stack ? trunc(e.stack, 8_000) : undefined,
+          userAgent,
+          userId,
+          deviceId,
+          meta: {
+            batch: true,
+            count: typeof e.count === 'number' ? e.count : 1,
+            trackId: e.trackId,
+            http: e.http,
+            code: e.code,
+            ts: e.ts,
+          },
+        });
+        digestItems.push({
+          id,
+          level,
+          kind,
+          message,
+          count: typeof e.count === 'number' ? e.count : 1,
+          trackId: typeof e.trackId === 'string' ? e.trackId : undefined,
+          http: typeof e.http === 'number' ? e.http : undefined,
+        });
+      }
+      void import('./platform/telemetryAlert.js')
+        .then(({ maybeAlertTelemetryDigest }) =>
+          maybeAlertTelemetryDigest({ env, deviceId, userId, userAgent, events: digestItems }),
+        )
+        .catch((err) => console.error('[telemetry] digest', err));
+      res.json({ ok: true, ingested: digestItems.length });
+    } catch (err) {
+      res.status(400).json({ error: String((err as Error).message || err) });
+    }
+  },
+);
+
 /** Rapport batterie détaillé → email (dev@ / BATTERY_REPORT_TO) + PJ zip optionnelle. */
 app.post(
   '/api/telemetry/battery-report',
@@ -986,12 +1062,20 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
 }
 
 app.get('/api/admin/status', requireAdmin, (_req, res) => {
+  const rt = loadRuntimeSettings();
   res.json({
     ...deployInfo(PORT),
     env: getAppEnv(),
     telemetry: telemetryStats(),
     deploy: deployAdminHints(),
     youtubeCookies: youtubeCookiesStatus(),
+    settings: {
+      allowRegister: authAllowRegister(),
+      allowRegisterOverride: rt.allowRegister,
+      updatedAt: rt.updatedAt,
+      privateMode: authPrivateMode(),
+    },
+    apkTicket: latestLiveApkTicket(PORT),
   });
 });
 
@@ -1064,6 +1148,51 @@ app.post('/api/admin/apk/upload', requireAdmin, (req, res) => {
 
 app.get('/api/admin/apk', requireAdmin, (_req, res) => {
   res.json(getApkJob());
+});
+
+app.get('/api/admin/settings', requireAdmin, (_req, res) => {
+  const rt = loadRuntimeSettings();
+  res.json({
+    allowRegister: authAllowRegister(),
+    allowRegisterOverride: rt.allowRegister,
+    updatedAt: rt.updatedAt,
+    privateMode: authPrivateMode(),
+    envAllowRegister: process.env.AUTH_ALLOW_REGISTER || null,
+  });
+});
+
+app.put('/api/admin/settings', requireAdmin, (req, res) => {
+  const raw = req.body?.allowRegister;
+  if (typeof raw !== 'boolean') {
+    res.status(400).json({ error: 'allowRegister (boolean) requis' });
+    return;
+  }
+  const rt = saveRuntimeSettings({ allowRegister: raw });
+  let ticket: ReturnType<typeof issueApkTicket> | null = null;
+  if (raw) {
+    ticket = issueApkTicket('register', req.userId, PORT);
+  }
+  res.json({
+    ok: true,
+    allowRegister: authAllowRegister(),
+    allowRegisterOverride: rt.allowRegister,
+    updatedAt: rt.updatedAt,
+    apkTicket: ticket,
+  });
+});
+
+app.get('/api/admin/users', requireAdmin, (_req, res) => {
+  const users = listAdminUsers();
+  res.json({
+    users,
+    missingGoogle: users.filter((u) => !u.ytmLinked).length,
+  });
+});
+
+app.post('/api/admin/apk/ticket', requireAdmin, (req, res) => {
+  const reason = String(req.body?.reason || 'download') === 'register' ? 'register' : 'download';
+  const ticket = issueApkTicket(reason, req.userId, PORT);
+  res.json({ ok: true, ...ticket });
 });
 
 /** Mise en prod depuis Admin local : web (git→GHCR→redeploy CE) / apk / all */
@@ -1152,10 +1281,17 @@ function isHomeStreamRelay(req: Request): boolean {
   return String(req.headers['x-ytm-stream-relay-token'] || '') === secret;
 }
 
-/** Téléchargement APK (QR / in-app). Token APK_DOWNLOAD_TOKEN ou JWT compte. */
+/** Téléchargement APK : ticket one-shot (?t=) · JWT compte · APK_DOWNLOAD_TOKEN. */
 app.get('/api/deploy/apk', authOptional, (req, res) => {
-  if (!apkDownloadOrAccount(req)) {
-    res.status(401).json({ error: 'Lien APK protégé — clé manquante ou invalide' });
+  const ticketTok = typeof req.query?.t === 'string' ? req.query.t.trim() : '';
+  if (ticketTok) {
+    const consumed = consumeApkTicket(ticketTok);
+    if (!consumed.ok) {
+      res.status(410).json({ error: consumed.error });
+      return;
+    }
+  } else if (!apkDownloadOrAccount(req)) {
+    res.status(401).json({ error: 'Lien APK protégé — demande un QR à l’admin' });
     return;
   }
   const path = getApkPath();
