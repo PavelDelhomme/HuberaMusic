@@ -3,8 +3,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installConsoleTimestamps } from './platform/log.js';
+import { installYoutubeJsEvaluator } from './youtube/youtubeiEval.js';
 
 installConsoleTimestamps();
+installYoutubeJsEvaluator();
 process.env.DOTENV_CONFIG_QUIET = 'true';
 
 const __envDir = dirname(fileURLToPath(import.meta.url));

@@ -10,6 +10,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { Innertube, UniversalCache, ClientType } from 'youtubei.js';
 import { getYtmCredentials } from './ytm-account.js';
 import { resolveYoutubeCookieHeader } from './youtubeCookies.js';
+import { installYoutubeJsEvaluator } from './youtubeiEval.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const DATA = join(ROOT, 'data');
@@ -113,6 +114,7 @@ let pendingOauth: Pending | null = null;
 
 /** Démarre le code appareil Google TV pour autoriser les streams sur le VPS. */
 export async function startStreamDeviceOauth() {
+  installYoutubeJsEvaluator();
   pendingOauth = null;
   const yt = await Innertube.create({
     cache: new UniversalCache(false),
@@ -187,6 +189,7 @@ export function getStreamDeviceOauthStatus() {
  * Retourne null si aucune session — l’appelant retombe sur l’anonyme.
  */
 export async function getSignedStreamYT(userId?: string): Promise<Innertube | null> {
+  installYoutubeJsEvaluator();
   if (signedYt && Date.now() - signedYtAt < SIGNED_TTL_MS) return signedYt;
 
   const creds = resolveAnyStreamCredentials(userId);
@@ -204,6 +207,7 @@ export async function getSignedStreamYT(userId?: string): Promise<Innertube | nu
     }
     signedYt = yt;
     signedYtAt = Date.now();
+    console.info('[streamAuth] session signée OK oauth=', Boolean(creds.oauth), 'cookie=', Boolean(creds.cookie));
     return yt;
   } catch (err) {
     console.warn('[streamAuth] session signée KO:', String((err as Error).message || err).slice(0, 160));
