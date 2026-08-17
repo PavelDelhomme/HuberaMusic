@@ -20,6 +20,28 @@ function formatSyncMsg(stats: {
   );
 }
 
+async function waitYtmSync(onAccount: (account: any) => void) {
+  const t0 = Date.now();
+  const kick = await api.ytmSync();
+  if (kick?.stats && kick.running !== true && kick.library) return kick;
+  if (kick?.account) onAccount(kick.account);
+  while (Date.now() - t0 < 180_000) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const s = await api.ytmStatus();
+    onAccount(s.account);
+    if (s.account?.syncError) throw new Error(s.account.syncError);
+    if (
+      s.account?.lastSyncAt &&
+      s.account.lastSyncAt >= t0 - 5000 &&
+      s.account.syncRunning !== true
+    ) {
+      const library = await api.library();
+      return { account: s.account, library, stats: kick?.stats };
+    }
+  }
+  throw new Error('Google reste lié. L’import continue — réessaie Synchroniser.');
+}
+
 export function ImportPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -102,14 +124,15 @@ export function ImportPage() {
       .then((r) => {
         setAccount(r.account);
         setCookie('');
-        setYtmMsg('Cookies enregistrés — synchronisation…');
-        return api.ytmSync();
+        setYtmMsg('Google lié — import de la bibliothèque…');
+        return waitYtmSync(setAccount);
       })
       .then((r) => {
-        if (!r) return;
-        applyLibrary(r.library);
+        if (r.library) applyLibrary(r.library);
         setAccount(r.account);
-        setYtmMsg(formatSyncMsg(r.stats));
+        setYtmMsg(
+          r.stats ? formatSyncMsg(r.stats) : r.account?.lastSyncSummary || 'Bibliothèque importée',
+        );
       })
       .catch((e) => setYtmErr(String(e.message || e)))
       .finally(() => setYtmBusy(false));
@@ -166,12 +189,15 @@ export function ImportPage() {
                     setYtmBusy(true);
                     setYtmErr('');
                     setYtmMsg('');
-                    void api
-                      .ytmSync()
+                    void waitYtmSync(setAccount)
                       .then((r) => {
-                        applyLibrary(r.library);
+                        if (r.library) applyLibrary(r.library);
                         setAccount(r.account);
-                        setYtmMsg(formatSyncMsg(r.stats));
+                        setYtmMsg(
+                          r.stats
+                            ? formatSyncMsg(r.stats)
+                            : r.account?.lastSyncSummary || 'Bibliothèque importée',
+                        );
                       })
                       .catch((e) => setYtmErr(String(e.message || e)))
                       .finally(() => setYtmBusy(false));
