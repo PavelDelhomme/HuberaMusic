@@ -36,8 +36,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.LibraryAddCheck
+import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
@@ -357,7 +357,7 @@ fun TrackActionsSheet(
                 }
             }
             SheetAction(
-                if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Default.LibraryAdd,
+                if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                 if (songInLibrary) "Retirer de la bibliothèque" else "Enregistrer le mix",
             ) {
                 scope.launch {
@@ -439,7 +439,7 @@ fun TrackActionsSheet(
         if (enriched.isPlayable()) {
             // Bibliothèque + téléchargement (juste après navigation)
             SheetAction(
-                if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Default.LibraryAdd,
+                if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                 if (songInLibrary) "Dans la bibliothèque" else "Enregistrer dans la bibliothèque",
                 if (songInLibrary) "Retirer (sans toucher au J'aime)" else "Sans ajouter aux J'aime",
             ) {
@@ -482,16 +482,20 @@ fun TrackActionsSheet(
                 },
                 label = when {
                     downloaded -> "Sur l'appareil"
-                    downloadProgress != null -> "Téléchargement ${(downloadProgress!! * 100).toInt()} %"
+                    downloadProgress != null -> "Annuler le téléchargement (${(downloadProgress!! * 100).toInt()} %)"
                     else -> "Télécharger"
                 },
-                enabled = downloadProgress == null,
+                enabled = true,
             ) {
                 if (downloaded) {
                     Toast.makeText(context, "Déjà sur l'appareil (lisible hors-ligne)", Toast.LENGTH_SHORT).show()
                     return@SheetAction
                 }
-                if (downloadProgress != null) return@SheetAction
+                if (downloadProgress != null) {
+                    container.downloadManager.cancel(enriched.id)
+                    Toast.makeText(context, "Téléchargement annulé — partiel supprimé", Toast.LENGTH_SHORT).show()
+                    return@SheetAction
+                }
                 val started = container.downloadManager.enqueue(enriched)
                 if (!started && container.offlineStore.has(enriched.id)) {
                     downloaded = true
@@ -742,7 +746,7 @@ fun TrackActionsSheet(
             }
         } else if (enriched.isAlbum() || enriched.isPlaylist() || enriched.isArtist()) {
             SheetAction(
-                if (inLibrary || albumInLibrary) Icons.Default.LibraryAddCheck else Icons.Default.LibraryAdd,
+                if (inLibrary || albumInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                 if (inLibrary || albumInLibrary) "Dans la bibliothèque" else "Enregistrer dans la bibliothèque",
             ) {
                 scope.launch {

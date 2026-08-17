@@ -20,12 +20,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.LibraryAddCheck
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
-import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.outlined.LibraryAdd
+import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -44,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -54,6 +56,7 @@ import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.FollowArtistBody
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.buildRadioQueue
+import ovh.delhomme.ytmusic.player.PlayerController
 import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.PinnedBadge
 import ovh.delhomme.ytmusic.ui.components.TrackRow
@@ -71,6 +74,7 @@ fun ArtistDetailScreen(
     onMore: (TrackDto) -> Unit,
     onOpenDetail: (TrackDto) -> Unit,
     onOpenAllSongs: () -> Unit = {},
+    player: PlayerController? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -91,6 +95,7 @@ fun ArtistDetailScreen(
     var playlists by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
     var libTracks by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
     var libAlbums by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
+    var libAlbumIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var inLib by remember { mutableStateOf(false) }
     var following by remember { mutableStateOf(false) }
     var radioBusy by remember { mutableStateOf(false) }
@@ -127,6 +132,7 @@ fun ArtistDetailScreen(
                 }
             libTracks = lib.liked.filter { it.isPlayable() && matches(it) }.take(20)
             libAlbums = lib.albums.filter { matches(it) || it.id == artistId }.take(12)
+            libAlbumIds = lib.albums.map { it.id }.toHashSet()
 
             following = runCatching {
                 container.api.prefs().follows.any {
@@ -243,20 +249,40 @@ fun ArtistDetailScreen(
                                 OutlinedButton(
                                     onClick = {
                                         radioBusy = true
+                                        val seed = songs.firstOrNull()
+                                        if (seed != null) {
+                                            onPlayNamed(
+                                                listOf(seed) + songs.filter { it.id != seed.id }.take(8),
+                                                0,
+                                                "Radio · $name",
+                                            )
+                                        }
                                         scope.launch {
                                             val mix = buildRadioQueue(
                                                 container.api,
                                                 "artist",
                                                 artistId,
-                                                songs.firstOrNull(),
+                                                seed,
                                                 mixCache = container.mixCache,
                                             )
                                             radioBusy = false
-                                            if (mix.isEmpty()) {
-                                                Toast.makeText(context, "Radio indisponible", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                val added = (mix.size - 1).coerceAtLeast(0)
-                                                onPlayNamed(mix, 0, "Radio · $name")
+                                            val rest = mix.filter { it.id != seed?.id }
+                                            when {
+                                                rest.isNotEmpty() && player != null ->
+                                                    player.addManyToQueue(rest)
+                                                mix.isNotEmpty() && seed == null ->
+                                                    onPlayNamed(mix, 0, "Radio · $name")
+                                                mix.isEmpty() && seed == null ->
+                                                    Toast.makeText(context, "Radio indisponible", Toast.LENGTH_SHORT).show()
+                                                rest.isNotEmpty() && player == null ->
+                                                    onPlayNamed(
+                                                        (listOfNotNull(seed) + rest).distinctBy { it.id },
+                                                        0,
+                                                        "Radio · $name",
+                                                    )
+                                            }
+                                            if (mix.isNotEmpty()) {
+                                                val added = rest.size
                                                 Toast.makeText(
                                                     context,
                                                     if (added > 0) {
@@ -309,7 +335,12 @@ fun ArtistDetailScreen(
                                     },
                                     modifier = Modifier.weight(1f),
                                 ) {
-                                    Icon(Icons.Default.LibraryMusic, null, Modifier.size(18.dp))
+                                    Icon(
+                                        if (inLib) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
+                                        null,
+                                        Modifier.size(18.dp),
+                                        tint = if (inLib) Color(0xFFFF0033) else MaterialTheme.colorScheme.onSurface,
+                                    )
                                     Spacer(Modifier.width(4.dp))
                                     Text(
                                         if (inLib) "Retirer" else "Biblio",
@@ -339,9 +370,10 @@ fun ArtistDetailScreen(
                                     modifier = Modifier.weight(1f),
                                 ) {
                                     Icon(
-                                        if (following) Icons.Default.PersonRemove else Icons.Default.PersonAdd,
+                                        if (following) Icons.Default.Person else Icons.Outlined.PersonAdd,
                                         null,
                                         Modifier.size(18.dp),
+                                        tint = if (following) Color(0xFFFF0033) else MaterialTheme.colorScheme.onSurface,
                                     )
                                     Spacer(Modifier.width(4.dp))
                                     Text(
@@ -436,15 +468,16 @@ fun ArtistDetailScreen(
                     if (albums.isNotEmpty()) {
                         item { SectionTitle("Albums") }
                         item {
-                            HorizontalShelf(
-                                items = albums,
-                                pinIds = pinIds,
-                                onTogglePin = { t ->
-                                    scope.launch { container.quickAccess.toggle(t, container.api) }
-                                },
-                                onOpen = onOpenDetail,
-                                onPlaySong = { onPlay(listOf(it), 0) },
-                            )
+                                HorizontalShelf(
+                                    items = albums,
+                                    pinIds = pinIds,
+                                    libraryIds = libAlbumIds,
+                                    onTogglePin = { t ->
+                                        scope.launch { container.quickAccess.toggle(t, container.api) }
+                                    },
+                                    onOpen = onOpenDetail,
+                                    onPlaySong = { onPlay(listOf(it), 0) },
+                                )
                         }
                     }
                     if (singles.isNotEmpty()) {
@@ -544,6 +577,7 @@ private fun HorizontalShelf(
     onPlaySong: (TrackDto) -> Unit,
     circle: Boolean = false,
     pinIds: Set<String> = emptySet(),
+    libraryIds: Set<String> = emptySet(),
     onTogglePin: ((TrackDto) -> Unit)? = null,
 ) {
     Row(
@@ -574,6 +608,27 @@ private fun HorizontalShelf(
                                 .padding(4.dp),
                             size = 24.dp,
                             onClick = onTogglePin?.let { { it(item) } },
+                        )
+                    }
+                    if (item.id in libraryIds) {
+                        Icon(
+                            Icons.Default.LibraryAddCheck,
+                            contentDescription = "Dans la bibliothèque",
+                            tint = Color(0xFFFF0033),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(4.dp)
+                                .size(22.dp),
+                        )
+                    } else if (item.isAlbum() || item.isPlaylist()) {
+                        Icon(
+                            Icons.Outlined.LibraryAdd,
+                            contentDescription = "Pas dans la bibliothèque",
+                            tint = Color.White.copy(alpha = 0.9f),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(4.dp)
+                                .size(20.dp),
                         )
                     }
                 }

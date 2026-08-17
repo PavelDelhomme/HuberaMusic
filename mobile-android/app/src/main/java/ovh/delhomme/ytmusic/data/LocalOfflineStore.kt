@@ -5,6 +5,9 @@ import android.net.Uri
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,7 +18,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import ovh.delhomme.ytmusic.debug.AppLog
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Téléchargements vraiment locaux (fichiers sur l’appareil), lisibles hors-ligne
@@ -131,9 +136,17 @@ class LocalOfflineStore(
             val result = downloadOnce(track, streamUrl, onProgress, attempt)
             if (result.isSuccess) return@withContext result
             lastError = result.exceptionOrNull()
-            AppLog.w("offline", "DL retry ${attempt + 1} ${track.id}: ${lastError?.message}")
-            // Backoff : laisse le lecteur / tunnel se stabiliser (reset CDN fréquent)
-            kotlinx.coroutines.delay(800L * (attempt + 1) * (attempt + 1))
+            val msg = lastError?.message.orEmpty()
+            AppLog.w("offline", "DL retry ${attempt + 1} ${track.id}: $msg")
+            if (msg.contains("HTTP 502") || msg.contains("HTTP 503") || msg.contains("HTTP 504")) {
+                ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(60_000L)
+                if (attempt >= 1) {
+                    return@withContext Result.failure(lastError ?: Exception("HTTP 5xx"))
+                }
+                kotlinx.coroutines.delay(350L * (attempt + 1))
+            } else {
+                kotlinx.coroutines.delay(800L * (attempt + 1) * (attempt + 1))
+            }
         }
         Result.failure(lastError ?: Exception("Échec téléchargement"))
     }
@@ -148,64 +161,167 @@ class LocalOfflineStore(
         val part = File(dir, "${track.id}.part")
         part.delete()
         return runCatching {
-            val req = Request.Builder().url(streamUrl).get().build()
-            http.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) error("HTTP ${resp.code}")
-                val body = resp.body ?: error("Réponse vide")
-                val total = body.contentLength().takeIf { it > 0 } ?: -1L
-                var readTotal = 0L
-                body.byteStream().use { input ->
-                    part.outputStream().use { output ->
-                        val buf = ByteArray(64 * 1024)
-                        var lastPct = -1
-                        var lastByteReport = 0L
-                        while (true) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            output.write(buf, 0, n)
-                            readTotal += n
-                            if (total > 0) {
-                                val pct = ((readTotal * 100) / total).toInt().coerceIn(0, 99)
-                                if (pct != lastPct) {
-                                    lastPct = pct
-                                    onProgress?.invoke(pct / 100f)
-                                }
-                            } else if (readTotal - lastByteReport >= 256 * 1024L) {
-                                lastByteReport = readTotal
-                                val soft = (0.08f + (readTotal / (1024f * 1024f)) * 0.04f).coerceAtMost(0.92f)
-                                onProgress?.invoke(soft)
-                            }
-                        }
-                        output.flush()
-                    }
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val probe = Request.Builder()
+                .url(streamUrl)
+                .header("Range", "bytes=0-0")
+                .get()
+                .build()
+            val (total, ranged) = http.newCall(probe).execute().use { resp ->
+                if (resp.code == 502 || resp.code == 503 || resp.code == 504) {
+                    error("HTTP ${resp.code}")
                 }
-                val minBytes = minBytesFor(track)
-                if (part.length() < minBytes) {
-                    part.delete()
-                    error("Fichier trop petit (${part.length()} < $minBytes) — stream incomplet")
-                }
-                if (total > 0 && readTotal < (total * 98 / 100)) {
-                    part.delete()
-                    error("Téléchargement tronqué ($readTotal / $total octets)")
-                }
-                // Persiste meta + taille attendue
-                mutex.withLock {
-                    if (dest.exists()) dest.delete()
-                    if (!part.renameTo(dest)) {
-                        part.copyTo(dest, overwrite = true)
-                        part.delete()
-                    }
-                    upsertMetaUnlocked(track)
-                    writeSizeHint(track.id, if (total > 0) total else dest.length())
-                    bump()
-                }
-                onProgress?.invoke(1f)
-                AppLog.i("offline", "DL ok ${track.id} ${dest.length()}b attempt=$attempt")
-                dest
+                if (!resp.isSuccessful && resp.code != 206) error("HTTP ${resp.code}")
+                val lenHeader = resp.header("Content-Range")
+                    ?.substringAfter('/')
+                    ?.toLongOrNull()
+                    ?.takeIf { it > 0 }
+                    ?: resp.header("Content-Length")?.toLongOrNull()?.takeIf { it > 1 }
+                    ?: -1L
+                val accept = resp.code == 206 ||
+                    resp.header("Accept-Ranges").orEmpty().contains("bytes", ignoreCase = true)
+                lenHeader to accept
+            }
+            if (ranged && total > 512 * 1024L) {
+                downloadParallel(track, streamUrl, part, dest, total, onProgress, attempt)
+            } else {
+                downloadSequential(track, streamUrl, part, dest, onProgress, attempt)
             }
         }.onFailure {
             part.delete()
         }
+    }
+
+    private suspend fun downloadSequential(
+        track: TrackDto,
+        streamUrl: String,
+        part: File,
+        dest: File,
+        onProgress: ((Float) -> Unit)?,
+        attempt: Int,
+    ): File {
+        val req = Request.Builder().url(streamUrl).get().build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("HTTP ${resp.code}")
+            val body = resp.body ?: error("Réponse vide")
+            val total = body.contentLength().takeIf { it > 0 } ?: -1L
+            var readTotal = 0L
+            body.byteStream().use { input ->
+                part.outputStream().use { output ->
+                    val buf = ByteArray(64 * 1024)
+                    var lastPct = -1
+                    var lastByteReport = 0L
+                    while (true) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        output.write(buf, 0, n)
+                        readTotal += n
+                        if (total > 0) {
+                            val pct = ((readTotal * 100) / total).toInt().coerceIn(0, 99)
+                            if (pct != lastPct) {
+                                lastPct = pct
+                                onProgress?.invoke(pct / 100f)
+                            }
+                        } else if (readTotal - lastByteReport >= 256 * 1024L) {
+                            lastByteReport = readTotal
+                            val soft = (0.08f + (readTotal / (1024f * 1024f)) * 0.04f).coerceAtMost(0.92f)
+                            onProgress?.invoke(soft)
+                        }
+                    }
+                    output.flush()
+                }
+            }
+            finalizeDownload(track, part, dest, total, readTotal, onProgress, attempt)
+        }
+        return dest
+    }
+
+    private suspend fun downloadParallel(
+        track: TrackDto,
+        streamUrl: String,
+        part: File,
+        dest: File,
+        total: Long,
+        onProgress: ((Float) -> Unit)?,
+        attempt: Int,
+    ): File {
+        val chunks = 4
+        val read = AtomicLong(0L)
+        part.parentFile?.mkdirs()
+        RandomAccessFile(part, "rw").use { raf ->
+            raf.setLength(total)
+            coroutineScope {
+                val size = total / chunks
+                (0 until chunks).map { i ->
+                    async(Dispatchers.IO) {
+                        val from = i * size
+                        val to = if (i == chunks - 1) total - 1 else (from + size - 1)
+                        val req = Request.Builder()
+                            .url(streamUrl)
+                            .header("Range", "bytes=$from-$to")
+                            .get()
+                            .build()
+                        http.newCall(req).execute().use { resp ->
+                            if (resp.code != 206 && !resp.isSuccessful) error("HTTP ${resp.code}")
+                            val body = resp.body ?: error("Réponse vide")
+                            val buf = ByteArray(64 * 1024)
+                            var offset = from
+                            body.byteStream().use { input ->
+                                while (true) {
+                                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                    val n = input.read(buf)
+                                    if (n < 0) break
+                                    synchronized(raf) {
+                                        raf.seek(offset)
+                                        raf.write(buf, 0, n)
+                                    }
+                                    offset += n
+                                    val soFar = read.addAndGet(n.toLong())
+                                    if (soFar % (256 * 1024L) < n) {
+                                        onProgress?.invoke((soFar.toFloat() / total).coerceIn(0.08f, 0.99f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }.forEach { it.await() }
+            }
+        }
+        finalizeDownload(track, part, dest, total, part.length(), onProgress, attempt)
+        return dest
+    }
+
+    private suspend fun finalizeDownload(
+        track: TrackDto,
+        part: File,
+        dest: File,
+        total: Long,
+        readTotal: Long,
+        onProgress: ((Float) -> Unit)?,
+        attempt: Int,
+    ) {
+        val minBytes = minBytesFor(track)
+        if (part.length() < minBytes) {
+            part.delete()
+            error("Fichier trop petit (${part.length()} < $minBytes) — stream incomplet")
+        }
+        if (total > 0 && readTotal < (total * 98 / 100)) {
+            part.delete()
+            error("Téléchargement tronqué ($readTotal / $total octets)")
+        }
+        mutex.withLock {
+            if (dest.exists()) dest.delete()
+            if (!part.renameTo(dest)) {
+                part.copyTo(dest, overwrite = true)
+                part.delete()
+            }
+            upsertMetaUnlocked(track)
+            writeSizeHint(track.id, if (total > 0) total else dest.length())
+            bump()
+        }
+        onProgress?.invoke(1f)
+        AppLog.i("offline", "DL ok ${track.id} ${dest.length()}b attempt=$attempt")
     }
 
     private fun sizeHintFile(trackId: String) = File(dir, "$trackId.size")

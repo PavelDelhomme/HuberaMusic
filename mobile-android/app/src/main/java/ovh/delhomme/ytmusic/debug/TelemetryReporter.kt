@@ -129,23 +129,85 @@ object TelemetryReporter {
         local: Boolean,
         streak: Int,
         detail: String? = null,
+        httpStatus: Int? = null,
     ) {
-        // Ne spam pas les glitches réseau streak=1
-        if (networkish && streak < 2 && !local) return
+        val blob = detail.orEmpty()
+        val http = httpStatus ?: extractHttpStatus(blob)
+        val serious = isSeriousStreamFailure(code, http, blob, local)
+        // Glitch réseau unique sans 5xx/timeout/DNS : on ne mail pas
+        if (networkish && streak < 2 && !local && !serious) return
+        val diag = diagnosePlayerError(code, trackId, networkish, local, streak, http, blob)
         report(
             level = "error",
             kind = "android.player",
-            message = "onPlayerError code=$code id=$trackId streak=$streak network=$networkish local=$local",
+            message = buildString {
+                append("onPlayerError code=$code")
+                if (http != null) append(" http=$http")
+                append(" id=$trackId streak=$streak network=$networkish local=$local")
+                append("\n\nPré-diagnostic Android : ")
+                append(diag)
+            },
             stack = detail,
             meta = mapOf(
                 "errorCode" to code,
+                "httpStatus" to http,
                 "trackId" to trackId,
                 "streak" to streak,
                 "networkish" to networkish,
                 "local" to local,
+                "diagnosis" to diag,
                 "recentLogs" to AppLog.recentLogText(12_000),
             ),
-            force = streak >= 3,
+            force = serious || streak >= 2 || local,
         )
+    }
+
+    private fun extractHttpStatus(text: String): Int? {
+        val m = Regex("Response code:\\s*(\\d{3})|HTTP\\s+(\\d{3})", RegexOption.IGNORE_CASE)
+            .find(text) ?: return null
+        return m.groupValues[1].ifBlank { m.groupValues[2] }.toIntOrNull()
+    }
+
+    private fun isSeriousStreamFailure(code: Int, http: Int?, blob: String, local: Boolean): Boolean {
+        if (local) return true
+        if (http != null && http >= 500) return true
+        if (code == 2004 || code == 2002) return true
+        return blob.contains("502") ||
+            blob.contains("503") ||
+            blob.contains("SocketTimeout", ignoreCase = true) ||
+            blob.contains("Unable to resolve host", ignoreCase = true) ||
+            blob.contains("UnknownHost", ignoreCase = true) ||
+            blob.contains("connection abort", ignoreCase = true)
+    }
+
+    private fun diagnosePlayerError(
+        code: Int,
+        trackId: String,
+        networkish: Boolean,
+        local: Boolean,
+        streak: Int,
+        http: Int?,
+        blob: String,
+    ): String {
+        val family = when {
+            blob.contains("Unable to resolve host", ignoreCase = true) ||
+                blob.contains("UnknownHost", ignoreCase = true) ->
+                "DNS — hostname API non résolu (pas un bug codec)"
+            http == 502 || blob.contains("Response code: 502") ->
+                "HTTP 502 — le reverse proxy / API n’a pas pu servir /api/stream/$trackId (YouTube/IP datacenter ou upstream mort). ExoPlayer n’a jamais ouvert le flux."
+            http == 503 || http == 504 ->
+                "HTTP $http — gateway saturée ou timeout amont sur le stream"
+            blob.contains("SocketTimeout", ignoreCase = true) || code == 2002 ->
+                "Timeout ouverture flux — le serveur n’a pas renvoyé les en-têtes à temps (souvent le même incident que le 502)"
+            blob.contains("connection abort", ignoreCase = true) ->
+                "Socket abort — connexion coupée pendant l’open HTTP (proxy / YouTube / trop de DL en parallèle)"
+            local ->
+                "Fichier local illisible — purge et reprise stream"
+            networkish ->
+                "Erreur réseau lecteur (code Media3 $code) — source HTTP, pas le décodeur"
+            else ->
+                "Erreur lecteur (code $code)"
+        }
+        return "$family · streak=$streak · local=$local · http=${http ?: "—"}"
     }
 }

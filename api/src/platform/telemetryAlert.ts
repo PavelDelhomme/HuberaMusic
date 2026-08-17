@@ -1,8 +1,11 @@
 import { sendMail, getAppEnv } from './mail.js';
 import { buildTextPdf } from './textPdf.js';
+import { diagnoseTelemetryEvent, formatDiagnosisText } from './telemetryDiagnose.js';
 
 const THROTTLE_MS = Number(process.env.TELEMETRY_ALERT_THROTTLE_MS || 90_000);
 const lastSent = new Map<string, number>();
+/** Occurrences écrasées par le throttle — rappelées dans le prochain mail. */
+const suppressed = new Map<string, number>();
 /** Au-delà : corps email résumé + PDF PJ avec dump complet. */
 const INLINE_MAX = Number(process.env.TELEMETRY_ALERT_INLINE_MAX || 10_000);
 
@@ -107,9 +110,12 @@ export async function maybeAlertTelemetryError(ev: {
   const now = Date.now();
   const prev = lastSent.get(fp) || 0;
   if (now - prev < THROTTLE_MS) {
+    suppressed.set(fp, (suppressed.get(fp) || 0) + 1);
     return { sent: false, reason: 'throttled' };
   }
   lastSent.set(fp, now);
+  const skipped = suppressed.get(fp) || 0;
+  suppressed.delete(fp);
   // prune map
   if (lastSent.size > 200) {
     for (const [k, t] of lastSent) {
@@ -122,6 +128,19 @@ export async function maybeAlertTelemetryError(ev: {
   const crumbs = extractBreadcrumbs(ev.meta);
   const metaLite = metaWithoutHeavy(ev.meta);
   const stack = (ev.stack || '').trim() || '(aucune stack Throwable — voir logs / breadcrumbs)';
+  const diagnosis = diagnoseTelemetryEvent({
+    kind: ev.kind,
+    message: ev.message,
+    stack: ev.stack,
+    url: ev.url,
+    userAgent: ev.userAgent,
+    meta: ev.meta,
+  });
+  const diagText = formatDiagnosisText(diagnosis);
+  const skipNote =
+    skipped > 0
+      ? `\n(${skipped} occurrence${skipped > 1 ? 's' : ''} identique${skipped > 1 ? 's' : ''} non envoyée${skipped > 1 ? 's' : ''} pendant le throttle)`
+      : '';
 
   const fullDump = [
     `PLM telemetry alert`,
@@ -130,6 +149,9 @@ export async function maybeAlertTelemetryError(ev: {
     `device=${ev.deviceId || '—'} user=${ev.userId || '—'}`,
     `url=${ev.url || '—'}`,
     `ua=${ev.userAgent || '—'}`,
+    '',
+    '=== PRÉ-DIAGNOSTIC ===',
+    diagText + skipNote,
     '',
     '=== MESSAGE ===',
     ev.message || '(vide)',
@@ -148,7 +170,7 @@ export async function maybeAlertTelemetryError(ev: {
   ].join('\n');
 
   const heavy = fullDump.length > INLINE_MAX;
-  const subject = `[PLM ${env}] ${level.toUpperCase()} · ${ev.kind} · ${(ev.message || 'erreur').slice(0, 80)}`;
+  const subject = `[PLM ${env}] ${level.toUpperCase()} · ${diagnosis.family} · ${ev.kind} · ${diagnosis.title.slice(0, 72)}`;
 
   const textSummary = [
     `PLM telemetry alert`,
@@ -156,6 +178,9 @@ export async function maybeAlertTelemetryError(ev: {
     `env=${env} level=${level} kind=${ev.kind}`,
     `device=${ev.deviceId || '—'} user=${ev.userId || '—'}`,
     `url=${ev.url || '—'}`,
+    '',
+    '--- pré-diagnostic ---',
+    diagText + skipNote,
     '',
     '--- message ---',
     ev.message || '(vide)',
@@ -179,6 +204,8 @@ export async function maybeAlertTelemetryError(ev: {
   device=<code>${esc(ev.deviceId || '—')}</code><br/>
   user=<code>${esc(ev.userId || '—')}</code><br/>
   url=<code>${esc(ev.url || '—')}</code></p>
+  <h3>Pré-diagnostic</h3>
+  <pre style="white-space:pre-wrap;background:#fef3c7;padding:12px;border-radius:8px;border:1px solid #f59e0b">${esc(diagText)}${esc(skipNote)}</pre>
   <h3>Message</h3>
   <pre style="white-space:pre-wrap;background:#f4f4f5;padding:12px;border-radius:8px">${esc(ev.message || '(vide)')}</pre>
   <h3>Stack / diagnostic</h3>
@@ -199,6 +226,7 @@ export async function maybeAlertTelemetryError(ev: {
         title: `PLM ${env} · ${level} · ${ev.kind} · ${ev.id}`,
         sections: [
           { heading: 'Résumé', body: `message: ${ev.message || '(vide)'}\ndevice: ${ev.deviceId || '—'}\nuser: ${ev.userId || '—'}\nurl: ${ev.url || '—'}\nua: ${ev.userAgent || '—'}` },
+          { heading: 'Pré-diagnostic', body: diagText + skipNote },
           { heading: 'Stack / diagnostic', body: stack },
           { heading: 'Breadcrumbs', body: crumbs || '(aucun)' },
           { heading: 'Recent logs', body: logs || '(aucun)' },

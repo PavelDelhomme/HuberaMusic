@@ -842,15 +842,21 @@ fun NowPlayingScreen(
                                                 modifier = Modifier
                                                     .clip(RoundedCornerShape(20.dp))
                                                     .background(PlayerFg.copy(alpha = 0.08f))
-                                                    .clickable(enabled = dlProgress == null && !dlDone) {
-                                                        val started = container.downloadManager.enqueue(track)
-                                                        if (!started && container.offlineStore.has(track.id)) {
-                                                            dlDone = true
-                                                            Toast.makeText(context, "Déjà sur l'appareil", Toast.LENGTH_SHORT).show()
-                                                        } else if (started) {
-                                                            Toast.makeText(context, "Téléchargement…", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                    }
+                                                    .clickable {
+                        if (dlDone) return@clickable
+                        if (dlProgress != null) {
+                            container.downloadManager.cancel(track.id)
+                            Toast.makeText(context, "Téléchargement annulé", Toast.LENGTH_SHORT).show()
+                            return@clickable
+                        }
+                        val started = container.downloadManager.enqueue(track)
+                        if (!started && container.offlineStore.has(track.id)) {
+                            dlDone = true
+                            Toast.makeText(context, "Déjà sur l'appareil", Toast.LENGTH_SHORT).show()
+                        } else if (started) {
+                            Toast.makeText(context, "Téléchargement…", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                             ) {
