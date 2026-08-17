@@ -138,6 +138,78 @@
 
 ---
 
+## Session 2026-08-17 (502 stream, reprise file, shuffle, mails)
+
+Télémetrie Nothing `p+1.3.18` : `71ad8024` (k1BneeJTDcU, 502 streak=4) · `2332b870` (HCgWWovlPVI, timeout 2002) · PDF `~/Téléchargements/plm-telemetry-71ad8024.pdf`.  
+Perplexity a raison : **ExoPlayer 2004 = HTTP 502 du backend**, pas un codec.
+
+### E14 — HTTP 502 / timeout sur `/api/stream` (prod)
+| | |
+|--|--|
+| **Status** | `investigating` — contournements app livrés ; **cause racine VPS / YouTube IP** |
+| **Surfaces** | Android prod · API prod `ytmusic.delhomme.ovh` · DL offline |
+| **Cause** | Reverse proxy / Innertube : YouTube bloque souvent l’IP Contabo (`LOGIN_REQUIRED`) → 502. DNS parfois `Unable to resolve host`. Timeouts = même chaîne (proxy attend trop longtemps). |
+| **Symptômes** | `InvalidResponseCodeException: 502` · `SocketTimeoutException` · OfflineKeeper `DL retry HTTP 502` · lecture en pause · toast « connexion » trompeur |
+| **Fix app** | Circuit-breaker immédiat sur 5xx ; 2 retries rapides puis **suivant** ; **pause** (plus de `stop()` qui vide la file) ; toast 502 ≠ Wi‑Fi ; OfflineKeeper capé ; mails avec pré-diagnostic |
+| **Fix infra (toi)** | OAuth TV : [`docs/STREAM-VPS-OAUTH.md`](./docs/STREAM-VPS-OAUTH.md) · `curl -I` stream musical vs Rickroll · logs API au timestamp du mail |
+| **Tests** | **R17** · DEV D8/D13 · PROD P8/P13 |
+
+### E15 — File d’attente absente au relance / skip → « chargement de suggestion »
+| | |
+|--|--|
+| **Status** | `fixed` (code) — à revalider Samsung DEV + Samsung PROD |
+| **Surfaces** | Android |
+| **Cause** | Restore `autoplay=false` préparait quand même le flux → 502 → `exo.stop()` **effaçait** les MediaItems. Skip sans suivant → fill autoplay (« Chargement des suggestions… ») puis titre suivant **sans audio**. |
+| **Fix** | Restore sans `prepare()` ; skip reconstruit depuis `Holder.queue` si IDLE/vide ; `stop()` → `pause()` |
+| **Tests** | **R18** · DEV D13 · PROD P13 |
+
+### E16 — Shuffle biblio / playlist trop lent, titres suivants jamais chauds
+| | |
+|--|--|
+| **Status** | `fixed` (code) — à revalider |
+| **Surfaces** | Android biblio / playlist / album |
+| **Cause** | `setMediaItems` 250 + warm 6 + **enqueueAhead immédiat** + OfflineKeeper 40 likes → saturation. 1er titre lent ; les autres n’ouvrent pas. |
+| **Fix** | Fenêtre 80 ; ahead DL **après 8 s** de lecture réelle ; retries 5xx 140 ms ×2 ; skip auto au suivant |
+| **Tests** | **R19** · DEV D6/D13 · PROD P6/P13 |
+
+### E17 — Shuffle playlist : tous les titres en « téléchargement » ; cancel ne marche pas
+| | |
+|--|--|
+| **Status** | `fixed` (code) — à revalider |
+| **Surfaces** | Android |
+| **Cause** | OfflineKeeper enfilait 40+12 DL sans que l’user clique ; 2ᵉ tap DL ignoré (`enabled = progress == null`) ; `.part` pas nettoyé à l’annulation UI |
+| **Fix** | Tick like cap 8 ; cancel / cancelMany + suppression `.part` ; 2ᵉ tap = **annuler** ; DL parallèle Range (4 segments) type torrent |
+| **Tests** | **R20** · DEV D7 · PROD P7 |
+
+### E18 — Radio artiste ne démarre pas
+| | |
+|--|--|
+| **Status** | `fixed` (code) — à revalider |
+| **Surfaces** | Android page artiste |
+| **Cause** | Attente du mix API complet avant le 1er play (timeout / vide) |
+| **Fix** | Joue le seed (tops) **tout de suite**, append le mix ensuite (comme mix album) |
+| **Tests** | **R21** · DEV D4 artiste · PROD P4 |
+
+### E19 — Boutons biblio / follow sans état visuel plein vs creux
+| | |
+|--|--|
+| **Status** | `fixed` (code) — à revalider |
+| **Surfaces** | Android album (depuis artiste), artiste, sheet ⋮ |
+| **Cause** | Même icône remplie pour on et off (seul le label changeait) |
+| **Fix** | Off = `Outlined.*` (creux) · On = `*Check` / filled + rouge ; pastille album dans le shelf artiste |
+| **Tests** | **R22** · DEV D4/D6 · PROD P4/P6 |
+
+### E20 — Mails d’erreur trop bruts / parfois absents (streak=1)
+| | |
+|--|--|
+| **Status** | `fixed` (code) — à revalider outbox |
+| **Surfaces** | API telemetry · Android · web |
+| **Cause** | `reportPlayerError` skip streak&lt;2 ; mail = stack brut ; throttle 90 s sans pré-diag |
+| **Fix** | 5xx/timeout/DNS mail **dès la 1ʳᵉ** fois ; bloc **Pré-diagnostic** FR (famille, cause, actions) + compteur throttle ; subject = famille |
+| **Tests** | **R17** · DEV D3 · PROD P3 |
+
+---
+
 ## OK constatés (ne pas réouvrir sans nouveau signal)
 
 | Check | Local | Prod | Samsung | Nothing |

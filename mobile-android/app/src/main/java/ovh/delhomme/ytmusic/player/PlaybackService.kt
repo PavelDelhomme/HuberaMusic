@@ -243,12 +243,16 @@ class PlaybackService : MediaSessionService() {
                 return
             }
 
+            val httpStatus = httpStatusOf(error)
             val streak = streamFailStreak.incrementAndGet()
             AppLog.w(
                 "PlaybackService",
-                "onPlayerError code=${error.errorCode} network=$networkish local=$localFile streak=$streak id=$id pos=$pos dur=$dur",
+                "onPlayerError code=${error.errorCode} http=$httpStatus network=$networkish local=$localFile streak=$streak id=$id pos=$pos dur=$dur",
                 error,
             )
+            if (httpStatus != null && httpStatus >= 500) {
+                StreamPrefetcher.markStreamDown(60_000L)
+            }
             runCatching {
                 ovh.delhomme.ytmusic.debug.TelemetryReporter.reportPlayerError(
                     code = error.errorCode,
@@ -257,6 +261,7 @@ class PlaybackService : MediaSessionService() {
                     local = localFile,
                     streak = streak,
                     detail = error.stackTraceToString().take(4_000),
+                    httpStatus = httpStatus,
                 )
             }
 
@@ -391,7 +396,9 @@ class PlaybackService : MediaSessionService() {
                     return
                 }
                 // Encore « online » : glitch / URL stream expirée — retenter LE MÊME titre (pas de skip)
-                if (streak <= 4) {
+                // 5xx : 2 essais rapides puis titre suivant (la même URL 502 ne guérit pas en 4 retries)
+                val maxSameTrack = if (httpStatus != null && httpStatus >= 500) 2 else 4
+                if (streak <= maxSameTrack) {
                     val attempt = recoverGen.incrementAndGet()
                     val resumePos = exo.currentPosition.coerceAtLeast(0L)
                     scope.launch {
@@ -403,7 +410,7 @@ class PlaybackService : MediaSessionService() {
                                 container?.api?.streamResolveUrl(id)
                             }
                         }.isSuccess
-                        delay(250L * streak)
+                        delay(if (httpStatus != null && httpStatus >= 500) 140L * streak else 250L * streak)
                         if (attempt != recoverGen.get()) return@launch
                         if (exo.currentMediaItem?.mediaId != id) return@launch
                         val rebuilt = runCatching {
@@ -449,14 +456,33 @@ class PlaybackService : MediaSessionService() {
                     }
                     return
                 }
-                // Échecs répétés alors que le device se dit en ligne → pause (flux, pas Wi‑Fi)
+                // Échecs répétés en ligne : garder la file (pause, pas stop) et tenter le suivant
                 StreamPrefetcher.markStreamDown()
                 StreamPrefetcher.cancelIdle()
                 recoverGen.incrementAndGet()
+                val failIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                val nextIdx = failIdx + 1
+                if (nextIdx < exo.mediaItemCount && nextIdx < Holder.queue.size) {
+                    streamFailStreak.set(0)
+                    runCatching {
+                        exo.seekTo(nextIdx, 0L)
+                        exo.prepare()
+                        exo.playWhenReady = true
+                        exo.play()
+                        Holder.index = nextIdx
+                    }
+                    android.os.Handler(mainLooper).post {
+                        android.widget.Toast.makeText(
+                            this@PlaybackService,
+                            "Flux KO sur ce titre — passage au suivant",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    return
+                }
                 exo.playWhenReady = false
-                runCatching { exo.stop() }
+                runCatching { exo.pause() }
                 streamFailStreak.set(0)
-                ovh.delhomme.ytmusic.data.NetworkMonitor.markPausedForNetwork()
                 android.os.Handler(mainLooper).post {
                     val localApi = BuildConfig.API_BASE_URL.contains("127.0.0.1") ||
                         BuildConfig.API_BASE_URL.contains("192.168.") ||
@@ -465,6 +491,7 @@ class PlaybackService : MediaSessionService() {
                     android.widget.Toast.makeText(
                         this@PlaybackService,
                         when {
+                            httpStatus == 502 -> "Serveur audio 502 — ce n’est pas le Wi‑Fi (OAuth TV / proxy)"
                             localApi -> "API locale injoignable (port 8787 ?) — ou change de réseau"
                             else -> "Flux audio indisponible — réessaie (le Wi‑Fi n’est pas forcément en cause)"
                         },
@@ -479,7 +506,7 @@ class PlaybackService : MediaSessionService() {
                 StreamPrefetcher.cancelIdle()
                 recoverGen.incrementAndGet()
                 exo.playWhenReady = false
-                runCatching { exo.stop() }
+                runCatching { exo.pause() }
                 streamFailStreak.set(0)
                 android.os.Handler(mainLooper).post {
                     val localApi = BuildConfig.API_BASE_URL.contains("127.0.0.1") ||
@@ -514,6 +541,20 @@ class PlaybackService : MediaSessionService() {
                 }
                 // Si ça échoue encore → 2ᵉ onPlayerError → stop (streak >= 2)
             }
+        }
+
+        private fun httpStatusOf(error: PlaybackException): Int? {
+            var c: Throwable? = error
+            var depth = 0
+            while (c != null && depth++ < 8) {
+                if (c is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+                    return c.responseCode
+                }
+                val m = Regex("Response code:\\s*(\\d{3})").find(c.message ?: "")
+                if (m != null) return m.groupValues[1].toIntOrNull()
+                c = c.cause
+            }
+            return null
         }
 
         private fun isNetworkOrServerError(error: PlaybackException): Boolean {

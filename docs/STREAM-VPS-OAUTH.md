@@ -5,16 +5,19 @@
 
 ---
 
-## Réponse courte — pubs / « YouTube Music fait maison »
+## Réponse courte — Premium, pubs, ce que tu dois faire
+
+**Tu n’as pas besoin de YouTube Premium.** PLM est pensé pour marcher avec un **compte Google gratuit**. Tu peux résilier Premium : ça ne casse pas PLM, et l’OAuth ci-dessous **n’est pas** un abonnement Google.
 
 | Question | Réponse |
 |---|---|
-| Est-ce que l’OAuth transforme PLM en YouTube Music officiel **avec pubs** ? | **Non.** Tu restes sur **PLM** (web / Android). Pas le lecteur YTM Google. |
-| Est-ce que ça enlève un éventuel Premium ? | **Non.** C’est le **même compte Google** : Premium reste Premium ; sans Premium, tu n’en gagnes pas non plus. |
-| À quoi sert l’OAuth alors ? | Uniquement à **autoriser le VPS** (IP datacenter Contabo) à résoudre les URLs audio. Sans ça, YouTube répond souvent `LOGIN_REQUIRED` / `unavailable` → **HTTP 502** sur la musique. |
-| Dois-tu le faire tout de suite ? | **Non obligatoire aujourd’hui.** Doc prête ; on reprend plus tard. En attendant, la musique prod peut rester fragile / en 502 sans relais maison. |
+| Est-ce que je dois garder / payer YouTube Premium ? | **Non.** Zéro Premium requis pour écouter sur PLM (web / Android). Résilie si tu veux. |
+| Est-ce que l’OAuth TV = Premium déguisé, ou des pubs YTM ? | **Non.** Tu restes dans **PLM** (notre lecteur). Pas l’app YouTube Music officielle, pas les pubs vidéo Google. On proxifie un flux **audio**. |
+| Est-ce que ça m’inscrit à Premium / me facture ? | **Non.** Tu autorises seulement le **VPS** à parler à YouTube **en ton nom** (compte gratuit OK). Aucun prélèvement lié à cette étape. |
+| À quoi sert l’OAuth alors ? | YouTube **bloque souvent les IP datacenter** (Contabo) si la requête est anonyme → `LOGIN_REQUIRED` → **HTTP 502** sur la musique. Un login appareil (gratuit) signe les requêtes. Ce n’est pas « acheter Premium ». |
+| Dois-tu le faire tout de suite ? | **Oui si la prod 502** (mails `onPlayerError` 2004 / 2002). Sans cette autorisation **gratuite**, la musique prod reste cassée — **même sans Premium**, **même avec Premium**. Premium ne débloque pas l’IP du VPS. |
 
-PLM ne diffuse pas les pubs vidéo YouTube dans le lecteur : on proxifie un flux **audio**. L’OAuth n’injecte pas de pubs « maison ».
+En résumé : **Premium = option Google que tu peux couper.** **OAuth TV = 2 min une fois, compte gratuit, pour que le serveur ait le droit de résoudre l’audio.** Les deux n’ont rien à voir.
 
 ---
 
@@ -70,8 +73,8 @@ Réponse typique :
 ### 3. Autoriser sur Google (2 min)
 
 1. Ouvre **https://www.google.com/device** (téléphone ou PC).
-2. Compte Google = celui de **ton** YouTube / YTM.
-3. Entre le `userCode`, valide.
+2. Compte Google = **n’importe lequel à toi**, **sans Premium**. (Celui que tu utilises déjà pour YouTube suffit.)
+3. Entre le `userCode`, valide. Tu n’achètes rien ; tu dis juste « oui, ce serveur a le droit de récupérer les URLs audio ».
 
 ### 4. Vérifier
 
@@ -110,7 +113,7 @@ BROWSER=brave bash scripts/deploy/push-youtube-cookies.sh prod
 - [ ] Déployer image prod avec `streamAuth`
 - [ ] `youtube-stream-oauth/start` + code sur google.com/device
 - [ ] Probe 206 sur titres musique (pas seulement dQw4w9WgXcQ)
-- [ ] Smoke Nothing : play + pas de spam `early_end` / 502
+- [ ] Smoke Samsung (DEV LAN puis PROD) : play + pas de spam `early_end` / 502
 - [ ] Commit/doc à jour si la procédure change
 
 **Note 15/08/2026 :** correctifs lecteur Android (volume système, `resumeOrPlay`, reprise `early_end`) installés en sideload sur Nothing ; API stream OAuth hot-copiée une fois sur le conteneur — à **rejouer via image** à la reprise.

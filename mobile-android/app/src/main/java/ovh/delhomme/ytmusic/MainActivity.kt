@@ -1156,6 +1156,7 @@ private fun MainTabs(
                         onOpenAllSongs = {
                             nav.navigate("artist_songs/${Uri.encode(id)}")
                         },
+                        player = player,
                     )
                 } else {
                     CollectionDetailScreen(

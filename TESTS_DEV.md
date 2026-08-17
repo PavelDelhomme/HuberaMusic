@@ -2,7 +2,7 @@
 
 **Appareil** : Samsung (`192.168.1.184:5555` ou USB `R5CT7263YJL`) — APK **dev** → API LAN.  
 **Web** : `http://localhost:5173` · **API** : `http://127.0.0.1:8787` / `http://<LAN>:8787`.  
-**Tracking** : [`STATUS.md`](./STATUS.md) · [`ERRORS.md`](./ERRORS.md) · index [`TESTS.md`](./TESTS.md) (**R1–R12**).
+**Tracking** : [`STATUS.md`](./STATUS.md) · [`ERRORS.md`](./ERRORS.md) · index [`TESTS.md`](./TESTS.md) (**R1–R22**).
 
 ### Journal sessions
 
@@ -74,8 +74,9 @@ Parallèle recommandé : web PC **et** Samsung pour chaque sous-catégorie.
 
 - [ ] Forcer une erreur visible (stream fail / API stop 5 s) → toast clair
 - [ ] Crash / erreur non fatale → entrée dans **Réglages → Logs / Crash**
-- [ ] Email d’alerte reçu (admin / outbox) avec contexte (device, version, stack)
-- [ ] Pas de spam email en boucle sur la même erreur (throttle)
+- [ ] Email d’alerte reçu (admin / outbox) avec **Pré-diagnostic** (famille, cause, actions) + stack
+- [ ] 502 / timeout : mail dès la 1ʳᵉ occurrence (pas seulement streak≥2) (E20)
+- [ ] Pas de spam email en boucle sur la même erreur (throttle + compteur dans le mail suivant)
 
 ---
 
@@ -168,6 +169,8 @@ Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de 
 - [ ] Hors‑ligne : lecture OK
 - [ ] Fermer sheet pendant DL → continue
 - [ ] Couper réseau mid-DL → reprise au retour (R6)
+- [ ] 2ᵉ tap pendant DL = **annuler** + `.part` disparu (R20 / E17)
+- [ ] Shuffle playlist **ne** met pas tous les titres en icône DL (E17)
 
 ---
 
@@ -176,6 +179,7 @@ Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de 
 - [ ] Naviguer 10 pages rapidement → pas de faux « connexion perdue »
 - [ ] Couper Wi‑Fi 5 s → message ; revenir → recovery
 - [ ] API restart (`make restart-api`) → clients récupèrent
+- [ ] Toast 502 ≠ « plus de connexion / Wi‑Fi » (R17 / E14)
 
 ---
 
@@ -209,11 +213,41 @@ Pour **chaque** page : ouvrir, scroller, vérifier skeleton → contenu, pas de 
 
 ---
 
+## D13 — Reprise / shuffle / radio / états on-off (R17–R22) — Samsung DEV
+
+Appareil : **Samsung** USB `R5CT7263YJL` · APK **dev** · API LAN. Nothing non requis.
+
+### Relance app (E15 / R18)
+- [ ] Lancer une playlist (≥ 4 titres), pause, **force-stop** l’app, rouvrir → file + mini-lecteur présents
+- [ ] Play reprend **le même titre** (pas une erreur connexion)
+- [ ] Suivant joue le titre suivant **avec du son** (pas « Chargement des suggestions… » puis silence)
+- [ ] Freeze perçu (titre ne lit pas) → fermer / rouvrir → skip OK
+
+### Shuffle biblio titres (E16 / R19)
+- [ ] Bibliothèque → Titres → Aléatoire : 1er titre part en &lt; ~2 s (LAN)
+- [ ] Suivant ×5 : chaque titre **joue**, pas bloqué « chargement »
+- [ ] Si 1er titre lent : retries rapides visibles (pas 20 s de vide)
+
+### Radio artiste (E18 / R21)
+- [ ] Page artiste → Radio : 1er titre **immédiat**
+- [ ] File se remplit ensuite ; pas d’échec silencieux
+
+### Boutons on/off (E19 / R22)
+- [ ] Album ouvert depuis un artiste : biblio **creux** si pas enregistré, **plein rouge** si déjà en biblio
+- [ ] Artiste : Biblio + Suivre même logique plein/creux
+- [ ] ⋮ titre : LibraryAdd outlined vs check
+
+### DL (E17 / R20)
+- [ ] Ne pas voir 20 spinners DL après un shuffle
+- [ ] Lancer un DL → retaper = annulation + pas de fichier partiel lisible
+
+---
+
 ## Fin de session DEV
 
 - [ ] Notes dans STATUS (IDs concernés → `🧪` ou `✅` LOCAL/DEV)
 - [ ] Bugs nouveaux ouverts en lignes STATUS / ERRORS
-- [ ] **R1–R12** tous OK sur web + Samsung
-- [ ] **Ne pas** merger prod tant que D0–D8 / D11 critiques KO
+- [ ] **R1–R22** tous OK sur web + Samsung
+- [ ] **Ne pas** merger prod tant que D0–D8 / D11 / D13 critiques KO
 
-Session suivante : promo puis [`TESTS_PROD.md`](./TESTS_PROD.md) sur **Nothing**.
+Session suivante : promo puis [`TESTS_PROD.md`](./TESTS_PROD.md) sur **Samsung PROD** (Nothing optionnel).

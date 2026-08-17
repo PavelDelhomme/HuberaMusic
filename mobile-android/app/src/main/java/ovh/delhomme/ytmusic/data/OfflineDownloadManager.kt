@@ -113,7 +113,11 @@ class OfflineDownloadManager(
                 }
                 throw e
             } catch (e: Exception) {
-                _errors.update { it + (track.id to (e.message ?: "Échec téléchargement")) }
+                val msg = e.message ?: "Échec téléchargement"
+                if (msg.contains("HTTP 502") || msg.contains("HTTP 503") || msg.contains("HTTP 504")) {
+                    ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(60_000L)
+                }
+                _errors.update { it + (track.id to msg) }
             } finally {
                 _progress.update { cur ->
                     val next = cur.toMutableMap()
@@ -180,5 +184,27 @@ class OfflineDownloadManager(
         val msg = _errors.value[trackId] ?: return null
         _errors.update { it - trackId }
         return msg
+    }
+
+    /** Annule un DL en cours et supprime le fichier partiel. */
+    fun cancel(trackId: String): Boolean {
+        val job = jobs[trackId]
+        val active = job?.isActive == true || _progress.value.containsKey(trackId)
+        job?.cancel()
+        _progress.update { it - trackId }
+        _errors.update { it - trackId }
+        runCatching {
+            java.io.File(
+                ovh.delhomme.ytmusic.YtMusicApp.instance.filesDir,
+                "offline/$trackId.part",
+            ).delete()
+        }
+        return active
+    }
+
+    fun cancelMany(ids: Collection<String>): Int {
+        var n = 0
+        for (id in ids) if (cancel(id)) n++
+        return n
     }
 }

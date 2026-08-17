@@ -71,8 +71,12 @@ class OfflineKeeper(
             return
         }
         AppLog.i("OfflineKeeper", "tick reason=$reason")
+        if (StreamPrefetcher.isStreamDown()) {
+            AppLog.w("OfflineKeeper", "skip tick — stream down")
+            return
+        }
         ensureToken()
-        syncLiked(limit = 40)
+        syncLiked(limit = 8)
         delay(2_500)
         if (!NetworkMonitor.isOnline() || StreamPrefetcher.isStreamDown()) return
         syncMonMix()
