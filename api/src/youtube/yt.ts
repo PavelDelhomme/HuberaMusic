@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { Innertube, UniversalCache, ClientType, YTNodes, Parser, Log } from 'youtubei.js';
 import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES } from './youtubeCookies.js';
 import { getSignedStreamYT } from './streamAuth.js';
+import { installYoutubeJsEvaluator } from './youtubeiEval.js';
 
 // youtubei.js loggue massivement des Type mismatch (WatchNext / Message) → pollue make logs
 try {
@@ -85,6 +86,7 @@ let yt: Innertube | null = null;
 let ytCookieFp: string | null = null;
 
 export async function getYT(): Promise<Innertube> {
+  installYoutubeJsEvaluator();
   const fp = youtubeCookiesFingerprint();
   if (yt && ytCookieFp === fp) return yt;
   yt = null;
@@ -2270,9 +2272,10 @@ export async function getAudioFormat(
       const innertube = signed || (await getYT());
       // Ordre : clients qui marchent sans session navigateur / sans po_token
       const clients = signed
-        ? (['TV', 'ANDROID_VR', 'IOS', 'WEB_EMBEDDED', 'ANDROID'] as const)
+        ? (['MWEB', 'WEB', 'TV', 'ANDROID'] as const)
         : (['ANDROID_VR', 'TV', 'TV_EMBEDDED', 'WEB_EMBEDDED', 'IOS', 'ANDROID'] as const);
       const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
+        const ms = signed ? 20_000 : 8_000;
         const format = await Promise.race([
           innertube.getStreamingData(videoId, {
             type: 'audio',
@@ -2280,10 +2283,11 @@ export async function getAudioFormat(
             client,
           }),
           new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error(`innertube ${client} timeout`)), 8_000),
+            setTimeout(() => rej(new Error(`innertube ${client} timeout`)), ms),
           ),
         ]);
-        const url = await format.decipher(innertube.session.player);
+        // getStreamingData a déjà decipher une fois — ne pas re-décrypter (cipher consommé)
+        const url = format.url || (await format.decipher(innertube.session.player));
         if (!url) throw new Error('empty stream url');
         return {
           url,
@@ -2296,7 +2300,7 @@ export async function getAudioFormat(
       // Essai parallèle sur le sous-ensemble le plus fiable, puis suite
       try {
         const parallel = signed
-          ? (['TV', 'ANDROID_VR', 'IOS'] as const)
+          ? (['MWEB'] as const)
           : (['ANDROID_VR', 'TV', 'IOS'] as const);
         return await Promise.any(parallel.map((c) => tryClient(c)));
       } catch {
@@ -2327,7 +2331,7 @@ export async function getAudioFormat(
 
     let entry = await Promise.race([
       resolveWithCap(),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 14_000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 22_000)),
     ]);
 
     if (!entry) {
@@ -2362,7 +2366,7 @@ export async function getAudioFormat(
   const capped = Promise.race([
     job,
     new Promise<AudioFormat>((_, rej) =>
-      setTimeout(() => rej(new Error('getAudioFormat deadline')), 16_000),
+      setTimeout(() => rej(new Error('getAudioFormat deadline')), 28_000),
     ),
   ]).finally(() => {
     audioFormatInflight.delete(key);
