@@ -22,12 +22,29 @@ function cleanChallenges() {
   }
 }
 
-export function getRpID(host?: string) {
+export function getRpID(host?: string, origin?: string) {
+  if (origin?.startsWith('android:')) return publicRpId();
   if (process.env.WEBAUTHN_RP_ID) return process.env.WEBAUTHN_RP_ID.split(':')[0];
   const h = (host || 'localhost').split(':')[0];
-  // Les IP ne sont pas des RP ID WebAuthn valides → fallback localhost
+  // Les IP ne sont pas des RP ID WebAuthn valides → fallback localhost (web local)
   if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h === '127.0.0.1') return 'localhost';
   return h;
+}
+
+/** RP ID public (Digital Asset Links). Jamais une IP ni localhost — Credential Manager Android. */
+export function publicRpId(): string {
+  const env = (process.env.WEBAUTHN_RP_ID || '').split(':')[0];
+  if (env && env !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(env)) return env;
+  try {
+    const u = process.env.APP_URL || process.env.WEBAUTHN_ORIGIN || '';
+    if (u.startsWith('http')) {
+      const h = new URL(u).hostname;
+      if (h && h !== 'localhost' && !/^\d+\.\d+\.\d+\.\d+$/.test(h)) return h;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'ytmusic.delhomme.ovh';
 }
 
 export function getOrigin(reqHost?: string, proto?: string) {
@@ -37,14 +54,44 @@ export function getOrigin(reqHost?: string, proto?: string) {
   return `${p}://${host}`;
 }
 
-/** Origines Android Credential Manager (apk-key-hash) + web. */
+const DEFAULT_APK_KEY_HASH = 'android:apk-key-hash:PPbFMh2hUX55lAyeJVFKY5ssRJ4-_333R2h2y_b0wR8';
+const DEFAULT_SHA256 =
+  '3C:F6:C5:32:1D:A1:51:7E:79:94:0C:9E:25:51:4A:63:9B:2C:44:9E:3E:FF:7D:F7:47:68:76:CB:F6:F4:C1:1F';
+
+function originsFromFingerprints(): string[] {
+  const fps = (process.env.ANDROID_SHA256_FINGERPRINTS || DEFAULT_SHA256)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  for (const fp of fps) {
+    try {
+      const hex = fp.replace(/:/g, '');
+      if (hex.length < 32) continue;
+      out.push(`android:apk-key-hash:${Buffer.from(hex, 'hex').toString('base64url')}`);
+    } catch {
+      /* ignore */
+    }
+  }
+  return out;
+}
+
+/** Origines Android Credential Manager (apk-key-hash) + web. Toujours inclure le hash debug. */
 export function expectedOrigins(primary: string): string | string[] {
   const extras = (process.env.WEBAUTHN_ANDROID_ORIGINS || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  const all = [primary, ...extras].filter(Boolean);
-  return all.length === 1 ? all[0]! : all;
+  const all = [
+    primary,
+    process.env.WEBAUTHN_ORIGIN,
+    (process.env.APP_URL || '').replace(/\/$/, ''),
+    DEFAULT_APK_KEY_HASH,
+    ...extras,
+    ...originsFromFingerprints(),
+  ].filter((s): s is string => Boolean(s));
+  const uniq = [...new Set(all)];
+  return uniq.length === 1 ? uniq[0]! : uniq;
 }
 
 db.exec(`

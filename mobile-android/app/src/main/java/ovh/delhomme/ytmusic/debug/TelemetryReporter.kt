@@ -149,8 +149,6 @@ object TelemetryReporter {
         val blob = detail.orEmpty()
         val http = httpStatus ?: extractHttpStatus(blob)
         val serious = isSeriousStreamFailure(code, http, blob, local)
-        // Glitch réseau unique sans 5xx/timeout/DNS : on ne mail pas
-        if (networkish && streak < 2 && !local && !serious) return
         val diag = diagnosePlayerError(code, trackId, networkish, local, streak, http, blob)
         report(
             level = "error",
@@ -171,9 +169,10 @@ object TelemetryReporter {
                 "networkish" to networkish,
                 "local" to local,
                 "diagnosis" to diag,
+                "serious" to serious,
                 "recentLogs" to AppLog.recentLogText(12_000),
             ),
-            force = serious || streak >= 2 || local,
+            force = true,
         )
     }
 

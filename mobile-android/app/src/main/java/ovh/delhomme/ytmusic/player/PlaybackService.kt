@@ -65,6 +65,7 @@ class PlaybackService : MediaSessionService() {
     /** Snapshot pour détecter une fin de piste trop tôt (stream tronqué / cache). */
     @Volatile private var lastPlayingId: String = ""
     @Volatile private var lastPlayingPosMs: Long = 0L
+    @Volatile private var lastNearEndWarmMs: Long = 0L
     /** Durée Exo du titre courant — le catalogue YTM est souvent trop long (faux early_end). */
     @Volatile private var lastPlayingDurationMs: Long = 0L
     /** Fin de buffer Exo — si pos ≈ buffer et catalogue plus long, ce n’est pas un early_end. */
@@ -137,6 +138,21 @@ class PlaybackService : MediaSessionService() {
                 streamFailStreak.set(0)
                 StreamPrefetcher.markStreamOk()
             }
+            // 8–22 s avant la fin : re-préchauffe le +1 / +2 (pas seulement au changement de piste)
+            if (player.isPlaying && player.playbackState == Player.STATE_READY) {
+                val d = player.duration
+                val posNow = player.currentPosition
+                if (d > 0L && d != C.TIME_UNSET) {
+                    val rem = d - posNow
+                    if (rem in 8_000L..22_000L) {
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - lastNearEndWarmMs > 4_000L) {
+                            lastNearEndWarmMs = now
+                            warmUpcoming(player.currentMediaItemIndex)
+                        }
+                    }
+                }
+            }
             // Fin propre du dernier item (sans erreur googlevideo) → suivant ou fill « À suivre »
             if (
                 events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
@@ -190,18 +206,30 @@ class PlaybackService : MediaSessionService() {
 
             val localFile = item.localConfiguration?.uri?.scheme == "file"
             val networkish = !localFile && isNetworkOrServerError(error)
-            val dur = exo.duration
-            val pos = exo.currentPosition
+            val dur = when {
+                exo.duration > 0L && exo.duration != C.TIME_UNSET -> exo.duration
+                lastPlayingDurationMs > 0L -> lastPlayingDurationMs
+                else -> 0L
+            }
+            val pos = maxOf(exo.currentPosition.coerceAtLeast(0L), lastPlayingPosMs)
             // Fin de titre souvent signalée comme IO/403/connexion coupée par googlevideo —
             // ce n’est PAS une panne réseau : avancer proprement, sans toast « connexion perdue ».
+            val httpPeek = httpStatusOf(error)
             val nearEnd =
                 !localFile &&
-                    dur > 0L &&
-                    dur != C.TIME_UNSET &&
                     pos >= 0L &&
                     (
-                        pos.toDouble() / dur.toDouble() >= 0.88 ||
-                            (dur - pos) in 0L..5_000L
+                        (
+                            dur > 0L &&
+                                dur != C.TIME_UNSET &&
+                                (
+                                    pos.toDouble() / dur.toDouble() >= 0.88 ||
+                                        (dur - pos) in 0L..5_000L
+                                )
+                        ) ||
+                            // Durée inconnue mais on a déjà joué un bon bout + IO/403
+                            (dur <= 0L && pos > 30_000L && networkish) ||
+                            (httpPeek == 403 && pos > 20_000L && dur > 0L && pos.toDouble() / dur >= 0.80)
                     )
             if (nearEnd) {
                 streamFailStreak.set(0)
@@ -425,7 +453,9 @@ class PlaybackService : MediaSessionService() {
                             } else {
                                 item
                             }
-                            exo.setMediaItem(nextItem, resumePos)
+                            val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                            exo.replaceMediaItem(idx, nextItem)
+                            exo.seekTo(idx, resumePos)
                             exo.prepare()
                             exo.playWhenReady = true
                             exo.play()
@@ -535,7 +565,9 @@ class PlaybackService : MediaSessionService() {
                 if (exo.currentMediaItem?.mediaId != id) return@launch
                 runCatching {
                     val pos = exo.currentPosition.coerceAtLeast(0L)
-                    exo.setMediaItem(item, pos)
+                    val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                    exo.replaceMediaItem(idx, item)
+                    exo.seekTo(idx, pos)
                     exo.prepare()
                     exo.playWhenReady = true
                 }
@@ -1166,8 +1198,8 @@ class PlaybackService : MediaSessionService() {
         // Toute la fenêtre visible de la file : au moins ~3 s de tête
         StreamPrefetcher.warmHeads3s(
             base,
-            queue.drop(fromIndex.coerceAtLeast(0)).take(12).map { it.id },
-            limit = 12,
+            queue.drop(fromIndex.coerceAtLeast(0)).take(6).map { it.id },
+            limit = 6,
         )
         CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 3, behind = 1)
         enqueueOfflineAhead(fromIndex)

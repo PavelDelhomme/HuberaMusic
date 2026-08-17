@@ -1,7 +1,8 @@
 # TESTS — carte des campagnes PLM
 
 Index. **Ne pas tout faire d’un coup**. Suivre le pipeline [`STATUS.md`](./STATUS.md).  
-Erreurs : [`ERRORS.md`](./ERRORS.md).
+Erreurs : [`ERRORS.md`](./ERRORS.md).  
+**Sessions dédiées (prod / DEV / local / alt)** : [`docs/TESTS-SESSIONS.md`](./docs/TESTS-SESSIONS.md).
 
 | Étape | Fichier | Device | API | Quand |
 |-------|---------|--------|-----|--------|

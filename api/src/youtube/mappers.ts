@@ -777,7 +777,7 @@ export function mapNavigationButton(item: any): Track | null {
     title,
     artists: [],
     album: browseId ? { name: title, id: browseId } : undefined,
-    thumbnails: [],
+    thumbnails: extractThumbs(item, item.icon, item.image, item.style, item.background),
     type: 'playlist',
   };
 }

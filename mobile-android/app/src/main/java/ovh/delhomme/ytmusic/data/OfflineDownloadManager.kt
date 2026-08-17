@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -26,8 +27,8 @@ class OfflineDownloadManager(
     private val ensureToken: suspend () -> Unit,
     private val notifyServer: suspend (trackId: String) -> Unit,
     private val warmStream: (suspend (trackId: String) -> Unit)? = null,
-    /** 1 max pendant la lecture : Exo + prefetch saturent déjà le tunnel. */
-    private val maxConcurrent: Int = 1,
+    /** 2 max : 1 laissait les albums (Pandemonium) coincés à 2 % derrière un warm bloqué. */
+    private val maxConcurrent: Int = 2,
 ) {
     private val jobsMutex = Mutex()
     private val jobs = mutableMapOf<String, Job>()
@@ -92,8 +93,8 @@ class OfflineDownloadManager(
                     if (offlineStore.has(track.id)) return@withPermit
                     ensureToken()
                     _progress.update { it + (track.id to 0.05f) }
-                    runCatching { warmStream?.invoke(track.id) }
-                    _progress.update { it + (track.id to 0.08f) }
+                    withTimeoutOrNull(2_500L) { warmStream?.invoke(track.id) }
+                    _progress.update { it + (track.id to 0.12f) }
                     offlineStore
                         .download(track, streamUrl(track.id)) { p ->
                             _progress.update { cur ->
@@ -114,9 +115,6 @@ class OfflineDownloadManager(
                 throw e
             } catch (e: Exception) {
                 val msg = e.message ?: "Échec téléchargement"
-                if (msg.contains("HTTP 502") || msg.contains("HTTP 503") || msg.contains("HTTP 504")) {
-                    ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(60_000L)
-                }
                 _errors.update { it + (track.id to msg) }
             } finally {
                 _progress.update { cur ->

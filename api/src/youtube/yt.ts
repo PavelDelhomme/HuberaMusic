@@ -1516,7 +1516,7 @@ export async function getArtistSongs(
 
 const LYRICS_CACHE_MAX = 400;
 /** bump pour invalider d’anciens timed mal alignés / écrasés */
-const LYRICS_CACHE_VER = 'v4';
+const LYRICS_CACHE_VER = 'v5';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
@@ -1680,6 +1680,7 @@ async function fetchLrclibTimed(
     cleanTitle,
     title,
     cleanTitle.replace(/['’]/g, ''),
+    cleanTitle.replace(/['’]/g, ' '),
     cleanTitle.replace(/['’]/g, "'"),
   ].filter((t, i, arr) => t && arr.indexOf(t) === i);
 
