@@ -63,6 +63,7 @@ Toute erreur player / crash **doit** partir par email admin (télémétrie). Si 
 - [ ] Téléchargés : playlists → albums → titres ; Lecture/aléatoire **titres seulement**
 
 ### P7 — Téléchargements
+- [ ] Télécharger **en Wi‑Fi** et **en 4G** (⋮ → Télécharger : progress avance, fichier local)
 - [ ] Titre ⋮ télécharger : progress avance (pas coincé 2 %)
 - [ ] Album *Pandemonium* Heaven Pierce Her : progress agrégé bouge, termine
 - [ ] 2ᵉ tap = annuler
