@@ -1313,18 +1313,18 @@ private fun MainTabs(
                     .putLong("dismissed_at", System.currentTimeMillis()).apply()
                 showGoogleLink = false
             },
-            title = { Text("Lier Google pour écouter") },
+            title = { Text("Connecter Google") },
             text = {
                 Text(
-                    "Compte Google gratuit — ce n’est pas YouTube Premium. " +
-                        "Ça signe tes streams depuis le serveur pour que YouTube ne bloque pas l’IP.",
+                    "Un bouton : tu valides ton compte Google (gratuit, pas Premium). " +
+                        "PLM récupère tout seul likes et playlists — rien à coller.",
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     showGoogleLink = false
                     nav.navigate("ytm_import")
-                }) { Text("Lier maintenant") }
+                }) { Text("Connecter") }
             },
             dismissButton = {
                 TextButton(onClick = {
