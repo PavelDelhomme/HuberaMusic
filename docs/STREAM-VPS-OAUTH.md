@@ -139,4 +139,4 @@ BROWSER=brave bash scripts/deploy/push-youtube-cookies.sh prod
 - [x] **B4.24** toggle inscription Admin + prompt liaison Google (comptes existants inclus)
 - [x] **B4.22 / B4.23** tampon télémétrie digest + playAt plus réactif (à valider Samsung)
 
-**Note 17/08/2026 :** OAuth TV admin **connecté** ; evaluator JS en image `cc62556`. Ne **pas** relancer `/start` tant que `status: connected`. Premium toujours **non requis**.
+**Note 17/08/2026 :** OAuth TV admin **connecté** ; image `ce4eb72` ; APK `p+1.3.18` installée Nothing + Samsung. Ne **pas** relancer `/start` tant que `status: connected`. Premium toujours **non requis**.
