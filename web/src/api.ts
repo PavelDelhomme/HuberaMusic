@@ -855,7 +855,7 @@ export const api = {
     ),
   ytmOauthStatus: () => req<{ status: string; error?: string; userCode?: string }>('/api/ytm/oauth/status'),
   ytmSync: () =>
-    req<{ ok: boolean; stats: any; library: LibraryData; account: any }>('/api/ytm/sync', {
+    req<{ ok: boolean; running?: boolean; stats?: any; library?: LibraryData; account: any }>('/api/ytm/sync', {
       method: 'POST',
       body: '{}',
     }),

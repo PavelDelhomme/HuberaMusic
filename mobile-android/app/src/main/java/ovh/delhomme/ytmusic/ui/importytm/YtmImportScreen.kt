@@ -38,11 +38,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.YtmAccountDto
 import ovh.delhomme.ytmusic.data.YtmCookieBody
+import ovh.delhomme.ytmusic.data.apiMessage
 import ovh.delhomme.ytmusic.debug.AppLog
+import ovh.delhomme.ytmusic.debug.TelemetryReporter
 import java.text.DateFormat
 import java.util.Date
 
@@ -74,32 +77,71 @@ fun YtmImportScreen(
 
     LaunchedEffect(Unit) { refresh() }
 
+    suspend fun waitForLibrarySync(startedAt: Long) {
+        runCatching { container.api.ytmSync() }
+            .onFailure {
+                AppLog.e("ytm", "sync kick ${it.apiMessage()}", it)
+            }
+        repeat(90) {
+            delay(2_000)
+            val acc = container.api.ytmStatus().account
+            account = acc
+            if (!acc.syncError.isNullOrBlank()) {
+                error = acc.syncError
+                message = "Google reste lié. ${acc.syncError}"
+                TelemetryReporter.report(
+                    level = "error",
+                    kind = "android.ytm.sync",
+                    message = acc.syncError,
+                    force = true,
+                )
+                return
+            }
+            val at = acc.lastSyncAt ?: 0L
+            if (acc.syncRunning != true && at >= startedAt - 5_000L) {
+                message = acc.lastSyncSummary ?: "Bibliothèque importée"
+                Toast.makeText(context, "Bibliothèque synchronisée", Toast.LENGTH_SHORT).show()
+                return
+            }
+            if (acc.syncRunning == true || acc.canSyncLibrary) {
+                message = acc.hint ?: "Import de la bibliothèque…"
+            }
+        }
+        message = "Google reste lié. L’import continue sur le serveur — tu peux réessayer Synchroniser."
+        TelemetryReporter.report(
+            level = "error",
+            kind = "android.ytm.sync",
+            message = "poll timeout after 180s",
+            force = true,
+        )
+    }
+
     fun applyCookieAndSync(raw: String, fromWebView: Boolean) {
         busy = true
         error = null
-        message = null
+        message = if (fromWebView) "Google lié — import de la bibliothèque…" else "Enregistrement…"
         scope.launch {
-            runCatching {
+            val startedAt = System.currentTimeMillis()
+            try {
                 container.ensureFreshToken()
-                container.api.ytmConnectCookie(YtmCookieBody(raw))
-                container.api.ytmSync()
-            }.onSuccess { r ->
-                account = r.account
+                val saved = container.api.ytmConnectCookie(YtmCookieBody(raw))
+                account = saved.account
                 cookie = ""
                 showLogin = false
-                message =
-                    "Google lié — ${r.stats.songs} likes, ${r.stats.librarySongs} titres, " +
-                        "${r.stats.albums} albums, ${r.stats.artists} artistes, " +
-                        "${r.stats.playlists} playlists" +
-                        if (r.stats.history > 0) ", ${r.stats.history} récents" else ""
-                AppLog.breadcrumb("ytm-sync", message ?: "")
+                message = "Google lié — import de la bibliothèque…"
                 Toast.makeText(context, "Compte Google connecté", Toast.LENGTH_SHORT).show()
-            }.onFailure {
-                error = it.message
-                AppLog.e("ytm", "sync", it)
-                if (fromWebView) {
-                    showLogin = false
-                }
+                waitForLibrarySync(startedAt)
+            } catch (e: Exception) {
+                error = e.apiMessage()
+                AppLog.e("ytm", "connect ${e.apiMessage()}", e)
+                TelemetryReporter.report(
+                    level = "error",
+                    kind = "android.ytm.connect",
+                    message = e.apiMessage(),
+                    stack = e.stackTraceToString(),
+                    force = true,
+                )
+                runCatching { account = container.api.ytmStatus().account }
             }
             busy = false
         }
@@ -107,7 +149,10 @@ fun YtmImportScreen(
 
     if (showLogin) {
         YtmGoogleLoginWebView(
-            onCaptured = { applyCookieAndSync(it, fromWebView = true) },
+            onCaptured = {
+                showLogin = false
+                applyCookieAndSync(it, fromWebView = true)
+            },
             onCancel = { showLogin = false },
         )
         return
@@ -166,14 +211,9 @@ fun YtmImportScreen(
                             error = null
                             message = null
                             scope.launch {
-                                runCatching { container.api.ytmSync() }
-                                    .onSuccess { r ->
-                                        account = r.account
-                                        message =
-                                            "Sync OK — ${r.stats.songs} likes, ${r.stats.librarySongs} titres, " +
-                                                "${r.stats.albums} albums, ${r.stats.artists} artistes"
-                                    }
-                                    .onFailure { error = it.message }
+                                val startedAt = System.currentTimeMillis()
+                                runCatching { waitForLibrarySync(startedAt) }
+                                    .onFailure { error = it.apiMessage() }
                                 busy = false
                             }
                         },
@@ -191,7 +231,7 @@ fun YtmImportScreen(
                                         account = it.account
                                         message = "Compte Google déconnecté"
                                     }
-                                    .onFailure { error = it.message }
+                                    .onFailure { error = it.apiMessage() }
                             }
                         },
                     ) {
@@ -201,7 +241,6 @@ fun YtmImportScreen(
                 OutlinedButton(
                     enabled = !busy,
                     onClick = {
-                        YtmCookieCapture.clearSession()
                         showLogin = true
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -219,7 +258,6 @@ fun YtmImportScreen(
                     enabled = !busy,
                     onClick = {
                         error = null
-                        YtmCookieCapture.clearSession()
                         showLogin = true
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -228,7 +266,7 @@ fun YtmImportScreen(
                 }
                 Text(
                     "Tu valides le compte dans la page Google. Dès que YouTube Music s’ouvre, " +
-                        "la bibliothèque se synchronise toute seule.",
+                        "la bibliothèque se synchronise. Si tu restes sur Comptes Google, appuie sur Continuer.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -242,7 +280,7 @@ fun YtmImportScreen(
                                         account = it.account
                                         message = "Compte Google déconnecté"
                                     }
-                                    .onFailure { error = it.message }
+                                    .onFailure { error = it.apiMessage() }
                             }
                         },
                     ) {
@@ -253,6 +291,11 @@ fun YtmImportScreen(
 
             if (busy) {
                 CircularProgressIndicator(Modifier.padding(8.dp))
+                Text(
+                    "Synchronisation de la bibliothèque…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             message?.let {
                 Text(it, color = MaterialTheme.colorScheme.primary)

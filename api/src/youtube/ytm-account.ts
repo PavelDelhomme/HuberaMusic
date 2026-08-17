@@ -103,9 +103,48 @@ export function getYtmCredentials(userId: string): {
     | undefined;
   if (!row || (!row.cookie_enc && !row.oauth_enc)) return null;
   return {
-    cookie: row.cookie_enc ? decrypt(row.cookie_enc) : undefined,
+    cookie: row.cookie_enc ? ensureYtmSapisid(decrypt(row.cookie_enc)) : undefined,
     oauth: row.oauth_enc ? (JSON.parse(decrypt(row.oauth_enc)) as Record<string, unknown>) : undefined,
   };
+}
+
+export function parseYtmCookieMap(cookie: string): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const part of cookie.split(';')) {
+    const kv = part.trim();
+    const eq = kv.indexOf('=');
+    if (eq <= 0) continue;
+    const key = kv.slice(0, eq).trim();
+    const value = kv.slice(eq + 1).trim();
+    if (key && value) map.set(key, value);
+  }
+  return map;
+}
+
+export function serializeYtmCookieMap(map: Map<string, string>): string {
+  return [...map.entries()].map(([k, v]) => `${k}=${v}`).join('; ');
+}
+
+export function ytmCookieKeySummary(cookie: string): string {
+  return [...parseYtmCookieMap(cookie).keys()].join(',');
+}
+
+/**
+ * youtubei.js n’émet SAPISIDHASH que si le cookie `SAPISID` est présent.
+ * Chrome / WebView n’exposent souvent que `__Secure-1PAPISID` / `__Secure-3PAPISID`.
+ */
+export function ensureYtmSapisid(cookie: string): string {
+  const map = parseYtmCookieMap(cookie);
+  if (map.has('SAPISID')) return serializeYtmCookieMap(map);
+  const from = map.get('__Secure-1PAPISID') || map.get('__Secure-3PAPISID');
+  if (!from) return serializeYtmCookieMap(map);
+  const rest = serializeYtmCookieMap(map);
+  return rest ? `SAPISID=${from}; ${rest}` : `SAPISID=${from}`;
+}
+
+export function ytmCookieHasSapisid(cookie: string): boolean {
+  const map = parseYtmCookieMap(ensureYtmSapisid(cookie));
+  return map.has('SAPISID');
 }
 
 /**
@@ -139,26 +178,14 @@ export function normalizeYtmCookiePaste(raw: string): string {
 }
 
 export function saveYtmCookie(userId: string, cookie: string) {
-  const cleaned = normalizeYtmCookiePaste(cookie);
+  const cleaned = ensureYtmSapisid(normalizeYtmCookiePaste(cookie));
   if (!cleaned || cleaned.length < 20) {
     throw new Error('Cookie YTM invalide ou trop court');
   }
 
-  const hasSapisid = /(?:^|;\s*)SAPISID=/.test(cleaned);
-  const hasSecurePsId =
-    /(?:^|;\s*)__Secure-1PSID=/.test(cleaned) || /(?:^|;\s*)__Secure-3PSID=/.test(cleaned);
-  const classic = ['SID', 'HSID', 'SSID', 'APISID'].filter((k) =>
-    new RegExp(`(?:^|;\\s*)${k}=`).test(cleaned),
-  );
-
-  if (!hasSapisid && !hasSecurePsId) {
+  if (!ytmCookieHasSapisid(cleaned)) {
     throw new Error(
-      'Session Google incomplète (SAPISID manquant). Sur Android, reconnecte via « Connecter Google » et attends YouTube Music. Sur le web, colle l’en-tête Cookie d’une requête browse.',
-    );
-  }
-  if (!hasSapisid && classic.length < 2 && !hasSecurePsId) {
-    throw new Error(
-      'Cookie incomplet. Copie l’en-tête Cookie entier d’une requête browse sur music.youtube.com (pas seulement un fragment).',
+      'Session Google incomplète (SAPISID manquant). Attends l’accueil YouTube Music dans l’app avant de valider — la page Comptes Google ne suffit pas.',
     );
   }
 

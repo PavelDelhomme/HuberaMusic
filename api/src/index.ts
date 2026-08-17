@@ -205,13 +205,17 @@ import './platform/platform.js';
 import {
   disconnectYtm,
   getYtmAccountPublic,
+  getYtmCredentials,
   saveYtmCookie,
+  ytmCookieKeySummary,
 } from './youtube/ytm-account.js';
 import {
   clearYtmSession,
   getYtmOauthStatus,
+  overlayYtmSync,
   startYtmDeviceOauth,
-  syncYtmLibrary,
+  startYtmSyncJob,
+  clearYtmSyncJob,
 } from './youtube/ytm-sync.js';
 import { findUserByEmail, createUser, publicUser, updateUserProfile, findUserById, isAdminUser } from './library/db.js';
 import { detachSocket, getHubPublic, handleSessionMessage, publishPlaybackState, touchHttpDevice, setActiveDeviceHttp, transferPlaybackHttp } from './auth/sessions.js';
@@ -2260,7 +2264,7 @@ app.get('/api/ytm/status', authRequired, (req, res) => {
     return;
   }
   res.json({
-    account: getYtmAccountPublic(req.userId!),
+    account: overlayYtmSync(req.userId!, getYtmAccountPublic(req.userId!)),
     oauth: getYtmOauthStatus(req.userId!),
   });
 });
@@ -2272,9 +2276,26 @@ app.post('/api/ytm/connect/cookie', authRequired, (req, res) => {
       return;
     }
     clearYtmSession(req.userId!);
-    saveYtmCookie(req.userId!, String(req.body?.cookie || ''));
-    res.json({ ok: true, account: getYtmAccountPublic(req.userId!) });
+    const rawCookie = String(req.body?.cookie || '');
+    saveYtmCookie(req.userId!, rawCookie);
+    console.info(
+      '[ytm] cookie saved',
+      req.userId,
+      'keys=',
+      ytmCookieKeySummary(rawCookie),
+      'len=',
+      rawCookie.length,
+    );
+    res.json({ ok: true, account: overlayYtmSync(req.userId!, getYtmAccountPublic(req.userId!)) });
   } catch (err) {
+    const rawCookie = String(req.body?.cookie || '');
+    console.warn(
+      '[ytm] connect/cookie 400',
+      req.userId,
+      String((err as Error).message || err),
+      'keys=',
+      ytmCookieKeySummary(rawCookie),
+    );
     res.status(400).json({ error: String((err as Error).message || err) });
   }
 });
@@ -2302,20 +2323,28 @@ app.post('/api/ytm/sync', authRequired, async (req, res) => {
       res.status(400).json({ error: 'Crée un compte pour synchroniser' });
       return;
     }
-    const result = await syncYtmLibrary(req.userId!);
+    const creds = getYtmCredentials(req.userId!);
+    if (!creds?.cookie) {
+      res.status(400).json({
+        error: 'Cookies YouTube Music requis. Reconnecte Google dans l’app.',
+      });
+      return;
+    }
+    const job = startYtmSyncJob(req.userId!);
     res.json({
       ok: true,
-      stats: result.stats,
-      library: result.library,
-      account: getYtmAccountPublic(req.userId!),
+      running: !job.done,
+      account: overlayYtmSync(req.userId!, getYtmAccountPublic(req.userId!)),
     });
   } catch (err) {
+    console.warn('[ytm] sync 400', req.userId, String((err as Error).message || err));
     res.status(400).json({ error: String((err as Error).message || err) });
   }
 });
 
 app.delete('/api/ytm/disconnect', authRequired, (req, res) => {
   clearYtmSession(req.userId!);
+  clearYtmSyncJob(req.userId!);
   disconnectYtm(req.userId!);
   res.json({ ok: true, account: getYtmAccountPublic(req.userId!) });
 });
