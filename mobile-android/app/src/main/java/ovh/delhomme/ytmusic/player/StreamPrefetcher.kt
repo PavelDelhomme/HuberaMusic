@@ -41,13 +41,15 @@ object StreamPrefetcher {
     private const val HEAD_NEXT_METERED = 1_600 * 1024L
 
     private const val MAX_WARM = 12
-    private const val AHEAD_WIFI = 6
-    private const val AHEAD_METERED = 3
+    private const val AHEAD_WIFI = 4
+    private const val AHEAD_METERED = 2
     private const val DISK_CACHE_MB = 24L
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
     @Volatile private var streamDownUntil = 0L
     private var streamFailStreak = 0
+    /** Pendant le 1er play : ne pas voler la bande au titre courant. */
+    @Volatile private var quietUntil = 0L
 
     fun isStreamDown(): Boolean = System.currentTimeMillis() < streamDownUntil
 
@@ -88,6 +90,14 @@ object StreamPrefetcher {
         inFlight.clear()
         PlayerCache.cancelPrefetch()
     }
+
+    /** Bloque le prefetch des suivants pendant [ms] (démarre le titre 1 sans concurrence). */
+    fun quietPrefetch(ms: Long) {
+        quietUntil = System.currentTimeMillis() + ms.coerceAtLeast(0L)
+        cancelIdle()
+    }
+
+    fun isQuiet(): Boolean = System.currentTimeMillis() < quietUntil
 
     private fun isUnmetered(): Boolean {
         val cm = YtMusicApp.instance.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
@@ -247,6 +257,7 @@ object StreamPrefetcher {
      * Limité pour ne pas saturer le réseau.
      */
     fun warmHeads3s(baseApi: String, trackIds: List<String>, limit: Int = 24) {
+        if (isQuiet()) return
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(limit)
         if (ids.isEmpty()) return
@@ -287,10 +298,16 @@ object StreamPrefetcher {
             cancelIdle()
             return
         }
-        val unmetered = isUnmetered()
-        val aheadN = if (unmetered) ahead.coerceAtLeast(AHEAD_WIFI) else AHEAD_METERED
-        val behindN = if (unmetered) behind else 0
         val idx = index.coerceIn(0, queueIds.lastIndex)
+        // 1er play : uniquement le format du titre courant (Exo charge le flux).
+        if (isQuiet()) {
+            val current = queueIds.getOrNull(idx) ?: return
+            if (current.length == 11) warmBatch(baseApi, listOf(current))
+            return
+        }
+        val unmetered = isUnmetered()
+        val aheadN = if (unmetered) ahead.coerceAtMost(AHEAD_WIFI) else AHEAD_METERED
+        val behindN = if (unmetered) behind else 0
 
         // Libère le cache Exo des titres déjà écoutés (garde [behindN] derrière)
         evictPlayed(queueIds, idx, keepBehind = behindN.coerceAtLeast(0))

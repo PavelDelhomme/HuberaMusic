@@ -38,6 +38,9 @@ Toute erreur player / crash **doit** partir par email admin (télémétrie). Si 
 
 ### P3 — Lecture / file / « erreur réseau »
 - [ ] Lancer un album (≥ 4 titres), laisser **enchaîner 4+ titres** sans toucher
+- [ ] **File d’attente** : Tout lire / album → son (ou `STATE_READY` logcat) en quelques secondes, pas 20 s
+- [ ] Volume **STREAM_MUSIC à 0** pour tests nocturnes (la lecture doit quand même bufferer)
+- [ ] Wi‑Fi → 4G → airplane 15 s → 4G : reprise **même titre, même position** (pas de `stop()`)
 - [ ] Fin de titre : **pas** de toast réseau, titre suivant part
 - [ ] Skip suivant ×5 : pas de crash, file conservée
 - [ ] Wi‑Fi OK : aucun « connexion perdue » / « réseau instable »
@@ -89,6 +92,8 @@ Même checklist **D0–D9** = P0–P9 avec API LAN.
 ### D-PLAY extra
 - [ ] File 10 titres, lecture 20+ min, enchaînement fin de piste
 - [ ] Logs : `EOS via error` sans `setMediaItem` qui vide la file
+- [ ] `playNow` puis `STATE_READY` (logcat `PlaybackService`) sans attendre `/warm` bloquant
+- [ ] Handover Wi‑Fi ↔ mobile : `rebindCurrentStream` / `rebindIfStalled`, reprise auto
 
 ---
 

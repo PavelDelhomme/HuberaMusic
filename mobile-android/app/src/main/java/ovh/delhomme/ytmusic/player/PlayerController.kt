@@ -209,7 +209,6 @@ class PlayerController(
             ?: if (this.sourceId != null) "album" else null
         ensureService()
         connect()
-        warmAround(tracks, startIndex)
         val playable = tracks.filter { it.isPlayable() }
         this.userQueueEnd = (userQueueEnd ?: playable.size).coerceIn(0, playable.size)
         userWantsPlaying = true
@@ -518,7 +517,7 @@ class PlayerController(
         val nid = PlaybackService.Holder.queue.getOrNull(nextIdx)?.id
         if (!nid.isNullOrBlank()) {
             val base = streamUrl("_").substringBefore("/api/stream/")
-            StreamPrefetcher.warmCurrentBlocking(base, nid, timeoutMs = 280L)
+            StreamPrefetcher.warmTrack(base, nid)
         }
         // REPEAT_MODE_ONE bloque le next ExoPlayer : on le désactive le temps du saut
         val wasOne = repeatMode == RepeatMode.One
@@ -757,7 +756,8 @@ class PlayerController(
         val track = queue[index]
         val base = streamUrl("_").substringBefore("/api/stream/")
         if (track.id.length == 11) {
-            StreamPrefetcher.warmCurrentBlocking(base, track.id, timeoutMs = 320L)
+            StreamPrefetcher.quietPrefetch(1_800L)
+            StreamPrefetcher.warmTrack(base, track.id)
         }
         runCatching {
             p.replaceMediaItem(index, mediaItemFor(track, streamUrl, queueTitle))
@@ -1214,20 +1214,26 @@ class PlayerController(
         }
         val base = streamUrl("_").substringBefore("/api/stream/")
         val currentId = window.getOrNull(idx)?.id
+        // Exo démarre tout de suite (stream progressif). Warm API en parallèle,
+        // prefetch des suivants seulement après les 1ères secondes (bande au titre 1).
+        StreamPrefetcher.quietPrefetch(2_400L)
         if (!currentId.isNullOrBlank()) {
-            // Court blocage (~450ms max) : chauffe le format API avant Exo prepare
-            StreamPrefetcher.warmCurrentBlocking(base, currentId, timeoutMs = 450L)
+            StreamPrefetcher.warmTrack(base, currentId)
         }
-        warmAround(window, idx) // format + CacheWriter suite (async)
-        // Full-DL des suivants seulement une fois la lecture vraiment partie
-        // (sinon shuffle biblio = 40 OfflineKeeper + 2 ahead → tout en « téléchargement »)
         if (autoplay) {
             val ahead = window.drop(idx + 1).take(3)
+            val startId = currentId
             scope.launch {
-                delay(8_000)
+                delay(2_500)
+                if (player()?.currentMediaItem?.mediaId != startId) return@launch
+                warmAround(window, idx)
+            }
+            scope.launch {
+                delay(12_000)
                 if (StreamPrefetcher.isStreamDown()) return@launch
                 val live = player() ?: return@launch
                 if (!live.isPlaying) return@launch
+                if (live.currentMediaItem?.mediaId != startId) return@launch
                 runCatching {
                     YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
                 }
@@ -1254,6 +1260,7 @@ class PlayerController(
             // Restore après kill : ne pas ouvrir le flux tout de suite (502 → stop() vidait la file)
             player.pause()
         }
+        AppLog.i("player", "playNow id=$currentId idx=$idx n=${window.size} pos=$pos auto=$autoplay")
         syncFrom(player)
     }
 
@@ -1266,7 +1273,7 @@ class PlayerController(
             base,
             playable.map { it.id },
             idx,
-            ahead = 6,
+            ahead = 4,
             behind = 1,
         )
         CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)
