@@ -298,6 +298,13 @@ data class PlaylistsContainingResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class LibraryContainsResponse(
+    val liked: Boolean = false,
+    val inLibrary: Boolean = false,
+    val albumInLibrary: Boolean = false,
+)
+
+@JsonClass(generateAdapter = false)
 data class OfflineDownloadDto(
     val trackId: String = "",
     val status: String? = null,
@@ -631,6 +638,12 @@ interface YtMusicApi {
 
     @GET("api/library/playlists/containing/{trackId}")
     suspend fun playlistsContaining(@Path("trackId") trackId: String): PlaylistsContainingResponse
+
+    @GET("api/library/contains")
+    suspend fun libraryContains(
+        @Query("trackId") trackId: String? = null,
+        @Query("albumId") albumId: String? = null,
+    ): LibraryContainsResponse
 
     @POST("api/offline/start")
     suspend fun offlineStart(@Body body: Map<String, String>): Map<String, Any>

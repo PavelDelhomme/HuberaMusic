@@ -14,11 +14,11 @@
 ### E13 — Fin de titre → « réseau instable » / file stoppée (prod mobile)
 | | |
 |--|--|
-| **Status** | `fixed` — revalidé 2026-08-14 Samsung DEV + Nothing PROD (`d+/p+1.3.18`) |
+| **Status** | `in progress` — `setMediaItem` (vidait la file) → `replaceMediaItem` · EOS si durée inconnue · warm 8–22 s avant la fin |
 | **Surfaces** | Android prod (surtout) · web |
-| **Cause** | En fin de piste, googlevideo coupe souvent la connexion → Exo/`audio.error` classé **network** → toast « Réseau instable » / « Connexion perdue » + circuit-breaker → **pas de titre suivant** alors que le Wi‑Fi est OK |
-| **Fix** | Si `pos/dur ≥ 88 %` (ou &lt; 5 s restantes) : traiter comme **EOS**, enchaîner le suivant, **sans** incrémenter le streak réseau. Mid-piste : toast « Reprise du flux… » + re-resolve `/url` + proxy frais |
-| **Tests** | R14 / R15 · DEV D* lecture longue · PROD Samsung + Nothing · web prod |
+| **Cause** | Recovery `setMediaItem` remplaçait toute la playlist par 1 item → plus de suivant. EOS raté si `duration` UNSET. Prefetch seulement au changement de piste. |
+| **Fix** | `replaceMediaItem` · snapshot `lastPlayingPosMs` · warm near-end · ne plus `markStreamDown` sur EOS |
+| **Tests** | docs/TESTS-SESSIONS.md **PROD P-PLAY** · **DEV D-PLAY** |
 
 ---
 
@@ -87,22 +87,22 @@
 ### E7 — Passkeys Android / Bitwarden non utilisables
 | | |
 |--|--|
-| **Status** | `fixed` (code) — à revalider Samsung DEV + Nothing PROD |
+| **Status** | `in progress` — rpId Android = domaine public (même en DEV LAN) · origines apk-key-hash toujours attendues · queries CredentialProviderService Android 14+ · Activity context |
 | **Surfaces** | Android (Samsung, Nothing, …) · API WebAuthn |
-| **Cause** | `authenticatorAttachment: 'platform'` excluait Bitwarden ; bouton login caché sans flag local ; `allowCredentials: []` si 0 creds ; assetlinks package `.dev` manquant |
-| **Fix** | Retrait attachment platform · discoverable auth · bouton passkey toujours visible · assetlinks prod+`.dev` · queries Bitwarden · Credential Manager 1.5 · messages d’erreur explicites |
-| **Repro** | Login Android → Continuer avec passkey → feuille Bitwarden ; Compte → Enregistrer une passkey |
-| **Tests** | TESTS.md **R7** · LOCAL §1 · DEV D1 · PROD P1 |
+| **Cause** | DEV : `WEBAUTHN_RP_ID=localhost` alors que Credential Manager lit assetlinks sur le domaine public ; VPS sans `WEBAUTHN_ANDROID_ORIGINS` ; Nothing Android 16 ne voyait pas Bitwarden |
+| **Fix** | `publicRpId()` pour Origin `android:` · `expectedOrigins` toujours hash debug · CORS `android:apk-key-hash` · queries framework + Bitwarden · sanitize `hints` |
+| **Repro** | Login Android prod Nothing → Continuer avec passkey ; enroll après login mot de passe |
+| **Tests** | docs/TESTS-SESSIONS.md **PROD P1** · **DEV D1** |
 
 ### E8 — Paroles synchronisées trop en avance (1–2 lignes)
 | | |
 |--|--|
-| **Status** | `fixed` (code) — à revalider web + Samsung + Nothing |
+| **Status** | `in progress` — lead YouTube à 0 (plus 0,5 s d’avance) · cache API `v5` · variantes apostrophe LRCLIB (*Vie d’artiste*) |
 | **Surfaces** | web · Android · API lyrics |
-| **Cause** | Timed YouTube parfois écrasé par LRCLIB ; LRC studio vs clip YT ; lead trop faible |
-| **Fix** | Pas d’écrasement YTM · align durée LRCLIB · lag LRCLIB 2 s · lead 0,5 s · Trop tôt/tard · cache `v4` |
-| **Repro** | Keny *Capitale de la rupture* / *Vie d’artiste* ; karaoké ~0,5 s d’avance |
-| **Tests** | TESTS.md **R8** · LOCAL §4 · DEV D5 · PROD P5 |
+| **Cause** | Lead 500 ms trop tôt pour karaoké ; cache Android `v1` figé ; apostrophes LRCLIB |
+| **Fix** | Lead YouTube 0 · lag LRCLIB 2 s conservé · cache `v5` / prefs `plm_lyrics_cache_v2` · titre « Vie d artiste » |
+| **Repro** | Keny *Capitale de la rupture* / *Vie d’artiste* |
+| **Tests** | docs/TESTS-SESSIONS.md **PROD P5** |
 
 ### E9 — Membership playlist lente / fausse (tracks light vides)
 | | |

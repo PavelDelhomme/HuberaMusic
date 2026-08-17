@@ -40,10 +40,10 @@ class PasskeyAuth(private val context: Context, private val http: OkHttpClient) 
             postJson("/api/auth/passkeys/login/options", optionsBody, authed = false)
         }
         val request = GetCredentialRequest.Builder()
-            .addCredentialOption(GetPublicKeyCredentialOption(options.toString()))
+            .addCredentialOption(GetPublicKeyCredentialOption(sanitizePublicKeyJson(options)))
             .build()
         val result = try {
-            cm.getCredential(context, request)
+            cm.getCredential(activityContext(), request)
         } catch (e: Exception) {
             throw Exception(friendlyGetError(e), e)
         }
@@ -72,12 +72,12 @@ class PasskeyAuth(private val context: Context, private val http: OkHttpClient) 
             )
         }
         val createReq = CreatePublicKeyCredentialRequest(
-            /* requestJson = */ options.toString(),
+            /* requestJson = */ sanitizePublicKeyJson(options),
             /* clientDataHash = */ null,
             /* preferImmediatelyAvailableCredentials = */ false,
         )
         val result = try {
-            cm.createCredential(context, createReq)
+            cm.createCredential(activityContext(), createReq)
         } catch (e: Exception) {
             throw Exception(friendlyCreateError(e), e)
         }
@@ -122,6 +122,21 @@ class PasskeyAuth(private val context: Context, private val http: OkHttpClient) 
             else -> e.message?.ifBlank { null }
                 ?: "Échec enregistrement passkey."
         }
+    }
+
+    private fun activityContext(): android.content.Context {
+        var c: android.content.Context? = context
+        while (c is android.content.ContextWrapper) {
+            if (c is android.app.Activity) return c
+            c = c.baseContext
+        }
+        return context
+    }
+
+    /** Credential Manager (surtout Android 14+/Nothing) refuse parfois `hints`. */
+    private fun sanitizePublicKeyJson(raw: JSONObject): String {
+        raw.remove("hints")
+        return raw.toString()
     }
 
     private fun postJson(

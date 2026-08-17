@@ -75,7 +75,7 @@ export const RADIO_CATEGORIES = [
   {
     id: 'discover',
     title: 'Nouveautés',
-    query: 'new music friday indie',
+    query: 'nouveautés rap rnb pop 2026',
     mode: 'discover',
     genreTags: ['indie', 'pop', 'electronic', 'hiphop'] as const,
   },

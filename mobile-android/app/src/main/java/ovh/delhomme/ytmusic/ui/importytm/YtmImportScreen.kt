@@ -149,7 +149,7 @@ fun YtmImportScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Google bloque OAuth pour la bibliothèque YTM. Colle les cookies de ta session music.youtube.com (chiffrés côté serveur).",
+                "Écouter PLM n’exige pas les cookies YouTube. Les cookies ne servent qu’à importer ta bibliothèque YouTube Music (likes, playlists). La lecture audio passe par le relais VPS / OAuth TV — pas de Premium. Si le collage cookies a échoué sur ce téléphone, connecte-toi simplement : tu peux déjà jouer.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

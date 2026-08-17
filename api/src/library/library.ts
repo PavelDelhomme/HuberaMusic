@@ -225,6 +225,20 @@ export function isTrackInLibrary(userId: string, trackId: string) {
   );
 }
 
+/** État j’aime / biblio / album — 3 SELECT, pas de getFullLibrary. */
+export function libraryMembership(userId: string, trackId?: string, albumId?: string) {
+  const liked = trackId ? isTrackLiked(userId, trackId) : false;
+  const inLibrary = trackId ? isTrackInLibrary(userId, trackId) || liked : false;
+  const albumInLibrary = albumId
+    ? Boolean(
+        db
+          .prepare('SELECT 1 FROM library_albums WHERE user_id = ? AND album_id = ?')
+          .get(userId, albumId),
+      )
+    : false;
+  return { liked, inLibrary, albumInLibrary };
+}
+
 export function removeLibraryTrack(userId: string, trackId: string) {
   db.prepare('DELETE FROM library_tracks WHERE user_id = ? AND track_id = ?').run(userId, trackId);
 }

@@ -20,6 +20,7 @@ services:
       SEED_PASSWORD: ${SEED_PASSWORD:-}
       WEBAUTHN_RP_ID: localhost
       WEBAUTHN_ORIGIN: http://localhost:8787
+      WEBAUTHN_ANDROID_ORIGINS: ${WEBAUTHN_ANDROID_ORIGINS:-android:apk-key-hash:PPbFMh2hUX55lAyeJVFKY5ssRJ4-_333R2h2y_b0wR8}
       SMTP_HOST: mailhog
       SMTP_PORT: "1025"
       SMTP_SECURE: "0"

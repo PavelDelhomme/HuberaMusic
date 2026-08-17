@@ -3,6 +3,8 @@ import { buildTextPdf } from './textPdf.js';
 import { diagnoseTelemetryEvent, formatDiagnosisText } from './telemetryDiagnose.js';
 
 const THROTTLE_MS = Number(process.env.TELEMETRY_ALERT_THROTTLE_MS || 90_000);
+/** Erreurs player / crash Android : mail quasi immédiat (demande produit). */
+const THROTTLE_PLAYER_MS = Number(process.env.TELEMETRY_ALERT_PLAYER_THROTTLE_MS || 12_000);
 const lastSent = new Map<string, number>();
 /** Occurrences écrasées par le throttle — rappelées dans le prochain mail. */
 const suppressed = new Map<string, number>();
@@ -109,7 +111,12 @@ export async function maybeAlertTelemetryError(ev: {
   const fp = fingerprint(level, ev.kind, ev.message || '', ev.stack);
   const now = Date.now();
   const prev = lastSent.get(fp) || 0;
-  if (now - prev < THROTTLE_MS) {
+  const kind = String(ev.kind || '');
+  const gap =
+    kind.startsWith('android.') || kind.includes('player') || kind.includes('crash')
+      ? THROTTLE_PLAYER_MS
+      : THROTTLE_MS;
+  if (now - prev < gap) {
     suppressed.set(fp, (suppressed.get(fp) || 0) + 1);
     return { sent: false, reason: 'throttled' };
   }
