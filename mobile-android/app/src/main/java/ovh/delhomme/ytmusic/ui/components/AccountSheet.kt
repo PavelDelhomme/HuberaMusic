@@ -68,12 +68,21 @@ fun AccountSheet(
     var user by remember { mutableStateOf<UserDto?>(null) }
     var passkeyInfo by remember { mutableStateOf<String?>(null) }
     var updateHint by remember { mutableStateOf<String?>(null) }
+    var ytmLinked by remember {
+        mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
+    }
 
     LaunchedEffect(Unit) {
         user = runCatching {
             container.ensureFreshToken()
             container.api.me().user
         }.getOrNull()
+        val status = runCatching { container.api.ytmStatus().account }.getOrNull()
+        val linked = user?.ytmLinked == true || status?.connected == true
+        if (user != null || status != null) {
+            ytmLinked = linked
+            container.sharedPrefs("ytm_google").edit().putBoolean("linked", linked).apply()
+        }
     }
 
     ModalBottomSheet(
@@ -159,7 +168,7 @@ fun AccountSheet(
                 },
             )
             if (onOpenYtmImport != null) {
-                val linked = user?.ytmLinked == true
+                val linked = user?.ytmLinked == true || ytmLinked
                 AccountRow(
                     icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
                     title = if (linked) "Compte Google" else "Connecter Google",

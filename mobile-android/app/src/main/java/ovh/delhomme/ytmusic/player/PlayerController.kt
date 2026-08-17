@@ -433,6 +433,7 @@ class PlayerController(
         connect()
         player()?.pause() ?: PlaybackService.Holder.player?.pause()
         StreamPrefetcher.cancelIdle()
+        flushPersist()
     }
 
     /**
@@ -1306,21 +1307,25 @@ class PlayerController(
 
     private var lastPersistAt = 0L
 
-    private fun persistLocalSnapshot() {
+    private fun persistLocalSnapshot(durable: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (now - lastPersistAt < 1_200L) return
+        if (!durable && now - lastPersistAt < 1_200L) return
         lastPersistAt = now
         val ui = _state.value
         val queue = ui.queue.ifEmpty { PlaybackService.Holder.queue }
         if (queue.isEmpty()) return
+        val p = player() ?: PlaybackService.Holder.player
+        val pos = p?.currentPosition?.coerceAtLeast(0L) ?: ui.positionMs
+        val playing = p?.let { it.isPlaying || it.playWhenReady } ?: ui.playing
         onPersistLocal?.invoke(
             LocalPlaybackSnapshot(
                 queue = queue,
                 queueIndex = ui.queueIndex,
-                positionMs = ui.positionMs,
+                positionMs = pos,
                 userQueueEnd = ui.userQueueEnd,
                 queueTitle = ui.queueTitle,
-                wasPlaying = ui.playing,
+                wasPlaying = playing,
+                durable = durable,
             ),
         )
     }
@@ -1330,7 +1335,7 @@ class PlayerController(
 
     fun flushPersist() {
         lastPersistAt = 0L
-        persistLocalSnapshot()
+        persistLocalSnapshot(durable = true)
     }
 
     private fun syncFrom(player: Player) {
@@ -1378,4 +1383,5 @@ data class LocalPlaybackSnapshot(
     val userQueueEnd: Int,
     val queueTitle: String,
     val wasPlaying: Boolean,
+    val durable: Boolean = false,
 )

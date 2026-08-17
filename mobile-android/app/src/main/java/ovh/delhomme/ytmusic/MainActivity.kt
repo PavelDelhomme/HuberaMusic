@@ -237,6 +237,7 @@ fun YtMusicAppContent(
                         queueTitle = snap.queueTitle,
                         wasPlaying = snap.wasPlaying,
                     ),
+                    durable = snap.durable,
                 )
             }
             ctrl.onClearLocal = { container.localPlayback.clear() }
@@ -628,14 +629,27 @@ private fun MainTabs(
             val dismissed = container.sharedPrefs("ytm_google_prompt")
                 .getLong("dismissed_at", 0L)
             val cool = System.currentTimeMillis() - dismissed < 3L * 24 * 3600 * 1000
-            if (me != null && !guest && me.ytmLinked != true && !cool) {
+            val googleLinked = me?.ytmLinked == true ||
+                runCatching { container.api.ytmStatus().account.connected }.getOrDefault(false)
+            if (googleLinked) {
+                container.sharedPrefs("ytm_google").edit().putBoolean("linked", true).apply()
+            }
+            if (me != null && !guest && !googleLinked && !cool) {
                 showGoogleLink = true
             }
         }
         if (!sessionHydrated) {
             sessionHydrated = true
-            if (!container.receiveRemoteSync()) {
-                // Lectures indépendantes : restaurer file locale (survit force-stop)
+            val exoAlive = PlaybackService.Holder.player
+            val serviceHasQueue = exoAlive != null && exoAlive.mediaItemCount > 0
+            if (serviceHasQueue) {
+                // Process encore vivant (swipe recents) : ne pas re-prepare / ne pas pauser.
+                AppLog.i(
+                    "player",
+                    "hydrate: service vivant id=${exoAlive?.currentMediaItem?.mediaId} " +
+                        "pos=${exoAlive?.currentPosition} playing=${exoAlive?.isPlaying}",
+                )
+            } else {
                 val local = container.localPlayback.load()
                 if (local != null && local.queue.isNotEmpty()) {
                     suppressSessionPublishUntil = System.currentTimeMillis() + 8_000L
@@ -643,12 +657,16 @@ private fun MainTabs(
                         tracks = local.queue,
                         startIndex = local.queueIndex,
                         positionMs = local.positionMs,
-                        autoplay = false, // ne pas auto-relancer après kill
+                        autoplay = local.wasPlaying,
                         title = local.queueTitle,
                         userQueueEnd = local.userQueueEnd,
                     )
-                }
-            } else runCatching {
+                    AppLog.i(
+                        "player",
+                        "hydrate local id=${local.queue.getOrNull(local.queueIndex)?.id} " +
+                            "pos=${local.positionMs} play=${local.wasPlaying} n=${local.queue.size}",
+                    )
+                } else if (container.receiveRemoteSync()) runCatching {
                 container.ensureFreshToken()
                 val snap = container.api.session()
                 val st = snap.state
@@ -688,6 +706,7 @@ private fun MainTabs(
                 }
             }.onFailure {
                 pendingRemoteLabel = "Titre en attente"
+            }
             }
         }
     }
