@@ -515,6 +515,11 @@ class PlayerController(
             else -> p.currentMediaItemIndex
         }
         warmAround(PlaybackService.Holder.queue, nextIdx)
+        val nid = PlaybackService.Holder.queue.getOrNull(nextIdx)?.id
+        if (!nid.isNullOrBlank()) {
+            val base = streamUrl("_").substringBefore("/api/stream/")
+            StreamPrefetcher.warmCurrentBlocking(base, nid, timeoutMs = 280L)
+        }
         // REPEAT_MODE_ONE bloque le next ExoPlayer : on le désactive le temps du saut
         val wasOne = repeatMode == RepeatMode.One
         if (wasOne) p.repeatMode = Player.REPEAT_MODE_OFF
@@ -744,17 +749,23 @@ class PlayerController(
         val p = player() ?: return
         val queue = PlaybackService.Holder.queue
         if (index !in queue.indices) return
-        // Titre auto (« À suivre ») → passe dans la file utilisateur
         if (index >= userQueueEnd) {
             userQueueEnd = (index + 1).coerceAtMost(queue.size)
         }
-        // Chauffe avant le seek (évite notif vide + long silence sur saut lointain)
-        warmAround(queue, index)
         userWantsPlaying = true
         pendingAutoplay = true
+        val track = queue[index]
+        val base = streamUrl("_").substringBefore("/api/stream/")
+        if (track.id.length == 11) {
+            StreamPrefetcher.warmCurrentBlocking(base, track.id, timeoutMs = 320L)
+        }
+        runCatching {
+            p.replaceMediaItem(index, mediaItemFor(track, streamUrl, queueTitle))
+        }
         p.seekTo(index, 0L)
         p.prepare()
         p.play()
+        warmAround(queue, index)
         PlaybackService.Holder.service?.notifyQueueJump()
         syncFrom(p)
     }

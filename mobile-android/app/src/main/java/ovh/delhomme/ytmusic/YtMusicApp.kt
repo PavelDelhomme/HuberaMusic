@@ -28,6 +28,7 @@ class YtMusicApp : Application(), ImageLoaderFactory {
         CrashReporter.install(this)
         container = AppContainer(this)
         NetworkMonitor.start(this)
+        ovh.delhomme.ytmusic.debug.TelemetryReporter.flushPending()
         // Précharge les JWT en mémoire dès le boot (évite runBlocking DataStore)
         appScope.launch {
             runCatching { container.tokenStore.warmCache() }

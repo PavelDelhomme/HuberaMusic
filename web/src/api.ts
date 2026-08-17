@@ -53,6 +53,7 @@ export type User = {
   isAdmin?: boolean;
   emailVerified?: boolean;
   totpEnabled?: boolean;
+  ytmLinked?: boolean;
 };
 
 const TOKEN_KEY = 'ytm_token';
@@ -307,7 +308,13 @@ async function tryRefresh(): Promise<boolean> {
 
 export const api = {
   health: () => req<{ ok: boolean; auth: { googleEnabled: boolean; googleClientId: string | null } }>('/api/health'),
-  authConfig: () => req<{ googleEnabled: boolean; googleClientId: string | null }>('/api/auth/config'),
+  authConfig: () =>
+    req<{
+      googleEnabled: boolean;
+      googleClientId: string | null;
+      allowRegister: boolean;
+      privateMode: boolean;
+    }>('/api/auth/config'),
   me: () => req<{ user: User | null }>('/api/auth/me'),
   register: (email: string, password: string, name: string) =>
     req<{ user: User; token: string; refreshToken?: string; needsEmailVerification?: boolean }>(
@@ -445,6 +452,34 @@ export const api = {
   adminYoutubeCookiesClear: () =>
     req<any>('/api/admin/youtube-cookies', { method: 'DELETE', body: '{}' }),
   adminApk: () => req<any>('/api/admin/apk'),
+  adminApkTicket: (reason: 'download' | 'register' = 'download') =>
+    req<{ ok: boolean; url: string; expiresAt: number; reason: string }>(
+      '/api/admin/apk/ticket',
+      { method: 'POST', body: JSON.stringify({ reason }) },
+    ),
+  adminSettings: () =>
+    req<{
+      allowRegister: boolean;
+      allowRegisterOverride: boolean | null;
+      privateMode: boolean;
+    }>('/api/admin/settings'),
+  adminSetSettings: (allowRegister: boolean) =>
+    req<{ ok: boolean; allowRegister: boolean; apkTicket?: { url: string } }>(
+      '/api/admin/settings',
+      { method: 'PUT', body: JSON.stringify({ allowRegister }) },
+    ),
+  adminUsers: () =>
+    req<{
+      users: Array<{
+        id: string;
+        email: string;
+        name: string;
+        ytmLinked: boolean;
+        isAdmin: boolean;
+        createdAt: number;
+      }>;
+      missingGoogle: number;
+    }>('/api/admin/users'),
   adminApkBuild: (target: string = 'auto') =>
     req<any>('/api/admin/apk/build', {
       method: 'POST',

@@ -180,6 +180,7 @@ object NetworkMonitor {
 
     private fun onBackOnline() {
         StreamPrefetcher.markStreamOk()
+        ovh.delhomme.ytmusic.debug.TelemetryReporter.flushPending()
         runCatching {
             ovh.delhomme.ytmusic.YtMusicApp.instance.container.offlineKeeper.requestSoon("online")
         }

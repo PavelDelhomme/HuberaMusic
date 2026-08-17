@@ -197,7 +197,8 @@ Style YouTube Music (« Forgotten favorites ») :
 ### Lecteur / erreurs
 
 - [ ] Next intermittent / crash → fix
-- [ ] Toute erreur → email immédiat (télémétrie)
+- [ ] Toute erreur → email (télémétrie) ; **hors-ligne** → digest unique au retour réseau (E21)
+- [ ] Force-stop Android : file restaurée **et** Play / Suivant jouent vraiment (E22)
 - [ ] Toast « connexion perdue » : cause + fix
 - [ ] **Web** : clic zone vide barre noire → toggle Now Playing (hors contrôles)
 - [ ] **Web** : retry auto plafonné (pas de boucle « nouvel essai » infinie sur 502)
@@ -205,6 +206,7 @@ Style YouTube Music (« Forgotten favorites ») :
 - [ ] **À suivre** : suggestions visibles même si auto OFF ; stop fin de file ; Suivant charge ; sync préf
 - [ ] Prefetch listes longues (~10 s tête viewport)
 - [ ] Playlist hero Android : play / shuffle / DL icône + menu ⋮
+- [ ] Inscription prod ouverte → onboarding **liaison Google** (compte gratuit, pas Premium) pour signer les streams (B4.24)
 
 ### Perf API (voir ERRORS.md)
 

@@ -183,12 +183,6 @@ export function saveYtmOauth(userId: string, tokens: Record<string, unknown>) {
        oauth_enc = excluded.oauth_enc,
        connected_at = excluded.connected_at`,
   ).run(userId, encrypt(JSON.stringify(tokens)), now);
-  // Même tokens → identité stream VPS (débloque LOGIN_REQUIRED musique)
-  void import('./streamAuth.js')
-    .then((m) => m.saveStreamOauthTokens(tokens))
-    .catch(() => {
-      /* ignore */
-    });
 }
 
 export function disconnectYtm(userId: string) {

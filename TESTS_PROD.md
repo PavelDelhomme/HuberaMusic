@@ -75,6 +75,7 @@ Si P0 KO → **stop** ([`DEPLOY.md`](./DEPLOY.md)).
 ## P3 — Erreurs → email
 
 - [ ] Erreur stream / crash → email reçu avec version **prod** + **Pré-diagnostic** (famille 502/timeout/DNS)
+- [ ] Hors-ligne puis retour réseau → **un** digest, pas une rafale de mails (E21 / R23)
 - [ ] Visible aussi dans admin outbox / logs serveur
 - [ ] Pas de boucle mail (throttle + compteur)
 - [ ] 1er 502 de session → mail (E20)
@@ -193,7 +194,7 @@ Cible : **Samsung** APK prod → `https://ytmusic.delhomme.ovh`. Nothing optionn
 
 ### Relance (E15 / R18)
 - [ ] Playlist ≥ 4 titres → force-stop → rouvrir → file présente
-- [ ] Play + Suivant **avec audio** (si stream 206)
+- [ ] Play = audio du **même** titre ; Suivant = audio du suivant (E22 / R24) — pas silence
 
 ### Shuffle / radio / biblio (E16–E19)
 - [ ] Aléatoire biblio titres : 1er titre part ; suivants jouent

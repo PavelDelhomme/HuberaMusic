@@ -77,6 +77,8 @@ Tout ce qui suit doit être **coché** dans LOCAL puis DEV puis PROD (cases dét
 | R20 | **DL : pas de faux « en cours » + cancel** | Shuffle **ne** met pas tous les titres en DL ; 2ᵉ tap = annuler + `.part` disparu ; Range parallèle | E17 |
 | R21 | **Radio artiste** | 1er titre immédiat ; mix s’ajoute ensuite ; pas d’écran bloqué « Radio… » | E18 |
 | R22 | **Boutons on/off plein vs creux** | Album (depuis artiste) biblio filled/hollow ; follow artiste ; ⋮ titre LibraryAdd outlined vs check | E19 |
+| R23 | **Télémétrie hors-ligne → digest** | Mode avion → provoquer 2–3 erreurs → reconnecter → **un** mail digest (pas N mails, pas de UI) ; fichier local reste petit | E21 |
+| R24 | **Play après force-stop** | File visible OK ; **Play** = audio du titre courant ; **Suivant** = audio du suivant (pas silence / pas nouvelles suggestions) | E22 |
 
 ---
 
@@ -131,7 +133,8 @@ Si une étape échoue : **ne pas déployer** ; corriger ; rejouer LOCAL puis DEV
 4. Lecture — play, pause, seek, next/prev, file, **À suivre audio-first**, autoplay, radio/mix, **paroles**, **fin de piste complète**  
 5. Bibliothèque — filtres ✕, titres, j’aime, albums, playlists (**UI play/shuffle/DL/⋮**), mixes, DL, podcasts, livres  
 6. Hors‑ligne — download progress (**pas stuck**), reprise réseau, lecture sans réseau  
-7. Erreurs — email crash/télémétrie, toast connexion perdue  
+7. Erreurs — email crash/télémétrie, **digest si hors-ligne** (R23), toast connexion perdue  
+7b. Relance — force-stop → Play + Suivant **avec audio** (R18 / R24)  
 8. Perf — batterie, prefetch scroll, pas de freeze  
 9. Ops — health local + prod, version déployée  
 10. Multi-appareils — `/api/prefs` autoplay ; drawer sync playlists  
