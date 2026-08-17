@@ -28,7 +28,8 @@ Toute erreur player / crash **doit** partir par email admin (télémétrie). Si 
 - [ ] Après login : prompt passkey → Enregistrer (Bitwarden ou empreinte)
 - [ ] Déconnexion → **Continuer avec une passkey**
 - [ ] Inscription fermée en prod (sauf toggle Admin)
-- [ ] Compte Google : **un bouton** « Connecter Google » → login → **Continuer** si YouTube Music ne s’ouvre pas tout seul → sync biblio **sans collage**
+- [ ] Compte : menu Historique / Téléchargements / Reco + ligne **Compte Google** (si lié) ou **Connecter Google** (si pas lié)
+- [ ] Page import : si lié → « Google connecté » + Synchroniser ; sinon un bouton « Connecter Google » → login → **Continuer** si YTM ne s’ouvre pas → sync **sans collage**
 - [ ] Pas Premium requis (compte Google gratuit)
 
 ### P2 — Batterie / télémétrie

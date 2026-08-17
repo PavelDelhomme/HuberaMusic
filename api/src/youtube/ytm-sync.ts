@@ -67,8 +67,8 @@ export async function getYTForUser(userId: string): Promise<Innertube> {
 export async function probeYtmLibraryAccess(userId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     clearYtmSession(userId);
-    const yt = await getYTForUser(userId);
-    await yt.music.getLibrary();
+    const yt = await withTimeout(getYTForUser(userId), 30_000, 'Session YouTube Music');
+    await withTimeout(yt.music.getLibrary(), 45_000, 'Lecture bibliothèque YTM');
     return { ok: true };
   } catch (e) {
     clearYtmSession(userId);
@@ -85,9 +85,28 @@ type SyncJob = {
   startedAt: number;
   done: boolean;
   error?: string;
+  stage?: string;
 };
 
 const syncJobs = new Map<string, SyncJob>();
+
+function setSyncStage(userId: string, stage: string) {
+  const job = syncJobs.get(userId);
+  if (job && !job.done) job.stage = stage;
+  console.info('[ytm] sync stage', userId, stage);
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} — délai dépassé (${Math.round(ms / 1000)}s)`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export function clearYtmSyncJob(userId: string) {
   syncJobs.delete(userId);
@@ -102,7 +121,7 @@ export function overlayYtmSync(userId: string, account: YtmAccountPublic) {
     syncRunning: running,
     syncError,
     hint: running
-      ? 'Import de la bibliothèque YouTube Music en cours…'
+      ? job?.stage || 'Import de la bibliothèque YouTube Music en cours…'
       : syncError || account.hint,
   };
 }
@@ -113,17 +132,19 @@ export function startYtmSyncJob(userId: string): SyncJob {
   if (existing && !existing.done && Date.now() - existing.startedAt < 12 * 60_000) {
     return existing;
   }
-  const job: SyncJob = { startedAt: Date.now(), done: false };
+  const job: SyncJob = { startedAt: Date.now(), done: false, stage: 'Préparation de l’import…' };
   syncJobs.set(userId, job);
   console.info('[ytm] sync job start', userId);
-  void syncYtmLibrary(userId)
+  void withTimeout(syncYtmLibrary(userId), 10 * 60_000, 'Import bibliothèque')
     .then(() => {
       job.done = true;
-      console.info('[ytm] sync job done', userId);
+      job.stage = undefined;
+      console.info('[ytm] sync job done', userId, `${Date.now() - job.startedAt}ms`);
     })
     .catch((e) => {
       job.done = true;
       job.error = String((e as Error).message || e);
+      job.stage = undefined;
       console.warn('[ytm] sync job fail', userId, job.error);
     });
   return job;
@@ -260,14 +281,6 @@ async function upsertLocalPlaylist(userId: string, name: string, ytmId: string, 
   return { playlistId: pl.id, added };
 }
 
-function albumAlreadySaved(userId: string, albumId: string) {
-  return getFullLibrary(userId).albums.some((a: any) => String(a.id) === albumId);
-}
-
-function artistAlreadySaved(userId: string, artistId: string) {
-  return getFullLibrary(userId).artists.some((a: any) => String(a.id) === artistId);
-}
-
 export type SyncStats = {
   songs: number;
   librarySongs: number;
@@ -288,6 +301,7 @@ export async function syncYtmLibrary(userId: string): Promise<{
     throw new Error(humanizeYtmProbeError(userId, probe.error));
   }
 
+  setSyncStage(userId, 'Connexion à YouTube Music…');
   const yt = await getYTForUser(userId);
   const stats: SyncStats = {
     songs: 0,
@@ -301,6 +315,7 @@ export async function syncYtmLibrary(userId: string): Promise<{
   };
 
   try {
+    setSyncStage(userId, 'Import des titres aimés…');
     const liked = await fetchPlaylistTracks(yt, 'LM', 2000);
     for (const t of liked.tracks || []) {
       if (ensureLiked(userId, t)) {
@@ -313,6 +328,7 @@ export async function syncYtmLibrary(userId: string): Promise<{
   }
 
   try {
+    setSyncStage(userId, 'Import des titres de la bibliothèque…');
     const songItems = await collectAllFiltered(yt, ['song', 'titre', 'track', 'morceau']);
     for (const item of songItems) {
       const m = mapAny(item);
@@ -324,12 +340,19 @@ export async function syncYtmLibrary(userId: string): Promise<{
   }
 
   try {
+    setSyncStage(userId, 'Import des albums…');
     const albumItems = await collectAllFiltered(yt, ['album']);
+    const savedAlbumIds = new Set(getFullLibrary(userId).albums.map((a: any) => String(a.id)));
+    let albumIndex = 0;
     for (const item of albumItems) {
       const m = mapAny(item);
       if (!m?.id) continue;
       if (!(m.type === 'album' || String(m.id).startsWith('MPREb'))) continue;
-      const wasNew = !albumAlreadySaved(userId, m.id);
+      if (savedAlbumIds.has(m.id)) continue;
+      albumIndex += 1;
+      if (albumIndex === 1 || albumIndex % 25 === 0) {
+        setSyncStage(userId, `Import des albums (${albumIndex} nouveaux)…`);
+      }
       const { tracksAdded } = await saveAlbumWithTracks(userId, {
         id: m.id,
         title: m.title,
@@ -337,7 +360,8 @@ export async function syncYtmLibrary(userId: string): Promise<{
         thumbnails: m.thumbnails,
         type: 'album',
       });
-      if (wasNew) stats.albums += 1;
+      savedAlbumIds.add(m.id);
+      stats.albums += 1;
       stats.librarySongs += tracksAdded;
     }
   } catch (e) {
@@ -345,12 +369,14 @@ export async function syncYtmLibrary(userId: string): Promise<{
   }
 
   try {
+    setSyncStage(userId, 'Import des artistes…');
     const artistItems = await collectAllFiltered(yt, ['artist', 'artiste']);
+    const savedArtistIds = new Set(getFullLibrary(userId).artists.map((a: any) => String(a.id)));
     for (const item of artistItems) {
       const m = mapAny(item);
       if (!m?.id) continue;
       if (!(m.type === 'artist' || String(m.id).startsWith('UC'))) continue;
-      const wasNew = !artistAlreadySaved(userId, m.id);
+      const wasNew = !savedArtistIds.has(m.id);
       saveArtist(userId, {
         id: m.id,
         title: m.title,
@@ -358,6 +384,7 @@ export async function syncYtmLibrary(userId: string): Promise<{
         thumbnails: m.thumbnails,
         type: 'artist',
       });
+      savedArtistIds.add(m.id);
       if (wasNew) stats.artists += 1;
     }
   } catch (e) {
@@ -365,6 +392,7 @@ export async function syncYtmLibrary(userId: string): Promise<{
   }
 
   try {
+    setSyncStage(userId, 'Import des playlists…');
     const playlistItems = await collectAllFiltered(yt, ['playlist', 'liste']);
     for (const item of playlistItems) {
       const m = mapAny(item);
@@ -389,6 +417,13 @@ export async function syncYtmLibrary(userId: string): Promise<{
       ) {
         stats.playlists += 1;
       }
+      const ytmId = m.id.replace(/^VL/, '');
+      const alreadyMirrored = listPlaylists(userId).find(
+        (p) =>
+          (p.description.includes(`ytm:${m.id}`) || p.description.includes(`ytm:${ytmId}`)) &&
+          (p.tracks?.length || 0) > 0,
+      );
+      if (alreadyMirrored) continue;
       try {
         const full = await fetchPlaylistTracks(yt, m.id, 500);
         const mirror = await upsertLocalPlaylist(userId, full.title || m.title, m.id, full.tracks || []);
@@ -402,6 +437,7 @@ export async function syncYtmLibrary(userId: string): Promise<{
   }
 
   try {
+    setSyncStage(userId, 'Import de l’historique…');
     const recentItems = await collectAllFiltered(yt, [
       'recent',
       'récents',
@@ -420,6 +456,8 @@ export async function syncYtmLibrary(userId: string): Promise<{
   } catch (e) {
     console.warn('sync history', e);
   }
+
+  setSyncStage(userId, 'Finalisation…');
 
   const summary =
     `+${stats.songs} likes, ${stats.librarySongs} titres biblio, ${stats.albums} albums, ` +
