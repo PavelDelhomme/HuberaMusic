@@ -7,6 +7,10 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,10 +36,12 @@ object NetworkMonitor {
     @Volatile
     private var pausedForNetwork = false
     private val main = Handler(Looper.getMainLooper())
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var offlineConfirm: Runnable? = null
+    private var appContext: Context? = null
 
     /** Délai avant de confirmer « vraiment hors ligne » (handover 4G/Wi‑Fi). */
-    private const val OFFLINE_DEBOUNCE_MS = 1_800L
+    private const val OFFLINE_DEBOUNCE_MS = 3_500L
 
     fun isOnline(): Boolean = online
 
@@ -46,6 +52,7 @@ object NetworkMonitor {
     fun start(context: Context) {
         if (!started.compareAndSet(false, true)) return
         val app = context.applicationContext
+        appContext = app
         val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return
         online = hasUsableInternet(cm)
@@ -54,45 +61,85 @@ object NetworkMonitor {
         val req = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
-        runCatching {
-            cm.registerNetworkCallback(
-                req,
-                object : ConnectivityManager.NetworkCallback() {
-                    override fun onAvailable(network: Network) {
-                        cancelOfflineConfirm()
-                        val wasOffline = !online
-                        online = true
-                        _onlineFlow.value = true
-                        if (wasOffline) onBackOnline()
-                    }
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (hasUsableInternet(cm)) markOnline()
+            }
 
-                    override fun onCapabilitiesChanged(
-                        network: Network,
-                        networkCapabilities: NetworkCapabilities,
-                    ) {
-                        val ok = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                        if (ok) {
-                            cancelOfflineConfirm()
-                            val wasOffline = !online
-                            online = true
-                            _onlineFlow.value = true
-                            if (wasOffline) onBackOnline()
-                        }
-                    }
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities,
+            ) {
+                if (isUsableCaps(networkCapabilities) || hasUsableInternet(cm)) markOnline()
+            }
 
-                    override fun onLost(network: Network) {
-                        // Handover : un autre réseau peut arriver dans la seconde
-                        scheduleOfflineConfirm(cm)
-                    }
-                },
-            )
+            override fun onLost(network: Network) {
+                // Handover Wi‑Fi → 4G : le défaut met 1–3 s à basculer, et
+                // le cellulaire déjà « available » ne renvoie pas onAvailable.
+                scheduleOfflineConfirm(cm)
+            }
         }
+        runCatching { cm.registerNetworkCallback(req, cb) }
+        runCatching { cm.registerDefaultNetworkCallback(cb) }
+        // Re-scan périodique : rattrape un 4G déjà là après coupure Wi‑Fi.
+        main.post(object : Runnable {
+            override fun run() {
+                refreshFromSystem(app)
+                main.postDelayed(this, 8_000L)
+            }
+        })
+    }
+
+    /** Recalcule depuis ConnectivityManager (DL / lecture ne doivent pas se fier à un flag périmé). */
+    fun refreshFromSystem(context: Context? = null): Boolean {
+        val app = (context ?: appContext)?.applicationContext ?: return online
+        val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return online
+        val ok = hasUsableInternet(cm)
+        if (ok) markOnline() else if (online) scheduleOfflineConfirm(cm)
+        return ok
+    }
+
+    /** Wi‑Fi / Ethernet : gros DL OK. 4G/5G : DL manuel oui, mais 1 flux à la fois. */
+    fun isUnmeteredPreferred(context: Context): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            ?: return false
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+    private fun markOnline() {
+        cancelOfflineConfirm()
+        val wasOffline = !online
+        online = true
+        _onlineFlow.value = true
+        if (wasOffline) onBackOnline()
+    }
+
+    private fun isUsableCaps(caps: NetworkCapabilities?): Boolean {
+        if (caps == null) return false
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return false
+        // IMS / MMS : pas de navigation générale
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
+        ) {
+            return false
+        }
+        if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMS) &&
+            !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+        ) {
+            return false
+        }
+        return true
     }
 
     private fun hasUsableInternet(cm: ConnectivityManager): Boolean {
-        val net = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(net) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val active = cm.activeNetwork
+        if (active != null && isUsableCaps(cm.getNetworkCapabilities(active))) return true
+        return cm.allNetworks.any { n -> isUsableCaps(cm.getNetworkCapabilities(n)) }
     }
 
     private fun scheduleOfflineConfirm(cm: ConnectivityManager) {
@@ -182,7 +229,11 @@ object NetworkMonitor {
         StreamPrefetcher.markStreamOk()
         ovh.delhomme.ytmusic.debug.TelemetryReporter.flushPending()
         runCatching {
-            ovh.delhomme.ytmusic.YtMusicApp.instance.container.offlineKeeper.requestSoon("online")
+            val app = ovh.delhomme.ytmusic.YtMusicApp.instance
+            ioScope.launch {
+                runCatching { app.container.ensureReachableApiOrFallbackToProd() }
+            }
+            app.container.offlineKeeper.requestSoon("online")
         }
         main.post {
             val exo = PlaybackService.Holder.player ?: return@post

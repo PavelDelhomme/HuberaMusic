@@ -1,8 +1,6 @@
 package ovh.delhomme.ytmusic.data
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -61,7 +59,7 @@ class OfflineKeeper(
     private suspend fun tick(reason: String) = tickMutex.withLock {
         if (!NetworkMonitor.isOnline()) return
         if (StreamPrefetcher.isStreamDown()) return
-        if (!isUnmeteredPreferred()) {
+        if (!NetworkMonitor.isUnmeteredPreferred(context)) {
             // Données mobiles : seulement aimés manquants (cap bas)
             syncLiked(limit = 8)
             return
@@ -125,16 +123,6 @@ class OfflineKeeper(
             delay(2_500)
         }
         if (started > 0) AppLog.i("OfflineKeeper", "monMix enqueued=$started target=${pool.size}")
-    }
-
-    private fun isUnmeteredPreferred(): Boolean {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            ?: return false
-        val net = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(net) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) ||
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
     }
 
     companion object {
