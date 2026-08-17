@@ -182,7 +182,10 @@ class LocalOfflineStore(
                     resp.header("Accept-Ranges").orEmpty().contains("bytes", ignoreCase = true)
                 lenHeader to accept
             }
-            if (ranged && total > 512 * 1024L) {
+            val metered = !NetworkMonitor.isUnmeteredPreferred(
+                ovh.delhomme.ytmusic.YtMusicApp.instance,
+            )
+            if (ranged && total > 512 * 1024L && !metered) {
                 downloadParallel(track, streamUrl, part, dest, total, onProgress, attempt)
             } else {
                 downloadSequential(track, streamUrl, part, dest, onProgress, attempt)

@@ -83,10 +83,15 @@ class OfflineDownloadManager(
 
         val job = scope.launch(Dispatchers.IO) {
             try {
-                // Hors-ligne : rester en file jusqu’au retour réseau (ne pas échouer tout de suite)
-                while (!NetworkMonitor.isOnline()) {
+                // Hors-ligne : rester en file jusqu’au retour réseau (ne pas échouer tout de suite).
+                // Recalcule le vrai réseau : après Wi‑Fi → 4G le flag peut rester faux.
+                while (!NetworkMonitor.refreshFromSystem()) {
                     _progress.update { it + (track.id to 0.02f) }
                     kotlinx.coroutines.delay(2_500)
+                }
+                runCatching {
+                    ovh.delhomme.ytmusic.YtMusicApp.instance.container
+                        .ensureReachableApiOrFallbackToProd()
                 }
                 gate.withPermit {
                     // Re-check après attente du sémaphore
