@@ -237,6 +237,16 @@ class AppContainer(context: Context) {
         .readTimeout(45, TimeUnit.SECONDS)
         .addInterceptor(rewriteHost)
         .addInterceptor(authInterceptor)
+        .addInterceptor { chain ->
+            val path = chain.request().url.encodedPath
+            if (path.contains("/api/ytm/sync")) {
+                chain.withReadTimeout(180, TimeUnit.SECONDS)
+                    .withWriteTimeout(60, TimeUnit.SECONDS)
+                    .proceed(chain.request())
+            } else {
+                chain.proceed(chain.request())
+            }
+        }
         .authenticator(tokenAuthenticator)
         .addInterceptor(
             HttpLoggingInterceptor().apply {

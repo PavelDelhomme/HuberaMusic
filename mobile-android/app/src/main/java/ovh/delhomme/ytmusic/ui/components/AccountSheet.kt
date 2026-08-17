@@ -159,10 +159,15 @@ fun AccountSheet(
                 },
             )
             if (onOpenYtmImport != null) {
+                val linked = user?.ytmLinked == true
                 AccountRow(
                     icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
-                    title = "Connecter Google",
-                    subtitle = "Un bouton — likes et playlists, sans collage",
+                    title = if (linked) "Compte Google" else "Connecter Google",
+                    subtitle = if (linked) {
+                        "Likes, playlists — synchroniser la bibliothèque"
+                    } else {
+                        "Un bouton — likes et playlists, sans collage"
+                    },
                     onClick = {
                         onDismiss()
                         onOpenYtmImport()

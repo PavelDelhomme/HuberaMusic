@@ -14,7 +14,14 @@ import {
   toggleLikeTrack,
   toggleLibraryTrack,
 } from '../library/library.js';
-import { getYtmCredentials, markYtmSynced, saveYtmOauth } from './ytm-account.js';
+import {
+  getYtmCredentials,
+  markYtmSynced,
+  saveYtmOauth,
+  ytmCookieHasSapisid,
+  ytmCookieKeySummary,
+  type YtmAccountPublic,
+} from './ytm-account.js';
 import type { Track } from './types.js';
 
 const userSessions = new Map<string, Innertube>();
@@ -72,6 +79,68 @@ export async function probeYtmLibraryAccess(userId: string): Promise<{ ok: true 
 export function clearYtmSession(userId: string) {
   userSessions.delete(userId);
   pendingOauth.delete(userId);
+}
+
+type SyncJob = {
+  startedAt: number;
+  done: boolean;
+  error?: string;
+};
+
+const syncJobs = new Map<string, SyncJob>();
+
+export function clearYtmSyncJob(userId: string) {
+  syncJobs.delete(userId);
+}
+
+export function overlayYtmSync(userId: string, account: YtmAccountPublic) {
+  const job = syncJobs.get(userId);
+  const running = Boolean(job && !job.done);
+  const syncError = job?.done ? job.error || null : null;
+  return {
+    ...account,
+    syncRunning: running,
+    syncError,
+    hint: running
+      ? 'Import de la bibliothèque YouTube Music en cours…'
+      : syncError || account.hint,
+  };
+}
+
+/** Lance l’import en arrière-plan : le POST HTTP ne doit pas attendre 5 min. */
+export function startYtmSyncJob(userId: string): SyncJob {
+  const existing = syncJobs.get(userId);
+  if (existing && !existing.done && Date.now() - existing.startedAt < 12 * 60_000) {
+    return existing;
+  }
+  const job: SyncJob = { startedAt: Date.now(), done: false };
+  syncJobs.set(userId, job);
+  console.info('[ytm] sync job start', userId);
+  void syncYtmLibrary(userId)
+    .then(() => {
+      job.done = true;
+      console.info('[ytm] sync job done', userId);
+    })
+    .catch((e) => {
+      job.done = true;
+      job.error = String((e as Error).message || e);
+      console.warn('[ytm] sync job fail', userId, job.error);
+    });
+  return job;
+}
+
+function humanizeYtmProbeError(userId: string, err: string): string {
+  const creds = getYtmCredentials(userId);
+  const keys = creds?.cookie ? ytmCookieKeySummary(creds.cookie) : '';
+  console.warn('[ytm] probe fail', userId, err.slice(0, 300), 'keys=', keys);
+  if (creds?.cookie && !ytmCookieHasSapisid(creds.cookie)) {
+    return 'Session Google incomplète : SAPISID absent. Reconnecte Google dans l’app et attends l’accueil YouTube Music (pas seulement la page Comptes).';
+  }
+  if (/\b400\b/.test(err) || /status code 400/i.test(err)) {
+    return 'Google a refusé la session YouTube Music (400). Reconnecte Google dans l’app et attends que YouTube Music s’affiche avant de valider.';
+  }
+  if (/Cookies/i.test(err)) return err;
+  return `Impossible d’accéder à la bibliothèque YTM. Reconnecte Google depuis l’app. (${err.slice(0, 180)})`;
 }
 
 function collectItems(lib: any): any[] {
@@ -216,11 +285,7 @@ export async function syncYtmLibrary(userId: string): Promise<{
 }> {
   const probe = await probeYtmLibraryAccess(userId);
   if (!probe.ok) {
-    throw new Error(
-      probe.error.includes('Cookies')
-        ? probe.error
-        : `Impossible d’accéder à la bibliothèque YTM (${probe.error}). Recolle des cookies frais depuis music.youtube.com (session navigateur).`,
-    );
+    throw new Error(humanizeYtmProbeError(userId, probe.error));
   }
 
   const yt = await getYTForUser(userId);

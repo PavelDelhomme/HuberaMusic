@@ -394,6 +394,8 @@ data class YtmAccountDto(
     val lastSyncAt: Long? = null,
     val lastSyncSummary: String? = null,
     val hint: String? = null,
+    val syncRunning: Boolean? = false,
+    val syncError: String? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -431,7 +433,9 @@ data class YtmSyncStats(
 
 @JsonClass(generateAdapter = false)
 data class YtmSyncResponse(
-    val stats: YtmSyncStats = YtmSyncStats(),
+    val ok: Boolean? = null,
+    val running: Boolean? = null,
+    val stats: YtmSyncStats? = null,
     val library: LibraryResponse? = null,
     val account: YtmAccountDto? = null,
 )
