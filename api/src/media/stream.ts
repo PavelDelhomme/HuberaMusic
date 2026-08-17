@@ -390,6 +390,8 @@ export async function handleStream(req: Request, res: Response) {
     res.status(400).json({ error: 'ID invalide' });
     return;
   }
+  // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
+  bumpWarmPriority(videoId);
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   const deadlineAt = Date.now() + 22_000;
   const ensureTime = (label: string) => {
@@ -746,8 +748,28 @@ async function runWarmWorker() {
   }
 }
 
+function bumpWarmPriority(id: string) {
+  if (!id || !/^[a-zA-Z0-9_-]{11}$/.test(id)) return;
+  const i = warmQueue.indexOf(id);
+  if (i > 0) {
+    warmQueue.splice(i, 1);
+    warmQueue.unshift(id);
+  }
+}
+
 function enqueueStreamWarm(ids: string[]) {
-  for (const id of ids) {
+  if (!ids.length) return;
+  const [first, ...rest] = ids;
+  const pushFront = (id: string) => {
+    if (warmQueued.has(id)) {
+      bumpWarmPriority(id);
+      return;
+    }
+    warmQueued.add(id);
+    warmQueue.unshift(id);
+  };
+  if (first) pushFront(first);
+  for (const id of rest) {
     if (warmQueued.has(id)) continue;
     warmQueued.add(id);
     warmQueue.push(id);
