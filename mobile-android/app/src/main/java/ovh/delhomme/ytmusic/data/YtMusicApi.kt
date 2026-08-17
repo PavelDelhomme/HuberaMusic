@@ -436,6 +436,9 @@ interface YtMusicApi {
     @GET("api/auth/me")
     suspend fun me(): MeResponse
 
+    @GET("api/auth/config")
+    suspend fun authConfig(): AuthConfigResponse
+
     @POST("api/auth/login")
     suspend fun login(@Body body: LoginBody): AuthResponse
 
@@ -450,6 +453,9 @@ interface YtMusicApi {
 
     @POST("api/telemetry")
     suspend fun telemetry(@Body body: Map<String, @JvmSuppressWildcards Any?>): Map<String, Any>
+
+    @POST("api/telemetry/batch")
+    suspend fun telemetryBatch(@Body body: Map<String, @JvmSuppressWildcards Any?>): Map<String, Any>
 
     @POST("api/telemetry/battery-report")
     suspend fun batteryReport(@Body body: Map<String, @JvmSuppressWildcards Any?>): Map<String, Any>

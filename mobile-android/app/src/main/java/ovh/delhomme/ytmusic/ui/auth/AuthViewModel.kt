@@ -28,6 +28,7 @@ data class AuthUiState(
     val offerPasskey: Boolean = false,
     /** Toujours true : Bitwarden / GPM peuvent avoir une passkey sans flag local. */
     val showPasskeyLogin: Boolean = true,
+    val allowRegister: Boolean = false,
 )
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
@@ -38,6 +39,11 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch {
+            val allow = runCatching { container.api.authConfig().allowRegister == true }.getOrDefault(false)
+            _state.value = _state.value.copy(allowRegister = allow)
+            if (!allow && _state.value.registerMode) {
+                _state.value = _state.value.copy(registerMode = false)
+            }
             if (container.validateSession()) {
                 _state.value = _state.value.copy(loggedIn = true)
             }
@@ -49,6 +55,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun updateName(v: String) { _state.value = _state.value.copy(name = v) }
     fun updateTotp(v: String) { _state.value = _state.value.copy(totp = v) }
     fun toggleMode() {
+        if (!_state.value.allowRegister && !_state.value.registerMode) return
         _state.value = _state.value.copy(registerMode = !_state.value.registerMode, error = null)
     }
 

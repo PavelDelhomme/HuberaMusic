@@ -59,7 +59,7 @@ function isPrivateHostUrl(url: string) {
 }
 
 /** Base publique pour liens APK / QR (jamais IP Docker / LAN privée en prod). */
-function publicDownloadBase(port: number): string {
+export function publicDownloadBase(port: number): string {
   const candidates = [
     process.env.WEBAUTHN_ORIGIN,
     process.env.DEPLOY_URL,

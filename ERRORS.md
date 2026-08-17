@@ -146,7 +146,7 @@ Perplexity a raison : **ExoPlayer 2004 = HTTP 502 du backend**, pas un codec.
 ### E14 — HTTP 502 / timeout sur `/api/stream` (prod)
 | | |
 |--|--|
-| **Status** | `investigating` — contournements app livrés ; **cause racine VPS / YouTube IP** |
+| **Status** | `investigating` — OAuth TV VPS **connected** (17/08) + curl titres musicaux **206** ; reste smoke **Samsung PROD** + liaison Google **par user** si inscription ouverte (B4.24) |
 | **Surfaces** | Android prod · API prod `ytmusic.delhomme.ovh` · DL offline |
 | **Cause** | Reverse proxy / Innertube : YouTube bloque souvent l’IP Contabo (`LOGIN_REQUIRED`) → 502. DNS parfois `Unable to resolve host`. Timeouts = même chaîne (proxy attend trop longtemps). |
 | **Symptômes** | `InvalidResponseCodeException: 502` · `SocketTimeoutException` · OfflineKeeper `DL retry HTTP 502` · lecture en pause · toast « connexion » trompeur |
@@ -207,6 +207,27 @@ Perplexity a raison : **ExoPlayer 2004 = HTTP 502 du backend**, pas un codec.
 | **Cause** | `reportPlayerError` skip streak&lt;2 ; mail = stack brut ; throttle 90 s sans pré-diag |
 | **Fix** | 5xx/timeout/DNS mail **dès la 1ʳᵉ** fois ; bloc **Pré-diagnostic** FR (famille, cause, actions) + compteur throttle ; subject = famille |
 | **Tests** | **R17** · DEV D3 · PROD P3 |
+
+### E21 — Erreurs mobile hors-ligne → mail jamais envoyé
+| | |
+|--|--|
+| **Status** | `open` |
+| **Surfaces** | Android (DEV + PROD) · `/api/telemetry` · SMTP |
+| **Cause** | `TelemetryReporter` POST immédiat ; échec réseau → log `upload failed` et **drop**. Pas de persistance. |
+| **Attendu** | Dès l’erreur : écrire un **résumé compact** sur disque. Au retour réseau : **un** flush de **tout** le cumul (pas N jobs qui s’enchaînent). Serveur : **un** mail digest. Invisible UX, budget RAM/réseau minuscule (STATUS **B4.22**). |
+| **Pas ça** | File de coroutines « en attente d’envoi » ; un mail par event ; dumps AppLog × N ; retry agressif. |
+| **STATUS** | **B4.22** |
+| **Tests** | **R23** · DEV D3 · PROD P3 |
+
+### E22 — Force-stop : file restaurée, Play / Suivant sans audio
+| | |
+|--|--|
+| **Status** | `open` |
+| **Surfaces** | Android |
+| **Symptôme** | Kill forcé → rouvrir : mini-lecteur + file **OK** (`LocalPlaybackStore`). Clic **Play** : le titre courant **ne part pas**. **Suivant** non plus, alors que les titres suivants sont bien ceux d’avant. |
+| **Piste** | Restore `autoplay=false` sans MediaItems Exo ; `Holder.queue` vs UI ; skip retombe sur « chargement de suggestion ». Lié E15 (là la file était vidée ; ici la file reste, l’audio non). |
+| **STATUS** | **B4.23** |
+| **Tests** | **R18** / **R24** · DEV D13 · PROD P13 — **Samsung** |
 
 ---
 

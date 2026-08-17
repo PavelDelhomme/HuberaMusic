@@ -85,9 +85,24 @@ object TelemetryReporter {
                         ),
                     )
                     container.api.telemetry(body)
+                    flushPendingLocked(container)
                 }
             }.onFailure { e ->
                 AppLog.w("telemetry", "upload failed: ${e.message}")
+                runCatching {
+                    val ctx = YtMusicApp.instance
+                    val compact = org.json.JSONObject()
+                        .put("ts", System.currentTimeMillis())
+                        .put("level", level)
+                        .put("kind", kind)
+                        .put("message", (message ?: "").take(240))
+                        .put("count", 1)
+                        .put("key", "$kind|${meta["trackId"]}|${meta["httpStatus"]}|$level")
+                    if (meta["trackId"] != null) compact.put("trackId", meta["trackId"].toString())
+                    if (meta["httpStatus"] is Number) compact.put("http", (meta["httpStatus"] as Number).toInt())
+                    if (meta["errorCode"] is Number) compact.put("code", (meta["errorCode"] as Number).toInt())
+                    TelemetryBuffer.enqueue(ctx, compact)
+                }
             }
         }
 
@@ -209,5 +224,40 @@ object TelemetryReporter {
                 "Erreur lecteur (code $code)"
         }
         return "$family · streak=$streak · local=$local · http=${http ?: "—"}"
+    }
+
+    fun flushPending() {
+        scope.launch {
+            runCatching {
+                mutex.withLock {
+                    val container = runCatching { YtMusicApp.instance.container }.getOrNull()
+                        ?: return@withLock
+                    flushPendingLocked(container)
+                }
+            }
+        }
+    }
+
+    private suspend fun flushPendingLocked(container: ovh.delhomme.ytmusic.data.AppContainer) {
+        val ctx = YtMusicApp.instance
+        if (TelemetryBuffer.pendingCount(ctx) <= 0) return
+        val events = TelemetryBuffer.drain(ctx)
+        if (events.isEmpty()) return
+        runCatching {
+            container.api.telemetryBatch(
+                mapOf(
+                    "events" to events,
+                    "digest" to true,
+                    "env" to container.apiEnvKind(),
+                    "deviceId" to container.deviceId,
+                ),
+            )
+        }.onFailure {
+            events.forEach { ev ->
+                val o = org.json.JSONObject()
+                ev.forEach { (k, v) -> if (v != null) o.put(k, v) }
+                TelemetryBuffer.enqueue(ctx, o)
+            }
+        }
     }
 }

@@ -212,10 +212,13 @@ fun LoginScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        TextButton(onClick = vm::toggleMode) {
+        TextButton(onClick = vm::toggleMode, enabled = state.allowRegister || state.registerMode) {
             Text(
-                if (state.registerMode) "Déjà un compte ? Connexion"
-                else "Créer un compte",
+                when {
+                    state.registerMode -> "Déjà un compte ? Connexion"
+                    !state.allowRegister -> "Inscription fermée"
+                    else -> "Créer un compte"
+                },
             )
         }
         Spacer(modifier = Modifier.height(8.dp))

@@ -60,8 +60,7 @@ export function loadStreamOauthTokens(): OauthTokens | null {
 export function saveStreamOauthTokens(tokens: OauthTokens) {
   ensureDataDir();
   writeFileSync(OAUTH_PATH, `${encrypt(JSON.stringify(tokens))}\n`, 'utf8');
-  signedYt = null;
-  signedYtAt = 0;
+  signedCache.delete('server');
 }
 
 export function clearStreamOauthTokens() {
@@ -70,35 +69,38 @@ export function clearStreamOauthTokens() {
   } catch {
     /* ignore */
   }
-  signedYt = null;
-  signedYtAt = 0;
+  signedCache.delete('server');
 }
 
 export function streamOauthConfigured(): boolean {
   return Boolean(loadStreamOauthTokens()?.access_token || loadStreamOauthTokens()?.refresh_token);
 }
 
-/** Tokens OAuth « stream » OU compte YTM utilisateur (si déjà lié). */
+/** Tokens OAuth « stream » : credentials **user** d’abord, puis filet VPS. */
 export function resolveAnyStreamCredentials(userId?: string): {
   oauth?: OauthTokens;
   cookie?: string;
+  source?: 'user' | 'server' | 'cookie';
 } {
-  const file = loadStreamOauthTokens();
-  if (file?.access_token || file?.refresh_token) {
-    return { oauth: file, cookie: resolveYoutubeCookieHeader() || undefined };
-  }
   if (userId) {
     const creds = getYtmCredentials(userId);
     if (creds?.oauth || creds?.cookie) {
-      return { oauth: creds.oauth, cookie: creds.cookie || resolveYoutubeCookieHeader() || undefined };
+      return {
+        oauth: creds.oauth,
+        cookie: creds.cookie || resolveYoutubeCookieHeader() || undefined,
+        source: 'user',
+      };
     }
   }
+  const file = loadStreamOauthTokens();
+  if (file?.access_token || file?.refresh_token) {
+    return { oauth: file, cookie: resolveYoutubeCookieHeader() || undefined, source: 'server' };
+  }
   const cookie = resolveYoutubeCookieHeader();
-  return cookie ? { cookie } : {};
+  return cookie ? { cookie, source: 'cookie' } : {};
 }
 
-let signedYt: Innertube | null = null;
-let signedYtAt = 0;
+let signedCache = new Map<string, { yt: Innertube; at: number }>();
 const SIGNED_TTL_MS = 25 * 60_000;
 
 type Pending = {
@@ -139,8 +141,7 @@ export async function startStreamDeviceOauth() {
 
   yt.session.on('auth', ({ credentials }) => {
     saveStreamOauthTokens(credentials as unknown as OauthTokens);
-    signedYt = yt;
-    signedYtAt = Date.now();
+    signedCache.set('server', { yt, at: Date.now() });
     pending.done = true;
   });
 
@@ -190,10 +191,11 @@ export function getStreamDeviceOauthStatus() {
  */
 export async function getSignedStreamYT(userId?: string): Promise<Innertube | null> {
   installYoutubeJsEvaluator();
-  if (signedYt && Date.now() - signedYtAt < SIGNED_TTL_MS) return signedYt;
-
   const creds = resolveAnyStreamCredentials(userId);
   if (!creds.oauth && !creds.cookie) return null;
+  const key = creds.source === 'user' && userId ? `u:${userId}` : creds.source || 'server';
+  const hit = signedCache.get(key);
+  if (hit && Date.now() - hit.at < SIGNED_TTL_MS) return hit.yt;
 
   try {
     const yt = await Innertube.create({
@@ -205,14 +207,23 @@ export async function getSignedStreamYT(userId?: string): Promise<Innertube | nu
     if (creds.oauth) {
       await yt.session.signIn(creds.oauth as any);
     }
-    signedYt = yt;
-    signedYtAt = Date.now();
-    console.info('[streamAuth] session signée OK oauth=', Boolean(creds.oauth), 'cookie=', Boolean(creds.cookie));
+    signedCache.set(key, { yt, at: Date.now() });
+    if (signedCache.size > 24) {
+      const oldest = [...signedCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) signedCache.delete(oldest[0]);
+    }
+    console.info(
+      '[streamAuth] session signée OK source=',
+      creds.source,
+      'oauth=',
+      Boolean(creds.oauth),
+      'cookie=',
+      Boolean(creds.cookie),
+    );
     return yt;
   } catch (err) {
     console.warn('[streamAuth] session signée KO:', String((err as Error).message || err).slice(0, 160));
-    signedYt = null;
-    signedYtAt = 0;
+    signedCache.delete(key);
     return null;
   }
 }

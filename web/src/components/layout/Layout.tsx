@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   Compass,
   Download,
@@ -561,6 +561,14 @@ export function Layout() {
     <div className="flex h-full min-h-0 flex-col bg-yt-bg">
       <ProxyHealthBanner />
       <OfflineBanner />
+      {user && !user.isGuest && user.ytmLinked === false && location.pathname !== '/import' && (
+        <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-center text-sm">
+          Lie un compte Google <strong>gratuit</strong> (pas Premium) pour signer tes streams.{' '}
+          <Link to="/import" className="font-medium text-white underline">
+            Lier maintenant
+          </Link>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
         {/* Overlay drawer (mobile + quand on ouvre par-dessus) */}
         {navOpen && (

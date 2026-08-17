@@ -595,6 +595,7 @@ private fun MainTabs(
     var likedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var forceOnboarding by remember { mutableStateOf(false) }
     var onboardingChecked by remember { mutableStateOf(false) }
+    var showGoogleLink by remember { mutableStateOf(false) }
 
     var sessionHydrated by remember { mutableStateOf(false) }
     var pendingRemoteLabel by remember { mutableStateOf<String?>(null) }
@@ -622,6 +623,14 @@ private fun MainTabs(
                 player.hydrateAutoplaySuggestions(p.autoplaySuggestions)
                 !p.onboardingDone || (p.genres.isEmpty() && p.moods.isEmpty())
             }.getOrDefault(false)
+            val me = runCatching { container.api.me().user }.getOrNull()
+            val guest = me?.isGuest == true || me?.email?.contains("@local.ytmusic") == true
+            val dismissed = container.sharedPrefs("ytm_google_prompt")
+                .getLong("dismissed_at", 0L)
+            val cool = System.currentTimeMillis() - dismissed < 3L * 24 * 3600 * 1000
+            if (me != null && !guest && me.ytmLinked != true && !cool) {
+                showGoogleLink = true
+            }
         }
         if (!sessionHydrated) {
             sessionHydrated = true
@@ -1295,6 +1304,36 @@ private fun MainTabs(
 
     if (showCast) {
         CastSheet(container = container, player = player, onDismiss = { showCast = false })
+    }
+
+    if (showGoogleLink && !forceOnboarding) {
+        AlertDialog(
+            onDismissRequest = {
+                container.sharedPrefs("ytm_google_prompt").edit()
+                    .putLong("dismissed_at", System.currentTimeMillis()).apply()
+                showGoogleLink = false
+            },
+            title = { Text("Lier Google pour écouter") },
+            text = {
+                Text(
+                    "Compte Google gratuit — ce n’est pas YouTube Premium. " +
+                        "Ça signe tes streams depuis le serveur pour que YouTube ne bloque pas l’IP.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showGoogleLink = false
+                    nav.navigate("ytm_import")
+                }) { Text("Lier maintenant") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    container.sharedPrefs("ytm_google_prompt").edit()
+                        .putLong("dismissed_at", System.currentTimeMillis()).apply()
+                    showGoogleLink = false
+                }) { Text("Plus tard") }
+            },
+        )
     }
 
     if (forceOnboarding) {

@@ -77,6 +77,7 @@ Parallèle recommandé : web PC **et** Samsung pour chaque sous-catégorie.
 - [ ] Email d’alerte reçu (admin / outbox) avec **Pré-diagnostic** (famille, cause, actions) + stack
 - [ ] 502 / timeout : mail dès la 1ʳᵉ occurrence (pas seulement streak≥2) (E20)
 - [ ] Pas de spam email en boucle sur la même erreur (throttle + compteur dans le mail suivant)
+- [ ] **Hors-ligne (E21 / R23)** : avion → 2–3 erreurs → réseau ON → **un** mail digest (pas N), rien à l’écran
 
 ---
 
@@ -219,7 +220,7 @@ Appareil : **Samsung** USB `R5CT7263YJL` · APK **dev** · API LAN. Nothing non 
 
 ### Relance app (E15 / R18)
 - [ ] Lancer une playlist (≥ 4 titres), pause, **force-stop** l’app, rouvrir → file + mini-lecteur présents
-- [ ] Play reprend **le même titre** (pas une erreur connexion)
+- [ ] Play reprend **le même titre avec du son** (pas une erreur connexion, pas silence) (E22 / R24)
 - [ ] Suivant joue le titre suivant **avec du son** (pas « Chargement des suggestions… » puis silence)
 - [ ] Freeze perçu (titre ne lit pas) → fermer / rouvrir → skip OK
 
