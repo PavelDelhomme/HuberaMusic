@@ -27,6 +27,7 @@ make android           # APK Kotlin sur device ADB (API LAN)
 - Web / PWA : http://localhost:5173  
 - API : http://localhost:8787  
 - Prod : https://ytmusic.delhomme.ovh — DNS & install : [`docs/DNS-ET-INSTALL.md`](docs/DNS-ET-INSTALL.md)
+- Streams musique VPS (OAuth TV, sans PC) : [`docs/STREAM-VPS-OAUTH.md`](docs/STREAM-VPS-OAUTH.md)
 
 ## Tests manuels (ordre)
 

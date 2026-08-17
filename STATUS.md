@@ -4,10 +4,10 @@
 > Mis à jour à chaque session. Détail produit : [`docs/FEATURES-BACKLOG.md`](./docs/FEATURES-BACKLOG.md).  
 > Campagnes : [`TESTS.md`](./TESTS.md).
 
-**Branche courante** : `fix/ux-similar-offline-radio`  
-**Version APK / API locale** : `1.3.17` (`d+` / `p+`) · prod live `a481e3b`  
-**Dernière MAJ STATUS** : 2026-08-12  
-**Erreurs ouvertes** : [`ERRORS.md`](./ERRORS.md)
+**Branche courante** : `feat/samsung-resume-stream-ux`  
+**Version APK / API locale** : `1.3.18` (`d+` / `p+`) · prod live encore fragile sur streams 502  
+**Dernière MAJ STATUS** : 2026-08-17  
+**Erreurs ouvertes** : [`ERRORS.md`](./ERRORS.md) (E14 investigating · E6 open · E15–E20 code à revalider)
 
 ---
 
@@ -95,25 +95,31 @@ Issues signalées après tests **prod** (Nothing) — rien de résolu côté UX 
 | B3.1 | Progress DL parfois bloqué / bleu (ex. album *Pandemonium* Heaven Pierce Her) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B3.2 | Progress album page détail : reste à **2 %** — refresh live | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B3.3 | DL beaucoup plus rapide + stockage optimisé (sans perte) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B3.4 | Annuler un DL (2ᵉ tap) + supprimer le `.part` ; pas de faux DL sur shuffle | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B4 — Lecteur / stabilité
 
 | ID | Demande | SPEC | CODE | LOCAL | DEV | PR | DEPLOY | PROD |
 |----|---------|:----:|:----:|:-----:|:---:|:--:|:------:|:----:|
-| B4.1 | « Titre suivant » crash / fail intermittent | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B4.2 | Toute erreur app → **email immédiat** (télémétrie / crash) pour traitement | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B4.3 | Erreurs « connexion perdue » au chargement pages → cause + fix | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.1 | « Titre suivant » crash / fail intermittent | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.2 | Toute erreur app → **email immédiat** + pré-diagnostic FR | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.3 | Erreurs « connexion perdue » au chargement pages / 502 stream → cause + fix | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.5 | Clic zone vide barre noire lecteur **web** → toggle expand / collapse Now Playing (hors play/pause/next/seek) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.6 | Web : retry « Lecture impossible / nouvel essai auto » **ne boucle pas** ; message clair + bouton après N essais ; détecter 502 stream | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.8 | Android : toast clair si lecture bloquée pendant **appel** (`MODE_IN_CALL`) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.9 | Web refresh biblio lent → playlists light API + cache localStorage | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| B4.10 | Emails télémétrie : streak≥2 = error, throttle 90s, fingerprint par message | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.10 | Emails télémétrie : 5xx dès streak=1, pré-diag, throttle 90s + compteur | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.11 | « À suivre » toujours visible ; auto OFF = stop fin de file ; Suivant charge ; sync préf devices | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.12 | Prefetch listes longues (viewport / scroll) web+Android ~10 s tête | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.13 | Crash `trackCount` string YTM → int (Ambiance Chill etc.) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.14 | Playlist hero : play / shuffle / DL icône+progress + menu ⋮ (rename/delete/mix/offline) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.15 | Sync playlists mobile→web drawer (poll 20s + refresh focus 8s) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | B4.16 | Drawer web : compter `trackCount` (pas `tracks.length`) — régression playlists light | ✅ | ✅ | 🧪 | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.17 | Restore file après kill sans 502 qui vide Exo ; skip reconstruit la file (E15) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.18 | Shuffle biblio fluide + retries rapides 5xx puis skip (E16) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.19 | Radio artiste : seed immédiat + append mix (E18) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.20 | Boutons booléens plein vs creux (biblio / follow / ⋮) (E19) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| B4.21 | OAuth TV VPS pour tuer les 502 prod (E14) — **action user** | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 
 ### B5 — Réglages / logs
 

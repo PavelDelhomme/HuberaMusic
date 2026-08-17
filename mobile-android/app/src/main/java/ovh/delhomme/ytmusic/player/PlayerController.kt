@@ -366,7 +366,7 @@ class PlayerController(
             } else {
                 userWantsPlaying = true
                 pendingAutoplay = true
-                exo.play()
+                resumeOrPlay(exo)
             }
             syncFrom(exo)
             return
@@ -379,9 +379,53 @@ class PlayerController(
         } else {
             userWantsPlaying = true
             pendingAutoplay = true
-            p.play()
+            resumeOrPlay(p)
         }
         syncFrom(p)
+    }
+
+    /**
+     * Après restore (autoplay=false) ou échec stream, Exo peut être IDLE / ENDED
+     * avec des URI mortes : un simple play() ne recharge rien.
+     * On re-prépare le titre courant (URL proxy fraîche) puis on lance.
+     */
+    private fun resumeOrPlay(p: Player) {
+        val state = p.playbackState
+        val needRebuild =
+            p.mediaItemCount == 0 ||
+                state == Player.STATE_IDLE ||
+                state == Player.STATE_ENDED
+        val id = p.currentMediaItem?.mediaId
+        val queue = PlaybackService.Holder.queue
+        val idx = p.currentMediaItemIndex.coerceAtLeast(0)
+        if (needRebuild || (id.isNullOrBlank() && queue.isNotEmpty())) {
+            val tracks = queue.ifEmpty { _state.value.queue }
+            if (tracks.isEmpty()) {
+                p.play()
+                return
+            }
+            val start = idx.coerceIn(0, tracks.lastIndex)
+            val pos = p.currentPosition.coerceAtLeast(_state.value.positionMs).coerceAtLeast(0L)
+            playNow(p, tracks, start, autoplay = true, startPositionMs = pos)
+            return
+        }
+        // URI stream encore là mais pas de buffer (souvent après kill / toast « Reprise du flux »)
+        if (p.bufferedPosition <= p.currentPosition + 500L && !id.isNullOrBlank()) {
+            val track = queue.firstOrNull { it.id == id } ?: _state.value.queue.firstOrNull { it.id == id }
+            if (track != null) {
+                val pos = p.currentPosition.coerceAtLeast(0L)
+                runCatching {
+                    val item = mediaItemFor(track, streamUrl, queueTitle)
+                    p.replaceMediaItem(p.currentMediaItemIndex, item)
+                    p.seekTo(p.currentMediaItemIndex, pos)
+                    p.prepare()
+                    p.play()
+                }
+                return
+            }
+        }
+        runCatching { p.prepare() }
+        p.play()
     }
 
     fun pause() {
@@ -452,6 +496,18 @@ class PlayerController(
     fun skipNext() {
         connect()
         val p = player() ?: PlaybackService.Holder.player ?: return
+        val saved = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
+        val idleOrEmpty =
+            p.mediaItemCount == 0 ||
+                p.playbackState == Player.STATE_IDLE
+        if (idleOrEmpty && saved.size > 1) {
+            val cur = PlaybackService.Holder.index.coerceIn(0, saved.lastIndex)
+            val next = if (saved.size > 1) (cur + 1) % saved.size else cur
+            userWantsPlaying = true
+            pendingAutoplay = true
+            playNow(p, saved, next, autoplay = true)
+            return
+        }
         val nextIdx = when {
             p.hasNextMediaItem() -> p.currentMediaItemIndex + 1
             repeatMode == RepeatMode.All && p.mediaItemCount > 0 -> 0
@@ -476,8 +532,14 @@ class PlayerController(
                 p.play()
             }
             else -> {
-                // Un seul titre : fill « À suivre » puis skip (ne pas relancer le même)
-                fillThenSkipFromEnd(fromUserSkip = true)
+                val savedQ = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
+                val cur = p.currentMediaItemIndex.coerceAtLeast(0)
+                if (savedQ.size > cur + 1) {
+                    userWantsPlaying = true
+                    playNow(p, savedQ, cur + 1, autoplay = true)
+                } else {
+                    fillThenSkipFromEnd(fromUserSkip = true)
+                }
             }
         }
         if (wasOne) {
@@ -504,11 +566,23 @@ class PlayerController(
             Toast.makeText(context, "Suggestions en cours…", Toast.LENGTH_SHORT).show()
             return
         }
+        val savedQ = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
+        val pNow = player() ?: PlaybackService.Holder.player
+        val curIdx = (pNow?.currentMediaItemIndex ?: PlaybackService.Holder.index).coerceAtLeast(0)
+        if (savedQ.size > curIdx + 1 && (pNow == null || pNow.mediaItemCount <= curIdx + 1)) {
+            if (pNow != null) {
+                playNow(pNow, savedQ, curIdx + 1, autoplay = true)
+                return
+            }
+        }
         val seed = _state.value.track?.id
-            ?: PlaybackService.Holder.queue.getOrNull(
-                (player() ?: PlaybackService.Holder.player)?.currentMediaItemIndex ?: 0,
-            )?.id
-        if (seed.isNullOrBlank()) return
+            ?: savedQ.getOrNull(curIdx)?.id
+        if (seed.isNullOrBlank()) {
+            if (savedQ.size > curIdx + 1 && pNow != null) {
+                playNow(pNow, savedQ, curIdx + 1, autoplay = true)
+            }
+            return
+        }
         val fetcher = autoFillFetcher
         if (fetcher == null) {
             Toast.makeText(context, "Suggestions indisponibles", Toast.LENGTH_SHORT).show()
@@ -653,7 +727,11 @@ class PlayerController(
         if (c != null) {
             val auto = autoplay || userWantsPlaying == true
             playNow(c, tracks, startIndex, autoplay = auto, startPositionMs = positionMs)
-            if (!auto) c.pause() else c.play()
+            if (!auto) {
+                runCatching { c.pause() }
+            } else {
+                c.play()
+            }
             syncFrom(c)
         } else {
             pending = tracks to startIndex
@@ -1103,7 +1181,7 @@ class PlayerController(
         val playable = tracks.filter { it.isPlayable() }
         if (playable.isEmpty()) return
         // Fenêtre autour de l’index : évite OOM / TransactionTooLarge sur grosses bibliothèques
-        val maxItems = 250
+        val maxItems = 80
         val centered = if (playable.size > maxItems) {
             val half = maxItems / 2
             val raw = startIndex.coerceIn(0, playable.lastIndex)
@@ -1130,12 +1208,21 @@ class PlayerController(
             StreamPrefetcher.warmCurrentBlocking(base, currentId, timeoutMs = 450L)
         }
         warmAround(window, idx) // format + CacheWriter suite (async)
-        // Persist 2 titres suivants (séquentiel) — Exo CacheWriter couvre le reste sans reset CDN
-        runCatching {
+        // Full-DL des suivants seulement une fois la lecture vraiment partie
+        // (sinon shuffle biblio = 40 OfflineKeeper + 2 ahead → tout en « téléchargement »)
+        if (autoplay) {
             val ahead = window.drop(idx + 1).take(3)
-            YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
+            scope.launch {
+                delay(8_000)
+                if (StreamPrefetcher.isStreamDown()) return@launch
+                val live = player() ?: return@launch
+                if (!live.isPlaying) return@launch
+                runCatching {
+                    YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
+                }
+            }
         }
-        ensureAudibleMediaVolume(YtMusicApp.instance)
+        // Ne jamais toucher au volume STREAM_MUSIC système : garder celui déjà réglé.
         player.volume = 1f
         val playingSame =
             autoplay &&
@@ -1149,8 +1236,13 @@ class PlayerController(
             pos,
         )
         applyRepeatShuffle(player)
-        player.prepare()
-        if (autoplay) player.play() else player.pause()
+        if (autoplay) {
+            player.prepare()
+            player.play()
+        } else {
+            // Restore après kill : ne pas ouvrir le flux tout de suite (502 → stop() vidait la file)
+            player.pause()
+        }
         syncFrom(player)
     }
 

@@ -52,12 +52,20 @@ if [[ ! -x "$YTD" ]]; then
 fi
 
 COOKIE_FILE="$TMP/cookies.netscape"
-echo "==> Export cookies depuis navigateur « $BROWSER » (ferme Chrome si le DB est verrouillé)…"
+# Flatpak Brave (Arch) : profil hors ~/.config
+if [[ "$BROWSER" == "brave" || "$BROWSER" == "brave-flatpak" ]]; then
+  BRAVE_FLAT="$HOME/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser"
+  if [[ -d "$BRAVE_FLAT" ]]; then
+    BROWSER="brave:${BRAVE_FLAT}"
+  fi
+fi
+echo "==> Export cookies depuis navigateur « $BROWSER » (ferme le navigateur si le DB est verrouillé)…"
 set +e
-# ignore-no-formats : on veut seulement écrire le Netscape, pas streamer
+# IMPORTANT : pas https://www.youtube.com/ (playlist home → yt-dlp télécharge des dizaines d’items).
+# Une seule vidéo + --no-playlist : écrit le Netscape et s’arrête.
 "$YTD" --cookies-from-browser "$BROWSER" --cookies "$COOKIE_FILE" \
-  --skip-download --ignore-no-formats-error --no-warnings -q \
-  "https://www.youtube.com/" 2>"$TMP/ytd.err"
+  --skip-download --no-playlist --ignore-no-formats-error --no-warnings -q \
+  "https://www.youtube.com/watch?v=jNQXAC9IVRw" 2>"$TMP/ytd.err"
 RC=$?
 set -e
 # Le fichier cookies est souvent écrit même si yt-dlp exit ≠ 0 (formats KO)
@@ -67,12 +75,12 @@ if [[ ! -s "$COOKIE_FILE" ]]; then
   BROWSER=firefox
   set +e
   "$YTD" --cookies-from-browser "$BROWSER" --cookies "$COOKIE_FILE" \
-    --skip-download --ignore-no-formats-error --no-warnings -q \
-    "https://www.youtube.com/" 2>"$TMP/ytd.err"
+    --skip-download --no-playlist --ignore-no-formats-error --no-warnings -q \
+    "https://www.youtube.com/watch?v=jNQXAC9IVRw" 2>"$TMP/ytd.err"
   set -e
 fi
 if [[ ! -s "$COOKIE_FILE" ]]; then
-  echo "Impossible d’exporter les cookies navigateur (DB verrouillée ? ferme Chrome/Firefox)." >&2
+  echo "Impossible d’exporter les cookies navigateur (DB verrouillée ? ferme Brave/Chrome/Firefox)." >&2
   cat "$TMP/ytd.err" >&2 || true
   exit 1
 fi
@@ -91,9 +99,17 @@ for line in raw.splitlines():
     domain, name, value = cols[0], cols[5], cols[6]
     if "youtube.com" not in domain and "google.com" not in domain:
         continue
+    if not value or value.startswith("v10") or value.startswith("v11"):
+        continue
     seen[name] = f"{name}={value}"
 header = "; ".join(seen.values())
-if len(header) < 40:
+need = ("SAPISID", "LOGIN_INFO", "__Secure-1PSID", "__Secure-3PSID", "SID")
+if not any(n in seen for n in need):
+    raise SystemExit(
+        "Session YouTube non connectée dans le navigateur "
+        "(pas de SAPISID/LOGIN_INFO). Ouvre youtube.com connecté puis réessaie."
+    )
+if len(header) < 80:
     raise SystemExit("Aucune session navigateur utile — connecte-toi sur youtube.com puis réessaie")
 Path("$HEADER").write_text(header)
 print(f"    {len(seen)} cookies · {len(header)} octets")

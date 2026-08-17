@@ -2,6 +2,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Innertube, UniversalCache, ClientType, YTNodes, Parser, Log } from 'youtubei.js';
 import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES } from './youtubeCookies.js';
+import { getSignedStreamYT } from './streamAuth.js';
 
 // youtubei.js loggue massivement des Type mismatch (WatchNext / Message) → pollue make logs
 try {
@@ -2164,22 +2165,21 @@ async function ytDlpGetUrl(
   const { spawn } = await import('node:child_process');
   const ytdlp = join(ROOT, 'bin', 'yt-dlp');
   return new Promise<string>((resolve, reject) => {
-    const proc = spawn(
-      ytdlp,
-      [
-        '-f',
-        format,
-        '-g',
-        '--no-playlist',
-        '--no-warnings',
-        // Clients anonymes connus pour éviter LOGIN_REQUIRED / botcheck VPS
-        '--extractor-args',
-        'youtube:player_client=android_vr,tv,ios,web_embedded',
-        ...cookieArgs,
-        `https://www.youtube.com/watch?v=${videoId}`,
-      ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
+    const proxy = (process.env.YOUTUBE_HTTP_PROXY || process.env.HTTPS_PROXY || '').trim();
+    const args = [
+      '-f',
+      format,
+      '-g',
+      '--no-playlist',
+      '--no-warnings',
+      // Clients anonymes connus pour éviter LOGIN_REQUIRED / botcheck VPS
+      '--extractor-args',
+      'youtube:player_client=android_vr,tv,ios,web_embedded,web',
+      ...cookieArgs,
+      ...(proxy ? ['--proxy', proxy] : []),
+      `https://www.youtube.com/watch?v=${videoId}`,
+    ];
+    const proc = spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     proc.stdout.on('data', (c) => {
@@ -2244,8 +2244,11 @@ async function audioFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
   throw lastErr || new Error('yt-dlp audio URL indisponible');
 }
 
-export async function getAudioFormat(videoId: string): Promise<AudioFormat> {
-  const key = audioCacheKey(videoId);
+export async function getAudioFormat(
+  videoId: string,
+  opts?: { userId?: string },
+): Promise<AudioFormat> {
+  const key = audioCacheKey(videoId) + (opts?.userId ? `:u:${opts.userId.slice(0, 8)}` : '');
   const cached = audioFormatCache.get(key);
   // Marge 90 s avant expire pour éviter une URL déjà morte
   if (cached && cached.expiresAt > Date.now() + 90_000) {
@@ -2260,10 +2263,15 @@ export async function getAudioFormat(videoId: string): Promise<AudioFormat> {
     // 1) yt-dlp (android_vr/tv/ios) → m4a
     // 2) Innertube clients anonymes (ANDROID_VR / TV / WEB_EMBEDDED / IOS)
     // Les cookies WEB/ANDROID datacenter provoquent souvent LOGIN_REQUIRED — on les évite.
+    // Sauf session OAuth TV signée (streamAuth) qui débloque la musique sur VPS.
     const tryInnertube = async (): Promise<AudioFormat | null> => {
-      const innertube = await getYT();
+      // Session OAuth/cookies signée (VPS) en priorité — débloque LOGIN_REQUIRED musique
+      const signed = await getSignedStreamYT(opts?.userId).catch(() => null);
+      const innertube = signed || (await getYT());
       // Ordre : clients qui marchent sans session navigateur / sans po_token
-      const clients = ['ANDROID_VR', 'TV', 'TV_EMBEDDED', 'WEB_EMBEDDED', 'IOS', 'ANDROID'] as const;
+      const clients = signed
+        ? (['TV', 'ANDROID_VR', 'IOS', 'WEB_EMBEDDED', 'ANDROID'] as const)
+        : (['ANDROID_VR', 'TV', 'TV_EMBEDDED', 'WEB_EMBEDDED', 'IOS', 'ANDROID'] as const);
       const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
         const format = await Promise.race([
           innertube.getStreamingData(videoId, {
@@ -2287,9 +2295,10 @@ export async function getAudioFormat(videoId: string): Promise<AudioFormat> {
       };
       // Essai parallèle sur le sous-ensemble le plus fiable, puis suite
       try {
-        return await Promise.any(
-          (['ANDROID_VR', 'TV', 'IOS'] as const).map((c) => tryClient(c)),
-        );
+        const parallel = signed
+          ? (['TV', 'ANDROID_VR', 'IOS'] as const)
+          : (['ANDROID_VR', 'TV', 'IOS'] as const);
+        return await Promise.any(parallel.map((c) => tryClient(c)));
       } catch {
         for (const c of clients) {
           try {
@@ -2303,6 +2312,12 @@ export async function getAudioFormat(videoId: string): Promise<AudioFormat> {
     };
 
     const resolveWithCap = async (): Promise<AudioFormat | null> => {
+      // Session signée : Innertube d’abord (yt-dlp DC = souvent 0 formats audio)
+      const signedFirst = await getSignedStreamYT(opts?.userId).catch(() => null);
+      if (signedFirst) {
+        const viaSigned = await tryInnertube();
+        if (viaSigned) return viaSigned;
+      }
       try {
         return await audioFormatViaYtDlp(videoId);
       } catch {

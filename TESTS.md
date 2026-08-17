@@ -14,7 +14,7 @@ Compléments :
 
 | Sujet | Où |
 |-------|-----|
-| **Erreurs ouvertes / fixed** | [`ERRORS.md`](./ERRORS.md) (`E1`…`E10`) |
+| **Erreurs ouvertes / fixed** | [`ERRORS.md`](./ERRORS.md) (`E1`…`E20`) |
 | Suivi features / bugs | [`STATUS.md`](./STATUS.md) |
 | Backlog produit | [`docs/FEATURES-BACKLOG.md`](./docs/FEATURES-BACKLOG.md) |
 | Déploiement | [`DEPLOY.md`](./DEPLOY.md) |
@@ -71,6 +71,12 @@ Tout ce qui suit doit être **coché** dans LOCAL puis DEV puis PROD (cases dét
 | R14 | **Pas de saut anticipé** | Le titre va jusqu’à la fin (silence skip conservateur + retry si stream coupe tôt) | E12 |
 | R15 | **Gzip JSON + têtes stream** | `Content-Encoding: gzip` sur JSON ; warm → Range 206 `X-PLM-Stream-Cache: ram` ≪ 100 ms ; pas de gzip sur `/api/stream` | — |
 | R16 | **Fin de titre ≠ panne réseau** | À ~fin de piste : enchaîne le suivant **sans** toast « connexion perdue / réseau instable » ; mid-piste = reprise flux, pas skip | E13 |
+| R17 | **502 / timeout stream ≠ Wi‑Fi** | Toast « serveur audio 502 » (pas connexion) ; mail **Pré-diagnostic** ; OfflineKeeper s’arrête ; `curl -I /api/stream/:id` | E14 E20 |
+| R18 | **Reprise file après kill / freeze** | Relancer l’app → mini-lecteur + file visible ; Play reprend ; Suivant **joue** le titre suivant (pas « chargement de suggestion » vide) | E15 |
+| R19 | **Shuffle biblio / playlist fluide** | 1er titre &lt; ~2 s perçu (LAN) ; suivants se préparent ; 2–3 retries rapides si 5xx puis skip | E16 |
+| R20 | **DL : pas de faux « en cours » + cancel** | Shuffle **ne** met pas tous les titres en DL ; 2ᵉ tap = annuler + `.part` disparu ; Range parallèle | E17 |
+| R21 | **Radio artiste** | 1er titre immédiat ; mix s’ajoute ensuite ; pas d’écran bloqué « Radio… » | E18 |
+| R22 | **Boutons on/off plein vs creux** | Album (depuis artiste) biblio filled/hollow ; follow artiste ; ⋮ titre LibraryAdd outlined vs check | E19 |
 
 ---
 

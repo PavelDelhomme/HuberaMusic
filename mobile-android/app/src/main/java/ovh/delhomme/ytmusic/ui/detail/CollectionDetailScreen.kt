@@ -23,8 +23,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.LibraryAddCheck
+import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
@@ -614,7 +614,7 @@ fun CollectionDetailScreen(
                             },
                         ) {
                             Icon(
-                                if (inLib) Icons.Default.LibraryAddCheck else Icons.Default.LibraryAdd,
+                                if (inLib) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                                 contentDescription = if (inLib) "Retiré" else "Enregistrer",
                             )
                         }
@@ -738,7 +738,18 @@ fun CollectionDetailScreen(
                                             ) ?: onPlayNamed(shuffled, 0, title)
                                         },
                                         onDownload = {
-                                            if (offlineDone || downloading || playable.isEmpty()) return@PlaylistHeroActions
+                                            val playable = tracks.filter { it.isPlayable() }
+                                            if (offlineDone || playable.isEmpty()) return@PlaylistHeroActions
+                                            if (downloading) {
+                                                val n = container.downloadManager.cancelMany(playable.map { it.id })
+                                                offlineProgress = null
+                                                Toast.makeText(
+                                                    context,
+                                                    "Téléchargement annulé ($n) — partiels supprimés",
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
+                                                return@PlaylistHeroActions
+                                            }
                                             offlineProgress = 0.02f
                                             val started = container.downloadManager.enqueueMany(playable)
                                             val online = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
@@ -802,10 +813,17 @@ fun CollectionDetailScreen(
             downloadProgress = offlineProgress,
             downloaded = offlineDone,
             onDownload = {
-                if (offlineDone || offlineProgress != null) return@AlbumOverflowSheet
                 val playable = tracks.filter { it.isPlayable() }
-                if (playable.isEmpty()) {
-                    Toast.makeText(context, "Aucun titre à télécharger", Toast.LENGTH_SHORT).show()
+                if (offlineDone || playable.isEmpty()) {
+                    if (playable.isEmpty()) {
+                        Toast.makeText(context, "Aucun titre à télécharger", Toast.LENGTH_SHORT).show()
+                    }
+                    return@AlbumOverflowSheet
+                }
+                if (offlineProgress != null) {
+                    val n = container.downloadManager.cancelMany(playable.map { it.id })
+                    offlineProgress = null
+                    Toast.makeText(context, "Téléchargement annulé ($n) — partiels supprimés", Toast.LENGTH_SHORT).show()
                     return@AlbumOverflowSheet
                 }
                 offlineProgress = 0.02f
@@ -892,7 +910,13 @@ fun CollectionDetailScreen(
             onDownload = {
                 showPlaylistMenu = false
                 val playable = tracks.filter { it.isPlayable() }
-                if (offlineDone || offlineProgress != null || playable.isEmpty()) return@PlaylistOverflowSheet
+                if (offlineDone || playable.isEmpty()) return@PlaylistOverflowSheet
+                if (offlineProgress != null) {
+                    container.downloadManager.cancelMany(playable.map { it.id })
+                    offlineProgress = null
+                    Toast.makeText(context, "Téléchargement annulé — partiels supprimés", Toast.LENGTH_SHORT).show()
+                    return@PlaylistOverflowSheet
+                }
                 offlineProgress = 0.02f
                 container.downloadManager.enqueueMany(playable)
                 Toast.makeText(
@@ -1106,7 +1130,7 @@ private fun PlaylistHeroActions(
                         when {
                             downloaded -> "Sur l'appareil"
                             downloadProgress != null ->
-                                "Téléchargement ${((downloadProgress) * 100).toInt()} %"
+                                "Annuler (${((downloadProgress) * 100).toInt()} %)"
                             else -> "Télécharger"
                         },
                     )
@@ -1119,7 +1143,7 @@ private fun PlaylistHeroActions(
                     .size(48.dp)
                     .clip(CircleShape)
                     .clickable(
-                        enabled = !downloaded && downloadProgress == null,
+                        enabled = !downloaded,
                         onClick = onDownload,
                     ),
                 contentAlignment = Alignment.Center,
@@ -1203,7 +1227,7 @@ private fun PlaylistOverflowSheet(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable(enabled = downloadProgress == null, onClick = onDownload)
+                        .clickable(onClick = onDownload)
                         .padding(horizontal = 20.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -1216,7 +1240,7 @@ private fun PlaylistOverflowSheet(
                     Spacer(Modifier.width(16.dp))
                     Text(
                         if (downloadProgress != null) {
-                            "Téléchargement ${(downloadProgress * 100).toInt()} %"
+                            "Annuler le téléchargement (${(downloadProgress * 100).toInt()} %)"
                         } else {
                             "Télécharger toute la playlist"
                         },
@@ -1304,7 +1328,7 @@ private fun AlbumHeroHeader(
                 onClick = onShuffle,
             )
             RoundIconAction(
-                icon = if (inLibrary) Icons.Default.LibraryAddCheck else Icons.Default.LibraryAdd,
+                icon = if (inLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                 label = if (inLibrary) "Bibliothèque" else "Enregistrer",
                 hint = if (inLibrary) {
                     "Déjà dans ta bibliothèque — appuie pour retirer"
@@ -1312,7 +1336,7 @@ private fun AlbumHeroHeader(
                     "Enregistrer l'album dans ta bibliothèque"
                 },
                 onClick = onToggleLibrary,
-                tint = if (inLibrary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                tint = if (inLibrary) Color(0xFFFF0033) else MaterialTheme.colorScheme.onSurface,
             )
             TooltipBox(
                 positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
@@ -1530,7 +1554,7 @@ private fun AlbumOverflowSheet(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = downloadProgress == null && !downloaded, onClick = onDownload)
+                    .clickable(enabled = !downloaded, onClick = onDownload)
                     .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1545,7 +1569,7 @@ private fun AlbumOverflowSheet(
                     when {
                         downloaded -> "Album téléchargé"
                         downloadProgress != null ->
-                            "Téléchargement ${(downloadProgress * 100).toInt()} %"
+                            "Annuler (${(downloadProgress * 100).toInt()} %)"
                         else -> "Télécharger l'album"
                     },
                     style = MaterialTheme.typography.bodyLarge,

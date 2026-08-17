@@ -1,4 +1,4 @@
-# TESTS_PROD — Session PROD (Nothing + web / API prod)
+# TESTS_PROD — Session PROD (Samsung + web / API prod)
 
 À lancer **uniquement** après LOCAL + DEV OK et déploiement VPS réussi (`dev` → `prod` + Pull Portainer).
 
@@ -6,16 +6,19 @@
 |---------|--------|
 | Web | https://ytmusic.delhomme.ovh |
 | API | même origin `/api/health` |
-| Nothing | APK **prod** (`DEVICE=192.168.1.44:5555 make android-prod`) |
-| Samsung | smoke APK prod optionnel |
-| Serveur | VPS / Portainer / volumes / cookies |
+| Samsung | APK **prod** (`DEVICE=R5CT7263YJL make android-prod`) — cible actuelle (Nothing optionnel) |
+| Nothing | APK **prod** si branché (`DEVICE=192.168.1.44:5555 make android-prod`) |
+| Serveur | VPS / Portainer / volumes / cookies / **OAuth TV stream** |
 
 ```bash
 make adb-both
 curl -sS https://ytmusic.delhomme.ovh/api/health | jq .
 # appVersion / ref doivent matcher le commit déployé
-DEVICE=192.168.1.44:5555 make android-prod
-make link-home-stream   # si streams 502 (IP datacenter)
+DEVICE=R5CT7263YJL make android-prod
+# Nothing si dispo :
+# DEVICE=192.168.1.44:5555 make android-prod
+# OAuth TV obligatoire si streams 502 (pas de PC allumé) :
+# docs/STREAM-VPS-OAUTH.md
 node scripts/test/smoke-load-test.mjs prod
 ```
 
@@ -71,9 +74,10 @@ Si P0 KO → **stop** ([`DEPLOY.md`](./DEPLOY.md)).
 
 ## P3 — Erreurs → email
 
-- [ ] Erreur stream / crash → email reçu avec version **prod** + device Nothing
+- [ ] Erreur stream / crash → email reçu avec version **prod** + **Pré-diagnostic** (famille 502/timeout/DNS)
 - [ ] Visible aussi dans admin outbox / logs serveur
-- [ ] Pas de boucle mail
+- [ ] Pas de boucle mail (throttle + compteur)
+- [ ] 1er 502 de session → mail (E20)
 
 ---
 
@@ -135,6 +139,8 @@ Si P0 KO → **stop** ([`DEPLOY.md`](./DEPLOY.md)).
 - [ ] Playlist entière
 - [ ] Offline lecture OK
 - [ ] Coupure réseau mid-DL → reprise au retour (R6)
+- [ ] 2ᵉ tap = annuler DL + partiel supprimé (R20)
+- [ ] Shuffle ne déclenche pas une file de 40 DL (E17)
 
 ---
 
@@ -143,6 +149,7 @@ Si P0 KO → **stop** ([`DEPLOY.md`](./DEPLOY.md)).
 - [ ] Nav rapide multi-pages sans faux positifs
 - [ ] Couper réseau → recovery
 - [ ] Pendant redeploy court → backoff puis OK
+- [ ] 502 prod : toast serveur audio, **pas** « Wi‑Fi HS » (R17)
 
 ---
 
@@ -175,6 +182,27 @@ Si P0 KO → **stop** ([`DEPLOY.md`](./DEPLOY.md)).
 
 ---
 
+## P13 — Reprise / shuffle / radio / 502 (R17–R22) — Samsung PROD
+
+Cible : **Samsung** APK prod → `https://ytmusic.delhomme.ovh`. Nothing optionnel.
+
+### Gate stream (E14)
+- [ ] `curl -sI -H 'Range: bytes=0-1' https://ytmusic.delhomme.ovh/api/stream/dQw4w9WgXcQ` → 206
+- [ ] Même chose sur un titre **musical** (ex. k1BneeJTDcU) : si **502**, OAuth TV pas validé → lecture prod cassée (pas un bug Samsung)
+- [ ] DNS : `getent hosts ytmusic.delhomme.ovh` OK
+
+### Relance (E15 / R18)
+- [ ] Playlist ≥ 4 titres → force-stop → rouvrir → file présente
+- [ ] Play + Suivant **avec audio** (si stream 206)
+
+### Shuffle / radio / biblio (E16–E19)
+- [ ] Aléatoire biblio titres : 1er titre part ; suivants jouent
+- [ ] Radio artiste : 1er titre immédiat
+- [ ] Album depuis artiste : bouton biblio creux/plein distinct
+- [ ] DL : 2ᵉ tap annule
+
+---
+
 ## Alternatives session PROD
 
 | Alt | Action |
@@ -188,8 +216,8 @@ Si P0 KO → **stop** ([`DEPLOY.md`](./DEPLOY.md)).
 ## Fin de session PROD
 
 - [ ] Cocher STATUS → `✅` PROD pour IDs validés
-- [ ] **R1–R12** OK sur web prod + Nothing
-- [ ] Ouvrir / garder `⬜` pour régressions (E2…E6)
+- [ ] **R1–R22** OK sur web prod + Samsung PROD
+- [ ] Ouvrir / garder `⬜` pour régressions (E14 OAuth TV si 502 persistants)
 - [ ] Noter version APK + `appVersion` health dans le journal ci-dessus
 
 Si KO majeur : hotfix branche `fix/…` depuis `dev`, rejouer DEV puis promo.
