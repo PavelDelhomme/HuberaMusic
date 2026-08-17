@@ -4,10 +4,13 @@ import android.content.Context
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 
 /**
- * Persistance locale file + position (survit force-stop / kill process).
- * Indépendant de la sync multi-appareils.
+ * Persistance locale file + position (survit force-stop / kill / coupure d’alimentation).
+ * Prefs + fichier JSON (fsync) — indépendant de la sync multi-appareils.
  */
 class LocalPlaybackStore(
     context: Context,
@@ -16,7 +19,9 @@ class LocalPlaybackStore(
         .add(KotlinJsonAdapterFactory())
         .build(),
 ) {
-    private val prefs = context.applicationContext.getSharedPreferences("ytm_player", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("ytm_player", Context.MODE_PRIVATE)
+    private val backupFile = File(appContext.filesDir, "local_playback.json")
     private val listType = Types.newParameterizedType(List::class.java, TrackDto::class.java)
     private val queueAdapter = moshi.adapter<List<TrackDto>>(listType)
 
@@ -27,9 +32,10 @@ class LocalPlaybackStore(
         val userQueueEnd: Int,
         val queueTitle: String,
         val wasPlaying: Boolean,
+        val savedAt: Long = 0L,
     )
 
-    fun save(snapshot: Snapshot) {
+    fun save(snapshot: Snapshot, durable: Boolean = false) {
         if (snapshot.queue.isEmpty()) {
             clear()
             return
@@ -40,33 +46,100 @@ class LocalPlaybackStore(
             return
         }
         val idx = snapshot.queueIndex.coerceIn(0, playable.lastIndex)
+        val queueJson = queueAdapter.toJson(playable.take(120))
+        val savedAt = System.currentTimeMillis()
         runCatching {
-            prefs.edit()
-                .putString(KEY_QUEUE, queueAdapter.toJson(playable.take(120)))
+            val ed = prefs.edit()
+                .putString(KEY_QUEUE, queueJson)
                 .putInt(KEY_INDEX, idx)
                 .putLong(KEY_POS, snapshot.positionMs.coerceAtLeast(0L))
                 .putInt(KEY_USER_END, snapshot.userQueueEnd.coerceIn(0, playable.size))
                 .putString(KEY_TITLE, snapshot.queueTitle.ifBlank { "File d'attente" })
                 .putBoolean(KEY_PLAYING, snapshot.wasPlaying)
-                .putLong(KEY_SAVED_AT, System.currentTimeMillis())
-                .apply()
+                .putLong(KEY_SAVED_AT, savedAt)
+            if (durable) ed.commit() else ed.apply()
+        }
+        if (durable) {
+            runCatching {
+                val blob = JSONObject()
+                    .put("queue", queueJson)
+                    .put("index", idx)
+                    .put("pos", snapshot.positionMs.coerceAtLeast(0L))
+                    .put("userEnd", snapshot.userQueueEnd.coerceIn(0, playable.size))
+                    .put("title", snapshot.queueTitle.ifBlank { "File d'attente" })
+                    .put("playing", snapshot.wasPlaying)
+                    .put("savedAt", savedAt)
+                    .toString()
+                val tmp = File(appContext.filesDir, "local_playback.json.tmp")
+                FileOutputStream(tmp).use { fos ->
+                    fos.write(blob.toByteArray())
+                    fos.flush()
+                    fos.fd.sync()
+                }
+                if (!tmp.renameTo(backupFile)) {
+                    tmp.copyTo(backupFile, overwrite = true)
+                    tmp.delete()
+                }
+            }
         }
     }
 
     fun load(): Snapshot? {
+        val fromPrefs = loadPrefs()
+        val fromFile = loadFile()
+        return when {
+            fromPrefs == null -> fromFile
+            fromFile == null -> fromPrefs
+            fromFile.savedAt > fromPrefs.savedAt -> fromFile
+            else -> fromPrefs
+        }
+    }
+
+    private fun loadPrefs(): Snapshot? {
         val raw = prefs.getString(KEY_QUEUE, null) ?: return null
-        val queue = runCatching { queueAdapter.fromJson(raw).orEmpty() }
+        return snapshotFrom(raw, prefs.getInt(KEY_INDEX, 0), prefs.getLong(KEY_POS, 0L),
+            prefs.getInt(KEY_USER_END, 0), prefs.getString(KEY_TITLE, null),
+            prefs.getBoolean(KEY_PLAYING, false), prefs.getLong(KEY_SAVED_AT, 0L))
+    }
+
+    private fun loadFile(): Snapshot? {
+        if (!backupFile.isFile || backupFile.length() < 8) return null
+        return runCatching {
+            val o = JSONObject(backupFile.readText())
+            snapshotFrom(
+                o.optString("queue"),
+                o.optInt("index"),
+                o.optLong("pos"),
+                o.optInt("userEnd"),
+                o.optString("title"),
+                o.optBoolean("playing"),
+                o.optLong("savedAt"),
+            )
+        }.getOrNull()
+    }
+
+    private fun snapshotFrom(
+        raw: String?,
+        index: Int,
+        pos: Long,
+        userEnd: Int,
+        title: String?,
+        playing: Boolean,
+        savedAt: Long,
+    ): Snapshot? {
+        val queue = runCatching { queueAdapter.fromJson(raw.orEmpty()).orEmpty() }
             .getOrDefault(emptyList())
             .filter { it.isPlayable() }
         if (queue.isEmpty()) return null
-        val idx = prefs.getInt(KEY_INDEX, 0).coerceIn(0, queue.lastIndex)
+        val idx = index.coerceIn(0, queue.lastIndex)
         return Snapshot(
             queue = queue,
             queueIndex = idx,
-            positionMs = prefs.getLong(KEY_POS, 0L).coerceAtLeast(0L),
-            userQueueEnd = prefs.getInt(KEY_USER_END, queue.size).coerceIn(0, queue.size),
-            queueTitle = prefs.getString(KEY_TITLE, null)?.ifBlank { null } ?: "File d'attente",
-            wasPlaying = prefs.getBoolean(KEY_PLAYING, false),
+            positionMs = pos.coerceAtLeast(0L),
+            userQueueEnd = userEnd.coerceIn(0, queue.size).let { if (it <= 0) queue.size else it },
+            queueTitle = title?.ifBlank { null } ?: "File d'attente",
+            wasPlaying = playing,
+            savedAt = savedAt,
         )
     }
 
@@ -79,7 +152,8 @@ class LocalPlaybackStore(
             .remove(KEY_TITLE)
             .remove(KEY_PLAYING)
             .remove(KEY_SAVED_AT)
-            .apply()
+            .commit()
+        runCatching { backupFile.delete() }
     }
 
     companion object {

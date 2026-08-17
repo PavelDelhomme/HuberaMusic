@@ -74,6 +74,7 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var prevPlayingPosMs: Long = 0L
     @Volatile private var earlyEndRetries: Int = 0
     @Volatile private var serviceFillInFlight: Boolean = false
+    @Volatile private var lastPersistAt: Long = 0L
 
     private val playerListener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
@@ -111,6 +112,7 @@ class PlaybackService : MediaSessionService() {
                         "playing=${player.isPlaying}",
                 )
             }
+            persistPlaybackSnapshot(durable = false)
             // Précharge « À suivre » même sans Activity / Now Playing (BG, lecteur fermé)
             if (
                 events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
@@ -723,6 +725,7 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        persistPlaybackSnapshot(durable = true)
         val p = player
         // Garder service + notif tant qu’une file existe (même en pause)
         if (p == null || p.mediaItemCount == 0) {
@@ -731,6 +734,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        persistPlaybackSnapshot(durable = true)
         scope.cancel()
         player?.removeListener(playerListener)
         session?.release()
@@ -1317,6 +1321,31 @@ class PlaybackService : MediaSessionService() {
                 (exo.playWhenReady && !exo.isPlaying)
         if (!stalled) return
         rebindCurrentStream(reason, forcePlay = true)
+    }
+
+    private fun persistPlaybackSnapshot(durable: Boolean) {
+        val exo = player ?: return
+        val queue = Holder.queue
+        if (queue.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val must = durable
+        val interval = if (exo.isPlaying || exo.playWhenReady) 3_500L else 8_000L
+        if (!must && now - lastPersistAt < interval) return
+        lastPersistAt = now
+        val idx = exo.currentMediaItemIndex.coerceAtLeast(0).coerceAtMost(queue.lastIndex)
+        runCatching {
+            YtMusicApp.instance.container.localPlayback.save(
+                ovh.delhomme.ytmusic.data.LocalPlaybackStore.Snapshot(
+                    queue = queue,
+                    queueIndex = idx,
+                    positionMs = exo.currentPosition.coerceAtLeast(0L),
+                    userQueueEnd = Holder.userQueueEnd.coerceIn(0, queue.size),
+                    queueTitle = Holder.queueTitle,
+                    wasPlaying = exo.isPlaying || exo.playWhenReady,
+                ),
+                durable = true,
+            )
+        }
     }
 
     /**
