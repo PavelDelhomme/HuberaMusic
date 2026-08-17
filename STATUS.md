@@ -4,8 +4,8 @@
 > Mis à jour à chaque session. Détail produit : [`docs/FEATURES-BACKLOG.md`](./docs/FEATURES-BACKLOG.md).  
 > Campagnes : [`TESTS.md`](./TESTS.md).
 
-**Branche courante** : `misc/notes-offline-mail-resume-google`  
-**Version APK / API locale** : `1.3.18` (`d+` / `p+`) · prod streams musicaux **206** (OAuth TV VPS connecté 17/08)  
+**Branche courante** : `feat/ytm-google-one-tap`  
+**Version APK / API locale** : `1.3.20` (`d+` / `p+`) · prod streams musicaux **206** (OAuth TV VPS connecté 17/08)  
 **Dernière MAJ STATUS** : 2026-08-17  
 **Erreurs ouvertes** : [`ERRORS.md`](./ERRORS.md) (E6 open · **E21** mails hors-ligne · **E22** play après kill · E14/E15–E20 à revalider Samsung)
 

@@ -89,7 +89,7 @@ export function getYtmAccountPublic(userId: string): YtmAccountPublic {
     lastSyncSummary: row.last_sync_summary,
     hint:
       hasOauth && !hasCookie
-        ? 'OAuth seul ne suffit plus pour la bibliothèque YouTube Music (Google renvoie 400). Colle les cookies depuis music.youtube.com.'
+        ? 'Liaison incomplète — sur Android, « Connecter Google » récupère la session tout seul (sans collage).'
         : null,
   };
 }
@@ -153,7 +153,7 @@ export function saveYtmCookie(userId: string, cookie: string) {
 
   if (!hasSapisid && !hasSecurePsId) {
     throw new Error(
-      'Cookie incomplet : il faut SAPISID (ou __Secure-1PSID). Sur music.youtube.com connecté → F12 → Réseau → filtre « browse » → Requête → En-tête Cookie → copie toute la valeur.',
+      'Session Google incomplète (SAPISID manquant). Sur Android, reconnecte via « Connecter Google » et attends YouTube Music. Sur le web, colle l’en-tête Cookie d’une requête browse.',
     );
   }
   if (!hasSapisid && classic.length < 2 && !hasSecurePsId) {

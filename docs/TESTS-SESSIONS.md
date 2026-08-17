@@ -28,7 +28,8 @@ Toute erreur player / crash **doit** partir par email admin (télémétrie). Si 
 - [ ] Après login : prompt passkey → Enregistrer (Bitwarden ou empreinte)
 - [ ] Déconnexion → **Continuer avec une passkey**
 - [ ] Inscription fermée en prod (sauf toggle Admin)
-- [ ] Pas de demande cookies pour **écouter** ; Import YTM = optionnel
+- [ ] Compte Google : **un bouton** « Connecter Google » → login dans l’app → sync biblio **sans collage**
+- [ ] Pas Premium requis (compte Google gratuit)
 
 ### P2 — Batterie / télémétrie
 - [ ] Réglages → Email rapport batterie

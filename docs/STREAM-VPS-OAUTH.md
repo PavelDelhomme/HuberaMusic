@@ -43,15 +43,13 @@ En prod, `STREAM_UPSTREAM` / fichier `stream-upstream.url` est **ignoré** sauf 
 
 ## Cookies YouTube vs compte Google (Android / Nothing)
 
-**Écouter de la musique dans PLM ≠ coller des cookies.**
+**Sur le téléphone : un bouton « Connecter Google ».** Tu te connectes dans l’app ; PLM récupère la session tout seul. Rien à coller. Compte Google **gratuit** — Premium **non requis** (ça marche aussi si tu n’as plus Premium).
 
 | Besoin | Quoi faire |
 |---|---|
-| Jouer titres / file / mix | Compte PLM (email / passkey) + OAuth TV **serveur** (déjà connecté). Rien à coller sur le téléphone. |
-| Importer likes / playlists **YouTube Music** | Cookies `music.youtube.com` (une fois, depuis le web ou l’écran Import). Google bloque OAuth pour `getLibrary`. |
-| Pubs / Premium | PLM lit un **flux audio** proxifié. Pas l’app YTM officielle, pas les pubs vidéo. Premium **non requis**. |
-
-Si Nothing (ou Samsung) affiche « lie tes cookies » : c’est **uniquement** l’import bibliothèque YTM. Tu peux fermer cet écran et écouter quand même.
+| Jouer titres / file / mix | Compte PLM + OAuth TV **serveur** (filet VPS). |
+| Importer likes / playlists YouTube Music | Android : **Connecter Google** (WebView). Web : collage cookies (le navigateur bloque l’accès auto). |
+| Pubs / Premium | PLM lit un **flux audio** proxifié. Pas l’app YTM officielle. Premium **jamais** requis. |
 
 ---
 ---

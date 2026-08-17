@@ -134,9 +134,10 @@ export function ImportPage() {
             <h2 className="font-display text-lg font-semibold">Compte YouTube Music</h2>
           </div>
           <p className="mb-4 text-sm text-yt-muted">
-            Google bloque OAuth pour la bibliothèque YTM. Il faut coller les{' '}
-            <span className="text-white">cookies</span> de ta session{' '}
-            <span className="text-white">music.youtube.com</span> (chiffrés côté serveur).
+            Sur le téléphone : un bouton « Connecter Google » dans l’app (connexion dans la page,
+            rien à coller). Ici sur le web, le navigateur n’autorise pas de récupérer la session
+            YouTube tout seul — colle les cookies une fois. Compte Google <strong>gratuit</strong>,
+            Premium non requis.
           </p>
 
           {account?.hint && (

@@ -161,8 +161,8 @@ fun AccountSheet(
             if (onOpenYtmImport != null) {
                 AccountRow(
                     icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
-                    title = "Importer YouTube Music",
-                    subtitle = "Likes, albums, playlists — sans Google Console",
+                    title = "Connecter Google",
+                    subtitle = "Un bouton — likes et playlists, sans collage",
                     onClick = {
                         onDismiss()
                         onOpenYtmImport()
