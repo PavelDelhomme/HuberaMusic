@@ -39,6 +39,9 @@ object NetworkMonitor {
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var offlineConfirm: Runnable? = null
     private var appContext: Context? = null
+    /** 1=wifi 2=cell 3=eth 0=other — pour rebind au handover. */
+    @Volatile
+    private var lastTransport: Int = -1
 
     /** Délai avant de confirmer « vraiment hors ligne » (handover 4G/Wi‑Fi). */
     private const val OFFLINE_DEBOUNCE_MS = 3_500L
@@ -57,12 +60,15 @@ object NetworkMonitor {
             ?: return
         online = hasUsableInternet(cm)
         _onlineFlow.value = online
+        lastTransport = transportOf(cm.activeNetwork?.let { cm.getNetworkCapabilities(it) })
+        bindProcessToActive(cm)
 
         val req = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                bindProcessToActive(cm)
                 if (hasUsableInternet(cm)) markOnline()
             }
 
@@ -70,7 +76,20 @@ object NetworkMonitor {
                 network: Network,
                 networkCapabilities: NetworkCapabilities,
             ) {
+                val t = transportOf(networkCapabilities)
+                val changed = t != lastTransport && lastTransport != -1 && t != -1
+                lastTransport = t
+                bindProcessToActive(cm)
                 if (isUsableCaps(networkCapabilities) || hasUsableInternet(cm)) markOnline()
+                if (changed) {
+                    ovh.delhomme.ytmusic.debug.AppLog.i(
+                        "NetworkMonitor",
+                        "transport change → $t (rebind si lecture coincée)",
+                    )
+                    main.post {
+                        PlaybackService.Holder.service?.rebindIfStalled("transport-$t")
+                    }
+                }
             }
 
             override fun onLost(network: Network) {
@@ -117,6 +136,21 @@ object NetworkMonitor {
         online = true
         _onlineFlow.value = true
         if (wasOffline) onBackOnline()
+    }
+
+    private fun transportOf(caps: NetworkCapabilities?): Int {
+        if (caps == null) return -1
+        return when {
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 1
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 2
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 3
+            else -> 0
+        }
+    }
+
+    private fun bindProcessToActive(cm: ConnectivityManager) {
+        val net = cm.activeNetwork
+        runCatching { cm.bindProcessToNetwork(net) }
     }
 
     private fun isUsableCaps(caps: NetworkCapabilities?): Boolean {
@@ -166,7 +200,7 @@ object NetworkMonitor {
 
     private fun onGoneOffline() {
         StreamPrefetcher.cancelIdle()
-        StreamPrefetcher.markStreamDown(pauseMs = 120_000L)
+        StreamPrefetcher.markStreamDown(pauseMs = 8_000L)
         // Si le titre courant (ou un suivant) est déjà téléchargé → bascule file:// sans couper
         main.post {
             val exo = PlaybackService.Holder.player ?: return@post
@@ -211,12 +245,13 @@ object NetworkMonitor {
                     android.widget.Toast.LENGTH_SHORT,
                 ).show()
             } else {
+                val wasPlaying = exo.isPlaying || exo.playWhenReady
                 exo.playWhenReady = false
                 runCatching { exo.pause() }
-                markPausedForNetwork()
+                if (wasPlaying) markPausedForNetwork()
                 android.widget.Toast.makeText(
                     ovh.delhomme.ytmusic.YtMusicApp.instance,
-                    "Hors ligne — aucun titre téléchargé dans la file",
+                    "Hors ligne — reprise dès que le réseau revient",
                     android.widget.Toast.LENGTH_LONG,
                 ).show()
             }
@@ -235,16 +270,20 @@ object NetworkMonitor {
             }
             app.container.offlineKeeper.requestSoon("online")
         }
+        val resume = pausedForNetwork
+        pausedForNetwork = false
         main.post {
+            val svc = PlaybackService.Holder.service
             val exo = PlaybackService.Holder.player ?: return@post
-            if (!pausedForNetwork) return@post
-            pausedForNetwork = false
-            runCatching {
-                if (exo.mediaItemCount > 0 && !exo.isPlaying) {
-                    exo.prepare()
-                    exo.playWhenReady = true
-                    exo.play()
-                }
+            if (resume) {
+                svc?.rebindCurrentStream("back-online", forcePlay = true)
+                return@post
+            }
+            // Déjà « online » mais sockets morts (Wi‑Fi → 4G sans debounce) : si coincé, rebind
+            if (!exo.isPlaying && exo.playWhenReady) {
+                svc?.rebindCurrentStream("back-online-stalled", forcePlay = true)
+            } else {
+                svc?.rebindIfStalled("back-online")
             }
         }
     }
