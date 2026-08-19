@@ -24,6 +24,17 @@ function blob(ev: {
   return [ev.kind, ev.message, ev.stack, ev.url, ev.userAgent, m].join('\n');
 }
 
+/** Message + stack uniquement — évite qu’un vieux log DNS/502 fausse le pré-diagnostic. */
+function coreBlob(ev: {
+  kind?: string;
+  message?: string;
+  stack?: string;
+  url?: string;
+  userAgent?: string;
+}): string {
+  return [ev.kind, ev.message, ev.stack, ev.url, ev.userAgent].join('\n');
+}
+
 function httpCode(text: string): number | null {
   const m =
     text.match(/Response code:\s*(\d{3})/i) ||
@@ -45,6 +56,7 @@ export function diagnoseTelemetryEvent(ev: {
   meta?: unknown;
 }): TelemetryDiagnosis {
   const text = blob(ev);
+  const core = coreBlob(ev);
   const kind = String(ev.kind || '');
   const url = String(ev.url || '');
   const ua = String(ev.userAgent || '');
@@ -57,16 +69,36 @@ export function diagnoseTelemetryEvent(ev: {
           ? 'server'
           : 'unknown';
 
+  const isWrongThread =
+    /Player is accessed on the wrong thread|verifyApplicationThread/i.test(core);
+  if (isWrongThread) {
+    return {
+      family: 'android-thread',
+      title: 'ExoPlayer lu depuis un thread IO (bug app — pas DNS)',
+      summary:
+        'OfflineDownloadManager ou StreamPrefetcher a appelé ExoPlayer hors thread principal. Crash fatal immédiat. Les logs récents peuvent contenir des HTTP 502 offline — ce n’est pas la cause.',
+      likelyCause:
+        'Régression p+1.3.31 : isPlaybackActive() touchait ExoPlayer depuis Dispatchers.IO. Corrigé en p+1.3.32 (flag Holder.playbackActive).',
+      actions: [
+        'Installer p+1.3.32 ou plus sur l’appareil (Nothing / Samsung)',
+        'Ne pas traiter comme panne DNS ni stream OAuth',
+        'Si le crash persiste après mise à jour : renvoyer le mail avec appVersion dans meta',
+      ],
+      surface,
+    };
+  }
+
   const code = httpCode(text);
-  const is502 = code === 502 || /HTTP 502|Response code:\s*502|home stream 502/i.test(text);
-  const is503 = code === 503 || /HTTP 503|Response code:\s*503/i.test(text);
-  const is504 = code === 504 || /HTTP 504|Response code:\s*504/i.test(text);
-  const isTimeout = /SocketTimeoutException|timeout|ETIMEDOUT|timed out/i.test(text);
-  const isAbort = /Software caused connection abort|connection abort|ECONNRESET|connection reset/i.test(text);
-  const isDns = /Unable to resolve host|UnknownHostException|No address associated with hostname|ENOTFOUND/i.test(text);
-  const is403 = code === 403 || /Response code:\s*403/i.test(text);
-  const is401 = code === 401 || /LOGIN_REQUIRED|unauthorized/i.test(text);
-  const player = /android\.player|ExoPlaybackException|Source error|onPlayerError/i.test(text);
+  const is502 = code === 502 || /HTTP 502|Response code:\s*502|home stream 502/i.test(core);
+  const is503 = code === 503 || /HTTP 503|Response code:\s*503/i.test(core);
+  const is504 = code === 504 || /HTTP 504|Response code:\s*504/i.test(core);
+  const isTimeout = /SocketTimeoutException|timeout|ETIMEDOUT|timed out/i.test(core);
+  const isAbort = /Software caused connection abort|connection abort|ECONNRESET|connection reset/i.test(core);
+  const isDns =
+    /Unable to resolve host|UnknownHostException|No address associated with hostname|ENOTFOUND/i.test(core);
+  const is403 = code === 403 || /Response code:\s*403/i.test(core);
+  const is401 = code === 401 || /LOGIN_REQUIRED|unauthorized/i.test(core);
+  const player = /android\.player|ExoPlaybackException|Source error|onPlayerError/i.test(core);
   const offlineDl = /offline: DL retry|HTTP 502/i.test(text) && /offline/i.test(text);
 
   if (isDns) {
