@@ -69,6 +69,18 @@ export function MixPage() {
     }
     setError('');
     try {
+      if (!preview.length && !cached?.length) {
+        const fast = await api.recoRadio(id, { preview: true });
+        const fastList = (fast.tracks || []).filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(t.id));
+        if (fastList.length) {
+          setTracks(fastList);
+          setLoading(false);
+          void warmFormats(fastList.slice(0, 3).map((t) => t.id));
+          const catTitle = radios.find((x) => x.id === id)?.title;
+          if (catTitle) setTitle(catTitle);
+          else if (fast.category?.title) setTitle(String(fast.category.title));
+        }
+      }
       const r = await api.recoRadio(id);
       const list = (r.tracks || []).filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(t.id));
       if (list.length) {

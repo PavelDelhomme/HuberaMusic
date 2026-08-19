@@ -41,6 +41,7 @@ Toute erreur player / crash **doit** partir par email admin (télémétrie). Si 
 - [ ] **File d’attente** : Tout lire / album → son (ou `STATE_READY` logcat) en quelques secondes, pas 20 s
 - [ ] Volume **STREAM_MUSIC à 0** pour tests nocturnes (la lecture doit quand même bufferer)
 - [ ] Wi‑Fi → 4G → airplane 15 s → 4G : reprise **même titre, même position** (pas de `stop()`)
+- [ ] **Pendant** play / skip / seek / pause-play : bascules **Wi‑Fi ↔ 4G** répétées + coupure 15 s — pas de saut de titre au milieu
 - [ ] Fin de titre : **pas** de toast réseau, titre suivant part
 - [ ] Skip suivant ×5 : pas de crash, file conservée
 - [ ] Wi‑Fi OK : aucun « connexion perdue » / « réseau instable »
@@ -93,7 +94,8 @@ Même checklist **D0–D9** = P0–P9 avec API LAN.
 - [ ] File 10 titres, lecture 20+ min, enchaînement fin de piste
 - [ ] Logs : `EOS via error` sans `setMediaItem` qui vide la file
 - [ ] `playNow` puis `STATE_READY` (logcat `PlaybackService`) sans attendre `/warm` bloquant
-- [ ] Handover Wi‑Fi ↔ mobile : `rebindCurrentStream` / `rebindIfStalled`, reprise auto
+- [ ] Handover Wi‑Fi ↔ mobile **sur chaque action** (play, skip, seek, pause) : `rebindCurrentStream` / `rebindIfStalled`, reprise auto, **même titre**
+- [ ] Script : `DEVICE=R5CT7263YJL python3 scripts/android/samsung-network-handover.py`
 
 ---
 

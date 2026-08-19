@@ -149,7 +149,16 @@ object NetworkMonitor {
     }
 
     private fun bindProcessToActive(cm: ConnectivityManager) {
-        val net = cm.activeNetwork
+        // Pendant un appel, activeNetwork peut être IMS → plus d’HTTP → skip de titres.
+        val wifi = cm.allNetworks.firstOrNull { n ->
+            val c = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
+            c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && isUsableCaps(c)
+        }
+        val other = cm.allNetworks.firstOrNull { n ->
+            val c = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
+            isUsableCaps(c)
+        }
+        val net = wifi ?: other ?: cm.activeNetwork
         runCatching { cm.bindProcessToNetwork(net) }
     }
 
@@ -201,7 +210,7 @@ object NetworkMonitor {
     private fun onGoneOffline() {
         StreamPrefetcher.cancelIdle()
         StreamPrefetcher.markStreamDown(pauseMs = 8_000L)
-        // Si le titre courant (ou un suivant) est déjà téléchargé → bascule file:// sans couper
+        // Si le titre courant est déjà téléchargé → bascule file:// sans couper
         main.post {
             val exo = PlaybackService.Holder.player ?: return@post
             val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
@@ -235,26 +244,16 @@ object NetworkMonitor {
                 jumpToOffline(curIdx)
                 return@post
             }
-            val next = (curIdx until queue.size).firstOrNull { store.has(queue[it].id) }
-                ?: queue.indices.firstOrNull { store.has(queue[it].id) }
-            if (next != null) {
-                jumpToOffline(next)
-                android.widget.Toast.makeText(
-                    ovh.delhomme.ytmusic.YtMusicApp.instance,
-                    "Hors ligne — titres non téléchargés ignorés",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
-            } else {
-                val wasPlaying = exo.isPlaying || exo.playWhenReady
-                exo.playWhenReady = false
-                runCatching { exo.pause() }
-                if (wasPlaying) markPausedForNetwork()
-                android.widget.Toast.makeText(
-                    ovh.delhomme.ytmusic.YtMusicApp.instance,
-                    "Hors ligne — reprise dès que le réseau revient",
-                    android.widget.Toast.LENGTH_LONG,
-                ).show()
-            }
+            // Ne jamais sauter à UN AUTRE titre hors-ligne (ça « change de musique » en milieu de morceau).
+            val wasPlaying = exo.isPlaying || exo.playWhenReady
+            exo.playWhenReady = false
+            runCatching { exo.pause() }
+            if (wasPlaying) markPausedForNetwork()
+            android.widget.Toast.makeText(
+                ovh.delhomme.ytmusic.YtMusicApp.instance,
+                "Hors ligne — reprise dès que le réseau revient",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
             // Relance sync quand le réseau reviendra
             runCatching { container.offlineKeeper.requestSoon("back-soon") }
         }

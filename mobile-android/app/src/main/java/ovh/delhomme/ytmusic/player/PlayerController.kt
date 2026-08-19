@@ -518,7 +518,13 @@ class PlayerController(
         val nid = PlaybackService.Holder.queue.getOrNull(nextIdx)?.id
         if (!nid.isNullOrBlank()) {
             val base = streamUrl("_").substringBefore("/api/stream/")
-            StreamPrefetcher.warmTrack(base, nid)
+            StreamPrefetcher.warmTrackFormatOnly(base, nid)
+            StreamPrefetcher.prefetchUpcomingHeads(
+                base,
+                PlaybackService.Holder.queue.map { it.id },
+                nextIdx,
+                count = 3,
+            )
         }
         // REPEAT_MODE_ONE bloque le next ExoPlayer : on le désactive le temps du saut
         val wasOne = repeatMode == RepeatMode.One
@@ -757,8 +763,14 @@ class PlayerController(
         val track = queue[index]
         val base = streamUrl("_").substringBefore("/api/stream/")
         if (track.id.length == 11) {
-            StreamPrefetcher.quietPrefetch(1_800L)
-            StreamPrefetcher.warmTrack(base, track.id)
+            StreamPrefetcher.quietPrefetch(600L)
+            StreamPrefetcher.warmTrackFormatOnly(base, track.id)
+            StreamPrefetcher.prefetchUpcomingHeads(
+                base,
+                queue.map { it.id },
+                index,
+                count = 3,
+            )
         }
         runCatching {
             p.replaceMediaItem(index, mediaItemFor(track, streamUrl, queueTitle))
@@ -977,9 +989,9 @@ class PlayerController(
 
         val lyricsEnd =
             lastLyricEndMs > 0L &&
-                lastLyricEndMs.toDouble() / dur >= 0.55 &&
+                lastLyricEndMs.toDouble() / dur >= 0.82 &&
                 pos >= lastLyricEndMs + 5_000L &&
-                remaining <= 12_000L
+                remaining <= 8_000L
 
         if (!paddedEnd && !lyricsEnd) return
 
@@ -1216,21 +1228,27 @@ class PlayerController(
         val base = streamUrl("_").substringBefore("/api/stream/")
         val currentId = window.getOrNull(idx)?.id
         // Exo démarre tout de suite (stream progressif). Warm API en parallèle,
-        // prefetch des suivants seulement après les 1ères secondes (bande au titre 1).
-        StreamPrefetcher.quietPrefetch(2_400L)
+        // prefetch têtes des suivants dès ~700 ms (sans voler la bande au titre courant).
+        StreamPrefetcher.quietPrefetch(600L)
         if (!currentId.isNullOrBlank()) {
-            StreamPrefetcher.warmTrack(base, currentId)
+            StreamPrefetcher.warmTrackFormatOnly(base, currentId)
         }
         if (autoplay) {
             val ahead = window.drop(idx + 1).take(3)
             val startId = currentId
             scope.launch {
-                delay(2_500)
+                delay(700)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
+                StreamPrefetcher.prefetchUpcomingHeads(
+                    base,
+                    window.map { it.id },
+                    idx,
+                    count = 3,
+                )
             }
             scope.launch {
-                delay(12_000)
+                delay(20_000)
                 if (StreamPrefetcher.isStreamDown()) return@launch
                 val live = player() ?: return@launch
                 if (!live.isPlaying) return@launch

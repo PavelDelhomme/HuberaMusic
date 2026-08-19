@@ -724,6 +724,30 @@ export function getLikedTrackIds(userId: string, limit = 400): Set<string> {
   return new Set(rows.map((r) => r.track_id));
 }
 
+/** Titres aimés hydratés (Radio J’aime) — pas l’historique d’écoute. */
+export function getLikedTracks(userId: string, limit = 48): Track[] {
+  const rows = db
+    .prepare(
+      `SELECT l.track_id AS track_id, t.payload AS payload
+       FROM liked_tracks l
+       LEFT JOIN tracks_cache t ON t.id = l.track_id
+       WHERE l.user_id = ?
+       ORDER BY l.created_at DESC
+       LIMIT ?`,
+    )
+    .all(userId, limit) as { track_id: string; payload: string | null }[];
+  const out: Track[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const t = trackFromRow(r);
+    if (!t?.id || seen.has(t.id)) continue;
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(t.id)) continue;
+    seen.add(t.id);
+    out.push(t);
+  }
+  return out;
+}
+
 /**
  * Pool de goûts biblio pour personnaliser les similaires :
  * likes + titres sauvés + échantillon playlists locales + tops écoutés.

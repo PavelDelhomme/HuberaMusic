@@ -1,6 +1,6 @@
 {
   "name": "plm-desktop",
-  "version": "1.3.27",
+  "version": "1.3.32",
   "private": true,
   "main": "main.js",
   "scripts": {

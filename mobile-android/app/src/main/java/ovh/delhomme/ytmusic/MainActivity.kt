@@ -296,6 +296,15 @@ fun YtMusicAppContent(
     LaunchedEffect(Unit) {
         val intent = activity?.intent
         val injected = intent?.getStringExtra(MainActivity.EXTRA_ACCESS_TOKEN)?.trim().orEmpty()
+        // Toujours tenter LAN→prod (émulateur, hors Wi‑Fi maison) avant session debug ou stockée.
+        val switched = container.ensureReachableApiOrFallbackToProd()
+        if (switched) {
+            Toast.makeText(
+                context,
+                "API locale injoignable — bascule PROD",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
         if (BuildConfig.DEBUG && injected.isNotEmpty()) {
             container.tokenStore.saveSession(
                 injected,
@@ -308,15 +317,6 @@ fun YtMusicAppContent(
             intent?.removeExtra(MainActivity.EXTRA_USER_EMAIL)
             loggedIn = true
         } else {
-            // Hors Wi‑Fi maison : APK/override LAN → bascule VPS prod (évite « plus de connexion »)
-            val switched = container.ensureReachableApiOrFallbackToProd()
-            if (switched) {
-                Toast.makeText(
-                    context,
-                    "API locale injoignable — bascule PROD",
-                    Toast.LENGTH_LONG,
-                ).show()
-            }
             // Tokens déjà là → UI tout de suite (pas d’écran noir pendant /me)
             container.tokenStore.warmCache()
             val hasTokens =

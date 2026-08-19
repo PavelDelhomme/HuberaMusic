@@ -98,7 +98,9 @@ class OfflineDownloadManager(
                     if (offlineStore.has(track.id)) return@withPermit
                     ensureToken()
                     _progress.update { it + (track.id to 0.05f) }
-                    withTimeoutOrNull(2_500L) { warmStream?.invoke(track.id) }
+                    if (!isPlaybackActive()) {
+                        withTimeoutOrNull(800L) { warmStream?.invoke(track.id) }
+                    }
                     _progress.update { it + (track.id to 0.12f) }
                     offlineStore
                         .download(track, streamUrl(track.id)) { p ->
@@ -164,24 +166,23 @@ class OfflineDownloadManager(
         if (!aheadRunning.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
             try {
-                // Laisse Exo stabiliser le titre courant avant full-DL
-                kotlinx.coroutines.delay(2_500)
+                val delayMs = if (isPlaybackActive()) 18_000L else 2_500L
+                kotlinx.coroutines.delay(delayMs)
                 for ((i, t) in candidates.withIndex()) {
                     if (!NetworkMonitor.isOnline()) break
                     if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) break
                     if (offlineStore.has(t.id)) continue
                     enqueue(t)
-                    // Attendre la fin du job courant avant le suivant
-                    while (jobs[t.id]?.isActive == true) {
-                        kotlinx.coroutines.delay(400)
-                    }
-                    if (i < candidates.lastIndex) kotlinx.coroutines.delay(2_500)
+                    if (i < candidates.lastIndex) kotlinx.coroutines.delay(8_000)
                 }
             } finally {
                 aheadRunning.set(false)
             }
         }
     }
+
+    private fun isPlaybackActive(): Boolean =
+        ovh.delhomme.ytmusic.player.PlaybackService.Holder.isPlaybackActiveSafe()
 
     fun consumeError(trackId: String): String? {
         val msg = _errors.value[trackId] ?: return null
@@ -210,4 +211,7 @@ class OfflineDownloadManager(
         for (id in ids) if (cancel(id)) n++
         return n
     }
+
+    /** Annule tous les téléchargements actifs (ex. arrêt idle en arrière-plan). */
+    fun cancelAll(): Int = cancelMany(jobs.keys.toList())
 }

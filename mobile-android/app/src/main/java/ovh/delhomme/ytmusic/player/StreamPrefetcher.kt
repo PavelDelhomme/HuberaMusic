@@ -91,10 +91,12 @@ object StreamPrefetcher {
         PlayerCache.cancelPrefetch()
     }
 
-    /** Bloque le prefetch des suivants pendant [ms] (démarre le titre 1 sans concurrence). */
+    /**
+     * Bloque le prefetch des suivants pendant [ms] (laisse Exo démarrer le titre courant).
+     * N’annule pas les requêtes en vol — évite de couper le flux en cours de lecture.
+     */
     fun quietPrefetch(ms: Long) {
         quietUntil = System.currentTimeMillis() + ms.coerceAtLeast(0L)
-        cancelIdle()
     }
 
     fun isQuiet(): Boolean = System.currentTimeMillis() < quietUntil
@@ -230,19 +232,49 @@ object StreamPrefetcher {
         })
     }
 
+    /** Chauffe le format API sans prefetch Exo (Exo charge le titre courant). */
+    fun warmTrackFormatOnly(baseApi: String, trackId: String) {
+        if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
+        warmBatch(baseApi, listOf(trackId))
+    }
+
     fun warmTrack(baseApi: String, trackId: String) {
         if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
         warmBatch(baseApi, listOf(trackId))
-        exoPrefetch(baseApi, trackId, distance = 0)
+        if (!isPlaybackActive()) {
+            exoPrefetch(baseApi, trackId, distance = 0)
+        }
     }
+
+    /** ~3 s de tête pour les [count] titres après [fromIndex] (changement de piste). */
+    fun prefetchUpcomingHeads(
+        baseApi: String,
+        queueIds: List<String>,
+        fromIndex: Int,
+        count: Int = 3,
+    ) {
+        if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        val idx = fromIndex.coerceIn(0, queueIds.lastIndex.coerceAtLeast(0))
+        queueIds.drop(idx + 1).take(count.coerceIn(1, 5)).forEach { id ->
+            if (id.length != 11 || isLocalOffline(id)) return@forEach
+            val url = "${baseApi.trimEnd('/')}/api/stream/$id"
+            PlayerCache.prefetchHead(YtMusicApp.instance, url, id, HEAD_3S)
+        }
+    }
+
+    private fun isPlaybackActive(): Boolean =
+        PlaybackService.Holder.isPlaybackActiveSafe()
 
     private fun exoPrefetch(baseApi: String, trackId: String, distance: Int) {
         if (isStreamDown() || isLocalOffline(trackId)) return
         val unmetered = isUnmetered()
+        val playing = isPlaybackActive()
         val bytes = when {
+            playing && distance >= 1 -> HEAD_3S
             !unmetered && distance == 0 -> HEAD_NEXT_METERED
             !unmetered && distance <= 2 -> HEAD_METERED
             !unmetered -> HEAD_3S
+            playing && distance == 0 -> HEAD_3S
             distance == 0 -> HEAD_NEXT_WIFI
             distance <= 2 -> HEAD_NEAR_WIFI
             distance <= 5 -> HEAD_WIFI
@@ -326,8 +358,12 @@ object StreamPrefetcher {
         }
         val current = queueIds[idx]
         warmBatch(baseApi, listOf(current) + nextIds + behindIds)
-        nextIds.forEachIndexed { i, id ->
-            exoPrefetch(baseApi, id, distance = i)
+        if (isPlaybackActive()) {
+            prefetchUpcomingHeads(baseApi, queueIds, idx, count = aheadN.coerceAtMost(3))
+        } else {
+            nextIds.forEachIndexed { i, id ->
+                exoPrefetch(baseApi, id, distance = i + 1)
+            }
         }
     }
 
