@@ -272,12 +272,21 @@ class PlaybackService : MediaSessionService() {
                 }
                 val curIdx = exo.currentMediaItemIndex
                 val forwardAdvance = prevIdx >= 0 && curIdx > prevIdx
-                if (naturalExoEnd || naturalBufEnd || forwardAdvance || mediaItemActuallyEnded(snapPrevPos, snapPrevDur)) {
+                if (naturalExoEnd || naturalBufEnd || mediaItemActuallyEnded(snapPrevPos, snapPrevDur)) {
                     recoveringTrackId = ""
                     earlyEndRetries = 0
                     if (forwardAdvance) Holder.index = curIdx
-                } else {
-                    maybeRecoverEarlyEnd(exo, snapPrevId, snapPrevPos, snapPrevDur, snapPrevBuf)
+                } else if (forwardAdvance && prevIdx >= 0) {
+                    // Recovery uniquement si saut AVANT ~72 % de la durée Exo réelle
+                    val exoRatio = if (snapPrevDur >= 45_000L) {
+                        snapPrevPos.toDouble() / snapPrevDur.toDouble()
+                    } else {
+                        1.0
+                    }
+                    if (exoRatio < 0.72) {
+                        maybeRecoverEarlyEnd(exo, snapPrevId, snapPrevPos, snapPrevDur, snapPrevBuf)
+                    }
+                    Holder.index = curIdx
                 }
                 // Stop en fin de file user si lecture auto OFF (suggestions restent dans la file)
                 val idx = exo.currentMediaItemIndex
@@ -1176,7 +1185,8 @@ class PlaybackService : MediaSessionService() {
         }
         if (exoDur >= 45_000L) {
             if (pos.toDouble() / exoDur.toDouble() >= 0.88) return false
-            return pos.toDouble() / exoDur.toDouble() < 0.85 && (exoDur - pos) > 8_000L
+            // Vrai milieu de piste seulement (< 72 % Exo) — pas une coda / fin catalogue
+            return pos.toDouble() / exoDur.toDouble() < 0.72 && (exoDur - pos) > 8_000L
         }
         val cat = catalog?.takeIf { it >= 45_000L } ?: return false
         // Durée Exo inconnue : seulement un vrai milieu (< 55 % catalogue), pas la coda.
@@ -1276,6 +1286,11 @@ class PlaybackService : MediaSessionService() {
         val prevIdx = Holder.queue.indexOfFirst { it.id == prevId }
         if (prevIdx < 0) return
         val curIdx = exo.currentMediaItemIndex
+        // Encore sur le même titre : ne pas « récupérer » près de la fin (catalogue > flux)
+        if (!fromStateEnded && exo.currentMediaItem?.mediaId == prevId) {
+            val dur = snapPrevDur.takeIf { it >= 45_000L } ?: return
+            if (pos.toDouble() / dur.toDouble() >= 0.72) return
+        }
         // Ne jamais rebobiner vers un titre déjà passé (race async / prevPlayingId périmé)
         if (prevIdx < curIdx) {
             AppLog.d(
