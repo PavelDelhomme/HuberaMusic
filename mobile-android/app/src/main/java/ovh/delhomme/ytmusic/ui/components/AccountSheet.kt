@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -68,6 +69,7 @@ fun AccountSheet(
     var user by remember { mutableStateOf<UserDto?>(null) }
     var passkeyInfo by remember { mutableStateOf<String?>(null) }
     var updateHint by remember { mutableStateOf<String?>(null) }
+    var showEqualizer by remember { mutableStateOf(false) }
     var ytmLinked by remember {
         mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
     }
@@ -204,6 +206,16 @@ fun AccountSheet(
                 },
             )
             AccountRow(
+                icon = { Icon(Icons.Default.Tune, contentDescription = null) },
+                title = "Égaliseur",
+                subtitle = if (ovh.delhomme.ytmusic.player.AudioEqualizer.isEnabled()) {
+                    "Actif — graves / médiums / aigus"
+                } else {
+                    "Ajuster le son"
+                },
+                onClick = { showEqualizer = true },
+            )
+            AccountRow(
                 icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
                 title = "API & logs",
                 subtitle = "${container.apiEnvLabel()} · ${container.resolvedApiBase()}",
@@ -277,6 +289,9 @@ fun AccountSheet(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
             )
         }
+    }
+    if (showEqualizer) {
+        EqualizerSheet(onDismiss = { showEqualizer = false })
     }
 }
 

@@ -70,15 +70,18 @@ android {
         } else {
             ""
         }
+        val deployUrl = rootEnv["DEPLOY_URL"]?.trim()?.trimEnd('/').orEmpty()
+        val buildingProd = gradle.startParameter.taskNames.any { it.contains("Prod", ignoreCase = true) }
         // Téléphone physique ≠ 127.0.0.1 (ça pointe le phone). Toujours LAN pour le local.
         val apiBase = when {
-            rawApi.isBlank() -> lanApi.ifBlank { error("API_BASE_URL manquant et IP LAN introuvable") }
-            rawApi.contains("127.0.0.1") || rawApi.contains("localhost") ->
+            rawApi.isNotBlank() && !(rawApi.contains("127.0.0.1") || rawApi.contains("localhost")) -> rawApi
+            rawApi.isNotBlank() && (rawApi.contains("127.0.0.1") || rawApi.contains("localhost")) ->
                 lanApi.ifBlank {
                     logger.warn("API locale 127.0.0.1/localhost → IP LAN introuvable, garde $rawApi (émulateur ?)")
                     rawApi
                 }
-            else -> rawApi
+            buildingProd && deployUrl.startsWith("https://") -> deployUrl
+            else -> lanApi.ifBlank { error("API_BASE_URL manquant et IP LAN introuvable") }
         }
         // Jamais préremplir les secrets locaux quand l’APK pointe la prod / un HTTPS distant
         val isRemoteApi = apiBase.startsWith("https://") &&
@@ -180,6 +183,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.navigation:navigation-compose:2.8.4")

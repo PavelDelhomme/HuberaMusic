@@ -15,6 +15,7 @@ import {
   getEntityHistory,
   getLibraryTasteTracks,
   getLikedTrackIds,
+  getLikedTracks,
 } from '../library/library.js';
 import { upsertTrack } from '../library/db.js';
 import { isWeakTitle, preferCatalogAudio } from '../youtube/mappers.js';
@@ -1196,7 +1197,10 @@ export async function radioForUser(
   const prefTags = prefGenresToTags(prefs.genres || []);
   const catTags = [...(cat.genreTags || [])];
   const targetTags = [...new Set([...catTags, ...prefTags])];
-  const cacheKey = mixKeyCategory(cat.id, genresCacheKey(prefs.genres || []));
+  const cacheKey = mixKeyCategory(
+    cat.id === 'liked-radio' ? 'liked-radio:from-likes' : cat.id,
+    genresCacheKey(prefs.genres || []),
+  );
 
   if (!light) {
     const hit = getMixCache(userId, cacheKey);
@@ -1216,20 +1220,29 @@ export async function radioForUser(
   let candidates: Track[] = [];
 
   if (cat.id === 'liked-radio') {
-    const top = getTopListened(userId, light ? 12 : 24);
-    seedTrack = top[0] || null;
-    if (seedTrack && !light) {
-      const { radio, related } = await getRelated(seedTrack.id);
-      candidates = [...radio, ...related, ...top];
-    } else {
-      candidates = [...top];
+    const liked = getLikedTracks(userId, light ? 16 : 48);
+    const pool = liked.length ? liked : getLibraryTasteTracks(userId, light ? 16 : 40);
+    seedTrack = pool[0] || getTopListened(userId, 1)[0] || null;
+    candidates = [...pool];
+    if (seedTrack && !light && pool.length) {
+      const hop = pool.slice(0, 3);
+      const bags = await Promise.all(
+        hop.map(async (s) => {
+          try {
+            const { radio, related } = await getRelated(s.id);
+            return [...radio, ...related];
+          } catch {
+            return [] as Track[];
+          }
+        }),
+      );
+      candidates = [...candidates, ...bags.flat()];
     }
-    // Peu d’historique → amorcer via genres prefs
     if (!candidates.length && prefs.genres?.length) {
       const g = prefs.genres[0];
       const res = await search(`${g} playlist`, 'song');
       candidates = [...(res.songs || []), ...(res.videos || [])];
-      seedTrack = candidates[0] || null;
+      seedTrack = candidates[0] || seedTrack;
     }
   }
 
@@ -1295,7 +1308,8 @@ export async function radioForUser(
     candidates,
     seed: seedTrack,
     mode: cat.mode === 'radio' ? 'style' : cat.mode,
-    softExcludePlayed: !light,
+    // Radio J’aime : garder les likes même déjà écoutés (sinon mix = radio du dernier titre)
+    softExcludePlayed: cat.id === 'liked-radio' ? false : !light,
     targetTags,
   });
   const out = tracks.slice(0, light ? MIX_PREVIEW : MIX_TARGET);

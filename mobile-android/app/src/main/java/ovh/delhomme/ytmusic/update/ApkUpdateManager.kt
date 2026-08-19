@@ -37,8 +37,11 @@ class ApkUpdateManager(
 
     fun shouldAutoCheck(now: Long = System.currentTimeMillis()): Boolean {
         val last = lastCheckAt()
-        return now - last >= TimeUnit.DAYS.toMillis(1)
+        return now - last >= PERIODIC_INTERVAL_MS
     }
+
+    /** Au cold start : toujours interroger le serveur (une fois par process). */
+    suspend fun checkOnStartup(): CheckResult = check(force = true)
 
     suspend fun check(force: Boolean = false): CheckResult = withContext(Dispatchers.IO) {
         if (!force && !shouldAutoCheck()) {
@@ -129,5 +132,7 @@ class ApkUpdateManager(
 
     companion object {
         private const val KEY_LAST_CHECK = "last_check_at"
+        /** Vérif périodique en session (à optimiser après campagne batterie). */
+        private val PERIODIC_INTERVAL_MS = TimeUnit.HOURS.toMillis(6)
     }
 }

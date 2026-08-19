@@ -23,6 +23,7 @@ import { AuthModal } from '../auth/AuthModal';
 import { DevicePicker } from '../auth/DevicePicker';
 import { PerfHud } from './PerfHud';
 import { InstallBanner } from './InstallBanner';
+import { UpdateBanner } from './UpdateBanner';
 import { ItemActionsSheet } from '../sheets/ItemActionsSheet';
 import { NowPlaying, type NowPlayingTab } from '../player/NowPlaying';
 import { OnboardingWizard } from '../auth/OnboardingWizard';
@@ -394,7 +395,7 @@ export function Layout() {
           <BrandLogo className="h-8 w-8 shrink-0" />
           <span
             className="font-display text-lg font-semibold tracking-tight"
-            title="Pue La Merde"
+            title="PLM"
           >
             PLM
           </span>
@@ -926,6 +927,7 @@ export function Layout() {
         onClose={() => setNowPlayingOpen(false)}
       />
       <InstallBanner />
+      <UpdateBanner />
       <SearchIdentifySheet open={identifyOpen} onClose={() => setIdentifyOpen(false)} />
       <AuthModal
         open={(authOpen || (authLoaded && isGuest && !allowGuestPage)) && !needsOnboarding}

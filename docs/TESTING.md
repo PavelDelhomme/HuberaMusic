@@ -11,6 +11,8 @@ Checklists à la **racine** :
 | [`../TESTS_DEV.md`](../TESTS_DEV.md) | **Session DEV** Samsung + web/API local |
 | [`../TESTS_PROD.md`](../TESTS_PROD.md) | **Session PROD** Nothing + web/API prod |
 | [`../docs/FEATURES-BACKLOG.md`](./FEATURES-BACKLOG.md) | Backlog produit UX |
+| [`./PLM.md`](./PLM.md) | Identité PLM / nommage |
+| [`./ANDROID-PLAYER.md`](./ANDROID-PLAYER.md) | Lecteur Android (EOS, offline) |
 
 ## Smoke API automatisé (charge légère)
 
@@ -40,8 +42,17 @@ Voir [`ANDROID.md`](./ANDROID.md).
 
 ## Perf / batterie
 
+**Tests fonctionnels (maintenant)** : volume muet OK ; pas de session batterie sur USB.  
+Détails : [`TESTS-SESSIONS.md`](./TESTS-SESSIONS.md) § Volume & batterie.
+
+**Tests batterie (plus tard — app stable + ADB Wi‑Fi + débranché)** :
+
 ```bash
 make battery-help
-make adb-both
-# sessions : battery-go / battery-suite
+make adb-wifi-doctor
+make adb-wifi-ensure
+# Débrancher le câble, puis :
+make battery-go          # ou battery-go-calm / battery-suite
 ```
+
+Les scripts refusent ou avertissent si le téléphone est encore en charge USB.

@@ -227,4 +227,4 @@ Quand `AUTH_ALLOW_REGISTER=1` sur le **conteneur prod** : après création de co
 
 | ID | Sujet | Notes |
 |----|-------|-------|
-| Z99 | **Rebrand install / domaines PLM** | L’app s’appelle **PLM** (Pue La Merde) dans l’UI web + mobile. Domaines `plm.delhomme.ovh` et `pue-la-merde.delhomme.ovh` (redirections déjà côté DNS/NPM). À aligner **en toute fin** : prompt d’install PWA (« Installer YTMusic » → PLM), manifests, titres onglet, stores texts, éventuels liens « Get the app », docs restantes encore « YTMusic ». **Ignore pour le sprint UX actuel.** |
+| Z99 | **Rebrand install / domaines PLM** | UI web + mobile + PWA → **PLM** (fait en 1.3.34 : manifests, titres, thèmes Android `Theme.PLM`). Domaines `plm.delhomme.ovh` / redirect OK. **Reste** : renommer repo Git `YTMusic` quand prod stable. Voir [`docs/PLM.md`](docs/PLM.md). |

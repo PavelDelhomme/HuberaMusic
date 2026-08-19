@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">PLM</string>
-    <string name="app_name_full">Pue La Merde</string>
+    <!-- Nom complet projet : docs/PLM.md — pas affiché en UI principale -->
+    <string name="app_name_full" translatable="false">PueLaMerde</string>
     <string name="playback_channel">Lecture PLM</string>
     <string name="playback_channel_name">Lecture en cours</string>
 </resources>

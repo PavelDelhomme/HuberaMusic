@@ -32,6 +32,9 @@ import android.widget.Toast
 
 enum class RepeatMode { Off, All, One }
 
+/** Volume ExoPlayer — ne pas saturer le canal média du téléphone. */
+internal const val PLAYBACK_VOLUME = 0.82f
+
 data class PlayerUiState(
     val track: TrackDto? = null,
     val playing: Boolean = false,
@@ -518,7 +521,13 @@ class PlayerController(
         val nid = PlaybackService.Holder.queue.getOrNull(nextIdx)?.id
         if (!nid.isNullOrBlank()) {
             val base = streamUrl("_").substringBefore("/api/stream/")
-            StreamPrefetcher.warmTrack(base, nid)
+            StreamPrefetcher.warmTrackFormatOnly(base, nid)
+            StreamPrefetcher.prefetchUpcomingHeads(
+                base,
+                PlaybackService.Holder.queue.map { it.id },
+                nextIdx,
+                count = 3,
+            )
         }
         // REPEAT_MODE_ONE bloque le next ExoPlayer : on le désactive le temps du saut
         val wasOne = repeatMode == RepeatMode.One
@@ -574,6 +583,25 @@ class PlayerController(
         val savedQ = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
         val pNow = player() ?: PlaybackService.Holder.player
         val curIdx = (pNow?.currentMediaItemIndex ?: PlaybackService.Holder.index).coerceAtLeast(0)
+        if (savedQ.size > curIdx + 1) {
+            val p = pNow
+            if (p != null) {
+                if (p.playbackState == Player.STATE_ENDED ||
+                    p.playbackState == Player.STATE_IDLE ||
+                    p.currentMediaItemIndex < curIdx + 1
+                ) {
+                    playNow(p, savedQ, curIdx + 1, autoplay = true)
+                    return
+                }
+                if (p.hasNextMediaItem()) {
+                    p.seekToNextMediaItem()
+                    p.prepare()
+                    p.play()
+                    syncFrom(p)
+                    return
+                }
+            }
+        }
         if (savedQ.size > curIdx + 1 && (pNow == null || pNow.mediaItemCount <= curIdx + 1)) {
             if (pNow != null) {
                 playNow(pNow, savedQ, curIdx + 1, autoplay = true)
@@ -625,9 +653,30 @@ class PlayerController(
     fun skipPrev() {
         connect()
         val p = player() ?: PlaybackService.Holder.player ?: return
-        if (p.currentPosition > 3000L) {
+        val saved = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
+        val idleOrEmpty =
+            p.mediaItemCount == 0 ||
+                p.playbackState == Player.STATE_IDLE
+        val curIdx = if (idleOrEmpty) {
+            PlaybackService.Holder.index.coerceIn(0, saved.lastIndex.coerceAtLeast(0))
+        } else {
+            p.currentMediaItemIndex.coerceAtLeast(0)
+        }
+        val posMs = if (idleOrEmpty) {
+            _state.value.positionMs.coerceAtLeast(0L)
+        } else {
+            p.currentPosition.coerceAtLeast(0L)
+        }
+        if (!idleOrEmpty && posMs > 3000L) {
             p.seekTo(0L)
             syncFrom(p)
+            return
+        }
+        if (idleOrEmpty && saved.size > 1) {
+            val prev = if (curIdx > 0) curIdx - 1 else saved.lastIndex
+            userWantsPlaying = true
+            pendingAutoplay = true
+            playNow(p, saved, prev, autoplay = true)
             return
         }
         val wasOne = repeatMode == RepeatMode.One
@@ -638,9 +687,14 @@ class PlayerController(
                 p.play()
             }
             p.mediaItemCount > 1 -> {
-                val prev = if (p.currentMediaItemIndex > 0) p.currentMediaItemIndex - 1 else p.mediaItemCount - 1
+                val prev = if (curIdx > 0) curIdx - 1 else p.mediaItemCount - 1
                 p.seekTo(prev, 0L)
                 p.play()
+            }
+            saved.size > 1 -> {
+                val prev = if (curIdx > 0) curIdx - 1 else saved.lastIndex
+                userWantsPlaying = true
+                playNow(p, saved, prev, autoplay = true)
             }
             else -> p.seekTo(0L)
         }
@@ -746,9 +800,20 @@ class PlayerController(
     }
 
     fun playAt(index: Int) {
-        val p = player() ?: return
-        val queue = PlaybackService.Holder.queue
+        connect()
+        val p = player() ?: PlaybackService.Holder.player ?: return
+        val queue = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
         if (index !in queue.indices) return
+        val idleOrEmpty =
+            p.mediaItemCount == 0 ||
+                p.playbackState == Player.STATE_IDLE ||
+                p.playbackState == Player.STATE_ENDED
+        if (idleOrEmpty || index !in 0 until p.mediaItemCount) {
+            userWantsPlaying = true
+            pendingAutoplay = true
+            playNow(p, queue, index, autoplay = true)
+            return
+        }
         if (index >= userQueueEnd) {
             userQueueEnd = (index + 1).coerceAtMost(queue.size)
         }
@@ -757,8 +822,15 @@ class PlayerController(
         val track = queue[index]
         val base = streamUrl("_").substringBefore("/api/stream/")
         if (track.id.length == 11) {
-            StreamPrefetcher.quietPrefetch(1_800L)
-            StreamPrefetcher.warmTrack(base, track.id)
+            StreamPrefetcher.quietPrefetch(600L)
+            StreamPrefetcher.warmTrackFormatOnly(base, track.id)
+            StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, index, radius = 2)
+            StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                base,
+                queue.map { it.id },
+                index,
+                count = 5,
+            )
         }
         runCatching {
             p.replaceMediaItem(index, mediaItemFor(track, streamUrl, queueTitle))
@@ -915,6 +987,30 @@ class PlayerController(
         }
     }
 
+    private var lastRollingMaintainAt = 0L
+
+    fun tickPrefetch() {
+        val p = player() ?: return
+        if (!p.isPlaying && p.playbackState != Player.STATE_READY) return
+        val now = System.currentTimeMillis()
+        if (now - lastRollingMaintainAt < 10_000L) return
+        lastRollingMaintainAt = now
+        val queue = PlaybackService.Holder.queue
+        if (queue.isEmpty()) return
+        val idx = p.currentMediaItemIndex.coerceIn(0, queue.lastIndex)
+        val base = streamUrl("_").substringBefore("/api/stream/")
+        val ids = queue.map { it.id }
+        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 8)
+        if (!StreamPrefetcher.isStreamDown()) {
+            runCatching {
+                YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
+                    queue.drop(idx + 1),
+                    limit = 1,
+                )
+            }
+        }
+    }
+
     fun tick() {
         val p = player() ?: return
         if (pauseAtEndOfTrack) {
@@ -934,6 +1030,7 @@ class PlayerController(
             }
         }
         maybeSkipTrailingSilence(p)
+        tickPrefetch()
         syncFrom(p)
     }
 
@@ -952,41 +1049,31 @@ class PlayerController(
         val pos = p.currentPosition
         if (dur <= 0L || dur == androidx.media3.common.C.TIME_UNSET || pos < 0L) return
         if (dur < 45_000L) return
-        // Jamais pendant les 75 % premiers
-        if (pos.toDouble() / dur < 0.75) return
+        // Jamais pendant les 92 % premiers — évite couper l’outro (ex. Papaoutai)
+        if (pos.toDouble() / dur < 0.92) return
         val remaining = dur - pos
-        // Il doit rester peu d’audio (sinon break / outro encore jouable)
-        if (remaining > 18_000L || remaining < 800L) return
+        // Il doit rester très peu d’audio audible
+        if (remaining > 2_500L || remaining < 400L) return
 
         val trackId = p.currentMediaItem?.mediaId ?: return
         if (silenceSkipTrackId == trackId) return
-        if (silenceActiveTrackId != trackId) {
-            silenceActiveTrackId = trackId
-            lastLyricEndMs = -1L
-            prefetchLyricsEnd(trackId)
-        }
 
         val track = PlaybackService.Holder.queue.firstOrNull { it.id == trackId }
         val metaMs = track?.durationMsOrNull()?.takeIf { it >= 45_000L }
-        // Seulement si meta est nettement plus courte ET on est déjà dans les ~12 s finales du flux
+        // Meta YTM souvent trop courte : ne couper que si le flux dépasse clairement + padding réel
         val paddedEnd =
             metaMs != null &&
-                dur >= metaMs + 5_000L &&
-                pos >= metaMs + 2_500L &&
-                remaining <= 12_000L
+                dur >= metaMs + 12_000L &&
+                pos >= metaMs + 6_000L &&
+                remaining <= 2_000L &&
+                pos.toDouble() / dur >= 0.96
 
-        val lyricsEnd =
-            lastLyricEndMs > 0L &&
-                lastLyricEndMs.toDouble() / dur >= 0.55 &&
-                pos >= lastLyricEndMs + 5_000L &&
-                remaining <= 12_000L
-
-        if (!paddedEnd && !lyricsEnd) return
+        if (!paddedEnd) return
 
         silenceSkipTrackId = trackId
         AppLog.i(
             "PlayerController",
-            "skip fin vide id=$trackId pos=$pos dur=$dur meta=$metaMs lyricEnd=$lastLyricEndMs padded=$paddedEnd lyrics=$lyricsEnd",
+            "skip fin vide id=$trackId pos=$pos dur=$dur meta=$metaMs padded=$paddedEnd",
         )
         skipNext()
     }
@@ -1216,32 +1303,29 @@ class PlayerController(
         val base = streamUrl("_").substringBefore("/api/stream/")
         val currentId = window.getOrNull(idx)?.id
         // Exo démarre tout de suite (stream progressif). Warm API en parallèle,
-        // prefetch des suivants seulement après les 1ères secondes (bande au titre 1).
-        StreamPrefetcher.quietPrefetch(2_400L)
+        // prefetch têtes des suivants dès ~700 ms (sans voler la bande au titre courant).
+        StreamPrefetcher.quietPrefetch(600L)
         if (!currentId.isNullOrBlank()) {
-            StreamPrefetcher.warmTrack(base, currentId)
+            StreamPrefetcher.warmTrackFormatOnly(base, currentId)
         }
         if (autoplay) {
             val ahead = window.drop(idx + 1).take(3)
             val startId = currentId
             scope.launch {
-                delay(2_500)
+                delay(700)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
-            }
-            scope.launch {
-                delay(12_000)
-                if (StreamPrefetcher.isStreamDown()) return@launch
-                val live = player() ?: return@launch
-                if (!live.isPlaying) return@launch
-                if (live.currentMediaItem?.mediaId != startId) return@launch
+                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 8)
                 runCatching {
-                    YtMusicApp.instance.container.downloadManager.enqueueAhead(ahead, limit = 2)
+                    YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
+                        window.drop(idx + 1),
+                        limit = 1,
+                    )
                 }
             }
         }
         // Ne jamais toucher au volume STREAM_MUSIC système : garder celui déjà réglé.
-        player.volume = 1f
+        player.volume = PLAYBACK_VOLUME
         val playingSame =
             autoplay &&
                 player.isPlaying &&
@@ -1254,15 +1338,22 @@ class PlayerController(
             pos,
         )
         applyRepeatShuffle(player)
+        // Toujours prepare : le bouton play après restore/sync doit répondre sans rebuild complet.
+        player.prepare()
         if (autoplay) {
-            player.prepare()
             player.play()
         } else {
-            // Restore après kill : ne pas ouvrir le flux tout de suite (502 → stop() vidait la file)
             player.pause()
         }
         AppLog.i("player", "playNow id=$currentId idx=$idx n=${window.size} pos=$pos auto=$autoplay")
         syncFrom(player)
+    }
+
+    fun prefetchQueueFocus(centerIndex: Int, radius: Int = 2) {
+        val queue = PlaybackService.Holder.queue
+        if (queue.isEmpty()) return
+        val base = streamUrl("_").substringBefore("/api/stream/")
+        StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, centerIndex, radius)
     }
 
     private fun warmAround(tracks: List<TrackDto>, startIndex: Int) {
@@ -1274,7 +1365,7 @@ class PlayerController(
             base,
             playable.map { it.id },
             idx,
-            ahead = 4,
+            ahead = 6,
             behind = 1,
         )
         CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)
@@ -1339,8 +1430,18 @@ class PlayerController(
     }
 
     private fun syncFrom(player: Player) {
-        val queue = PlaybackService.Holder.queue
+        var queue = PlaybackService.Holder.queue
         val idx = player.currentMediaItemIndex.coerceAtLeast(0)
+        val exoDur = player.duration.takeIf { it > 0L && it != androidx.media3.common.C.TIME_UNSET }
+        if (exoDur != null && idx in queue.indices) {
+            val cur = queue[idx]
+            if (cur.durationMsOrNull() == null) {
+                val patched = queue.toMutableList()
+                patched[idx] = cur.withKnownDurationMs(exoDur)
+                queue = patched
+                PlaybackService.Holder.queue = patched
+            }
+        }
         val track = queue.getOrNull(idx)
             ?: queue.getOrNull(PlaybackService.Holder.index)
         shuffleEnabled = player.shuffleModeEnabled
