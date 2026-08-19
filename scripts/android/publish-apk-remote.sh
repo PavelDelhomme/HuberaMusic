@@ -59,19 +59,29 @@ if [[ -z "$TOKEN" ]]; then
 fi
 
 VERSION_NAME="upload"
+VERSION_CODE=""
 if [[ -f "$OUT_DIR/manifest.json" ]]; then
-  VERSION_NAME="$(python3 -c "import json; print(json.load(open('$OUT_DIR/manifest.json')).get('versionName','upload'))")"
+  read -r VERSION_NAME VERSION_CODE < <(
+    python3 -c "import json; m=json.load(open('$OUT_DIR/manifest.json')); print(m.get('versionName','upload'), m.get('versionCode',''))"
+  )
 fi
 
 echo "==> Upload → $DEPLOY_URL/api/admin/apk/upload"
 echo "    apiBaseUrl annoncée : $API_BASE_URL"
 echo "    fichier : $APK ($(du -h "$APK" | cut -f1))"
 
+UPLOAD_HEADERS=(
+  -H "Authorization: Bearer $TOKEN"
+  -H "Content-Type: application/vnd.android.package-archive"
+  -H "X-Apk-Api-Base-Url: $API_BASE_URL"
+  -H "X-Apk-Version-Name: $VERSION_NAME"
+)
+if [[ -n "$VERSION_CODE" ]]; then
+  UPLOAD_HEADERS+=(-H "X-Apk-Version-Code: $VERSION_CODE")
+fi
+
 curl -fsS -X POST "$DEPLOY_URL/api/admin/apk/upload" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/vnd.android.package-archive" \
-  -H "X-Apk-Api-Base-Url: $API_BASE_URL" \
-  -H "X-Apk-Version-Name: $VERSION_NAME" \
+  "${UPLOAD_HEADERS[@]}" \
   --data-binary @"$APK" \
   | python3 -m json.tool
 
