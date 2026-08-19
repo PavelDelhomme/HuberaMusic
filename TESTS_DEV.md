@@ -63,10 +63,13 @@ Parallèle recommandé : web PC **et** Samsung pour chaque sous-catégorie.
 
 ## D2 — Batterie & usage
 
-- [ ] `make adb-wifi-doctor` (Samsung OK)
-- [ ] Smoke usage 10 min lecture + scroll Accueil / Biblio (notes janks)
-- [ ] Session calme optionnelle : `make battery-go-calm` ou `DURATION=600 make battery-go`
-- [ ] Rapport email batterie reçu / lisible (si SMTP OK)
+> **Reporté** tant que l’app n’est pas finalisée et que les tests se font en **USB** (charge = mesures invalides).  
+> Garder un smoke usage 10 min si tu veux (lecture + scroll) — **volume muet OK**. Voir [`docs/TESTS-SESSIONS.md`](docs/TESTS-SESSIONS.md) § Volume & batterie.
+
+- [ ] ~~`make adb-wifi-doctor`~~ → **N/A** (phase actuelle)
+- [ ] Smoke usage 10 min lecture + scroll Accueil / Biblio (optionnel, notes janks)
+- [ ] ~~Session `make battery-go-calm`~~ → **N/A** — à refaire avec ADB Wi‑Fi + téléphone débranché
+- [ ] ~~Rapport email batterie~~ → **N/A**
 
 ---
 

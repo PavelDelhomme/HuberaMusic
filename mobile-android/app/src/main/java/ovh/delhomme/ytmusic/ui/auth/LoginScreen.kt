@@ -107,7 +107,7 @@ fun LoginScreen(
             color = MaterialTheme.colorScheme.primary,
         )
         Text(
-            "Pue La Merde",
+            "Musique sans pubs",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

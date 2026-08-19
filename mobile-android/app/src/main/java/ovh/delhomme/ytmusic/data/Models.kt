@@ -130,6 +130,20 @@ data class TrackDto(
         }
     }
 
+    /** Affichage mm:ss pour listes / file d’attente. */
+    fun durationLabel(): String? {
+        val ms = durationMsOrNull() ?: return null
+        return formatDurationLabel(ms)
+    }
+
+    /** Enrichit la piste avec une durée Exo/catalogue sans toucher au reste. */
+    fun withKnownDurationMs(ms: Long): TrackDto {
+        if (ms <= 0L) return this
+        durationMsOrNull()?.takeIf { kotlin.math.abs(it - ms) < 2_000L }?.let { return this }
+        val sec = ((ms + 500L) / 1000L).toInt().coerceAtLeast(1)
+        return copy(durationSeconds = sec, duration = formatDurationLabel(ms))
+    }
+
     /** Durée en ms pour MediaSession / lockscreen (si connue). */
     fun durationMsOrNull(): Long? {
         durationSeconds?.takeIf { it > 0 }?.let { return it * 1000L }
@@ -159,6 +173,14 @@ data class TrackDto(
     fun isPlayable(): Boolean =
         !isPlaylist() && !isArtist() && !isAlbum() &&
             id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))
+}
+
+/** mm:ss pour UI (file, listes, mini-lecteur). */
+fun formatDurationLabel(ms: Long): String {
+    val totalSec = (ms / 1000L).toInt().coerceAtLeast(0)
+    val m = totalSec / 60
+    val s = totalSec % 60
+    return "%d:%02d".format(m, s)
 }
 
 @JsonClass(generateAdapter = false)

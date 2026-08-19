@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.YTMusic.Splash" parent="Theme.YTMusic">
+    <style name="Theme.PLM.Splash" parent="Theme.PLM">
         <item name="android:windowSplashScreenBackground">@color/yt_bg</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
         <item name="android:windowSplashScreenIconBackgroundColor">@color/yt_bg</item>

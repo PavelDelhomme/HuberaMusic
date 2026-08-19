@@ -6,14 +6,14 @@
     <color name="yt_red">#FFFF0033</color>
     <color name="yt_muted">#FFB3B3B3</color>
 
-    <style name="Theme.YTMusic" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.PLM" parent="android:Theme.Material.NoActionBar">
         <item name="android:statusBarColor">@color/yt_bg</item>
         <item name="android:navigationBarColor">@color/yt_bg</item>
         <item name="android:windowBackground">@color/yt_bg</item>
         <item name="android:colorPrimary">@color/yt_red</item>
     </style>
 
-    <style name="Theme.YTMusic.Splash" parent="Theme.YTMusic">
+    <style name="Theme.PLM.Splash" parent="Theme.PLM">
         <item name="android:windowBackground">@drawable/splash_background</item>
     </style>
 </resources>

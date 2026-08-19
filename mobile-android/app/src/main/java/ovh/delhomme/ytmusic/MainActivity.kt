@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Splash → thème app après le premier frame
-        setTheme(R.style.Theme_YTMusic)
+        setTheme(R.style.Theme_PLM)
         enableEdgeToEdge()
         if (Build.VERSION.SDK_INT >= 33) {
             val ok = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -340,22 +340,70 @@ fun YtMusicAppContent(
         }
     }
 
-    // Vérif mise à jour quotidienne (force possible via Compte → Mettre à jour)
+    // Mise à jour : vérif au démarrage + toutes les 6 h (install in-app)
+    var pendingUpdate by remember {
+        mutableStateOf<ovh.delhomme.ytmusic.update.ApkUpdateManager.CheckResult?>(null)
+    }
+    var updateInstalling by remember { mutableStateOf(false) }
+
     LaunchedEffect(loggedIn) {
         if (loggedIn != true) return@LaunchedEffect
         val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
             context.applicationContext,
             container,
         )
-        if (!updater.shouldAutoCheck()) return@LaunchedEffect
-        val check = runCatching { updater.check(force = false) }.getOrNull() ?: return@LaunchedEffect
-        if (check.available) {
-            Toast.makeText(
-                context,
-                "Mise à jour ${check.info?.versionName ?: ""} disponible — Compte → Mettre à jour",
-                Toast.LENGTH_LONG,
-            ).show()
+        val check = runCatching { updater.checkOnStartup() }.getOrNull() ?: return@LaunchedEffect
+        if (check.available) pendingUpdate = check
+    }
+
+    LaunchedEffect(loggedIn) {
+        if (loggedIn != true) return@LaunchedEffect
+        val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
+            context.applicationContext,
+            container,
+        )
+        while (isActive) {
+            delay(6L * 60L * 60L * 1000L)
+            if (!updater.shouldAutoCheck()) continue
+            val check = runCatching { updater.check(force = false) }.getOrNull() ?: continue
+            if (check.available) pendingUpdate = check
         }
+    }
+
+    pendingUpdate?.takeIf { it.available }?.let { upd ->
+        AlertDialog(
+            onDismissRequest = { pendingUpdate = null },
+            title = { Text("Mise à jour disponible") },
+            text = {
+                Text(
+                    upd.info?.versionName?.let { "Version $it prête à installer." }
+                        ?: "Une nouvelle version PLM est disponible.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !updateInstalling,
+                    onClick = {
+                        scope.launch {
+                            updateInstalling = true
+                            val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
+                                context.applicationContext,
+                                container,
+                            )
+                            val msg = runCatching {
+                                updater.downloadAndInstall(upd.info)
+                            }.getOrElse { it.message ?: "Échec" }
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            updateInstalling = false
+                            pendingUpdate = null
+                        }
+                    },
+                ) { Text(if (updateInstalling) "…" else "Installer") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingUpdate = null }) { Text("Plus tard") }
+            },
+        )
     }
 
     BackHandler(enabled = loggedIn == true && showNowPlaying) {
@@ -651,7 +699,65 @@ private fun MainTabs(
                 )
             } else {
                 val local = container.localPlayback.load()
-                if (local != null && local.queue.isNotEmpty()) {
+                val remoteSnap = if (container.receiveRemoteSync()) {
+                    runCatching {
+                        container.ensureFreshToken()
+                        container.api.session()
+                    }.getOrNull()
+                } else {
+                    null
+                }
+                val st = remoteSnap?.state
+                val remoteQueue = st?.queue.orEmpty().filter { it.isPlayable() }
+                val remoteCurrent = st?.current?.takeIf { it.isPlayable() }
+                val remoteTracks = when {
+                    remoteQueue.isNotEmpty() -> remoteQueue
+                    remoteCurrent != null -> listOf(remoteCurrent)
+                    else -> emptyList()
+                }
+                val remoteUpdated = st?.updatedAt ?: 0L
+                val localSaved = local?.savedAt ?: 0L
+                val useRemote = remoteTracks.isNotEmpty() && (
+                    local == null ||
+                        local.queue.isEmpty() ||
+                        remoteUpdated > localSaved + 2_000L
+                    )
+                if (useRemote) {
+                    val idx = when {
+                        remoteCurrent != null -> remoteTracks.indexOfFirst { it.id == remoteCurrent.id }
+                            .takeIf { it >= 0 } ?: (st?.queueIndex ?: 0)
+                        else -> st?.queueIndex ?: 0
+                    }.coerceIn(0, remoteTracks.lastIndex)
+                    val base = (st?.progress ?: 0.0).coerceAtLeast(0.0)
+                    val ageSec = if (st?.isPlaying == true) {
+                        ((System.currentTimeMillis() - remoteUpdated).coerceAtLeast(0L) / 1000.0)
+                    } else {
+                        0.0
+                    }
+                    val posMs = ((base + ageSec) * 1000.0).toLong().coerceAtLeast(0L)
+                    val activeHere = remoteSnap?.activePlayerId == container.deviceId
+                    val autoplay = st?.isPlaying == true && activeHere
+                    suppressSessionPublishUntil = System.currentTimeMillis() + 12_000L
+                    player.restoreQueue(
+                        tracks = remoteTracks,
+                        startIndex = idx,
+                        positionMs = posMs,
+                        autoplay = autoplay,
+                        title = "File synchronisée",
+                        userQueueEnd = st?.userQueueEnd,
+                    )
+                    pendingRemoteLabel = when {
+                        st?.isPlaying == true && !activeHere ->
+                            "En pause — lecture active ailleurs"
+                        st?.isPlaying != true && remoteCurrent != null ->
+                            remoteCurrent.title ?: "Titre en pause"
+                        else -> null
+                    }
+                    AppLog.i(
+                        "player",
+                        "hydrate remote id=${remoteCurrent?.id} pos=$posMs play=$autoplay n=${remoteTracks.size}",
+                    )
+                } else if (local != null && local.queue.isNotEmpty()) {
                     suppressSessionPublishUntil = System.currentTimeMillis() + 8_000L
                     player.restoreQueue(
                         tracks = local.queue,
@@ -666,47 +772,23 @@ private fun MainTabs(
                         "hydrate local id=${local.queue.getOrNull(local.queueIndex)?.id} " +
                             "pos=${local.positionMs} play=${local.wasPlaying} n=${local.queue.size}",
                     )
-                } else if (container.receiveRemoteSync()) runCatching {
-                container.ensureFreshToken()
-                val snap = container.api.session()
-                val st = snap.state
-                val queue = st?.queue.orEmpty().filter { it.isPlayable() }
-                val current = st?.current?.takeIf { it.isPlayable() }
-                val tracks = when {
-                    queue.isNotEmpty() -> queue
-                    current != null -> listOf(current)
-                    else -> emptyList()
-                }
-                if (tracks.isNotEmpty()) {
-                    val idx = when {
-                        current != null -> tracks.indexOfFirst { it.id == current.id }
-                            .takeIf { it >= 0 } ?: (st?.queueIndex ?: 0)
-                        else -> st?.queueIndex ?: 0
-                    }.coerceIn(0, tracks.lastIndex)
+                } else if (remoteTracks.isNotEmpty()) {
+                    val idx = (st?.queueIndex ?: 0).coerceIn(0, remoteTracks.lastIndex)
                     val posMs = ((st?.progress ?: 0.0) * 1000.0).toLong().coerceAtLeast(0L)
-                    // Ne jamais voler la lecture au démarrage : sync file en pause.
-                    // L’utilisateur appuie play → claim actif (évite conflit web/mobile).
-                    val autoplay = false
                     suppressSessionPublishUntil = System.currentTimeMillis() + 12_000L
                     player.restoreQueue(
-                        tracks = tracks,
+                        tracks = remoteTracks,
                         startIndex = idx,
                         positionMs = posMs,
-                        autoplay = autoplay,
+                        autoplay = false,
                         title = "File synchronisée",
                         userQueueEnd = st?.userQueueEnd,
                     )
-                    pendingRemoteLabel = if (st?.isPlaying == true) {
-                        "En pause — lecture active ailleurs"
-                    } else {
-                        null
-                    }
                 } else if (st?.current != null) {
                     pendingRemoteLabel = st.current.title ?: "Titre en attente"
+                } else if (container.receiveRemoteSync() && remoteSnap == null) {
+                    pendingRemoteLabel = "Titre en attente"
                 }
-            }.onFailure {
-                pendingRemoteLabel = "Titre en attente"
-            }
             }
         }
     }

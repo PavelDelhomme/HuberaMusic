@@ -65,10 +65,12 @@ Si P0 KO → **stop** ([`DEPLOY.md`](./DEPLOY.md)).
 
 ## P2 — Batterie & usage (Nothing)
 
-- [ ] `make adb-wifi-doctor` → Nothing ✅
-- [ ] 15–30 min usage réel (lecture + biblio + next)
-- [ ] Optionnel : `INCLUDE_NOTHING=1 make battery-go-calm` (Nothing)
-- [ ] Email rapport batterie
+> **Reporté** — même règle que DEV : pas de campagne batterie sur USB ; prévoir **ADB Wi‑Fi + débranché** quand l’app sera complète. [`docs/TESTS-SESSIONS.md`](docs/TESTS-SESSIONS.md)
+
+- [ ] ~~`make adb-wifi-doctor`~~ → **N/A**
+- [ ] ~~15–30 min usage réel mesuré~~ → **N/A**
+- [ ] ~~`make battery-go-calm`~~ → **N/A**
+- [ ] ~~Email rapport batterie~~ → **N/A**
 
 ---
 

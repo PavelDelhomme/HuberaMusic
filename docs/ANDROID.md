@@ -1,8 +1,10 @@
-# Application Android native (Kotlin)
+# Application Android native PLM (Kotlin)
 
 Client **Kotlin + Jetpack Compose + Media3/ExoPlayer** — pas de WebView.
 
-Sources : `mobile-android/` · Package : `ovh.delhomme.ytmusic`
+Sources : `mobile-android/` · Package install : `ovh.delhomme.ytmusic` (label **PLM**)
+
+Historique : [`../mobile-android/HISTORY.md`](../mobile-android/HISTORY.md) · Identité PLM : [`PLM.md`](./PLM.md) · Lecteur : [`ANDROID-PLAYER.md`](./ANDROID-PLAYER.md)
 
 ## Structure monorepo
 

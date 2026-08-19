@@ -1,5 +1,6 @@
 package ovh.delhomme.ytmusic.ui.player
 
+import android.content.Context
 import android.os.SystemClock
 import android.widget.Toast
 import androidx.compose.animation.core.Animatable
@@ -83,10 +84,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -111,7 +114,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
@@ -127,6 +132,7 @@ import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.player.PlayerController
 import ovh.delhomme.ytmusic.player.PlayerUiState
 import ovh.delhomme.ytmusic.player.RepeatMode
+import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.components.ArtistLinksText
 import ovh.delhomme.ytmusic.ui.components.DownloadStatusIcon
 import ovh.delhomme.ytmusic.ui.components.HoldSeekIconButton
@@ -136,6 +142,15 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private enum class NowPlayingDragAxis { None, Horizontal, Vertical }
+
+/** Cache léger onglet Similaires (scroll + titres par seed). */
+private data class SimilarTabCache(
+    val tracks: List<TrackDto> = emptyList(),
+    val scrollIndex: Int = 0,
+    val scrollOffset: Int = 0,
+    val loadingMore: Boolean = false,
+    val exhausted: Boolean = false,
+)
 
 private val SeekRed = Color(0xFFFF0033)
 private val PlayerFg = Color(0xFFF5F5F5)
@@ -204,6 +219,8 @@ fun NowPlayingScreen(
     val flingDismiss = 2200f
     val listState = rememberLazyListState()
     val queueListState = rememberLazyListState()
+    val similarListState = rememberLazyListState()
+    val similarPanelCache = remember { mutableStateMapOf<String, SimilarTabCache>() }
     val queueOpen = queueProgress.value > 0.55f
     val queueInteractive = queueProgress.value > 0.02f
 
@@ -276,15 +293,14 @@ fun NowPlayingScreen(
         scope.launch {
             val target = when {
                 velocityY < -900f -> 1f
-                velocityY > 900f -> 0f
-                queueProgress.value >= 0.38f -> 1f
-                else -> 0f
+                queueProgress.value >= 0.42f -> 1f
+                queueProgress.value <= 0.08f -> 0f
+                else -> queueProgress.value // garder la position intermédiaire
             }
             queueProgress.animateTo(
                 target,
                 spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
             )
-            // Évite qu’un swipe résiduel ferme le Now Playing juste après le collapse
             if (target == 0f) dragOffset = 0f
         }
     }
@@ -404,15 +420,26 @@ fun NowPlayingScreen(
         mediaSlideX = 0f
     }
 
-    // Dès que la file s’ouvre (même partiellement), ancrer sur le titre courant
-    LaunchedEffect(queueInteractive, ui.queueIndex, ui.queue.size, queuePanelTab) {
+    LaunchedEffect(ui.queueIndex, ui.queue.size) {
+        if (ui.queue.isEmpty()) return@LaunchedEffect
+        player.prefetchQueueFocus(ui.queueIndex.coerceIn(0, ui.queue.lastIndex), radius = 2)
+        val base = container.remoteStreamUrl("_").substringBefore("/api/stream/")
+        StreamPrefetcher.maintainRollingPrefetch(
+            base,
+            ui.queue.map { it.id },
+            ui.queueIndex.coerceIn(0, ui.queue.lastIndex),
+            window = 8,
+        )
+    }
+
+    // Dès que la file s'ouvre (même partiellement), ancrer sur le titre courant — une seule fois à l'ouverture
+    LaunchedEffect(queueInteractive, queuePanelTab) {
         if (!queueInteractive || queuePanelTab != 0 || ui.queue.isEmpty()) return@LaunchedEffect
         val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
         val target = when {
             ui.queueIndex < boundary -> ui.queueIndex
-            else -> ui.queueIndex + 1 // header « À suivre » entre user et auto
+            else -> ui.queueIndex + 1
         }.coerceAtLeast(0)
-        // Instant : évite le flash « haut de file (déjà joués) »
         runCatching { queueListState.scrollToItem(target) }
     }
 
@@ -428,7 +455,15 @@ fun NowPlayingScreen(
     LaunchedEffect(focusPlayerToken) {
         if (focusPlayerToken <= 0) return@LaunchedEffect
         queueProgress.snapTo(0f)
+        dragOffset = 0f
         runCatching { listState.scrollToItem(0) }
+    }
+
+    LaunchedEffect(sheetVisible) {
+        if (!sheetVisible) {
+            queueProgress.snapTo(0f)
+            dragOffset = 0f
+        }
     }
 
     val dragProgress = (dragOffset / (dismissPx * 2.2f)).coerceIn(0f, 1f)
@@ -580,25 +615,27 @@ fun NowPlayingScreen(
             }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                // Lecteur « plein » : cover + contrôles + aperçu file
+                // Lecteur « plein » : cover + contrôles + aperçu file (portrait : file ancrée en bas)
                 val landscapeLayout = isLandscape()
+                Column(Modifier.fillMaxSize()) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
-                        .fillMaxSize()
+                        .weight(if (landscapeLayout || queueInteractive) 1f else 0.62f)
+                        .fillMaxWidth()
                         .graphicsLayer {
                             alpha = (1f - qp * 1.05f).coerceIn(0f, 1f)
                             translationY = -qp * 48f
                         },
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    userScrollEnabled = qp < 0.45f && !landscapeLayout,
+                    userScrollEnabled = (qp < 0.45f && landscapeLayout) || showLyrics,
                 ) {
                     item {
                         val landscape = landscapeLayout
                         val coverH = if (landscape) {
                             (screenHeightDp() * 0.62f).dp.coerceIn(110.dp, 200.dp)
                         } else {
-                            260.dp
+                            (screenHeightDp() * 0.34f).dp.coerceIn(200.dp, 272.dp)
                         }
                         val lyricsH = if (landscape) {
                             (screenHeightDp() * 0.72f).dp.coerceIn(130.dp, 240.dp)
@@ -1057,8 +1094,8 @@ fun NowPlayingScreen(
                         }
                     }
 
-                    // Portrait : aperçu file sous le lecteur. Paysage : file via panneau glissé.
-                    if (!landscapeLayout) {
+                    // Paysage : aperçu file dans le même scroll. Portrait : panneau dédié en bas.
+                    if (landscapeLayout) {
                         item {
                             QueueSectionHeader(
                                 title = "File d'attente",
@@ -1220,6 +1257,26 @@ fun NowPlayingScreen(
                     }
                 }
 
+                if (!landscapeLayout && !queueInteractive) {
+                    PortraitQueuePreview(
+                        ui = ui,
+                        player = player,
+                        container = container,
+                        scope = scope,
+                        context = context,
+                        onMore = onMore,
+                        onExpand = { expandQueue() },
+                        onSave = { showSaveQueue = true },
+                        onQueueDrag = ::onQueueDrag,
+                        onQueueDragEnd = { settleQueue(it) },
+                        modifier = Modifier
+                            .weight(0.38f)
+                            .fillMaxWidth()
+                            .navigationBarsPadding(),
+                    )
+                }
+                }
+
                 // File plein écran (suit le doigt via queueProgress)
                 if (queueInteractive) {
                     QueueExpandedBody(
@@ -1229,6 +1286,8 @@ fun NowPlayingScreen(
                         listState = queueListState,
                         panelTab = queuePanelTab,
                         onPanelTabChange = { queuePanelTab = it },
+                        similarListState = similarListState,
+                        similarPanelCache = similarPanelCache,
                         onPlayAt = player::playAt,
                         onMore = onMore,
                         onMove = player::moveInQueue,
@@ -1252,6 +1311,7 @@ fun NowPlayingScreen(
                         onCollapsePullEnd = { settleQueue(it) },
                         modifier = Modifier
                             .fillMaxSize()
+                            .navigationBarsPadding()
                             .graphicsLayer {
                                 alpha = (qp * 1.1f).coerceIn(0f, 1f)
                                 translationY = (1f - qp) * 96f
@@ -1310,6 +1370,171 @@ private fun SecondaryChip(
                 maxLines = 1,
             )
         }
+    }
+}
+
+/** Aperçu file d’attente ancré en bas (portrait) — au-dessus de la barre de navigation système. */
+@Composable
+private fun PortraitQueuePreview(
+    ui: PlayerUiState,
+    player: PlayerController,
+    container: AppContainer,
+    scope: CoroutineScope,
+    context: Context,
+    onMore: ((TrackDto) -> Unit)?,
+    onExpand: () -> Unit,
+    onSave: () -> Unit,
+    onQueueDrag: (Float) -> Unit,
+    onQueueDragEnd: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val previewList = rememberLazyListState()
+    val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
+    LaunchedEffect(ui.queueIndex, ui.queue.size) {
+        if (ui.queue.isEmpty()) return@LaunchedEffect
+        val target = ui.queueIndex.coerceIn(0, ui.queue.lastIndex)
+        runCatching { previewList.scrollToItem(target.coerceAtLeast(0)) }
+    }
+    LazyColumn(modifier = modifier, state = previewList) {
+        item {
+            QueueSectionHeader(
+                title = "File d'attente",
+                canClear = ui.queue.size > 1,
+                onExpand = onExpand,
+                onSave = onSave,
+                onClear = {
+                    player.clearUpcomingFromQueue()
+                    Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
+                },
+                onStartMix = {
+                    val t = ui.track ?: return@QueueSectionHeader
+                    scope.launch {
+                        val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
+                        if (mix.isNotEmpty()) {
+                            player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                            Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                onQueueDrag = onQueueDrag,
+                onQueueDragEnd = onQueueDragEnd,
+            )
+        }
+        val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
+        if (playedBefore.isNotEmpty()) {
+            item {
+                Text(
+                    "Déjà joués",
+                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = PlayerMuted,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            itemsIndexed(playedBefore, key = { i, t -> "pp-${t.id}-$i" }) { index, item ->
+                QueueTrackRow(
+                    track = item,
+                    index = index,
+                    highlighted = false,
+                    onClick = { player.playAt(index) },
+                    onLongClick = { onMore?.invoke(item) },
+                    onMove = { from, to -> player.moveInQueue(from, to) },
+                    onMore = onMore?.let { { it(item) } },
+                    onMix = {
+                        scope.launch {
+                            val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
+                            if (mix.isNotEmpty()) {
+                                player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                            }
+                        }
+                    },
+                    radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                )
+            }
+        }
+        item {
+            Text(
+                "En cours",
+                Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = PlayerMuted,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        val previewFrom = ui.queueIndex.coerceIn(0, boundary)
+        itemsIndexed(
+            ui.queue.subList(previewFrom, boundary),
+            key = { i, t -> "ip-${t.id}-${previewFrom + i}" },
+        ) { index, item ->
+            val abs = previewFrom + index
+            QueueTrackRow(
+                track = item,
+                index = abs,
+                highlighted = abs == ui.queueIndex,
+                onClick = { player.playAt(abs) },
+                onLongClick = { onMore?.invoke(item) },
+                onMove = { from, to -> player.moveInQueue(from, to) },
+                onMore = onMore?.let { { it(item) } },
+                onMix = {
+                    scope.launch {
+                        val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
+                        if (mix.isNotEmpty()) {
+                            player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                        }
+                    }
+                },
+                radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+            )
+        }
+        item {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("À suivre", fontWeight = FontWeight.SemiBold, color = PlayerFg)
+                    Text(
+                        "Lecture automatique",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = PlayerMuted,
+                    )
+                }
+                Switch(
+                    checked = ui.autoplaySuggestions,
+                    onCheckedChange = { player.toggleAutoplaySuggestions() },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = SeekRed,
+                        checkedThumbColor = Color.White,
+                    ),
+                )
+            }
+        }
+        itemsIndexed(
+            ui.queue.drop(boundary).take(12),
+            key = { i, t -> "ap-${t.id}-${boundary + i}" },
+        ) { i, item ->
+            val abs = boundary + i
+            QueueTrackRow(
+                track = item,
+                index = abs,
+                highlighted = abs == ui.queueIndex,
+                onClick = { player.playAt(abs) },
+                onLongClick = { onMore?.invoke(item) },
+                onMove = { from, to -> player.moveInQueue(from, to) },
+                onMore = onMore?.let { { it(item) } },
+                onMix = {
+                    scope.launch {
+                        val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
+                        if (mix.isNotEmpty()) {
+                            player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                        }
+                    }
+                },
+            )
+        }
+        item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
@@ -1527,6 +1752,29 @@ private fun QueueExpandedHeader(
     }
 }
 
+private fun similarFingerprint(t: TrackDto): String {
+    val title = t.title.lowercase()
+        .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
+        .replace(Regex("[^a-z0-9àâäéèêëïîôùûüç]+"), " ")
+        .trim()
+    val artist = t.artists?.firstOrNull()?.name.orEmpty().lowercase().trim()
+    return "$title|$artist"
+}
+
+private fun dedupeSimilar(seedId: String, list: List<TrackDto>): List<TrackDto> {
+    val seenId = HashSet<String>()
+    val seenFp = HashSet<String>()
+    val out = ArrayList<TrackDto>()
+    for (t in list) {
+        if (!t.isPlayable() || t.id == seedId) continue
+        if (!seenId.add(t.id)) continue
+        val fp = similarFingerprint(t)
+        if (fp.isNotBlank() && !seenFp.add(fp)) continue
+        out += t
+    }
+    return out
+}
+
 @Composable
 private fun QueueExpandedBody(
     ui: PlayerUiState,
@@ -1535,6 +1783,8 @@ private fun QueueExpandedBody(
     listState: LazyListState,
     panelTab: Int,
     onPanelTabChange: (Int) -> Unit,
+    similarListState: LazyListState,
+    similarPanelCache: MutableMap<String, SimilarTabCache>,
     onPlayAt: (Int) -> Unit,
     onMore: ((TrackDto) -> Unit)?,
     onMove: (Int, Int) -> Unit,
@@ -1563,8 +1813,73 @@ private fun QueueExpandedBody(
 
     var similarTracks by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
     var similarLoading by remember { mutableStateOf(false) }
+    var similarLoadingMore by remember { mutableStateOf(false) }
+    var similarExhausted by remember { mutableStateOf(false) }
     val seedId = ui.track?.id
     val scope = rememberCoroutineScope()
+    var lastPanelTab by remember { mutableIntStateOf(panelTab) }
+
+    LaunchedEffect(panelTab, seedId, similarTracks.size, similarListState) {
+        if (panelTab != 1 || seedId.isNullOrBlank()) return@LaunchedEffect
+        snapshotFlow {
+            similarListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+        }.distinctUntilChanged().collect { lastVisible ->
+            val size = similarTracks.size
+            if (size == 0 || similarLoadingMore || similarExhausted) return@collect
+            if (lastVisible < size - 5) return@collect
+            similarLoadingMore = true
+            val anchor = similarTracks.lastOrNull()?.id ?: seedId
+            val more = runCatching {
+                val rel = container.api.related(anchor, full = 0)
+                dedupeSimilar(
+                    seedId,
+                    rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty(),
+                )
+            }.getOrDefault(emptyList())
+            val up = runCatching {
+                container.api.upNext(anchor).tracks.orEmpty().filter { it.isPlayable() }
+            }.getOrDefault(emptyList())
+            val seen = similarTracks.map { it.id }.toHashSet()
+            val extras = (more + up).filter { it.id !in seen && it.id != seedId }
+            if (extras.isEmpty()) {
+                similarExhausted = true
+            } else {
+                val merged = (similarTracks + extras).distinctBy { it.id }
+                val trimmed = if (merged.size > 64) merged.takeLast(64) else merged
+                similarTracks = trimmed
+                similarPanelCache[seedId] = (similarPanelCache[seedId] ?: SimilarTabCache()).copy(
+                    tracks = trimmed,
+                    exhausted = similarExhausted,
+                )
+            }
+            similarLoadingMore = false
+        }
+    }
+
+    LaunchedEffect(panelTab) {
+        val sid = seedId
+        if (lastPanelTab == 1 && !sid.isNullOrBlank()) {
+            similarPanelCache[sid] = (similarPanelCache[sid] ?: SimilarTabCache()).copy(
+                tracks = similarTracks,
+                scrollIndex = similarListState.firstVisibleItemIndex,
+                scrollOffset = similarListState.firstVisibleItemScrollOffset,
+                loadingMore = similarLoadingMore,
+                exhausted = similarExhausted,
+            )
+        }
+        if (panelTab == 1 && !sid.isNullOrBlank()) {
+            val cached = similarPanelCache[sid]
+            if (cached != null && cached.tracks.isNotEmpty()) {
+                similarTracks = cached.tracks
+                similarExhausted = cached.exhausted
+                similarLoading = false
+                runCatching {
+                    similarListState.scrollToItem(cached.scrollIndex, cached.scrollOffset)
+                }
+            }
+        }
+        lastPanelTab = panelTab
+    }
     val startMixFor: (TrackDto) -> Unit = { track ->
         scope.launch {
             val mix = buildRadioQueue(container.api, "track", track.id, track, mixCache = container.mixCache)
@@ -1574,32 +1889,50 @@ private fun QueueExpandedBody(
         }
     }
 
-    val collapseWhenTop = remember(listState) {
+    val collapsePullAccum = remember { mutableFloatStateOf(0f) }
+    val collapseThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val collapseWhenTop = remember(listState, collapseThresholdPx) {
         object : NestedScrollConnection {
+            override fun onPreScroll(
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                // Reset si plus en haut
+                if (listState.firstVisibleItemIndex > 0 ||
+                    listState.firstVisibleItemScrollOffset > 4
+                ) {
+                    collapsePullAccum.floatValue = 0f
+                }
+                return Offset.Zero
+            }
+
             override fun onPostScroll(
                 consumed: Offset,
                 available: Offset,
                 source: NestedScrollSource,
             ): Offset {
-                // En haut de la file + pull bas → replie vers le lecteur
-                if (available.y > 0f &&
-                    listState.firstVisibleItemIndex == 0 &&
-                    listState.firstVisibleItemScrollOffset <= 2
+                // Uniquement doigt actif en haut — pas l'inertie de fling après scroll vers le haut
+                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                if (available.y <= 0f) return Offset.Zero
+                if (listState.firstVisibleItemIndex != 0 ||
+                    listState.firstVisibleItemScrollOffset > 4
                 ) {
-                    onCollapsePull(available.y)
-                    return Offset(0f, available.y)
+                    return Offset.Zero
                 }
-                return Offset.Zero
+                collapsePullAccum.floatValue += available.y
+                if (collapsePullAccum.floatValue < collapseThresholdPx) {
+                    return Offset.Zero
+                }
+                onCollapsePull(available.y)
+                return Offset(0f, available.y)
             }
 
-            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
-                if (listState.firstVisibleItemIndex == 0 &&
-                    listState.firstVisibleItemScrollOffset <= 2 &&
-                    available.y > 0f
-                ) {
-                    onCollapsePullEnd(available.y)
-                    return available
-                }
+            override suspend fun onPostFling(
+                consumed: Velocity,
+                available: Velocity,
+            ): Velocity {
+                // Ne jamais replier sur l'inertie — évite le « blocage » en arrivant en haut de liste
+                collapsePullAccum.floatValue = 0f
                 onCollapsePullEnd(0f)
                 return Velocity.Zero
             }
@@ -1608,52 +1941,43 @@ private fun QueueExpandedBody(
 
     LaunchedEffect(seedId) {
         if (seedId.isNullOrBlank()) return@LaunchedEffect
-        similarLoading = true
-        fun fingerprint(t: TrackDto): String {
-            val title = t.title.lowercase()
-                .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
-                .replace(Regex("[^a-z0-9àâäéèêëïîôùûüç]+"), " ")
-                .trim()
-            val artist = t.artists?.firstOrNull()?.name.orEmpty().lowercase().trim()
-            return "$title|$artist"
-        }
-        fun dedupe(list: List<TrackDto>): List<TrackDto> {
-            val seenId = HashSet<String>()
-            val seenFp = HashSet<String>()
-            val out = ArrayList<TrackDto>()
-            for (t in list) {
-                if (!t.isPlayable() || t.id == seedId) continue
-                if (!seenId.add(t.id)) continue
-                val fp = fingerprint(t)
-                if (fp.isNotBlank() && !seenFp.add(fp)) continue
-                out += t
+        val cached = similarPanelCache[seedId]
+        if (cached != null && cached.tracks.isNotEmpty()) {
+            similarTracks = cached.tracks
+            similarExhausted = cached.exhausted
+            similarLoading = false
+            runCatching {
+                similarListState.scrollToItem(cached.scrollIndex, cached.scrollOffset)
             }
-            return out
+            return@LaunchedEffect
         }
-        // Phase 1 : fast — on la garde
+        similarLoading = true
+        similarExhausted = false
         val fast = runCatching {
             val rel = container.api.related(seedId, fast = 1)
-            dedupe(rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty()).take(10)
+            dedupeSimilar(
+                seedId,
+                rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty(),
+            ).take(12)
         }.getOrDefault(emptyList())
         if (ui.track?.id != seedId) return@LaunchedEffect
         similarTracks = fast
         similarLoading = false
-        // Phase 2 : append uniquement (ne remplace pas la 1ʳᵉ liste)
+        similarPanelCache[seedId] = SimilarTabCache(tracks = fast)
         val mid = runCatching {
             val rel = container.api.related(seedId, full = 0)
-            dedupe(rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty())
+            dedupeSimilar(
+                seedId,
+                rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty(),
+            )
         }.getOrDefault(emptyList())
         if (ui.track?.id != seedId) return@LaunchedEffect
         val seenId = similarTracks.map { it.id }.toHashSet()
-        val seenFp = similarTracks.map { fingerprint(it) }.toHashSet()
-        val extras = mid.filter { t ->
-            if (t.id in seenId) return@filter false
-            val fp = fingerprint(t)
-            if (fp.isNotBlank() && fp in seenFp) return@filter false
-            true
-        }
+        val extras = mid.filter { it.id !in seenId }
         if (extras.isNotEmpty()) {
-            similarTracks = (similarTracks + extras).distinctBy { it.id }
+            val merged = (similarTracks + extras).distinctBy { it.id }.take(48)
+            similarTracks = merged
+            similarPanelCache[seedId] = (similarPanelCache[seedId] ?: SimilarTabCache()).copy(tracks = merged)
         }
     }
 
@@ -1835,8 +2159,8 @@ private fun QueueExpandedBody(
                 item { Spacer(Modifier.height(48.dp)) }
             }
         } else {
-            // Découverte type YTM — se met à jour à chaque titre
-            LazyColumn(Modifier.fillMaxSize()) {
+            // Découverte type YTM — cache par titre + scroll infini
+            LazyColumn(Modifier.fillMaxSize().navigationBarsPadding(), state = similarListState) {
                 item {
                     Row(
                         Modifier
@@ -1903,6 +2227,7 @@ private fun QueueExpandedBody(
                                         startIndex = idx,
                                         title = "Similaires",
                                     )
+                                    onPanelTabChange(0)
                                 },
                                 onLongClick = { onMore?.invoke(item) },
                                 onMove = { _, _ -> },
@@ -1912,7 +2237,16 @@ private fun QueueExpandedBody(
                         }
                     }
                 }
-                item { Spacer(Modifier.height(48.dp)) }
+                if (similarLoadingMore) {
+                    item {
+                        Text(
+                            "Chargement…",
+                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            color = PlayerMuted,
+                        )
+                    }
+                }
+                item { Spacer(Modifier.height(72.dp)) }
             }
         }
     }
@@ -2100,7 +2434,7 @@ private fun QueueTrackRow(
                             .weight(1f, fill = false)
                             .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1200),
                     )
-                    track.duration?.takeIf { it.isNotBlank() }?.let {
+                    track.durationLabel()?.let {
                         Text(" · $it", style = MaterialTheme.typography.bodySmall, color = PlayerMuted)
                     }
                 }

@@ -196,6 +196,7 @@ Style YouTube Music (« Forgotten favorites ») :
 
 ### Lecteur / erreurs
 
+- [ ] **Vitesse de lecture** — menu ⋮ (titre en cours / lecteur) : 0,5×–2×, option mémorisée par compte (style YTM)
 - [ ] Next intermittent / crash → fix
 - [ ] Toute erreur → email (télémétrie) ; **hors-ligne** → digest unique au retour réseau (E21)
 - [ ] Force-stop Android : file restaurée **et** Play / Suivant jouent vraiment (E22)
@@ -227,4 +228,4 @@ Style YouTube Music (« Forgotten favorites ») :
 
 ### Plus tard — toute fin (ne pas prioriser)
 
-- [ ] **Z99 Rebrand install / domaines PLM** — PWA « Installer YTMusic » → PLM ; manifests ; `plm.delhomme.ovh` / `pue-la-merde.delhomme.ovh` déjà en redirect. À faire **après** le sprint UX biblio/DL. Voir `STATUS.md` §Plus tard.
+- [x] **Z99 Rebrand PLM (UI)** — PWA / mobile / manifests → **PLM** ; nom complet réservé à la doc. Repo Git **YTMusic** inchangé. Voir [`docs/PLM.md`](./PLM.md).

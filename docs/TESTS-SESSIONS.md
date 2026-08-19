@@ -16,6 +16,30 @@ Toute erreur player / crash **doit** partir par email admin (télémétrie). Si 
 
 ---
 
+## Volume & batterie (règles communes)
+
+### Volume pendant les tests
+
+| Question | Réponse |
+|----------|---------|
+| Mettre le son **à fond** pour tester ? | **Non.** Inutile pour valider lecture, file, EOS, réseau, UI. |
+| Volume **0** (muet) casse les tests ? | **Non.** Exo bufferise et joue pareil ; les scripts ADB mettent `STREAM_MUSIC` à **0** pour le confort (nuit, open space). |
+| Le volume change la conso batterie ? | **Très peu** vs décodage audio + Wi‑Fi/4G + wake locks ExoPlayer. L’amplificateur tire un peu plus à fort volume, mais ce n’est **pas** un critère pour les tests fonctionnels actuels. |
+| Web / desktop | Même logique : mute navigateur ou volume bas — suffisant. |
+
+### Tests batterie — reportés
+
+Les mesures batterie **ne sont pas fiables** tant que le téléphone est **branché USB** (charge = faux positifs).  
+Campagne batterie prévue **plus tard** :
+
+1. App **fonctionnellement complète** (lecteur, offline, biblio, etc.)  
+2. **ADB Wi‑Fi** stable (`make adb-wifi-ensure` / `adb-wifi.sh go`)  
+3. Téléphone **débranché**, session `make battery-go` ou `battery-suite` (30–45 min)
+
+**Phase actuelle** : cocher **N/A** sur les items « rapport batterie / battery-go » ; garder uniquement la **télémétrie** (mail sur erreur player volontaire, P2 ci-dessous).
+
+---
+
 ## Session PROD (Nothing)
 
 ### P0 — Santé
@@ -32,14 +56,18 @@ Toute erreur player / crash **doit** partir par email admin (télémétrie). Si 
 - [ ] Page import : si lié → « Google connecté » + Synchroniser ; sinon un bouton « Connecter Google » → login → **Continuer** si YTM ne s’ouvre pas → sync **sans collage**
 - [ ] Pas Premium requis (compte Google gratuit)
 
-### P2 — Batterie / télémétrie
-- [ ] Réglages → Email rapport batterie
+### P2 — Télémétrie (batterie : N/A pour l’instant)
+
+- [ ] Réglages → option email rapport batterie **présente** (pas besoin de session longue maintenant)
 - [ ] Forcer une erreur player (avion 3 s puis play) → mail `android.player` reçu
+- [ ] ~~Session batterie 30 min~~ → **N/A** (USB branché / app pas finalisée — voir § Volume & batterie)
 
 ### P3 — Lecture / file / « erreur réseau »
 - [ ] Lancer un album (≥ 4 titres), laisser **enchaîner 4+ titres** sans toucher
+- [ ] **Pas de skip avant la vraie fin** (ex. Papaoutai, outro entier) — build ≥ **p+1.3.34**
+- [ ] **Durée totale** visible dans la file d’attente quand Exo a résolu le conteneur
 - [ ] **File d’attente** : Tout lire / album → son (ou `STATE_READY` logcat) en quelques secondes, pas 20 s
-- [ ] Volume **STREAM_MUSIC à 0** pour tests nocturnes (la lecture doit quand même bufferer)
+- [ ] Volume **STREAM_MUSIC à 0** recommandé (confort) — **pas** besoin de monter le volume ; la lecture doit quand même bufferer
 - [ ] Wi‑Fi → 4G → airplane 15 s → 4G : reprise **même titre, même position** (pas de `stop()`)
 - [ ] **Pendant** play / skip / seek / pause-play : bascules **Wi‑Fi ↔ 4G** répétées + coupure 15 s — pas de saut de titre au milieu
 - [ ] Fin de titre : **pas** de toast réseau, titre suivant part
@@ -67,6 +95,7 @@ Toute erreur player / crash **doit** partir par email admin (télémétrie). Si 
 - [ ] Téléchargés : playlists → albums → titres ; Lecture/aléatoire **titres seulement**
 
 ### P7 — Téléchargements
+- [ ] Téléchargements offline **ne bloquent pas** la lecture (pas de rafale 502 sur `/api/stream` pendant play)
 - [ ] Télécharger **en Wi‑Fi** et **en 4G** (⋮ → Télécharger : progress avance, fichier local)
 - [ ] Titre ⋮ télécharger : progress avance (pas coincé 2 %)
 - [ ] Album *Pandemonium* Heaven Pierce Her : progress agrégé bouge, termine
