@@ -33,6 +33,9 @@ function fingerprint(level: string, kind: string, message: string, stack?: strin
   if (/early end\s+\S+/i.test(msg) && /unavailable|502|Source error/i.test(stack || msg)) {
     return `${level}|${kind}|early-end-stream`;
   }
+  if (/Player is accessed on the wrong thread|verifyApplicationThread/i.test(stack || msg)) {
+    return `${level}|${kind}|exo-wrong-thread`;
+  }
   // Inclut l’id piste / code erreur pour ne pas écraser des alertes distinctes
   const tip = msg.slice(0, 120);
   const stackTip = (stack || '').split('\n').slice(0, 2).join('|').slice(0, 120);

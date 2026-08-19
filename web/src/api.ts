@@ -211,34 +211,37 @@ export function artistNames(track: Track) {
   return names?.length ? names.join(', ') : 'Artiste';
 }
 
-async function req<T>(url: string, init?: RequestInit, retried = false): Promise<T> {
+type ReqInit = RequestInit & { timeoutMs?: number };
+
+async function req<T>(url: string, init?: ReqInit, retried = false): Promise<T> {
   const fullUrl = apiUrl(url);
+  const timeoutMs = init?.timeoutMs ?? 25_000;
+  const { timeoutMs: _ignored, ...fetchInit } = init || {};
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Device-Id': deviceId(),
-    ...(init?.headers as Record<string, string> | undefined),
+    ...(fetchInit.headers as Record<string, string> | undefined),
   };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const ctrl = new AbortController();
-  const timeoutMs = 25_000;
   const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
   // Respect caller abort if any
   const onAbort = () => ctrl.abort();
-  init?.signal?.addEventListener('abort', onAbort);
+  fetchInit.signal?.addEventListener('abort', onAbort);
 
   let res: Response;
   try {
     res = await fetch(fullUrl, {
-      ...init,
+      ...fetchInit,
       headers,
       credentials: 'include',
       signal: ctrl.signal,
     });
   } catch (e) {
     window.clearTimeout(timer);
-    init?.signal?.removeEventListener('abort', onAbort);
+    fetchInit.signal?.removeEventListener('abort', onAbort);
     if ((e as Error)?.name === 'AbortError') {
       throw new Error('API ne répond pas (timeout) — vérifie que le serveur :8787 tourne (make ensure-api)');
     }
@@ -247,7 +250,7 @@ async function req<T>(url: string, init?: RequestInit, retried = false): Promise
     );
   }
   window.clearTimeout(timer);
-  init?.signal?.removeEventListener('abort', onAbort);
+  fetchInit.signal?.removeEventListener('abort', onAbort);
 
   if (res.status === 401 && !retried && !fullUrl.includes('/auth/')) {
     const refreshed = await tryRefresh();
@@ -640,7 +643,9 @@ export const api = {
       cached?: boolean;
       target?: number;
       generatedAt?: number;
-    }>(`/api/reco/radio/${category}${opts?.preview ? '?preview=1' : ''}`),
+    }>(`/api/reco/radio/${category}${opts?.preview ? '?preview=1' : ''}`, {
+      timeoutMs: opts?.preview ? 20_000 : 70_000,
+    }),
   recoRadios: () => req<{ radios: { id: string; title: string }[] }>('/api/reco/radios'),
   recoFeedback: (payload: {
     trackId: string;

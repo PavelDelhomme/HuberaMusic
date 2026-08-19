@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -122,6 +123,7 @@ fun TrackActionsSheet(
     var enriched by remember(track.id) { mutableStateOf(track) }
     var pinned by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
+    var showEqualizer by remember { mutableStateOf(false) }
     var downloaded by remember { mutableStateOf(false) }
     var wasDownloading by remember { mutableStateOf(false) }
     var albumInLibrary by remember { mutableStateOf(false) }
@@ -885,8 +887,20 @@ fun TrackActionsSheet(
             showSleep = true
         }
 
+        SheetAction(
+            Icons.Default.Tune,
+            "Égaliseur",
+            if (ovh.delhomme.ytmusic.player.AudioEqualizer.isEnabled()) "Actif" else null,
+        ) {
+            showEqualizer = true
+        }
+
         Spacer(Modifier.height(24.dp))
         } // end scroll Column
+    }
+
+    if (showEqualizer) {
+        EqualizerSheet(onDismiss = { showEqualizer = false })
     }
 
     if (showSleep) {

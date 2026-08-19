@@ -180,19 +180,7 @@ fun TrackRow(
                 )
             }
         }
-        val durationLabel = trailing ?: run {
-            val ms = track.durationMsOrNull()
-            when {
-                ms != null && ms > 0L -> {
-                    val totalSec = (ms / 1000L).toInt()
-                    val m = totalSec / 60
-                    val s = totalSec % 60
-                    "%d:%02d".format(m, s)
-                }
-                !track.duration.isNullOrBlank() && track.duration!!.contains(':') -> track.duration
-                else -> null
-            }
-        }
+        val durationLabel = trailing ?: track.durationLabel()
         if (durationLabel != null) {
             Text(
                 durationLabel,

@@ -20,7 +20,7 @@ Compléments :
 | Backlog produit | [`docs/FEATURES-BACKLOG.md`](./docs/FEATURES-BACKLOG.md) |
 | Déploiement | [`DEPLOY.md`](./DEPLOY.md) |
 | Android / passkeys | [`docs/ANDROID.md`](./docs/ANDROID.md) |
-| Batterie | `make battery-help` · `make battery-go` |
+| Batterie (reporté — voir [`docs/TESTS-SESSIONS.md`](docs/TESTS-SESSIONS.md)) | `make battery-help` · **plus tard** `make battery-go` (Wi‑Fi ADB, débranché) |
 | Auth / SMTP | [`docs/AUTH-EMAIL.md`](./docs/AUTH-EMAIL.md) · [`docs/SMTP-MAILY.md`](./docs/SMTP-MAILY.md) |
 | Smoke API charge | `node scripts/test/smoke-load-test.mjs both` → `logs/smoke-*.json` |
 

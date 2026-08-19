@@ -2,7 +2,7 @@
 
 ## Objectif
 
-Avoir **https://ytmusic.delhomme.ovh** → ton clone YouTube Music (compte, biblio, PWA),
+Avoir **https://ytmusic.delhomme.ovh** → **PLM** (compte, biblio, PWA),
 **sans pubs YouTube**, sur web / Android / Windows / Linux / macOS.
 
 ## Zone DNS OVH (`delhomme.ovh`)

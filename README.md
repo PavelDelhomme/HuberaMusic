@@ -1,6 +1,8 @@
-# PLM — Pue La Merde
+# PLM
 
-Client musique multi-plateforme (PLM) : **web**, **API**, **Android Kotlin**, **desktop Electron**.
+Client musique multi-plateforme : **web**, **API**, **Android Kotlin**, **desktop Electron**.
+
+Identité et nommage : [`docs/PLM.md`](docs/PLM.md) · index docs : [`docs/README.md`](docs/README.md)
 
 ## Structure
 
@@ -10,7 +12,7 @@ web/              React / Vite / PWA
 mobile-android/   App Android Kotlin (Compose + Media3)
 desktop/          Electron
 scripts/          seed, android, ops
-docs/             Guides (Android, DNS, tests, auth…)
+docs/             Guides PLM (Android, DNS, tests, auth…) — voir docs/README.md
 ```
 
 ## Démarrage rapide
@@ -77,7 +79,7 @@ make adb-wifi-ensure
 2. Bannière « Installer » / « Comment installer » (guide selon OS)  
 3. Compte app → sync biblio entre appareils (sans pubs)
 
-Détail Android natif : [`docs/ANDROID.md`](docs/ANDROID.md).
+Détail Android natif : [`docs/ANDROID.md`](docs/ANDROID.md) · lecteur : [`docs/ANDROID-PLAYER.md`](docs/ANDROID-PLAYER.md).
 
 ## Multi-appareils & Cast
 

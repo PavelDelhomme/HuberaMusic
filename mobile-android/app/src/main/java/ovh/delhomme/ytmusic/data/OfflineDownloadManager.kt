@@ -71,34 +71,107 @@ class OfflineDownloadManager(
 
     /**
      * Lance le DL en arrière-plan (no-op si déjà local / déjà en cours).
-     * @return false si déjà téléchargé ou déjà en file
      */
-    fun enqueue(track: TrackDto): Boolean {
+    fun enqueue(track: TrackDto): Boolean = enqueueInternal(track, duringPlaybackSafe = false)
+
+    /**
+     * Pré-télécharge silencieusement les prochains titres (mix / file).
+     * @param skipFirst ignore les N premiers (tête Exo sur le courant + suivants immédiats).
+     * @param duringPlaybackSafe autorise le DL pendant lecture si skipFirst ≥ 3 (Wi‑Fi only).
+     */
+    fun enqueueAhead(
+        tracks: List<TrackDto>,
+        limit: Int = 2,
+        skipFirst: Int = 0,
+        duringPlaybackSafe: Boolean = false,
+    ) {
+        if (!NetworkMonitor.isOnline()) return
+        if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return
+        if (duringPlaybackSafe) {
+            if (!NetworkMonitor.isUnmeteredPreferred(ovh.delhomme.ytmusic.YtMusicApp.instance)) return
+        } else if (isPlaybackActive()) {
+            return
+        }
+        val cap = limit.coerceIn(1, 2)
+        val candidates = tracks
+            .drop(skipFirst.coerceAtLeast(0))
+            .asSequence()
+            .filter { it.id.matches(Regex("^[a-zA-Z0-9_-]{11}$")) }
+            .filter { !offlineStore.has(it.id) }
+            .filter { jobs[it.id]?.isActive != true }
+            .take(cap)
+            .toList()
+        if (candidates.isEmpty()) return
+        if (!aheadRunning.compareAndSet(false, true)) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val initialDelay = when {
+                    duringPlaybackSafe -> 22_000L
+                    isPlaybackActive() -> 18_000L
+                    else -> 2_500L
+                }
+                kotlinx.coroutines.delay(initialDelay)
+                for ((i, t) in candidates.withIndex()) {
+                    if (!NetworkMonitor.isOnline()) break
+                    if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) break
+                    if (offlineStore.has(t.id)) continue
+                    enqueueInternal(t, duringPlaybackSafe = duringPlaybackSafe)
+                    val gap = if (duringPlaybackSafe) 14_000L else 8_000L
+                    if (i < candidates.lastIndex) kotlinx.coroutines.delay(gap)
+                }
+            } finally {
+                aheadRunning.set(false)
+            }
+        }
+    }
+
+    /** DL pendant lecture : titres à +3 et au-delà (pas le courant / suivants immédiats). */
+    fun enqueueAheadDuringPlayback(tracks: List<TrackDto>, limit: Int = 1) {
+        enqueueAhead(tracks, limit = limit, skipFirst = 3, duringPlaybackSafe = true)
+    }
+
+    private fun enqueueInternal(track: TrackDto, duringPlaybackSafe: Boolean = false): Boolean {
         if (offlineStore.has(track.id)) return false
         val already = jobs[track.id]?.isActive == true
         if (already) return false
+        if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return false
 
         _progress.update { it + (track.id to 0.02f) }
         _errors.update { it - track.id }
 
         val job = scope.launch(Dispatchers.IO) {
             try {
-                // Hors-ligne : rester en file jusqu’au retour réseau (ne pas échouer tout de suite).
-                // Recalcule le vrai réseau : après Wi‑Fi → 4G le flag peut rester faux.
                 while (!NetworkMonitor.refreshFromSystem()) {
                     _progress.update { it + (track.id to 0.02f) }
                     kotlinx.coroutines.delay(2_500)
+                }
+                if (!duringPlaybackSafe) {
+                    var waitLoops = 0
+                    while (
+                        isPlaybackActive() ||
+                        ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()
+                    ) {
+                        if (++waitLoops > 40) return@launch
+                        _progress.update { it + (track.id to 0.02f) }
+                        kotlinx.coroutines.delay(15_000)
+                        if (!NetworkMonitor.refreshFromSystem()) {
+                            kotlinx.coroutines.delay(2_500)
+                        }
+                    }
+                } else if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
+                    return@launch
                 }
                 runCatching {
                     ovh.delhomme.ytmusic.YtMusicApp.instance.container
                         .ensureReachableApiOrFallbackToProd()
                 }
                 gate.withPermit {
-                    // Re-check après attente du sémaphore
                     if (offlineStore.has(track.id)) return@withPermit
                     ensureToken()
                     _progress.update { it + (track.id to 0.05f) }
-                    withTimeoutOrNull(2_500L) { warmStream?.invoke(track.id) }
+                    if (!duringPlaybackSafe && !isPlaybackActive()) {
+                        withTimeoutOrNull(800L) { warmStream?.invoke(track.id) }
+                    }
                     _progress.update { it + (track.id to 0.12f) }
                     offlineStore
                         .download(track, streamUrl(track.id)) { p ->
@@ -107,7 +180,6 @@ class OfflineDownloadManager(
                             }
                         }
                         .getOrThrow()
-                    // Marque serveur sans re-télécharger (ack)
                     runCatching { notifyServer(track.id) }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -143,45 +215,11 @@ class OfflineDownloadManager(
         return started
     }
 
-    /**
-     * Pré-télécharge silencieusement les prochains titres (mix / file) pour survivre
-     * à une coupure réseau. Séquentiel + limité : ne pas concurrencer la lecture
-     * (sinon googlevideo reset → trou / skip).
-     */
-    fun enqueueAhead(tracks: List<TrackDto>, limit: Int = 2) {
-        if (!NetworkMonitor.isOnline()) return
-        if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return
-        val cap = limit.coerceIn(1, 2)
-        val candidates = tracks
-            .asSequence()
-            .filter { it.id.matches(Regex("^[a-zA-Z0-9_-]{11}$")) }
-            .filter { !offlineStore.has(it.id) }
-            .filter { jobs[it.id]?.isActive != true }
-            .take(cap)
-            .toList()
-        if (candidates.isEmpty()) return
-        // Un seul « ahead pipeline » à la fois — priorité au prochain titre
-        if (!aheadRunning.compareAndSet(false, true)) return
-        scope.launch(Dispatchers.IO) {
-            try {
-                // Laisse Exo stabiliser le titre courant avant full-DL
-                kotlinx.coroutines.delay(2_500)
-                for ((i, t) in candidates.withIndex()) {
-                    if (!NetworkMonitor.isOnline()) break
-                    if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) break
-                    if (offlineStore.has(t.id)) continue
-                    enqueue(t)
-                    // Attendre la fin du job courant avant le suivant
-                    while (jobs[t.id]?.isActive == true) {
-                        kotlinx.coroutines.delay(400)
-                    }
-                    if (i < candidates.lastIndex) kotlinx.coroutines.delay(2_500)
-                }
-            } finally {
-                aheadRunning.set(false)
-            }
-        }
-    }
+    private fun isPlaybackActive(): Boolean =
+        ovh.delhomme.ytmusic.player.PlaybackService.Holder.isPlaybackActiveSafe()
+
+    /** Exposé à OfflineKeeper — ne pas saturer /api/stream pendant la lecture. */
+    fun isPlaybackBusy(): Boolean = isPlaybackActive()
 
     fun consumeError(trackId: String): String? {
         val msg = _errors.value[trackId] ?: return null
@@ -210,4 +248,7 @@ class OfflineDownloadManager(
         for (id in ids) if (cancel(id)) n++
         return n
     }
+
+    /** Annule tous les téléchargements actifs (ex. arrêt idle en arrière-plan). */
+    fun cancelAll(): Int = cancelMany(jobs.keys.toList())
 }

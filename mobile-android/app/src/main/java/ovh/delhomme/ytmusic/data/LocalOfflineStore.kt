@@ -122,6 +122,9 @@ class LocalOfflineStore(
         streamUrl: String,
         onProgress: ((Float) -> Unit)? = null,
     ): Result<File> = withContext(Dispatchers.IO) {
+        if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
+            return@withContext Result.failure(Exception("stream down — DL différé"))
+        }
         val dest = audioFile(track.id)
         if (dest.isFile && isFileComplete(dest, track)) {
             mutex.withLock {
@@ -132,21 +135,20 @@ class LocalOfflineStore(
             return@withContext Result.success(dest)
         }
         var lastError: Throwable? = null
-        repeat(4) { attempt ->
+        repeat(2) { attempt ->
+            if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
+                return@withContext Result.failure(lastError ?: Exception("stream down"))
+            }
             val result = downloadOnce(track, streamUrl, onProgress, attempt)
             if (result.isSuccess) return@withContext result
             lastError = result.exceptionOrNull()
             val msg = lastError?.message.orEmpty()
             AppLog.w("offline", "DL retry ${attempt + 1} ${track.id}: $msg")
             if (msg.contains("HTTP 502") || msg.contains("HTTP 503") || msg.contains("HTTP 504")) {
-                ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(60_000L)
-                if (attempt >= 1) {
-                    return@withContext Result.failure(lastError ?: Exception("HTTP 5xx"))
-                }
-                kotlinx.coroutines.delay(350L * (attempt + 1))
-            } else {
-                kotlinx.coroutines.delay(800L * (attempt + 1) * (attempt + 1))
+                ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(120_000L)
+                return@withContext Result.failure(lastError ?: Exception("HTTP 5xx"))
             }
+            kotlinx.coroutines.delay(1_500L * (attempt + 1) * (attempt + 1))
         }
         Result.failure(lastError ?: Exception("Échec téléchargement"))
     }

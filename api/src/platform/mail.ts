@@ -18,10 +18,20 @@ export function parseFromAddress(raw: string): { name: string; address: string }
   const s = String(raw || '').trim();
   const m = s.match(/^(.*?)\s*<([^>]+)>\s*$/);
   if (m) {
-    const name = m[1].replace(/^["']|["']$/g, '').trim() || 'PLM';
+    let name = m[1].replace(/^["']|["']$/g, '').trim() || 'PLM';
+    if (/ytmusic/i.test(name)) name = 'PLM';
     return { name, address: m[2].trim() };
   }
-  if (s.includes('@')) return { name: 'PLM', address: s };
+  if (s.includes('@')) {
+    let name = 'PLM';
+    const angle = s.match(/^(.+?)\s+<?([^>]+@[^>]+)>?$/);
+    if (angle) {
+      name = angle[1].trim().replace(/^["']|["']$/g, '') || 'PLM';
+      if (/ytmusic/i.test(name)) name = 'PLM';
+      return { name, address: angle[2].trim() };
+    }
+    return { name, address: s };
+  }
   return {
     name: 'PLM',
     address: process.env.SMTP_USER || 'noreply@localhost',
@@ -40,7 +50,7 @@ export function smtpPublicConfig() {
   const fromRaw =
     process.env.SMTP_FROM ||
     (process.env.SMTP_USER ? `PLM <${process.env.SMTP_USER}>` : 'PLM <noreply@localhost>');
-  const from = parseFromAddress(fromRaw);
+  const from = parseFromAddress(fromRaw.replace(/YTMusic/gi, 'PLM'));
   return {
     configured: Boolean(host),
     host: host || null,
