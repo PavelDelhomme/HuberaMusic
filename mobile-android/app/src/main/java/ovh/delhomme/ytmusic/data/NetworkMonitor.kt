@@ -30,6 +30,9 @@ object NetworkMonitor {
     private val started = AtomicBoolean(false)
     @Volatile
     private var online = true
+    /** Simulation hors-ligne (debug) — ne coupe pas le Wi‑Fi ADB. */
+    @Volatile
+    private var forceOffline = false
     private val _onlineFlow = MutableStateFlow(true)
     /** UI : collectAsState pour griser la file hors-ligne. */
     val onlineFlow: StateFlow<Boolean> = _onlineFlow.asStateFlow()
@@ -46,7 +49,34 @@ object NetworkMonitor {
     /** Délai avant de confirmer « vraiment hors ligne » (handover 4G/Wi‑Fi). */
     private const val OFFLINE_DEBOUNCE_MS = 3_500L
 
-    fun isOnline(): Boolean = online
+    fun isOnline(): Boolean = online && !forceOffline
+
+    fun isForceOffline(): Boolean = forceOffline
+
+    /**
+     * Mode debug : l’app se comporte hors-ligne (prefetch stoppé, UI grisée)
+     * sans couper le Wi‑Fi (ADB reste vivant).
+     */
+    fun setForceOffline(enabled: Boolean) {
+        if (forceOffline == enabled) return
+        forceOffline = enabled
+        ovh.delhomme.ytmusic.debug.AppLog.i(
+            "NetworkMonitor",
+            "forceOffline=$enabled (sim debug, Wi‑Fi ADB intact)",
+        )
+        if (enabled) {
+            cancelOfflineConfirm()
+            _onlineFlow.value = false
+            onGoneOffline()
+            return
+        }
+        val app = appContext
+        val cm = app?.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val ok = if (cm != null) hasUsableInternet(cm) else true
+        online = ok
+        _onlineFlow.value = ok
+        if (ok) onBackOnline()
+    }
 
     fun markPausedForNetwork() {
         pausedForNetwork = true
@@ -132,6 +162,11 @@ object NetworkMonitor {
 
     private fun markOnline() {
         cancelOfflineConfirm()
+        if (forceOffline) {
+            // Système OK mais sim debug active — ne pas revendiquer online pour l’app
+            online = true
+            return
+        }
         val wasOffline = !online
         online = true
         _onlineFlow.value = true
@@ -191,11 +226,15 @@ object NetworkMonitor {
             val still = hasUsableInternet(cm)
             if (!still) {
                 online = false
-                _onlineFlow.value = false
-                onGoneOffline()
+                if (!forceOffline) {
+                    _onlineFlow.value = false
+                    onGoneOffline()
+                }
             } else {
                 online = true
-                _onlineFlow.value = true
+                if (!forceOffline) {
+                    _onlineFlow.value = true
+                }
             }
         }
         offlineConfirm = r

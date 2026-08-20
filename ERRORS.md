@@ -231,6 +231,97 @@ Perplexity a raison : **ExoPlayer 2004 = HTTP 502 du backend**, pas un codec.
 
 ---
 
+## Session 2026-08-20 (UX prod Nothing + lecteur)
+
+**Envs** : local `d+1.3.37` · prod `p+1.3.37` · Nothing Wi‑Fi · Blackview USB · Samsung ADB absent (ping OK)
+
+### E23 — Ajouter à une playlist : « 0 titres » affiché
+| | |
+|--|--|
+| **Status** | `fixed` (code) — `resolvedTrackCount()` |
+| **Surfaces** | Android (sheet Ajouter) |
+| **Cause** | UI utilise `pl.tracks?.size` alors que la biblio light a `tracks: []` + `trackCount` |
+| **Fix** | `pl.resolvedTrackCount()` |
+| **Tests** | Nothing PROD · Samsung DEV · Blackview USB |
+
+### E24 — Téléchargement bloqué à 2 %
+| | |
+|--|--|
+| **Status** | `fixed` (code) — enqueue utilisateur `duringPlaybackSafe=true` |
+| **Surfaces** | Android (page artiste / ⋮) |
+| **Cause** | `enqueue` attend fin de lecture (`duringPlaybackSafe=false`) et reste à progress `0.02` |
+| **Fix** | Téléchargements utilisateur autorisés pendant la lecture |
+| **Tests** | DL pendant lecture · artiste · album |
+
+### E25 — Partage = lien YouTube Music
+| | |
+|--|--|
+| **Status** | `fixed` (code) — `/watch/:id` PLM |
+| **Surfaces** | Android + web |
+| **Fix** | URL app `/watch/:id` (et album/artist/playlist PLM) |
+| **Tests** | Share sheet · ouverture lien web |
+
+### E26 — Contrôles play/prev/next absents quand file ouverte / scroll
+| | |
+|--|--|
+| **Status** | `fixed` (code) — barre sticky file expandue |
+| **Surfaces** | Android Now Playing |
+| **Fix** | Barre transport compacte sticky au-dessus de la file expandue |
+| **Tests** | Scroll file · onglet Similaires |
+
+### E27 — Boucle fin de chunk / coda (prod)
+| | |
+|--|--|
+| **Status** | `fixed` (code) — `shouldRetryEndedAsTruncated` refuse le retry si Exo a vraiment terminé le fichier |
+| **Surfaces** | Android |
+| **Cause** | Catalogue YTM plus long que le flux → retry rejouait la coda |
+| **Fix** | `mediaItemActuallyEnded` → enchaîner sans rebind |
+| **Tests** | Marathon EOS Samsung DEV · Blackview · Nothing après deploy |
+
+### E28 — Égaliseur dans le ⋮ de n’importe quel titre
+| | |
+|--|--|
+| **Status** | `fixed` (code) — EQ lecteur only + icônes Activer/Reset |
+| **Surfaces** | Android · web |
+| **Fix** | EQ uniquement depuis le lecteur en cours ; boutons Activer / Reset icônes seuls |
+| **Tests** | ⋮ titre hors lecture → pas d’EQ · Now Playing → EQ + Reset |
+
+### E29 — Paroles désynchronisées / pas d’auto-sync
+| | |
+|--|--|
+| **Status** | `fixed` (code) — lead 0 + recentrage auto · lag LRCLIB 1,2 s |
+| **Surfaces** | Android (web à surveiller) |
+| **Fix** | lead 0 · lag LRCLIB · recentrage auto sur la ligne active |
+| **Tests** | Paroles pendant lecture · seek · changement de titre |
+
+### E30 — Contamination `d+` sur APK prod (build joint)
+| | |
+|--|--|
+| **Status** | `fixed` (code) — canal / API par flavor Gradle |
+| **Surfaces** | Android build |
+| **Cause** | `defaultConfig` unique : assembleDev+Prod → LAN partout → `d+` sur prod |
+| **Fix** | `productFlavors` prod=`p+`+HTTPS · dev=`d+`+LAN |
+| **Tests** | `assembleDevDebug assembleProdDebug` → badging `d+` / `p+` |
+
+### E31 — Auto-play à la réouverture de l’app
+| | |
+|--|--|
+| **Status** | `fixed` (code) — restore file en pause |
+| **Surfaces** | Android (hydrate local / remote) |
+| **Cause** | `autoplay = local.wasPlaying` (et remote active) relançait le son |
+| **Fix** | Toujours `autoplay=false` à l’hydrate — file + position + titres gardés |
+| **Tests** | Kill app → réouvrir → mini-lecteur en pause · play manuel OK |
+
+### E32 — Historique d’écoute incomplet / pas par date
+| | |
+|--|--|
+| **Status** | `fixed` (code) — `/api/history/detailed` enrichi + UI par jour |
+| **Surfaces** | Android HistorySheet · API |
+| **Fix** | Événements start/partial/complete/skip groupés par date · progress ≥5 % → history |
+| **Tests** | Compte → Historique · plusieurs jours · badges Complet/Partiel/Skip |
+
+---
+
 ## OK constatés (ne pas réouvrir sans nouveau signal)
 
 | Check | Local | Prod | Samsung | Nothing |

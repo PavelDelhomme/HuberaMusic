@@ -24,8 +24,6 @@ fun loadRootEnv(): Map<String, String> {
     return map
 }
 
-val rootEnv = loadRootEnv()
-
 fun readAppVersion(): String {
     val f = rootProject.projectDir.parentFile.resolve("VERSION")
     if (!f.isFile) return "0.0.0"
@@ -40,6 +38,72 @@ fun versionCodeFromSemver(semver: String): Int {
     return maj * 10_000 + min * 100 + pat
 }
 
+fun detectLanIp(): String =
+    runCatching {
+        ProcessBuilder(
+            "bash",
+            "-lc",
+            "ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if(\$i==\"src\") {print \$(i+1); exit}}'",
+        ).redirectErrorStream(true).start()
+            .inputStream.bufferedReader().readText().trim()
+    }.getOrNull().orEmpty()
+
+fun escBuildConfig(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
+
+val rootEnv = loadRootEnv()
+val appSemver = readAppVersion()
+val appVersionCode = versionCodeFromSemver(appSemver)
+
+val lanIp = detectLanIp()
+val lanApiBase = if (lanIp.matches(Regex("""\d+\.\d+\.\d+\.\d+"""))) {
+    "http://$lanIp:8787"
+} else {
+    ""
+}
+val publicApiBase = listOfNotNull(
+    rootEnv["PUBLIC_API_URL"],
+    rootEnv["DEPLOY_URL"],
+    rootEnv["ANDROID_API_BASE_URL"],
+).map { it.trim().trimEnd('/') }
+    .firstOrNull { it.startsWith("https://") && !it.contains("127.0.0.1") && !it.contains("localhost") }
+    ?: ""
+val rawApiProp = (project.findProperty("API_BASE_URL") as String?)
+    ?: rootEnv["ANDROID_API_BASE_URL"]
+    ?: rootEnv["API_BASE_URL"]
+    ?: ""
+
+/** API LAN pour le flavor `dev` (téléphone physique ≠ 127.0.0.1). */
+fun resolveDevApiBase(): String {
+    val raw = rawApiProp
+    return when {
+        raw.isNotBlank() &&
+            !(raw.contains("127.0.0.1") || raw.contains("localhost")) &&
+            !raw.startsWith("https://") -> raw.trim().trimEnd('/')
+        else -> lanApiBase.ifBlank {
+            if (raw.isNotBlank()) {
+                logger.warn("API locale 127.0.0.1/localhost → IP LAN introuvable, garde $raw (émulateur ?)")
+                raw.trim().trimEnd('/')
+            } else {
+                error("API_BASE_URL manquant et IP LAN introuvable")
+            }
+        }
+    }
+}
+
+/** API HTTPS publique pour le flavor `prod` — indépendant du flavor `dev`. */
+fun resolveProdApiBase(): String {
+    val fromProp = (project.findProperty("API_BASE_URL") as String?)?.trim()?.trimEnd('/').orEmpty()
+    if (fromProp.startsWith("https://") &&
+        !fromProp.contains("127.0.0.1") &&
+        !fromProp.contains("localhost")
+    ) {
+        return fromProp
+    }
+    return publicApiBase.ifBlank {
+        error("PUBLIC_API_URL / DEPLOY_URL HTTPS manquant pour assembleProd*")
+    }
+}
+
 android {
     namespace = "ovh.delhomme.ytmusic"
     compileSdk = 35
@@ -48,99 +112,51 @@ android {
         applicationId = "ovh.delhomme.ytmusic"
         minSdk = 26
         targetSdk = 35
+        versionCode = appVersionCode
+        // versionName / API_BASE_URL / canal : par flavor (évite d+ sur prod en build joint)
 
-        val semver = readAppVersion()
-        val rawApi = (project.findProperty("API_BASE_URL") as String?)
-            ?: rootEnv["ANDROID_API_BASE_URL"]
-            ?: rootEnv["API_BASE_URL"]
-            ?: ""
-        fun detectLanIp(): String =
-            runCatching {
-                ProcessBuilder(
-                    "bash",
-                    "-lc",
-                    "ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if(\$i==\"src\") {print \$(i+1); exit}}'",
-                ).redirectErrorStream(true).start()
-                    .inputStream.bufferedReader().readText().trim()
-            }.getOrNull().orEmpty()
-
-        val lanIp = detectLanIp()
-        val lanApi = if (lanIp.matches(Regex("""\d+\.\d+\.\d+\.\d+"""))) {
-            "http://$lanIp:8787"
-        } else {
-            ""
-        }
-        val deployUrl = rootEnv["DEPLOY_URL"]?.trim()?.trimEnd('/').orEmpty()
-        val buildingProd = gradle.startParameter.taskNames.any { it.contains("Prod", ignoreCase = true) }
-        // Téléphone physique ≠ 127.0.0.1 (ça pointe le phone). Toujours LAN pour le local.
-        val apiBase = when {
-            rawApi.isNotBlank() && !(rawApi.contains("127.0.0.1") || rawApi.contains("localhost")) -> rawApi
-            rawApi.isNotBlank() && (rawApi.contains("127.0.0.1") || rawApi.contains("localhost")) ->
-                lanApi.ifBlank {
-                    logger.warn("API locale 127.0.0.1/localhost → IP LAN introuvable, garde $rawApi (émulateur ?)")
-                    rawApi
-                }
-            buildingProd && deployUrl.startsWith("https://") -> deployUrl
-            else -> lanApi.ifBlank { error("API_BASE_URL manquant et IP LAN introuvable") }
-        }
-        // Jamais préremplir les secrets locaux quand l’APK pointe la prod / un HTTPS distant
-        val isRemoteApi = apiBase.startsWith("https://") &&
-            !apiBase.contains("127.0.0.1") &&
-            !apiBase.contains("localhost")
-        // d+ = local/LAN · p+ = API prod distante
-        val channel = if (isRemoteApi) "p" else "d"
-        versionCode = versionCodeFromSemver(semver)
-        versionName = "$channel+$semver"
-        val devEmail = if (isRemoteApi) {
-            ""
-        } else {
-            rootEnv["SEED_EMAIL"] ?: rootEnv["VITE_DEV_EMAIL"] ?: ""
-        }
-        val devPassword = if (isRemoteApi) {
-            ""
-        } else {
-            rootEnv["SEED_PASSWORD"] ?: rootEnv["VITE_DEV_PASSWORD"] ?: ""
-        }
         val androidOrigin = rootEnv["WEBAUTHN_ANDROID_ORIGINS"]
             ?.split(",")
             ?.firstOrNull()
             ?.trim()
             ?: "android:apk-key-hash:PPbFMh2hUX55lAyeJVFKY5ssRJ4-_333R2h2y_b0wR8"
 
-        fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
-        buildConfigField("String", "API_BASE_URL", "\"${esc(apiBase)}\"")
-        buildConfigField("String", "DEV_EMAIL", "\"${esc(devEmail)}\"")
-        buildConfigField("String", "DEV_PASSWORD", "\"${esc(devPassword)}\"")
-        buildConfigField("String", "ANDROID_WEBAUTHN_ORIGIN", "\"${esc(androidOrigin)}\"")
-        buildConfigField("String", "APP_VERSION", "\"${esc(semver)}\"")
-        buildConfigField("String", "APP_CHANNEL", "\"$channel\"")
-        buildConfigField("String", "APP_VERSION_LABEL", "\"${esc(versionName!!)}\"")
-        // URL publique (DEPLOY_URL / PUBLIC_API_URL) — fallback LAN→prod, bouton Debug
-        val publicApi = listOfNotNull(
-            rootEnv["PUBLIC_API_URL"],
-            rootEnv["DEPLOY_URL"],
-            rootEnv["ANDROID_API_BASE_URL"],
-        ).map { it.trim().trimEnd('/') }
-            .firstOrNull { it.startsWith("https://") && !it.contains("127.0.0.1") && !it.contains("localhost") }
-            ?: ""
-        buildConfigField("String", "PUBLIC_API_URL", "\"${esc(publicApi)}\"")
+        buildConfigField("String", "ANDROID_WEBAUTHN_ORIGIN", "\"${escBuildConfig(androidOrigin)}\"")
+        buildConfigField("String", "APP_VERSION", "\"${escBuildConfig(appSemver)}\"")
+        buildConfigField("String", "PUBLIC_API_URL", "\"${escBuildConfig(publicApiBase)}\"")
     }
 
     // Deux APK côte à côte sur le même téléphone :
-    //   prod → ovh.delhomme.ytmusic      (PLM)
-    //   dev  → ovh.delhomme.ytmusic.dev  (PLM Dev)
+    //   prod → ovh.delhomme.ytmusic      (PLM)   · p+ · API HTTPS
+    //   dev  → ovh.delhomme.ytmusic.dev  (PLM Dev) · d+ · API LAN
     flavorDimensions += "channel"
     productFlavors {
         create("prod") {
             dimension = "channel"
             resValue("string", "app_name", "PLM")
             manifestPlaceholders["usesCleartext"] = "false"
+            val api = resolveProdApiBase()
+            versionName = "p+$appSemver"
+            buildConfigField("String", "API_BASE_URL", "\"${escBuildConfig(api)}\"")
+            buildConfigField("String", "DEV_EMAIL", "\"\"")
+            buildConfigField("String", "DEV_PASSWORD", "\"\"")
+            buildConfigField("String", "APP_CHANNEL", "\"p\"")
+            buildConfigField("String", "APP_VERSION_LABEL", "\"${escBuildConfig(versionName!!)}\"")
         }
         create("dev") {
             dimension = "channel"
             applicationIdSuffix = ".dev"
             resValue("string", "app_name", "PLM Dev")
             manifestPlaceholders["usesCleartext"] = "true"
+            val api = resolveDevApiBase()
+            versionName = "d+$appSemver"
+            val email = rootEnv["SEED_EMAIL"] ?: rootEnv["VITE_DEV_EMAIL"] ?: ""
+            val password = rootEnv["SEED_PASSWORD"] ?: rootEnv["VITE_DEV_PASSWORD"] ?: ""
+            buildConfigField("String", "API_BASE_URL", "\"${escBuildConfig(api)}\"")
+            buildConfigField("String", "DEV_EMAIL", "\"${escBuildConfig(email)}\"")
+            buildConfigField("String", "DEV_PASSWORD", "\"${escBuildConfig(password)}\"")
+            buildConfigField("String", "APP_CHANNEL", "\"d\"")
+            buildConfigField("String", "APP_VERSION_LABEL", "\"${escBuildConfig(versionName!!)}\"")
         }
     }
 

@@ -44,6 +44,15 @@ object AudioEqualizer {
         applyGains(gains)
     }
 
+    /** Remet les 5 bandes à 0 (flat). */
+    fun resetUiGains() {
+        val flat = IntArray(5) { 0 }
+        YtMusicApp.instance.getSharedPreferences(PREFS, 0).edit()
+            .putString(KEY_GAINS, flat.joinToString(","))
+            .apply()
+        applyGains(flat)
+    }
+
     fun attach(audioSessionId: Int) {
         if (audioSessionId <= 0) return
         if (sessionId == audioSessionId && fx != null) return

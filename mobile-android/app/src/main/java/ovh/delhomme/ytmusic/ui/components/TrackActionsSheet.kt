@@ -29,7 +29,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bedtime
-import androidx.compose.material.icons.filled.Tune
+
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -123,7 +123,6 @@ fun TrackActionsSheet(
     var enriched by remember(track.id) { mutableStateOf(track) }
     var pinned by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
-    var showEqualizer by remember { mutableStateOf(false) }
     var downloaded by remember { mutableStateOf(false) }
     var wasDownloading by remember { mutableStateOf(false) }
     var albumInLibrary by remember { mutableStateOf(false) }
@@ -405,11 +404,14 @@ fun TrackActionsSheet(
                     onOpenAddToPlaylist(playlistContainedIds)
                 }
                 QuickAction(Icons.Default.Share, "Partager") {
+                    val shareBase = ovh.delhomme.ytmusic.BuildConfig.PUBLIC_API_URL
+                        .trimEnd('/')
+                        .ifBlank { "https://ytmusic.delhomme.ovh" }
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(
                             Intent.EXTRA_TEXT,
-                            "${enriched.title} — ${enriched.artistLine()}\nhttps://music.youtube.com/watch?v=${enriched.id}",
+                            "${enriched.title} — ${enriched.artistLine()}\n$shareBase/watch/${enriched.id}",
                         )
                     }
                     context.startActivity(Intent.createChooser(send, "Partager"))
@@ -887,20 +889,8 @@ fun TrackActionsSheet(
             showSleep = true
         }
 
-        SheetAction(
-            Icons.Default.Tune,
-            "Égaliseur",
-            if (ovh.delhomme.ytmusic.player.AudioEqualizer.isEnabled()) "Actif" else null,
-        ) {
-            showEqualizer = true
-        }
-
         Spacer(Modifier.height(24.dp))
         } // end scroll Column
-    }
-
-    if (showEqualizer) {
-        EqualizerSheet(onDismiss = { showEqualizer = false })
     }
 
     if (showSleep) {
@@ -1312,7 +1302,10 @@ fun AddToPlaylistSheet(
                                 )
                                 Text(
                                     if (already) "Déjà dans cette playlist"
-                                    else "${pl.tracks?.size ?: 0} titres",
+                                    else {
+                                        val n = pl.resolvedTrackCount()
+                                        if (n == 1) "1 titre" else "$n titres"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (already) Color(0xFFFF0033)
                                     else MaterialTheme.colorScheme.onSurfaceVariant,

@@ -27,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -36,6 +37,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.data.AppContainer
+import ovh.delhomme.ytmusic.data.NetworkMonitor
 import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.debug.PerfSnapshot
 
@@ -223,6 +226,35 @@ fun DebugLogsScreen(
                         MaterialTheme.colorScheme.error
                     },
                     style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            var forceOffline by remember { mutableStateOf(NetworkMonitor.isForceOffline()) }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Simuler hors-ligne", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                    Text(
+                        "Préfetch stoppé, UI hors-ligne — Wi‑Fi ADB intact",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = forceOffline,
+                    onCheckedChange = {
+                        forceOffline = it
+                        NetworkMonitor.setForceOffline(it)
+                        Toast.makeText(
+                            context,
+                            if (it) "Hors-ligne simulé" else "Réseau normal",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
                 )
             }
 

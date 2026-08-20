@@ -723,8 +723,8 @@ class PlaybackService : MediaSessionService() {
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs */ 18_000,
-                /* maxBufferMs */ 90_000,
+                /* minBufferMs */ 25_000,
+                /* maxBufferMs */ 240_000,
                 /* bufferForPlaybackMs */ 700,
                 /* bufferForPlaybackAfterRebufferMs */ 1_600,
             )
@@ -1203,8 +1203,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Un seul retry si le catalogue est *beaucoup* plus long ET qu’on n’a pas déjà
-     * retenté ce titre. Sinon → titre suivant (évite la boucle sur la coda).
+     * Retry uniquement si le flux s’arrête *avant* la fin Exo (troncature).
+     * Si Exo a vraiment terminé le fichier → jamais retry (évite boucle coda E27).
      */
     private fun shouldRetryEndedAsTruncated(
         trackId: String,
@@ -1216,10 +1216,9 @@ class PlaybackService : MediaSessionService() {
         if (recoveringTrackId == trackId && earlyEndRetries > 0) return false
         val cat = catalog?.takeIf { it >= 45_000L } ?: return false
         if (mediaItemActuallyEnded(pos, exoDur)) {
-            // Flux Exo terminé mais catalogue nettement plus long (ex. silence/outro manquants)
-            return exoDur >= 60_000L &&
-                cat > (exoDur * 1.08).toLong() &&
-                pos.toDouble() / cat.toDouble() < 0.92
+            // Flux réellement terminé → enchaîner. Ne jamais rejouer la coda
+            // juste parce que le catalogue YTM est plus long (boucle E27).
+            return false
         }
         if (exoDur >= 45_000L && pos.toDouble() / exoDur.toDouble() >= 0.85) return false
         return pos >= 8_000L && pos.toDouble() / cat.toDouble() < 0.75
