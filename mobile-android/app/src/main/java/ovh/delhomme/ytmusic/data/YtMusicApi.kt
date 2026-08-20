@@ -385,6 +385,29 @@ data class HistoryEntityResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class HistoryListResponse(
+    val history: List<TrackDto> = emptyList(),
+    val entities: List<TrackDto> = emptyList(),
+)
+
+@JsonClass(generateAdapter = false)
+data class ListenEventDto(
+    val id: String = "",
+    val trackId: String? = null,
+    val event: String? = null,
+    val status: String? = null,
+    val progressPct: Double? = null,
+    val durationMs: Long? = null,
+    val createdAt: Long = 0L,
+    val track: TrackDto? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class HistoryDetailedResponse(
+    val events: List<ListenEventDto> = emptyList(),
+)
+
+@JsonClass(generateAdapter = false)
 data class YtmAccountDto(
     val connected: Boolean = false,
     val canSyncLibrary: Boolean = false,
@@ -678,6 +701,12 @@ interface YtMusicApi {
 
     @POST("api/listen")
     suspend fun listen(@Body body: ListenBody): Map<String, Any>
+
+    @GET("api/history")
+    suspend fun history(): HistoryListResponse
+
+    @GET("api/history/detailed")
+    suspend fun historyDetailed(): HistoryDetailedResponse
 
     @POST("api/history/entity")
     suspend fun recordEntityPlay(@Body body: HistoryEntityBody): HistoryEntityResponse

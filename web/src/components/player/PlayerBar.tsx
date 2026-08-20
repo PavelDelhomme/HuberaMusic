@@ -106,7 +106,23 @@ export function PlayerBar({
 
   // Barre fluide : lit l’élément audio (évite re-render store à chaque timeupdate)
   useEffect(() => {
+    setBufferedPct(0);
     let raf = 0;
+    const readBuffered = (el: HTMLAudioElement) => {
+      if (!(el.duration > 0) || !Number.isFinite(el.duration)) return;
+      try {
+        const ranges = el.buffered;
+        if (!ranges || ranges.length === 0) return;
+        // Fin du buffer le plus avancé (souvent un seul range en progressive)
+        let end = 0;
+        for (let i = 0; i < ranges.length; i++) {
+          end = Math.max(end, ranges.end(i));
+        }
+        setBufferedPct(Math.min(100, (end / el.duration) * 100));
+      } catch {
+        /* ignore */
+      }
+    };
     const tick = () => {
       const el = usePlayer.getState().audioEl;
       if (el && !el.paused && !el.ended && Number.isFinite(el.currentTime)) {
@@ -114,19 +130,24 @@ export function PlayerBar({
       } else {
         setLiveProgress(usePlayer.getState().progress);
       }
-      if (el && el.buffered.length > 0 && el.duration > 0) {
-        try {
-          const end = el.buffered.end(el.buffered.length - 1);
-          setBufferedPct(Math.min(100, (end / el.duration) * 100));
-        } catch {
-          /* ignore */
-        }
-      }
+      if (el) readBuffered(el);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [current?.id]);
+    const el = usePlayer.getState().audioEl;
+    const onProgress = () => {
+      if (el) readBuffered(el);
+    };
+    el?.addEventListener('progress', onProgress);
+    el?.addEventListener('loadedmetadata', onProgress);
+    el?.addEventListener('canplay', onProgress);
+    return () => {
+      cancelAnimationFrame(raf);
+      el?.removeEventListener('progress', onProgress);
+      el?.removeEventListener('loadedmetadata', onProgress);
+      el?.removeEventListener('canplay', onProgress);
+    };
+  }, [current?.id, audioEl]);
 
   useEffect(() => {
     setLiveProgress(progress);
@@ -338,9 +359,9 @@ export function PlayerBar({
             if (e.key === 'ArrowLeft') seek(Math.max(0, cur - 5));
           }}
         >
-          <div className="absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2 bg-[#3a3a3a] transition group-hover:h-1">
+          <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 overflow-hidden rounded-full bg-[#2a2a2a] transition group-hover:h-1.5">
             <div
-              className="absolute inset-y-0 left-0 bg-[#5c5c5c]"
+              className="absolute inset-y-0 left-0 bg-[#6e6e6e] transition-[width] duration-200"
               style={{ width: `${bufferedPct}%` }}
             />
             <div className="relative h-full bg-[#ff0033]" style={{ width: `${pct}%` }}>

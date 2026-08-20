@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -135,6 +136,7 @@ import ovh.delhomme.ytmusic.player.RepeatMode
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.components.ArtistLinksText
 import ovh.delhomme.ytmusic.ui.components.DownloadStatusIcon
+import ovh.delhomme.ytmusic.ui.components.EqualizerSheet
 import ovh.delhomme.ytmusic.ui.components.HoldSeekIconButton
 import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.icons.MixIcon
@@ -210,9 +212,12 @@ fun NowPlayingScreen(
     var mediaSlideX by remember { mutableFloatStateOf(0f) }
     val queueProgress = remember { Animatable(0f) }
     var showLyrics by remember { mutableStateOf(false) }
+    var showEqualizer by remember { mutableStateOf(false) }
     var showSaveQueue by remember { mutableStateOf(false) }
     var queuePanelTab by remember { mutableIntStateOf(0) } // 0 = file, 1 = similaires
     var lastPrevTap by remember { mutableLongStateOf(0L) }
+    /** Après repli file → lecteur : bloquer le dismiss jusqu’à stabilisation. */
+    var dismissArmed by remember { mutableStateOf(true) }
     val density = LocalDensity.current
     val dismissPx = with(density) { 110.dp.toPx() }
     val queueRangePx = with(density) { 380.dp.toPx() }
@@ -262,6 +267,16 @@ fun NowPlayingScreen(
         }
     }
 
+    fun armDismissAfterSettle() {
+        dismissArmed = false
+        dragOffset = 0f
+        scope.launch {
+            delay(450L)
+            dragOffset = 0f
+            dismissArmed = true
+        }
+    }
+
     fun settleOrClose() {
         scope.launch {
             // File encore visible → ne jamais fermer le lecteur, juste replier la file
@@ -271,6 +286,10 @@ fun NowPlayingScreen(
                     0f,
                     spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
                 )
+                armDismissAfterSettle()
+                return@launch
+            }
+            if (!dismissArmed) {
                 dragOffset = 0f
                 return@launch
             }
@@ -291,8 +310,11 @@ fun NowPlayingScreen(
 
     fun settleQueue(velocityY: Float = 0f) {
         scope.launch {
+            val wasOpen = queueProgress.value > 0.02f
             val target = when {
                 velocityY < -900f -> 1f
+                // Fling vers le bas depuis la file → toujours le lecteur plein, jamais dismiss
+                velocityY > 900f && wasOpen -> 0f
                 queueProgress.value >= 0.42f -> 1f
                 queueProgress.value <= 0.08f -> 0f
                 else -> queueProgress.value // garder la position intermédiaire
@@ -301,12 +323,17 @@ fun NowPlayingScreen(
                 target,
                 spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
             )
-            if (target == 0f) dragOffset = 0f
+            if (target == 0f && wasOpen) {
+                armDismissAfterSettle()
+            } else if (target == 0f) {
+                dragOffset = 0f
+            }
         }
     }
 
     fun expandQueue() {
         scope.launch {
+            dismissArmed = false
             queueProgress.animateTo(
                 1f,
                 spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
@@ -317,11 +344,12 @@ fun NowPlayingScreen(
     fun collapseQueue() {
         scope.launch {
             dragOffset = 0f
+            val wasOpen = queueProgress.value > 0.02f
             queueProgress.animateTo(
                 0f,
                 spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
             )
-            dragOffset = 0f
+            if (wasOpen) armDismissAfterSettle() else dragOffset = 0f
         }
     }
 
@@ -344,13 +372,17 @@ fun NowPlayingScreen(
         player.skipPrevOrRestart(forcePrevious = true)
     }
 
-    val dismissScroll = remember(queueInteractive, dismissPx, showLyrics) {
+    val dismissScroll = remember(queueInteractive, dismissPx, showLyrics, dismissArmed) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 // Paroles : scroll libre, pas de dismiss du lecteur
                 if (showLyrics) return Offset.Zero
                 // File ouverte / en transition → pas de dismiss du lecteur
                 if (queueProgress.value > 0.02f) return Offset.Zero
+                if (!dismissArmed) {
+                    dragOffset = 0f
+                    return Offset.Zero
+                }
                 if (available.y < 0f && dragOffset > 0f) {
                     val next = (dragOffset + available.y).coerceAtLeast(0f)
                     val consumed = next - dragOffset
@@ -367,6 +399,10 @@ fun NowPlayingScreen(
             ): Offset {
                 if (showLyrics) return Offset.Zero
                 if (queueProgress.value > 0.02f) return Offset.Zero
+                if (!dismissArmed) {
+                    dragOffset = 0f
+                    return Offset.Zero
+                }
                 if (available.y > 0f) {
                     dragOffset += available.y
                     return Offset(0f, available.y)
@@ -379,7 +415,7 @@ fun NowPlayingScreen(
                     dragOffset = 0f
                     return Velocity.Zero
                 }
-                if (queueProgress.value > 0.02f) {
+                if (queueProgress.value > 0.02f || !dismissArmed) {
                     dragOffset = 0f
                     return Velocity.Zero
                 }
@@ -513,12 +549,16 @@ fun NowPlayingScreen(
                     Modifier
                         .fillMaxWidth()
                         .graphicsLayer { alpha = (1f - qp * 1.2f).coerceIn(0f, 1f) }
-                        .pointerInput(queueInteractive) {
+                        .pointerInput(queueInteractive, dismissArmed) {
                             detectVerticalDragGestures(
                                 onVerticalDrag = { _, amount ->
                                     if (queueProgress.value > 0.02f) {
                                         // Replie la file, ne dismiss pas le lecteur
                                         onQueueDrag(amount)
+                                        return@detectVerticalDragGestures
+                                    }
+                                    if (!dismissArmed) {
+                                        dragOffset = 0f
                                         return@detectVerticalDragGestures
                                     }
                                     if (amount > 0f || dragOffset > 0f) {
@@ -594,11 +634,21 @@ fun NowPlayingScreen(
                     QueueExpandedHeader(
                         track = track,
                         playing = ui.playing,
+                        shuffle = ui.shuffle,
+                        repeat = ui.repeat,
                         queueTitle = ui.queueTitle,
                         progressHint = qp,
                         onCollapse = { collapseQueue() },
                         onToggle = player::toggle,
-                        onCast = onCast,
+                        onSkipPrev = {
+                            val now = SystemClock.elapsedRealtime()
+                            val double = now - lastPrevTap < 380L
+                            lastPrevTap = now
+                            player.skipPrevOrRestart(forcePrevious = double)
+                        },
+                        onSkipNext = player::skipNext,
+                        onToggleShuffle = player::toggleShuffle,
+                        onCycleRepeat = player::cycleRepeat,
                         onOpenArtist = onOpenArtist,
                         onQueueDrag = ::onQueueDrag,
                         onQueueDragEnd = { settleQueue(it) },
@@ -653,6 +703,8 @@ fun NowPlayingScreen(
                                             onDismissDelta = { delta ->
                                                 if (queueProgress.value > 0.02f) {
                                                     onQueueDrag(delta)
+                                                } else if (!dismissArmed) {
+                                                    dragOffset = 0f
                                                 } else {
                                                     dragOffset = (dragOffset + delta).coerceAtLeast(0f)
                                                 }
@@ -917,6 +969,12 @@ fun NowPlayingScreen(
                                                 }
                                             }
                                         }
+                                        PlayerChromeAction.Equalizer -> SecondaryChip(
+                                            Icons.Default.Tune,
+                                            "Égaliseur",
+                                            if (ovh.delhomme.ytmusic.player.AudioEqualizer.isEnabled()) SeekRed else PlayerFg,
+                                            showLabel = false,
+                                        ) { showEqualizer = true }
                                         else -> Unit
                                     }
                                 }
@@ -931,22 +989,23 @@ fun NowPlayingScreen(
                             val seekColors = SliderDefaults.colors(
                                 thumbColor = Color.White,
                                 activeTrackColor = SeekRed,
-                                inactiveTrackColor = PlayerFg.copy(alpha = 0.18f),
+                                // Transparent : laisse voir le buffer gris dessous
+                                inactiveTrackColor = Color.Transparent,
                             )
                             Box(Modifier.fillMaxWidth()) {
                                 Box(
                                     Modifier
                                         .fillMaxWidth()
-                                        .height(2.dp)
+                                        .height(3.dp)
                                         .align(Alignment.Center)
-                                        .clip(RoundedCornerShape(1.dp))
-                                        .background(PlayerFg.copy(alpha = 0.12f)),
+                                        .clip(RoundedCornerShape(1.5.dp))
+                                        .background(PlayerFg.copy(alpha = 0.14f)),
                                 ) {
                                     Box(
                                         Modifier
                                             .fillMaxWidth(bufferedFrac)
-                                            .height(2.dp)
-                                            .background(PlayerFg.copy(alpha = 0.32f)),
+                                            .height(3.dp)
+                                            .background(PlayerFg.copy(alpha = 0.42f)),
                                     )
                                 }
                                 Slider(
@@ -971,7 +1030,7 @@ fun NowPlayingScreen(
                                             sliderState = sliderState,
                                             colors = seekColors,
                                             enabled = true,
-                                            modifier = Modifier.height(2.dp),
+                                            modifier = Modifier.height(3.dp),
                                             thumbTrackGapSize = 0.dp,
                                             drawStopIndicator = null,
                                         )
@@ -1336,6 +1395,9 @@ fun NowPlayingScreen(
             },
         )
     }
+    if (showEqualizer) {
+        EqualizerSheet(onDismiss = { showEqualizer = false })
+    }
 }
 
 @Composable
@@ -1373,7 +1435,7 @@ private fun SecondaryChip(
     }
 }
 
-/** Aperçu file d’attente ancré en bas (portrait) — au-dessus de la barre de navigation système. */
+/** Aperçu file d’attente ancré en bas (portrait) — liste scrollable, sans doublon transport. */
 @Composable
 private fun PortraitQueuePreview(
     ui: PlayerUiState,
@@ -1617,11 +1679,16 @@ private fun QueueSectionHeader(
 private fun QueueExpandedHeader(
     track: TrackDto,
     playing: Boolean,
+    shuffle: Boolean,
+    repeat: RepeatMode,
     queueTitle: String,
     progressHint: Float,
     onCollapse: () -> Unit,
     onToggle: () -> Unit,
-    onCast: (() -> Unit)?,
+    onSkipPrev: () -> Unit,
+    onSkipNext: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onCycleRepeat: () -> Unit,
     onOpenArtist: ((id: String?, name: String) -> Unit)? = null,
     onQueueDrag: (Float) -> Unit,
     onQueueDragEnd: (velocityY: Float) -> Unit,
@@ -1680,7 +1747,7 @@ private fun QueueExpandedHeader(
                     },
                 )
             }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Box(
             Modifier
@@ -1690,7 +1757,7 @@ private fun QueueExpandedHeader(
                 .clip(RoundedCornerShape(2.dp))
                 .background(PlayerFg.copy(alpha = (0.25f + 0.2f * progressHint).coerceIn(0.25f, 0.55f))),
         )
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             MediaCover(track, 48.dp)
             Spacer(Modifier.width(10.dp))
@@ -1729,15 +1796,54 @@ private fun QueueExpandedHeader(
                     )
                 }
             }
+            IconButton(onClick = onCollapse) {
+                Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
+            }
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onToggleShuffle) {
+                Icon(
+                    Icons.Default.Shuffle,
+                    "Aléatoire",
+                    tint = if (shuffle) MaterialTheme.colorScheme.primary else PlayerFg,
+                )
+            }
+            IconButton(onClick = onSkipPrev) {
+                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(32.dp))
+            }
             IconButton(onClick = onToggle) {
                 Icon(
                     if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    null,
+                    "Lecture",
                     tint = PlayerFg,
+                    modifier = Modifier.size(40.dp),
                 )
             }
-            IconButton(onClick = onCollapse) {
-                Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
+            IconButton(onClick = onSkipNext) {
+                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(32.dp))
+            }
+            IconButton(onClick = onCycleRepeat) {
+                Icon(
+                    when (repeat) {
+                        RepeatMode.One -> Icons.Default.RepeatOne
+                        else -> Icons.Default.Repeat
+                    },
+                    when (repeat) {
+                        RepeatMode.Off -> "Boucle désactivée"
+                        RepeatMode.All -> "Boucler la file"
+                        RepeatMode.One -> "Boucler le titre"
+                    },
+                    tint = when (repeat) {
+                        RepeatMode.Off -> PlayerMuted
+                        else -> MaterialTheme.colorScheme.primary
+                    },
+                )
             }
         }
         Text(
@@ -1747,7 +1853,7 @@ private fun QueueExpandedHeader(
             else "Mix · $queueTitle",
             style = MaterialTheme.typography.labelMedium,
             color = PlayerMuted,
-            modifier = Modifier.padding(top = 8.dp, start = 4.dp),
+            modifier = Modifier.padding(top = 4.dp, start = 4.dp),
         )
     }
 }
@@ -2529,22 +2635,35 @@ private fun InlineSyncedLyrics(
         loading = false
     }
 
-    // Lead 0 (youtube) : le +500 ms faisait défiler trop tôt (karaoké). LRCLIB : lag 2 s.
-    val leadMs = if (lyricsSource == "lrclib" || lyricsSource == "lrc") 500L else 0L
+    // Lead 0 : le +500 ms faisait défiler trop tôt. LRCLIB : léger lag pour coller au karaoké.
+    val leadMs = 0L
     val sourceLagMs =
-        if (lyricsSource == "lrclib" || lyricsSource == "lrc") 2000L else 0L
+        if (lyricsSource == "lrclib" || lyricsSource == "lrc") 1200L else 0L
+    val syncPos = positionMs + leadMs - userOffsetMs - sourceLagMs
     val active = if (timed.isEmpty()) -1
-    else timed.indexOfLast {
-        it.startMsLong() <= positionMs + leadMs - userOffsetMs - sourceLagMs
-    }.coerceAtLeast(0)
+    else timed.indexOfLast { it.startMsLong() <= syncPos }.coerceAtLeast(0)
     val listState = rememberLazyListState()
-    LaunchedEffect(active) {
+    // Recentre automatiquement la ligne active (seek, reprise, dérive)
+    LaunchedEffect(active, track.id) {
         if (active < 0) return@LaunchedEffect
         runCatching {
             listState.animateScrollToItem(
                 index = active.coerceIn(0, timed.lastIndex),
                 scrollOffset = -120,
             )
+        }
+    }
+    LaunchedEffect(positionMs / 2_000L, track.id) {
+        if (active < 0 || timed.isEmpty()) return@LaunchedEffect
+        val visible = listState.layoutInfo.visibleItemsInfo
+        val onScreen = visible.any { it.index == active }
+        if (!onScreen) {
+            runCatching {
+                listState.animateScrollToItem(
+                    index = active.coerceIn(0, timed.lastIndex),
+                    scrollOffset = -120,
+                )
+            }
         }
     }
 

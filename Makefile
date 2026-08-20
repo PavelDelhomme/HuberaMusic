@@ -28,7 +28,7 @@ SAMPLE_SECS ?= 15
 	android-capacitor android-capacitor-prod adb-fix \
 	adb-fix-keys \
 	adb-wifi adb-wifi-connect adb-wifi-status adb-wifi-wait-unplug adb-wifi-disconnect \
-	adb-wifi-doctor adb-wifi-ensure adb-wifi-pair adb-both adb-devices \
+	adb-wifi-doctor adb-wifi-ensure adb-wifi-pair adb-both adb-devices adb-help \
 	battery-go battery-go-calm battery-suite \
 	battery-test battery-test-short battery-report battery-report-mail \
 	update-apps status status-watch \
@@ -291,6 +291,39 @@ adb-both: ## Rapide : reconnecte Samsung (DEV) + Nothing (PROD) en ADB
 adb-devices: ## Alias de make adb-both (liste + reconnect)
 	@$(MAKE) adb-both
 
+adb-help: ## Aide détaillée de toutes les cibles make adb-* (et sous-commandes scripts)
+	@echo ""
+	@printf "$(C_BOLD)  PLM — make adb-*$(C_RESET)\n"
+	@echo "  =================="
+	@echo ""
+	@printf "  $(C_GREEN)▶ Connexion / Wi‑Fi$(C_RESET)\n"
+	@grep -E '^(adb-wifi|adb-wifi-connect|adb-wifi-status|adb-wifi-wait-unplug|adb-wifi-disconnect|adb-wifi-doctor|adb-wifi-ensure|adb-wifi-pair|adb-both|adb-devices|adb-fix|adb-fix-keys|adb-help):.*?##' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-28s$(C_RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@printf "  $(C_GREEN)▶ Sous-commandes scripts/adb/adb-wifi.sh$(C_RESET)\n"
+	@printf "    $(C_CYAN)%-28s$(C_RESET) %s\n" "doctor" "État Samsung + Nothing (+ Blackview)"
+	@printf "    $(C_CYAN)%-28s$(C_RESET) %s\n" "ensure" "Attend / reconnecte les endpoints Wi‑Fi"
+	@printf "    $(C_CYAN)%-28s$(C_RESET) %s\n" "enable" "USB → tcpip 5555 + enregistre IP"
+	@printf "    $(C_CYAN)%-28s$(C_RESET) %s\n" "connect" "adb connect sur les IPs enregistrées"
+	@printf "    $(C_CYAN)%-28s$(C_RESET) %s\n" "pair" "Débogage sans fil (IP:port + code 6 chiffres)"
+	@printf "    $(C_CYAN)%-28s$(C_RESET) %s\n" "disconnect" "Coupe les sessions ADB Wi‑Fi"
+	@printf "    $(C_CYAN)%-28s$(C_RESET) %s\n" "wait-unplug" "Attend débranchement charge USB/AC"
+	@printf "    $(C_CYAN)%-28s$(C_RESET) %s\n" "go" "Ensure + enchaîne batterie (USAGE=…)"
+	@echo ""
+	@printf "  $(C_DIM)Exemples$(C_RESET)\n"
+	@printf "    make adb-both\n"
+	@printf "    make adb-wifi-pair          # tablette / nouveau téléphone\n"
+	@printf "    DEVICE=192.168.1.44:43085 make android-prod\n"
+	@printf "    bash scripts/adb/adb-wifi.sh doctor\n"
+	@printf "    INCLUDE_NOTHING=1 bash scripts/adb/adb-wifi.sh ensure\n"
+	@echo ""
+	@printf "  $(C_GREEN)▶ Batterie (dépend ADB Wi‑Fi)$(C_RESET)\n"
+	@grep -E '^(battery-[^:]+:).*?##' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-28s$(C_RESET) %s\n", $$1, $$2}'
+	@echo ""
+	@printf "  $(C_DIM)Rôles : Samsung=DEV · Nothing=PROD · Blackview=USB · tablette=pair Wi‑Fi$(C_RESET)\n"
+	@echo ""
+
 adb-wifi-pair: ## Associe un téléphone via Débogage sans fil (IP:port + code)
 	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh
 	@bash $(ROOT)/scripts/adb/adb-wifi.sh pair
@@ -501,7 +534,7 @@ status: ## Statut coloré API / Vite / process locaux / Docker / ADB
 	  printf "  \033[0;90m(aucun — normal si stack Node local ; optionnel : make docker-dev)\033[0m\n"; \
 	fi
 	@echo ""
-	@echo "📱 ADB (Samsung=DEV · Nothing=PROD) — make adb-both :"
+	@echo "📱 ADB (Samsung=DEV · Nothing=PROD · Blackview=USB) — make adb-both :"
 	@echo ""
 	@chmod +x $(ROOT)/scripts/adb/adb-status-snippet.sh
 	@bash $(ROOT)/scripts/adb/adb-status-snippet.sh
