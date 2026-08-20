@@ -10,6 +10,7 @@ enum class PlayerChromeAction {
     AddToPlaylist,
     Download,
     Mix,
+    Equalizer,
     Shuffle,
     Previous,
     PlayPause,
@@ -34,6 +35,7 @@ object NowPlayingChrome {
         ChromeSlot(PlayerChromeAction.AddToPlaylist, "Playlist"),
         ChromeSlot(PlayerChromeAction.Download, "Télécharger"),
         ChromeSlot(PlayerChromeAction.Mix, "Mix"),
+        ChromeSlot(PlayerChromeAction.Equalizer, "Égaliseur"),
     )
 
     /** Sous la barre de seek. */

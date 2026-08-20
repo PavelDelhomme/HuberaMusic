@@ -1,17 +1,23 @@
 package ovh.delhomme.ytmusic.ui.components
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -45,20 +51,41 @@ fun EqualizerSheet(onDismiss: () -> Unit) {
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 8.dp),
         ) {
-            Text("Égaliseur", style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(8.dp))
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("Activer", modifier = Modifier.weight(1f))
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = {
-                        enabled = it
-                        AudioEqualizer.setEnabled(it)
-                    },
-                )
+                Text("Égaliseur", style = MaterialTheme.typography.titleLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
+                            enabled = !enabled
+                            AudioEqualizer.setEnabled(enabled)
+                        },
+                        colors = IconButtonDefaults.iconButtonColors(
+                            contentColor = if (enabled) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        ),
+                    ) {
+                        Icon(
+                            Icons.Default.PowerSettingsNew,
+                            contentDescription = if (enabled) "Désactiver" else "Activer",
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            AudioEqualizer.resetUiGains()
+                            sliders = FloatArray(5) { 0f }
+                        },
+                        enabled = enabled,
+                    ) {
+                        Icon(Icons.Default.RestartAlt, contentDescription = "Réinitialiser")
+                    }
+                }
             }
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
             BAND_LABELS.forEachIndexed { i, label ->

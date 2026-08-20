@@ -271,6 +271,58 @@ export function listListenEvents(userId: string, limit = 200) {
     .all(userId, limit);
 }
 
+/** Événements d’écoute enrichis (titre / artiste) pour l’UI historique. */
+export function listListenEventsDetailed(userId: string, limit = 500) {
+  const rows = db
+    .prepare(
+      `SELECT e.*, t.payload AS payload
+       FROM listen_events e
+       LEFT JOIN tracks_cache t ON t.id = e.track_id
+       WHERE e.user_id = ?
+       ORDER BY e.created_at DESC
+       LIMIT ?`,
+    )
+    .all(userId, limit) as Array<Record<string, unknown> & { payload?: string | null }>;
+
+  return rows.map((row) => {
+    let track: Record<string, unknown> | null = null;
+    if (row.payload) {
+      try {
+        track = JSON.parse(String(row.payload));
+      } catch {
+        track = null;
+      }
+    }
+    if (!track) {
+      track = {
+        id: row.track_id,
+        title: String(row.track_id),
+        artists: [],
+        thumbnails: [],
+        type: 'song',
+      };
+    }
+    const event = String(row.event || 'start');
+    const pct = Number(row.progress_pct || 0);
+    let status: 'started' | 'partial' | 'complete' | 'skipped' = 'started';
+    if (event === 'complete') status = 'complete';
+    else if (event === 'skip') status = 'skipped';
+    else if (event === 'progress' || (event === 'start' && pct >= 5)) {
+      status = pct >= 85 ? 'complete' : 'partial';
+    }
+    return {
+      id: row.id,
+      trackId: row.track_id,
+      event,
+      status,
+      progressPct: pct,
+      durationMs: row.duration_ms ?? null,
+      createdAt: Number(row.created_at || 0),
+      track,
+    };
+  });
+}
+
 export function addSearchHistory(
   userId: string,
   query: string,

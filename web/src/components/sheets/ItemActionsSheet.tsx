@@ -41,10 +41,15 @@ function isPlayable(t: Track) {
 }
 
 function shareUrl(track: Track) {
-  if (track.type === 'playlist') return `https://music.youtube.com/playlist?list=${track.id}`;
-  if (track.type === 'album') return `https://music.youtube.com/browse/${track.id}`;
-  if (track.type === 'artist') return `https://music.youtube.com/channel/${track.id}`;
-  return `https://music.youtube.com/watch?v=${track.id}`;
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin : 'https://ytmusic.delhomme.ovh';
+  if (track.type === 'playlist') {
+    const local = track.id.startsWith('local-') || track.id.length > 24;
+    return local ? `${origin}/local-playlist/${track.id}` : `${origin}/playlist/${track.id}`;
+  }
+  if (track.type === 'album') return `${origin}/album/${track.id}`;
+  if (track.type === 'artist') return `${origin}/artist/${track.id}`;
+  return `${origin}/watch/${track.id}`;
 }
 
 async function shareTrack(track: Track) {
@@ -76,6 +81,8 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const startMix = usePlayer((s) => s.startMix);
   const queue = usePlayer((s) => s.queue);
   const queueIndex = usePlayer((s) => s.queueIndex);
+  const currentId = queue[queueIndex]?.id;
+  const isCurrentPlaying = !!item && item.id === currentId;
   const { isLiked, isInLibrary, toggleLike, toggleLibrarySong, playlists, addToPlaylist, createPlaylist, hasAlbum, hasArtist, hasMix, saveMix, removeMix, isPlaylistLiked, applyLibrary, downloaded, refresh } =
     useLibrary();
   const pinId = usePins((s) => (item ? s.pinIdFor(item.id) : null));
@@ -708,11 +715,11 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
           )}
 
           {/* 6. Divers */}
-          {playable && onOpenEqualizer && (
+          {playable && onOpenEqualizer && isCurrentPlaying && (
             <Row
               icon={<SlidersHorizontal className="h-4 w-4" />}
               label="Égaliseur"
-              sub="Optionnel · désactivé par défaut"
+              sub="Lecteur en cours"
               onClick={() =>
                 after(() => {
                   onOpenEqualizer();

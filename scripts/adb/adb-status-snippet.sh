@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Affiche Samsung / Nothing pour `make status` (ports Wi‑Fi dynamiques OK).
+# Affiche Samsung / Nothing / Blackview pour `make status` (ports Wi‑Fi dynamiques OK).
 set -euo pipefail
 ADB="${ADB_BIN:-adb}"
 ADB_OUT="$("$ADB" devices -l 2>/dev/null || true)"
@@ -20,12 +20,13 @@ print_dev() {
     printf "  \033[1;32m✅ %s\033[0m %-10s %s\n" "$role" "$label" "$line"
   else
     printf "  \033[1;31m❌ %s\033[0m %-10s manquant  → make adb-both  (%s / %s*)\n" \
-      "$role" "$label" "$serial" "$iphost"
+      "$role" "$label" "$serial" "${iphost:-USB}"
   fi
 }
 
 print_dev "DEV " "Samsung" "R5CT7263YJL" "192.168.1.184" "SM_G990B2"
 print_dev "PROD" "Nothing" "00145153K001434" "192.168.1.44" "A059"
+print_dev "USB " "Blackview" "EEA9700PRO0014587" "" "BV9700Pro"
 
 printf '%s\n' "$ADB_OUT" | awk 'NR > 1 && NF && $2 != "device" {
   if ($2 == "unauthorized")

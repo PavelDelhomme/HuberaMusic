@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { SlidersHorizontal, X } from 'lucide-react';
+import { Power, RotateCcw, SlidersHorizontal, X } from 'lucide-react';
 import {
   getEqState,
   resetEqBands,
@@ -44,34 +44,37 @@ export function EqualizerPanel({ open, onClose }: { open: boolean; onClose: () =
             <SlidersHorizontal className="h-5 w-5 text-yt-red" />
             <h2 className="font-display text-lg font-semibold">Égaliseur</h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full p-2 text-yt-muted hover:bg-white/10 hover:text-white"
-            aria-label="Fermer"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <label className="mb-4 flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-white/5 px-3 py-3">
-          <span className="text-sm">Activer l&apos;égaliseur</span>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={enabled}
-            onClick={() => setEqEnabled(!enabled)}
-            className={`relative h-7 w-12 shrink-0 rounded-full transition ${
-              enabled ? 'bg-yt-red' : 'bg-white/15'
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${
-                enabled ? 'left-5' : 'left-0.5'
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label={enabled ? 'Désactiver' : 'Activer'}
+              aria-pressed={enabled}
+              onClick={() => setEqEnabled(!enabled)}
+              className={`rounded-full p-2 ${
+                enabled ? 'text-yt-red hover:bg-yt-red/15' : 'text-yt-muted hover:bg-white/10 hover:text-white'
               }`}
-            />
-          </button>
-        </label>
+            >
+              <Power className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Réinitialiser"
+              disabled={!enabled}
+              onClick={() => resetEqBands()}
+              className="rounded-full p-2 text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-40"
+            >
+              <RotateCcw className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full p-2 text-yt-muted hover:bg-white/10 hover:text-white"
+              aria-label="Fermer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
 
         <div className={`space-y-3 ${enabled ? '' : 'pointer-events-none opacity-40'}`}>
           {bands.map((b) => (
@@ -94,26 +97,6 @@ export function EqualizerPanel({ open, onClose }: { open: boolean; onClose: () =
             </div>
           ))}
         </div>
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => resetEqBands()}
-            className="rounded-full bg-white/10 px-4 py-2 text-xs text-yt-muted hover:text-white"
-          >
-            Réinitialiser
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full bg-yt-red px-4 py-2 text-xs font-medium text-white"
-          >
-            OK
-          </button>
-        </div>
-        <p className="mt-3 text-[11px] text-yt-muted">
-          Désactivé par défaut. Les réglages sont mémorisés sur cet appareil.
-        </p>
       </div>
     </div>
   );

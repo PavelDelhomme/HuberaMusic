@@ -213,6 +213,8 @@ fun MiniPlayerBar(
     progress: Float,
     /** Durée totale (ms) pour afficher le temps restant `-3:45`. */
     durationMs: Long = 0L,
+    /** Fraction 0–1 déjà bufferisée (gris clair sous le rouge). */
+    bufferedProgress: Float = 0f,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     /** Swipe bas → fermer lecteur + vider la file. */
@@ -296,7 +298,13 @@ fun MiniPlayerBar(
                     Modifier
                         .fillMaxWidth()
                         .height(2.dp)
-                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)),
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
+                )
+                Box(
+                    Modifier
+                        .fillMaxWidth(bufferedProgress.coerceIn(0f, 1f))
+                        .height(2.dp)
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)),
                 )
                 Box(
                     Modifier

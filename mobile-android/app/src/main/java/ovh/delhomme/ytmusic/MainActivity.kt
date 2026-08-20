@@ -736,7 +736,9 @@ private fun MainTabs(
                     }
                     val posMs = ((base + ageSec) * 1000.0).toLong().coerceAtLeast(0L)
                     val activeHere = remoteSnap?.activePlayerId == container.deviceId
-                    val autoplay = st?.isPlaying == true && activeHere
+                    // Réouverture app : toujours en pause — file + position conservées.
+                    // L’utilisateur décide de reprendre (play) ou de changer de file.
+                    val autoplay = false
                     suppressSessionPublishUntil = System.currentTimeMillis() + 12_000L
                     player.restoreQueue(
                         tracks = remoteTracks,
@@ -749,13 +751,13 @@ private fun MainTabs(
                     pendingRemoteLabel = when {
                         st?.isPlaying == true && !activeHere ->
                             "En pause — lecture active ailleurs"
-                        st?.isPlaying != true && remoteCurrent != null ->
+                        remoteCurrent != null ->
                             remoteCurrent.title ?: "Titre en pause"
                         else -> null
                     }
                     AppLog.i(
                         "player",
-                        "hydrate remote id=${remoteCurrent?.id} pos=$posMs play=$autoplay n=${remoteTracks.size}",
+                        "hydrate remote id=${remoteCurrent?.id} pos=$posMs play=false n=${remoteTracks.size}",
                     )
                 } else if (local != null && local.queue.isNotEmpty()) {
                     suppressSessionPublishUntil = System.currentTimeMillis() + 8_000L
@@ -763,14 +765,14 @@ private fun MainTabs(
                         tracks = local.queue,
                         startIndex = local.queueIndex,
                         positionMs = local.positionMs,
-                        autoplay = local.wasPlaying,
+                        autoplay = false,
                         title = local.queueTitle,
                         userQueueEnd = local.userQueueEnd,
                     )
                     AppLog.i(
                         "player",
                         "hydrate local id=${local.queue.getOrNull(local.queueIndex)?.id} " +
-                            "pos=${local.positionMs} play=${local.wasPlaying} n=${local.queue.size}",
+                            "pos=${local.positionMs} play=false n=${local.queue.size}",
                     )
                 } else if (remoteTracks.isNotEmpty()) {
                     val idx = (st?.queueIndex ?: 0).coerceIn(0, remoteTracks.lastIndex)
@@ -1067,6 +1069,11 @@ private fun MainTabs(
                                 0f
                             },
                             durationMs = playerUi.durationMs,
+                            bufferedProgress = if (playerUi.durationMs > 0) {
+                                (playerUi.bufferedMs.toFloat() / playerUi.durationMs).coerceIn(0f, 1f)
+                            } else {
+                                0f
+                            },
                             onToggle = {
                                 suppressSessionPublishUntil = 0L
                                 scope.launch {

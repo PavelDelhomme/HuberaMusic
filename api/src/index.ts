@@ -158,6 +158,7 @@ import {
   getPrefs,
   listFollows,
   listListenEvents,
+  listListenEventsDetailed,
   listPins,
   listSearchHistory,
   listWeights,
@@ -1616,7 +1617,7 @@ app.post('/api/history/entity', accountRequired, (req, res) => {
 });
 
 app.get('/api/history/detailed', accountRequired, (req, res) => {
-  res.json({ events: listListenEvents(req.userId!, 500) });
+  res.json({ events: listListenEventsDetailed(req.userId!, 500) });
 });
 
 app.post('/api/listen', accountRequired, (req, res) => {
@@ -1627,15 +1628,19 @@ app.post('/api/listen', accountRequired, (req, res) => {
       res.status(400).json({ error: 'trackId requis' });
       return;
     }
+    const progressRaw = Number(req.body?.progressPct || 0);
+    // Clients envoient parfois 0–1, parfois 0–100
+    const progressPct = progressRaw > 0 && progressRaw <= 1 ? progressRaw * 100 : progressRaw;
     recordListenEvent({
       userId: req.userId!,
       trackId,
       event,
-      progressPct: Number(req.body?.progressPct || 0),
+      progressPct,
       durationMs: req.body?.durationMs != null ? Number(req.body.durationMs) : undefined,
       seedId: req.body?.seedId ? String(req.body.seedId) : undefined,
     });
-    if (event === 'start' || event === 'complete') {
+    // Remonter dans l’historique : start / complete / écoute partielle (≥5 %)
+    if (event === 'start' || event === 'complete' || (event === 'progress' && progressPct >= 5)) {
       const track = (req.body?.track as Track | undefined) || {
         id: trackId,
         title: trackId,
@@ -1643,7 +1648,6 @@ app.post('/api/listen', accountRequired, (req, res) => {
         thumbnails: [],
         type: 'song' as const,
       };
-      // start = remonter dans « récemment » ; complete = incrémenter le compteur
       addHistory(req.userId!, track, { bumpCount: event === 'complete' });
     }
     const ctx = req.body?.context;

@@ -72,7 +72,7 @@ class OfflineDownloadManager(
     /**
      * Lance le DL en arrière-plan (no-op si déjà local / déjà en cours).
      */
-    fun enqueue(track: TrackDto): Boolean = enqueueInternal(track, duringPlaybackSafe = false)
+    fun enqueue(track: TrackDto): Boolean = enqueueInternal(track, duringPlaybackSafe = true)
 
     /**
      * Pré-télécharge silencieusement les prochains titres (mix / file).

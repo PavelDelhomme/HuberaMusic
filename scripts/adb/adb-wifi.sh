@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# ADB Wi‑Fi multi-appareils physiques (Samsung + Nothing) — pairing inclus.
+# ADB Wi‑Fi multi-appareils physiques (Samsung + Nothing + Blackview USB) — pairing inclus.
 #
 # Appareils attendus (physiques) :
-#   Samsung  R5CT7263YJL  SM-G990B2 / r9q*
-#   Nothing  00145153K001434  A059 / Asteroids
+#   Samsung   R5CT7263YJL       SM-G990B2 / r9q*          → DEV (Wi‑Fi ou USB)
+#   Nothing   00145153K001434   A059 / Asteroids          → PROD (Wi‑Fi)
+#   Blackview EEA9700PRO0014587 BV9700Pro                 → USB only (pas de débogage sans fil)
 #
 # Commandes :
 #   bash scripts/adb/adb-wifi.sh doctor
@@ -25,6 +26,7 @@ mkdir -p "$STATE_DIR"
 EXPECTED_SERIALS=(
   "R5CT7263YJL:S21 FE DD"
   "00145153K001434:Nothing"
+  "EEA9700PRO0014587:Blackview"
 )
 
 # IPs LAN connues (Débogage sans fil = port dynamique ≠ 5555)
@@ -41,6 +43,10 @@ is_nothing_fingerprint() {
 is_samsung_fingerprint() {
   local blob="$1"
   echo "$blob" | grep -qiE 'SM-G990B2|SM_G990B2|r9q|R5CT7263YJL'
+}
+is_blackview_fingerprint() {
+  local blob="$1"
+  echo "$blob" | grep -qiE 'BV9700Pro|BV9700|EEA9700PRO0014587|Blackview'
 }
 
 # Au moins 1 appareil suffit (Samsung optionnel). REQUIRE_BOTH=1 pour exiger les 2.
@@ -150,7 +156,7 @@ list_expected_wifi_transports() {
 
 cmd_doctor() {
   log "╔══════════════════════════════════════════════════════════╗"
-  log "║  ADB doctor — S21 FE DD + Nothing (min ${MIN_DEVICES})   ║"
+  log "║  ADB doctor — S21 FE DD + Nothing + Blackview (min ${MIN_DEVICES})   ║"
   log "╚══════════════════════════════════════════════════════════╝"
   log ""
   "$ADB" devices -l
@@ -185,7 +191,7 @@ cmd_doctor() {
       [[ "$hw" == "${entry%%:*}" ]] && matched=1 && break
     done
     if [[ "$matched" == 0 ]]; then
-      warn "Transport ignoré (pas S21/Nothing) : $t hw=${hw:-?} model=$(model_of "$t")"
+      warn "Transport ignoré (pas S21/Nothing/Blackview) : $t hw=${hw:-?} model=$(model_of "$t")"
     fi
   done
   log ""
