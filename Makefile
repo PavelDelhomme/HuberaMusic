@@ -534,7 +534,7 @@ status: ## Statut coloré API / Vite / process locaux / Docker / ADB
 	  printf "  \033[0;90m(aucun — normal si stack Node local ; optionnel : make docker-dev)\033[0m\n"; \
 	fi
 	@echo ""
-	@echo "📱 ADB (Samsung=DEV · Nothing=PROD · Blackview=USB) — make adb-both :"
+	@echo "📱 ADB (Samsung=DEV · Nothing=PROD · Blackview=USB · Lenovo=TAB) — make adb-both :"
 	@echo ""
 	@chmod +x $(ROOT)/scripts/adb/adb-status-snippet.sh
 	@bash $(ROOT)/scripts/adb/adb-status-snippet.sh

@@ -156,7 +156,7 @@ list_expected_wifi_transports() {
 
 cmd_doctor() {
   log "╔══════════════════════════════════════════════════════════╗"
-  log "║  ADB doctor — S21 FE DD + Nothing + Blackview (min ${MIN_DEVICES})   ║"
+  log "║  ADB doctor — appareils physiques (min ${MIN_DEVICES})              ║"
   log "╚══════════════════════════════════════════════════════════╝"
   log ""
   "$ADB" devices -l
@@ -191,7 +191,14 @@ cmd_doctor() {
       [[ "$hw" == "${entry%%:*}" ]] && matched=1 && break
     done
     if [[ "$matched" == 0 ]]; then
-      warn "Transport ignoré (pas S21/Nothing/Blackview) : $t hw=${hw:-?} model=$(model_of "$t")"
+      warn "Transport extra (hors liste fixe) : $t hw=${hw:-?} model=$(model_of "$t")"
+      # Enregistre tout appareil Wi‑Fi supplémentaire (ex. tablette Lenovo)
+      if [[ "$t" == *:* ]]; then
+        local tip tport
+        tip="${t%%:*}"
+        tport="${t##*:}"
+        [[ -n "$hw" ]] && remember_endpoint "$hw" "$tip" "$tport"
+      fi
     fi
   done
   log ""
@@ -298,10 +305,10 @@ cmd_pair() {
   log "║  Débogage sans fil — association (pairing)              ║"
   log "╚══════════════════════════════════════════════════════════╝"
   log ""
-  log "Sur le téléphone (S21 FE DD) :"
+  log "Sur l’appareil Android (téléphone ou tablette) :"
   log "  1. Options dév → Débogage sans fil = ON"
   log "  2. Associer avec un code → IP:port + code 6 chiffres"
-  log "  3. Puis IP:port de connexion (souvent différent)"
+  log "  3. Puis IP:port de connexion (souvent différent du port d’association)"
   log ""
   local pair_host pair_code connect_host
   if [[ -n "${PAIR:-}" && -n "${PAIR_CODE:-}" ]]; then
@@ -329,7 +336,20 @@ cmd_pair() {
     *) connect_host="${connect_host}:$PORT" ;;
   esac
   "$ADB" connect "$connect_host"
-  echo "paired $connect_host" >>"$STATE_DIR/endpoints.txt"
+  sleep 1
+  # Enregistre correctement hw + IP + port (pas juste « paired IP:port »)
+  local ip_only port_only hw_new model_new
+  ip_only="${connect_host%%:*}"
+  port_only="${connect_host##*:}"
+  hw_new="$(hw_serial_of "$connect_host" 2>/dev/null || true)"
+  model_new="$(model_of "$connect_host" 2>/dev/null || true)"
+  if [[ -n "$hw_new" && -n "$ip_only" && -n "$port_only" ]]; then
+    remember_endpoint "$hw_new" "$ip_only" "$port_only"
+    ok "Endpoint enregistré : $hw_new ($model_new) → $ip_only:$port_only"
+  else
+    echo "paired $connect_host" >>"$STATE_DIR/endpoints.txt"
+    warn "Connecté $connect_host mais serial HW introuvable — réessaie make adb-wifi-connect"
+  fi
   sleep 1
   cmd_doctor || true
 }
