@@ -216,7 +216,9 @@ class OfflineDownloadManager(
     }
 
     private fun isPlaybackActive(): Boolean =
-        ovh.delhomme.ytmusic.player.PlaybackService.Holder.isPlaybackActiveSafe()
+        runCatching {
+            ovh.delhomme.ytmusic.player.PlaybackService.Holder.isPlaybackActiveSafe()
+        }.getOrDefault(true) // en doute : ne pas DL pendant une éventuelle lecture
 
     /** Exposé à OfflineKeeper — ne pas saturer /api/stream pendant la lecture. */
     fun isPlaybackBusy(): Boolean = isPlaybackActive()

@@ -12,6 +12,7 @@ import {
   LRCLIB_BASE_LAG_SEC,
   getLyricUserOffsetMs,
   nudgeLyricUserOffsetMs,
+  setLyricUserOffsetMs,
 } from '../../lib/player/lyricSync';
 
 export type NowPlayingTab = 'queue' | 'lyrics' | 'related';
@@ -104,7 +105,7 @@ export function SyncedLyrics({
       const el = usePlayer.getState().audioEl;
       if (el && Number.isFinite(el.currentTime)) {
         const t = el.currentTime + leadSec - offsetSec - sourceLagSec;
-        let idx = 0;
+        let idx = -1;
         for (let i = 0; i < lines.length; i++) {
           if (lines[i].t <= t) idx = i;
           else break;
@@ -144,7 +145,7 @@ export function SyncedLyrics({
   const activeIdx = useMemo(() => {
     if (!lines.length) return -1;
     const t = clock + leadSec - offsetSec - sourceLagSec;
-    let idx = 0;
+    let idx = -1;
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].t <= t) idx = i;
       else break;
@@ -198,36 +199,79 @@ export function SyncedLyrics({
   return (
     <div className="relative">
       {currentId && (
-        <div className="sticky top-0 z-10 mb-2 flex items-center justify-center gap-2 bg-yt-surface/90 px-2 py-1.5 backdrop-blur-sm">
-          <button
-            type="button"
-            className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-            title="Paroles trop en avance → retarder l’highlight"
-            onClick={() => {
-              if (!currentId) return;
-              setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 500));
-              lastActiveRef.current = -1;
-            }}
-          >
-            Trop tôt
-          </button>
-          <span className="min-w-[3.5rem] text-center text-[11px] tabular-nums text-yt-muted">
-            {userOffsetMs === 0
-              ? '±0,5 s lead'
-              : `${userOffsetMs > 0 ? '+' : ''}${(userOffsetMs / 1000).toFixed(1)} s`}
-          </span>
-          <button
-            type="button"
-            className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-            title="Paroles trop en retard → avancer l’highlight"
-            onClick={() => {
-              if (!currentId) return;
-              setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -500));
-              lastActiveRef.current = -1;
-            }}
-          >
-            Trop tard
-          </button>
+        <div className="sticky top-0 z-10 mb-2 space-y-1 bg-yt-surface/90 px-2 py-1.5 backdrop-blur-sm">
+          <p className="text-center text-[10px] text-yt-muted">
+            Appui long sur une ligne pour recaler le rythme
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
+            <button
+              type="button"
+              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+              title="Retarder d’1 s"
+              onClick={() => {
+                if (!currentId) return;
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 1000));
+                lastActiveRef.current = -1;
+              }}
+            >
+              −1 s
+            </button>
+            <button
+              type="button"
+              className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+              title="Paroles trop en avance"
+              onClick={() => {
+                if (!currentId) return;
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 200));
+                lastActiveRef.current = -1;
+              }}
+            >
+              Trop tôt
+            </button>
+            <span className="min-w-[3rem] text-center text-[11px] font-semibold tabular-nums text-yt-muted">
+              {userOffsetMs === 0
+                ? 'sync'
+                : `${userOffsetMs > 0 ? '+' : ''}${(userOffsetMs / 1000).toFixed(1)} s`}
+            </span>
+            <button
+              type="button"
+              className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+              title="Paroles trop en retard"
+              onClick={() => {
+                if (!currentId) return;
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -200));
+                lastActiveRef.current = -1;
+              }}
+            >
+              Trop tard
+            </button>
+            <button
+              type="button"
+              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+              title="Avancer d’1 s"
+              onClick={() => {
+                if (!currentId) return;
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -1000));
+                lastActiveRef.current = -1;
+              }}
+            >
+              +1 s
+            </button>
+            {userOffsetMs !== 0 && (
+              <button
+                type="button"
+                className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+                onClick={() => {
+                  if (!currentId) return;
+                  setLyricUserOffsetMs(currentId, 0);
+                  setUserOffsetMs(0);
+                  lastActiveRef.current = -1;
+                }}
+              >
+                Reset
+              </button>
+            )}
+          </div>
         </div>
       )}
       <div
@@ -243,7 +287,7 @@ export function SyncedLyrics({
       >
         {lines.map((line, i) => {
           const active = i === activeIdx;
-          const past = i < activeIdx;
+          const past = activeIdx >= 0 && i < activeIdx;
           return (
             <p
               key={`${i}-${line.t}`}
@@ -251,6 +295,49 @@ export function SyncedLyrics({
               role="button"
               tabIndex={0}
               onClick={() => seek(Math.max(0, line.t))}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                if (!currentId) return;
+                const el = usePlayer.getState().audioEl;
+                const now = el && Number.isFinite(el.currentTime) ? el.currentTime : clock;
+                const nextMs = Math.round(
+                  (now + leadSec - sourceLagSec - line.t) * 1000,
+                );
+                setLyricUserOffsetMs(currentId, nextMs);
+                setUserOffsetMs(getLyricUserOffsetMs(currentId));
+                lastActiveRef.current = -1;
+              }}
+              onTouchStart={(e) => {
+                const target = e.currentTarget;
+                const timer = window.setTimeout(() => {
+                  if (!currentId) return;
+                  const el = usePlayer.getState().audioEl;
+                  const now = el && Number.isFinite(el.currentTime) ? el.currentTime : clock;
+                  const nextMs = Math.round(
+                    (now + leadSec - sourceLagSec - line.t) * 1000,
+                  );
+                  setLyricUserOffsetMs(currentId, nextMs);
+                  setUserOffsetMs(getLyricUserOffsetMs(currentId));
+                  lastActiveRef.current = -1;
+                  target.dataset.calibrated = '1';
+                }, 480);
+                target.dataset.longPressTimer = String(timer);
+              }}
+              onTouchEnd={(e) => {
+                const t = e.currentTarget.dataset.longPressTimer;
+                if (t) window.clearTimeout(Number(t));
+                if (e.currentTarget.dataset.calibrated === '1') {
+                  e.preventDefault();
+                  delete e.currentTarget.dataset.calibrated;
+                }
+                delete e.currentTarget.dataset.longPressTimer;
+              }}
+              onTouchCancel={(e) => {
+                const t = e.currentTarget.dataset.longPressTimer;
+                if (t) window.clearTimeout(Number(t));
+                delete e.currentTarget.dataset.longPressTimer;
+                delete e.currentTarget.dataset.calibrated;
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
@@ -264,7 +351,7 @@ export function SyncedLyrics({
                     ? 'text-base leading-7 text-white/25 sm:text-lg'
                     : 'text-lg leading-8 text-[#9a9a9a] sm:text-xl sm:leading-9'
               }`}
-              title="Aller à cet instant"
+              title="Clic : aller à cet instant · Appui long : caler le sync"
             >
               {line.text || '\u00a0'}
             </p>

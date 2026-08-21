@@ -108,11 +108,14 @@ object AppLog {
         return if (f.isFile) f.readText() else "(aucun crash enregistré)"
     }
 
-    fun recentLogText(maxChars: Int = 120_000): String {
+    fun recentLogText(maxChars: Int = 120_000, newestFirst: Boolean = true): String {
         val f = filesDir?.let { File(it, APP_LOG) } ?: return "(logs indisponibles)"
         if (!f.isFile) return "(fichier app.log vide)"
         val text = f.readText()
-        return if (text.length <= maxChars) text else text.takeLast(maxChars)
+        val slice = if (text.length <= maxChars) text else text.takeLast(maxChars)
+        if (!newestFirst) return slice
+        // Plus récent en haut (le fichier est chronologique croissant)
+        return slice.lineSequence().toList().asReversed().joinToString("\n")
     }
 
     fun exportBundle(): String {

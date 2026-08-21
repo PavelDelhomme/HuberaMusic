@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
+import ovh.delhomme.ytmusic.data.BatterySaver
 import ovh.delhomme.ytmusic.data.NetworkMonitor
 import ovh.delhomme.ytmusic.debug.CrashReporter
 import ovh.delhomme.ytmusic.player.PlaybackIdleGuard
@@ -29,6 +30,7 @@ class YtMusicApp : Application(), ImageLoaderFactory {
         CrashReporter.install(this)
         container = AppContainer(this)
         NetworkMonitor.start(this)
+        BatterySaver.start(this)
         PlaybackIdleGuard.start(this)
         ovh.delhomme.ytmusic.debug.TelemetryReporter.flushPending()
         // Précharge les JWT en mémoire dès le boot (évite runBlocking DataStore)
