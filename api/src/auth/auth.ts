@@ -177,11 +177,16 @@ export function allowedEmails(): Set<string> {
 
 export function assertEmailAllowed(email: string) {
   if (!authPrivateMode()) return;
+  const normalized = String(email || '').trim().toLowerCase();
+  // Compte déjà créé (ex. pendant une fenêtre d’inscription Admin) → toujours OK
+  if (normalized && findUserByEmail(normalized)) return;
+  // Inscription ouverte via Admin → nouvel email autorisé
+  if (authAllowRegister()) return;
   const set = allowedEmails();
   if (!set.size) {
     throw new Error('AUTH_ALLOWED_EMAILS / ADMIN_EMAILS requis en mode privé');
   }
-  if (!set.has(String(email || '').trim().toLowerCase())) {
+  if (!set.has(normalized)) {
     throw new Error('Accès réservé — compte non autorisé');
   }
 }
