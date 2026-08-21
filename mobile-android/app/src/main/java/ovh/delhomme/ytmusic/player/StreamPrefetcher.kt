@@ -312,10 +312,13 @@ object StreamPrefetcher {
         val idx = fromIndex.coerceIn(0, queueIds.lastIndex.coerceAtLeast(0))
         val playing = isPlaybackActive()
         val unmetered = isUnmetered()
-        queueIds.drop(idx + 1).take(count.coerceIn(1, 8)).forEachIndexed { i, id ->
+        val saver = ovh.delhomme.ytmusic.data.BatterySaver.isActive()
+        val take = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(count.coerceIn(1, 8))
+        queueIds.drop(idx + 1).take(take).forEachIndexed { i, id ->
             if (id.length != 11 || isLocalOffline(id)) return@forEachIndexed
             val url = "${baseApi.trimEnd('/')}/api/stream/$id"
             val bytes = when {
+                saver -> HEAD_3S
                 !unmetered -> if (i == 0) HEAD_NEXT_METERED else HEAD_3S
                 !playing && i == 0 -> HEAD_NEXT_WIFI
                 !playing && i <= 2 -> HEAD_NEAR_WIFI

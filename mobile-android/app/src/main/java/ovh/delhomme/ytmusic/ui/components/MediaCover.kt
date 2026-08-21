@@ -25,7 +25,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import coil.compose.SubcomposeAsyncImage
+import ovh.delhomme.ytmusic.data.BatterySaver
 import ovh.delhomme.ytmusic.data.TrackDto
 
 @Composable
@@ -37,6 +40,7 @@ fun MediaCover(
     /** Force l’overlay ; sinon déduit de [LocalNowPlaying]. */
     playingOverlay: Boolean? = null,
 ) {
+    val saverOn by BatterySaver.active.collectAsState()
     val now = LocalNowPlaying.current
     val active = playingOverlay
         ?: when {
@@ -47,7 +51,7 @@ fun MediaCover(
             track.isAlbum() && now.matchesAlbum(track.album?.id) -> true
             else -> false
         }
-    val animating = active && now.playing
+    val animating = active && now.playing && !saverOn
     val shape = when {
         circle || track.isArtist() -> CircleShape
         else -> RoundedCornerShape(8.dp)
@@ -63,6 +67,9 @@ fun MediaCover(
         size >= 80.dp -> 20.dp
         else -> 14.dp
     }
+    val thumbPx = BatterySaver.coverSizeHint(size.value.toInt().coerceAtLeast(120))
+    // Économiseur : listes / grilles → placeholder (sauf titre en lecture)
+    val skipNetworkImage = saverOn && !active && size < 140.dp
     Box(
         modifier = modifier
             .size(size)
@@ -70,26 +77,35 @@ fun MediaCover(
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {
-        SubcomposeAsyncImage(
-            model = track.coverUrl(size.value.toInt().coerceAtLeast(120)),
-            contentDescription = track.title,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-            loading = {
-                Icon(
-                    placeholderIcon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                )
-            },
-            error = {
-                Icon(
-                    placeholderIcon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                )
-            },
-        )
+        if (skipNetworkImage) {
+            Icon(
+                placeholderIcon,
+                contentDescription = track.title,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                modifier = Modifier.size((size.value * 0.42f).dp.coerceAtLeast(18.dp)),
+            )
+        } else {
+            SubcomposeAsyncImage(
+                model = track.coverUrl(thumbPx),
+                contentDescription = track.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+                loading = {
+                    Icon(
+                        placeholderIcon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    )
+                },
+                error = {
+                    Icon(
+                        placeholderIcon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    )
+                },
+            )
+        }
         PlayingCoverOverlay(
             active = active,
             playing = animating,

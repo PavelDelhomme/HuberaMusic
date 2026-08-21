@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -113,6 +114,14 @@ fun DebugLogsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            val saverOn by ovh.delhomme.ytmusic.data.BatterySaver.active.collectAsState()
+            if (saverOn) {
+                Text(
+                    "Économiseur système ON — pochettes / prefetch / offline allégés",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Text(
                 "Mode ${container.apiEnvLabel()} · ${container.resolvedApiBase()}",
                 style = MaterialTheme.typography.bodySmall,
@@ -357,6 +366,14 @@ fun DebugLogsScreen(
                 }
             }
             Spacer(Modifier.height(8.dp))
+            if (tab == 1) {
+                Text(
+                    "Journal : plus récent en haut",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
             Text(
                 content.ifBlank { "(vide)" },
                 modifier = Modifier

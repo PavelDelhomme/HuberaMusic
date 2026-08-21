@@ -311,13 +311,13 @@ fun NowPlayingScreen(
     fun settleQueue(velocityY: Float = 0f) {
         scope.launch {
             val wasOpen = queueProgress.value > 0.02f
+            // Snap binaire uniquement : jamais laisser le « petit lecteur » à mi-chemin
             val target = when {
                 velocityY < -900f -> 1f
-                // Fling vers le bas depuis la file → toujours le lecteur plein, jamais dismiss
-                velocityY > 900f && wasOpen -> 0f
-                queueProgress.value >= 0.42f -> 1f
-                queueProgress.value <= 0.08f -> 0f
-                else -> queueProgress.value // garder la position intermédiaire
+                // Fling vers le bas depuis la file → lecteur plein, jamais dismiss
+                velocityY > 900f -> 0f
+                queueProgress.value >= 0.5f -> 1f
+                else -> 0f
             }
             queueProgress.animateTo(
                 target,
@@ -543,20 +543,14 @@ fun NowPlayingScreen(
         val liked = track.id in likedIds
 
         Column(Modifier.fillMaxSize()) {
-            // Chrome / mini-header selon l’ouverture de la file
-            Box(Modifier.fillMaxWidth()) {
+            // Chrome lecteur (masqué quand la file est ouverte — le header file porte les contrôles)
+            if (!queueInteractive) {
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .graphicsLayer { alpha = (1f - qp * 1.2f).coerceIn(0f, 1f) }
-                        .pointerInput(queueInteractive, dismissArmed) {
+                        .pointerInput(dismissArmed) {
                             detectVerticalDragGestures(
                                 onVerticalDrag = { _, amount ->
-                                    if (queueProgress.value > 0.02f) {
-                                        // Replie la file, ne dismiss pas le lecteur
-                                        onQueueDrag(amount)
-                                        return@detectVerticalDragGestures
-                                    }
                                     if (!dismissArmed) {
                                         dragOffset = 0f
                                         return@detectVerticalDragGestures
@@ -565,14 +559,8 @@ fun NowPlayingScreen(
                                         dragOffset = (dragOffset + amount).coerceAtLeast(0f)
                                     }
                                 },
-                                onDragEnd = {
-                                    if (queueProgress.value > 0.02f) settleQueue(0f)
-                                    else settleOrClose()
-                                },
-                                onDragCancel = {
-                                    if (queueProgress.value > 0.02f) settleQueue(0f)
-                                    else settleOrClose()
-                                },
+                                onDragEnd = { settleOrClose() },
+                                onDragCancel = { settleOrClose() },
                             )
                         },
                 ) {
@@ -596,21 +584,15 @@ fun NowPlayingScreen(
                             .padding(horizontal = 8.dp, vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        IconButton(
-                            onClick = {
-                                if (queueInteractive) collapseQueue()
-                                else onClose()
-                            },
-                        ) {
+                        IconButton(onClick = onClose) {
                             Icon(
                                 Icons.Default.KeyboardArrowDown,
-                                contentDescription = if (queueInteractive) "Replier la file" else "Replier",
+                                contentDescription = "Replier",
                                 tint = PlayerFg,
                                 modifier = Modifier.size(32.dp),
                             )
                         }
                         Spacer(Modifier.weight(1f))
-                        // Switch Titre | Vidéo (centre, entre replier et ⋮)
                         MediaModeSwitch(
                             video = SessionMediaMode.video,
                             onChange = { SessionMediaMode.video = it },
@@ -628,39 +610,6 @@ fun NowPlayingScreen(
                             }
                         }
                     }
-                }
-
-                if (queueInteractive) {
-                    QueueExpandedHeader(
-                        track = track,
-                        playing = ui.playing,
-                        shuffle = ui.shuffle,
-                        repeat = ui.repeat,
-                        queueTitle = ui.queueTitle,
-                        progressHint = qp,
-                        onCollapse = { collapseQueue() },
-                        onToggle = player::toggle,
-                        onSkipPrev = {
-                            val now = SystemClock.elapsedRealtime()
-                            val double = now - lastPrevTap < 380L
-                            lastPrevTap = now
-                            player.skipPrevOrRestart(forcePrevious = double)
-                        },
-                        onSkipNext = player::skipNext,
-                        onToggleShuffle = player::toggleShuffle,
-                        onCycleRepeat = player::cycleRepeat,
-                        onOpenArtist = onOpenArtist,
-                        onQueueDrag = ::onQueueDrag,
-                        onQueueDragEnd = { settleQueue(it) },
-                        onSwipeToSimilar = { queuePanelTab = 1 },
-                        onSwipeToQueue = { queuePanelTab = 0 },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                alpha = (qp * 1.15f).coerceIn(0f, 1f)
-                                translationY = (1f - qp) * -28f
-                            },
-                    )
                 }
             }
 
@@ -733,6 +682,7 @@ fun NowPlayingScreen(
                                         container = container,
                                         track = track,
                                         positionMs = ui.positionMs,
+                                        durationMs = ui.durationMs,
                                         onSeek = { player.seek(it) },
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1336,46 +1286,75 @@ fun NowPlayingScreen(
                 }
                 }
 
-                // File plein écran (suit le doigt via queueProgress)
+                // File plein écran : transport sticky + liste (pas d’overlay séparé du header)
                 if (queueInteractive) {
-                    QueueExpandedBody(
-                        ui = ui,
-                        container = container,
-                        player = player,
-                        listState = queueListState,
-                        panelTab = queuePanelTab,
-                        onPanelTabChange = { queuePanelTab = it },
-                        similarListState = similarListState,
-                        similarPanelCache = similarPanelCache,
-                        onPlayAt = player::playAt,
-                        onMore = onMore,
-                        onMove = player::moveInQueue,
-                        onSave = { showSaveQueue = true },
-                        onClear = {
-                            player.clearUpcomingFromQueue()
-                            Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
-                        },
-                        onStartMix = {
-                            val t = ui.track ?: return@QueueExpandedBody
-                            scope.launch {
-                                val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
-                                if (mix.isNotEmpty()) {
-                                    player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                    Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        },
-                        onToggleAutoplay = player::toggleAutoplaySuggestions,
-                        onCollapsePull = { dy -> onQueueDrag(dy) },
-                        onCollapsePullEnd = { settleQueue(it) },
-                        modifier = Modifier
+                    Column(
+                        Modifier
                             .fillMaxSize()
                             .navigationBarsPadding()
                             .graphicsLayer {
                                 alpha = (qp * 1.1f).coerceIn(0f, 1f)
                                 translationY = (1f - qp) * 96f
                             },
-                    )
+                    ) {
+                        QueueExpandedHeader(
+                            track = track,
+                            playing = ui.playing,
+                            shuffle = ui.shuffle,
+                            repeat = ui.repeat,
+                            queueTitle = ui.queueTitle,
+                            progressHint = qp,
+                            onCollapse = { collapseQueue() },
+                            onToggle = player::toggle,
+                            onSkipPrev = {
+                                val now = SystemClock.elapsedRealtime()
+                                val double = now - lastPrevTap < 380L
+                                lastPrevTap = now
+                                player.skipPrevOrRestart(forcePrevious = double)
+                            },
+                            onSkipNext = player::skipNext,
+                            onToggleShuffle = player::toggleShuffle,
+                            onCycleRepeat = player::cycleRepeat,
+                            onOpenArtist = onOpenArtist,
+                            onQueueDrag = ::onQueueDrag,
+                            onQueueDragEnd = { settleQueue(it) },
+                            onSwipeToSimilar = { queuePanelTab = 1 },
+                            onSwipeToQueue = { queuePanelTab = 0 },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        QueueExpandedBody(
+                            ui = ui,
+                            container = container,
+                            player = player,
+                            listState = queueListState,
+                            panelTab = queuePanelTab,
+                            onPanelTabChange = { queuePanelTab = it },
+                            similarListState = similarListState,
+                            similarPanelCache = similarPanelCache,
+                            onPlayAt = player::playAt,
+                            onMore = onMore,
+                            onMove = player::moveInQueue,
+                            onSave = { showSaveQueue = true },
+                            onClear = {
+                                player.clearUpcomingFromQueue()
+                                Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
+                            },
+                            onStartMix = {
+                                val t = ui.track ?: return@QueueExpandedBody
+                                scope.launch {
+                                    val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
+                                    if (mix.isNotEmpty()) {
+                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            onToggleAutoplay = player::toggleAutoplaySuggestions,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }
@@ -1451,13 +1430,37 @@ private fun PortraitQueuePreview(
     modifier: Modifier = Modifier,
 ) {
     val previewList = rememberLazyListState()
+    // Empêche l’overscroll de la file de shrink/dismiss le lecteur plein écran
+    val blockParentDismiss = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                if (available.y == 0f) return Offset.Zero
+                return Offset(0f, available.y)
+            }
+
+            override suspend fun onPostFling(
+                consumed: Velocity,
+                available: Velocity,
+            ): Velocity {
+                if (available.y == 0f) return Velocity.Zero
+                return Velocity(0f, available.y)
+            }
+        }
+    }
     val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
     LaunchedEffect(ui.queueIndex, ui.queue.size) {
         if (ui.queue.isEmpty()) return@LaunchedEffect
         val target = ui.queueIndex.coerceIn(0, ui.queue.lastIndex)
         runCatching { previewList.scrollToItem(target.coerceAtLeast(0)) }
     }
-    LazyColumn(modifier = modifier, state = previewList) {
+    LazyColumn(
+        modifier = modifier.nestedScroll(blockParentDismiss),
+        state = previewList,
+    ) {
         item {
             QueueSectionHeader(
                 title = "File d'attente",
@@ -1700,7 +1703,7 @@ private fun QueueExpandedHeader(
     Column(
         modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
+            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.97f))
             .pointerInput(track.id) {
                 var axis = NowPlayingDragAxis.None
                 var totalX = 0f
@@ -1757,7 +1760,53 @@ private fun QueueExpandedHeader(
                 .clip(RoundedCornerShape(2.dp))
                 .background(PlayerFg.copy(alpha = (0.25f + 0.2f * progressHint).coerceIn(0.25f, 0.55f))),
         )
-        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp, bottom = 2.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onToggleShuffle) {
+                Icon(
+                    Icons.Default.Shuffle,
+                    "Aléatoire",
+                    tint = if (shuffle) MaterialTheme.colorScheme.primary else PlayerFg,
+                )
+            }
+            IconButton(onClick = onSkipPrev) {
+                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(36.dp))
+            }
+            IconButton(onClick = onToggle) {
+                Icon(
+                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    "Lecture",
+                    tint = PlayerFg,
+                    modifier = Modifier.size(48.dp),
+                )
+            }
+            IconButton(onClick = onSkipNext) {
+                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(36.dp))
+            }
+            IconButton(onClick = onCycleRepeat) {
+                Icon(
+                    when (repeat) {
+                        RepeatMode.One -> Icons.Default.RepeatOne
+                        else -> Icons.Default.Repeat
+                    },
+                    when (repeat) {
+                        RepeatMode.Off -> "Boucle désactivée"
+                        RepeatMode.All -> "Boucler la file"
+                        RepeatMode.One -> "Boucler le titre"
+                    },
+                    tint = when (repeat) {
+                        RepeatMode.Off -> PlayerMuted
+                        else -> MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             MediaCover(track, 48.dp)
             Spacer(Modifier.width(10.dp))
@@ -1798,52 +1847,6 @@ private fun QueueExpandedHeader(
             }
             IconButton(onClick = onCollapse) {
                 Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
-            }
-        }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onToggleShuffle) {
-                Icon(
-                    Icons.Default.Shuffle,
-                    "Aléatoire",
-                    tint = if (shuffle) MaterialTheme.colorScheme.primary else PlayerFg,
-                )
-            }
-            IconButton(onClick = onSkipPrev) {
-                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(32.dp))
-            }
-            IconButton(onClick = onToggle) {
-                Icon(
-                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    "Lecture",
-                    tint = PlayerFg,
-                    modifier = Modifier.size(40.dp),
-                )
-            }
-            IconButton(onClick = onSkipNext) {
-                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(32.dp))
-            }
-            IconButton(onClick = onCycleRepeat) {
-                Icon(
-                    when (repeat) {
-                        RepeatMode.One -> Icons.Default.RepeatOne
-                        else -> Icons.Default.Repeat
-                    },
-                    when (repeat) {
-                        RepeatMode.Off -> "Boucle désactivée"
-                        RepeatMode.All -> "Boucler la file"
-                        RepeatMode.One -> "Boucler le titre"
-                    },
-                    tint = when (repeat) {
-                        RepeatMode.Off -> PlayerMuted
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                )
             }
         }
         Text(
@@ -1898,8 +1901,6 @@ private fun QueueExpandedBody(
     onClear: () -> Unit = {},
     onStartMix: () -> Unit,
     onToggleAutoplay: () -> Unit,
-    onCollapsePull: (Float) -> Unit = {},
-    onCollapsePullEnd: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var tabDragX by remember { mutableFloatStateOf(0f) }
@@ -1995,56 +1996,6 @@ private fun QueueExpandedBody(
         }
     }
 
-    val collapsePullAccum = remember { mutableFloatStateOf(0f) }
-    val collapseThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
-    val collapseWhenTop = remember(listState, collapseThresholdPx) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                // Reset si plus en haut
-                if (listState.firstVisibleItemIndex > 0 ||
-                    listState.firstVisibleItemScrollOffset > 4
-                ) {
-                    collapsePullAccum.floatValue = 0f
-                }
-                return Offset.Zero
-            }
-
-            override fun onPostScroll(
-                consumed: Offset,
-                available: Offset,
-                source: NestedScrollSource,
-            ): Offset {
-                // Uniquement doigt actif en haut — pas l'inertie de fling après scroll vers le haut
-                if (source != NestedScrollSource.UserInput) return Offset.Zero
-                if (available.y <= 0f) return Offset.Zero
-                if (listState.firstVisibleItemIndex != 0 ||
-                    listState.firstVisibleItemScrollOffset > 4
-                ) {
-                    return Offset.Zero
-                }
-                collapsePullAccum.floatValue += available.y
-                if (collapsePullAccum.floatValue < collapseThresholdPx) {
-                    return Offset.Zero
-                }
-                onCollapsePull(available.y)
-                return Offset(0f, available.y)
-            }
-
-            override suspend fun onPostFling(
-                consumed: Velocity,
-                available: Velocity,
-            ): Velocity {
-                // Ne jamais replier sur l'inertie — évite le « blocage » en arrivant en haut de liste
-                collapsePullAccum.floatValue = 0f
-                onCollapsePullEnd(0f)
-                return Velocity.Zero
-            }
-        }
-    }
-
     LaunchedEffect(seedId) {
         if (seedId.isNullOrBlank()) return@LaunchedEffect
         val cached = similarPanelCache[seedId]
@@ -2087,10 +2038,10 @@ private fun QueueExpandedBody(
         }
     }
 
+    // Scroll file = liste uniquement. Repli via chevron / poignée header, jamais via overscroll.
     Column(
         modifier
             .fillMaxWidth()
-            .nestedScroll(collapseWhenTop)
             .pointerInput(panelTab) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
@@ -2567,14 +2518,17 @@ private fun QueueTrackRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun InlineSyncedLyrics(
     container: AppContainer,
     track: TrackDto,
     positionMs: Long,
+    durationMs: Long = 0L,
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     var text by remember(track.id) { mutableStateOf<String?>(null) }
     var timed by remember(track.id) { mutableStateOf<List<TimedLyricLine>>(emptyList()) }
     var lyricsSource by remember(track.id) { mutableStateOf<String?>(null) }
@@ -2587,20 +2541,22 @@ private fun InlineSyncedLyrics(
     LaunchedEffect(track.id) {
         loading = true
         userOffsetMs = syncPrefs.getLong(track.id, 0L)
-        // Cache local paroles (karaoké hors-ligne)
-        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v2")
+        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v4")
         val cachedText = lyricsCache.getString("t_${track.id}", null)
         val cachedTimed = lyricsCache.getString("l_${track.id}", null)
         if (!cachedText.isNullOrBlank()) {
             text = cachedText
-            timed = if (!cachedTimed.isNullOrBlank()) {
+            val raw = if (!cachedTimed.isNullOrBlank()) {
                 cachedTimed.lineSequence().mapNotNull { line ->
                     val p = line.split('|', limit = 2)
                     if (p.size < 2) return@mapNotNull null
                     val ms = p[0].toLongOrNull() ?: return@mapNotNull null
                     TimedLyricLine(startMs = ms.toDouble(), text = p[1])
                 }.toList()
-            } else parseLrcLines(cachedText)
+            } else {
+                parseLrcLines(cachedText)
+            }
+            timed = normalizeTimedLines(raw, durationMs)
             lyricsSource = lyricsCache.getString("s_${track.id}", null)
             loading = false
         }
@@ -2612,8 +2568,8 @@ private fun InlineSyncedLyrics(
                 text = it.lyrics
                 lyricsSource = it.source
                 val apiTimed = it.timed.orEmpty()
-                timed = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
-                // Persiste pour hors-ligne
+                val raw = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
+                timed = normalizeTimedLines(raw, durationMs.coerceAtLeast(0L))
                 runCatching {
                     lyricsCache.edit()
                         .putString("t_${track.id}", it.lyrics)
@@ -2635,15 +2591,14 @@ private fun InlineSyncedLyrics(
         loading = false
     }
 
-    // Lead 0 : le +500 ms faisait défiler trop tôt. LRCLIB : léger lag pour coller au karaoké.
-    val leadMs = 0L
-    val sourceLagMs =
-        if (lyricsSource == "lrclib" || lyricsSource == "lrc") 1200L else 0L
+    // Collé au son ; l’API aligne déjà LRCLIB (stretch/offset). Affiner via appui long.
+    val leadMs = 120L
+    val sourceLagMs = 0L
     val syncPos = positionMs + leadMs - userOffsetMs - sourceLagMs
+    // Ne PAS forcer l’index 0 avant la 1ʳᵉ ligne (sinon « désync » totale en intro)
     val active = if (timed.isEmpty()) -1
-    else timed.indexOfLast { it.startMsLong() <= syncPos }.coerceAtLeast(0)
+    else timed.indexOfLast { it.startMsLong() <= syncPos }
     val listState = rememberLazyListState()
-    // Recentre automatiquement la ligne active (seek, reprise, dérive)
     LaunchedEffect(active, track.id) {
         if (active < 0) return@LaunchedEffect
         runCatching {
@@ -2667,33 +2622,71 @@ private fun InlineSyncedLyrics(
         }
     }
 
-    fun nudgeOffset(delta: Long) {
-        val next = (userOffsetMs + delta).coerceIn(-15_000L, 15_000L)
-        userOffsetMs = next
-        syncPrefs.edit().putLong(track.id, next).apply()
+    fun persistOffset(next: Long) {
+        val clamped = next.coerceIn(-15_000L, 15_000L)
+        userOffsetMs = clamped
+        syncPrefs.edit().putLong(track.id, clamped).apply()
     }
 
-    Column(modifier = modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+    fun nudgeOffset(delta: Long) {
+        persistOffset(userOffsetMs + delta)
+    }
+
+    /** Appui long sur une ligne = « c’est celle qui est chantée maintenant ». */
+    fun calibrateToLine(lineStartMs: Long) {
+        persistOffset(positionMs + leadMs - sourceLagMs - lineStartMs)
+        Toast.makeText(
+            context,
+            "Sync calé sur cette ligne",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    Column(modifier = modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
         if (timed.isNotEmpty()) {
-            Row(
-                modifier = Modifier
+            Column(
+                Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(bottom = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                TextButton(onClick = { nudgeOffset(500L) }) {
-                    Text("Trop tôt", style = MaterialTheme.typography.labelSmall)
-                }
                 Text(
-                    if (userOffsetMs == 0L) "±0,5 s"
-                    else String.format("%+.1f s", userOffsetMs / 1000.0),
-                    color = PlayerMuted,
+                    "Appui long sur une ligne pour recaler le rythme",
                     style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(horizontal = 8.dp),
+                    color = PlayerMuted,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(bottom = 4.dp),
                 )
-                TextButton(onClick = { nudgeOffset(-500L) }) {
-                    Text("Trop tard", style = MaterialTheme.typography.labelSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = { nudgeOffset(1000L) }) {
+                        Text("−1 s", style = MaterialTheme.typography.labelSmall)
+                    }
+                    TextButton(onClick = { nudgeOffset(200L) }) {
+                        Text("Trop tôt", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Text(
+                        if (userOffsetMs == 0L) "sync"
+                        else String.format("%+.1f s", userOffsetMs / 1000.0),
+                        color = if (userOffsetMs == 0L) PlayerMuted else SeekRed,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                    TextButton(onClick = { nudgeOffset(-200L) }) {
+                        Text("Trop tard", style = MaterialTheme.typography.labelSmall)
+                    }
+                    TextButton(onClick = { nudgeOffset(-1000L) }) {
+                        Text("+1 s", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                if (userOffsetMs != 0L) {
+                    TextButton(onClick = { persistOffset(0L) }) {
+                        Text("Réinitialiser sync", style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         }
@@ -2706,13 +2699,13 @@ private fun InlineSyncedLyrics(
             timed.isNotEmpty() -> {
                 LazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(vertical = 20.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 20.dp),
                     modifier = Modifier.fillMaxSize(),
                     userScrollEnabled = true,
                 ) {
                     itemsIndexed(timed) { i, line ->
                         val isActive = i == active
-                        val past = i < active
+                        val past = active >= 0 && i < active
                         Text(
                             line.text.ifBlank { " " },
                             style = if (isActive) {
@@ -2726,19 +2719,20 @@ private fun InlineSyncedLyrics(
                                 past -> PlayerMuted.copy(alpha = 0.28f)
                                 else -> PlayerMuted.copy(alpha = 0.72f)
                             },
+                            textAlign = TextAlign.Start,
+                            softWrap = true,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(
                                     if (isActive) SeekRed.copy(alpha = 0.22f) else Color.Transparent,
                                 )
-                                .clickable { onSeek(line.startMsLong()) }
-                                .padding(horizontal = if (isActive) 10.dp else 0.dp)
-                                .padding(vertical = if (isActive) 14.dp else 7.dp)
-                                .graphicsLayer {
-                                    scaleX = if (isActive) 1.04f else 1f
-                                    scaleY = if (isActive) 1.04f else 1f
-                                },
+                                .combinedClickable(
+                                    onClick = { onSeek(line.startMsLong()) },
+                                    onLongClick = { calibrateToLine(line.startMsLong()) },
+                                )
+                                .padding(horizontal = 12.dp)
+                                .padding(vertical = if (isActive) 14.dp else 7.dp),
                         )
                     }
                 }
@@ -2750,7 +2744,8 @@ private fun InlineSyncedLyrics(
                             text!!,
                             color = PlayerFg,
                             style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(vertical = 16.dp),
+                            softWrap = true,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 16.dp),
                         )
                     }
                 }
@@ -2761,6 +2756,30 @@ private fun InlineSyncedLyrics(
                 modifier = Modifier.padding(top = 24.dp),
             )
         }
+    }
+}
+
+/**
+ * Si l’API / LRC envoie des secondes dans `startMs` (plage &lt; 600), convertir en ms.
+ * Aligné sur le heuristique web NowPlaying.
+ */
+private fun normalizeTimedLines(
+    lines: List<TimedLyricLine>,
+    durationMs: Long,
+): List<TimedLyricLine> {
+    if (lines.size < 2) return lines
+    val values = lines.map { it.startMs }
+    val maxRaw = values.maxOrNull() ?: 0.0
+    val durSec = if (durationMs > 0L) durationMs / 1000.0 else 0.0
+    val looksLikeSeconds =
+        maxRaw > 0.0 &&
+            maxRaw < 600.0 &&
+            (durSec <= 0.0 || maxRaw <= durSec * 1.5) &&
+            values.count { it > 0.0 } >= 2
+    return if (looksLikeSeconds) {
+        lines.map { it.copy(startMs = it.startMs * 1000.0) }
+    } else {
+        lines
     }
 }
 

@@ -1516,7 +1516,7 @@ export async function getArtistSongs(
 
 const LYRICS_CACHE_MAX = 400;
 /** bump pour invalider d’anciens timed mal alignés / écrasés */
-const LYRICS_CACHE_VER = 'v5';
+const LYRICS_CACHE_VER = 'v6';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
@@ -1560,7 +1560,9 @@ function parseLrcBlock(raw: string): { startMs: number; text: string }[] {
 }
 
 /**
- * Aligne un LRC studio sur la durée YouTube (intro clip plus longue → paroles trop tôt).
+ * Aligne un LRC studio sur la durée YouTube.
+ * - Petit écart de durée → offset d’intro constant
+ * - Écart relatif (0,85–1,15) → étirement linéaire (dérive de rythme / edit)
  * offset positif = retarde les lignes (corrige l’avance).
  */
 function alignTimedToTrack(
@@ -1570,24 +1572,37 @@ function alignTimedToTrack(
 ): { timed: { startMs: number; text: string }[]; offsetMs: number } {
   if (!timed.length) return { timed, offsetMs: 0 };
 
+  let working = timed;
   let offsetMs = 0;
+
   if (
     trackDurationSec &&
     trackDurationSec >= 20 &&
     sourceDurationSec &&
     sourceDurationSec >= 20
   ) {
+    const ratio = trackDurationSec / sourceDurationSec;
     const diffSec = trackDurationSec - sourceDurationSec;
-    // Uniquement retarder (clip YT plus long / intro) — ne jamais avancer auto
-    // (avance auto = paroles encore plus en avant, plainte UX fréquente).
-    if (diffSec >= 0.35 && diffSec <= 30) {
+    if (ratio >= 0.85 && ratio <= 1.15 && Math.abs(ratio - 1) >= 0.008) {
+      // Stretch : mappe le LRC studio sur la durée YT (mieux qu’un lag fixe mid-track)
+      working = timed.map((l) => ({
+        ...l,
+        startMs: Math.max(0, Math.round(l.startMs * ratio)),
+      }));
       offsetMs = Math.round(diffSec * 1000);
+    } else if (diffSec >= 0.35 && diffSec <= 30) {
+      offsetMs = Math.round(diffSec * 1000);
+      working = timed.map((l) => ({
+        ...l,
+        startMs: Math.max(0, Math.round(l.startMs + offsetMs)),
+      }));
     }
   }
 
   // Sans durée source : estime un décalage d’intro si la plage LRC est « trop courte »
   if (
     offsetMs === 0 &&
+    working === timed &&
     trackDurationSec &&
     trackDurationSec >= 30 &&
     timed.length >= 4
@@ -1595,28 +1610,24 @@ function alignTimedToTrack(
     const first = timed[0]!.startMs / 1000;
     const last = timed[timed.length - 1]!.startMs / 1000;
     const span = last - first;
-    // Master ~span, clip YT plus long → gap final (intro+outro). On décale d’environ l’intro.
     const tailGap = trackDurationSec - last;
-    // Si première ligne quasi à 0 et gap de fin notable → intro clip YT probable
     if (first < 2.5 && span >= trackDurationSec * 0.5 && span <= trackDurationSec * 0.99) {
       if (tailGap >= 3 && tailGap <= 35) {
-        // Prendre l’essentiel du surplus comme intro (rap FR / clips clip-heavy)
         offsetMs = Math.round(Math.min(Math.max(tailGap * 0.8, 2.5), 24) * 1000);
       } else if (first < 1.2 && span >= trackDurationSec * 0.85) {
-        // Durées quasi égales mais LRC démarre à 0 → léger lag intro typique clip
         offsetMs = 2500;
       }
     }
+    if (offsetMs) {
+      working = timed.map((l) => ({
+        ...l,
+        startMs: Math.max(0, Math.round(l.startMs + offsetMs)),
+      }));
+    }
   }
 
-  if (!offsetMs) return { timed, offsetMs: 0 };
-  return {
-    offsetMs,
-    timed: timed.map((l) => ({
-      ...l,
-      startMs: Math.max(0, Math.round(l.startMs + offsetMs)),
-    })),
-  };
+  if (working === timed && !offsetMs) return { timed, offsetMs: 0 };
+  return { offsetMs, timed: working };
 }
 
 type LrclibHit = {
