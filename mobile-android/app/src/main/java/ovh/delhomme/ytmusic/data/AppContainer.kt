@@ -135,9 +135,17 @@ class AppContainer(context: Context) {
                 null
             }
         }
+        val prev = apiPrefs.getString("base_url", null)?.trim()?.trimEnd('/')
+        val next = cleaned
+        val changed = (prev ?: "") != (next ?: "")
         apiPrefs.edit().apply {
             if (cleaned == null) remove("base_url") else putString("base_url", cleaned)
         }.apply()
+        // Changer d’API (LAN ↔ prod) invalide les JWT de l’autre instance.
+        if (changed) {
+            runCatching { runBlocking { tokenStore.clear() } }
+            AppLog.i("api", "base_url override → ${next ?: "(BuildConfig)"} — session cleared")
+        }
     }
 
     /** DEV = LAN / localhost ; PROD = HTTPS distant. */
