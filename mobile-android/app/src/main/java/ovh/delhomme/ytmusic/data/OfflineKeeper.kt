@@ -59,6 +59,10 @@ class OfflineKeeper(
     private suspend fun tick(reason: String) = tickMutex.withLock {
         if (!NetworkMonitor.isOnline()) return
         if (StreamPrefetcher.isStreamDown()) return
+        if (!BatterySaver.allowBackgroundDownloads()) {
+            AppLog.d("OfflineKeeper", "skip tick — économiseur batterie")
+            return
+        }
         if (downloadManager.isPlaybackBusy()) {
             AppLog.d("OfflineKeeper", "skip tick — lecture active")
             return

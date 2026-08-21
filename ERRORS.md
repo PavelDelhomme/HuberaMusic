@@ -97,10 +97,10 @@
 ### E8 — Paroles synchronisées trop en avance (1–2 lignes)
 | | |
 |--|--|
-| **Status** | `in progress` — lead YouTube à 0 (plus 0,5 s d’avance) · cache API `v5` · variantes apostrophe LRCLIB (*Vie d’artiste*) |
+| **Status** | `fixed` (code) — lead 350 ms · lag LRCLIB 300 ms · pas de ligne 0 forcée |
 | **Surfaces** | web · Android · API lyrics |
-| **Cause** | Lead 500 ms trop tôt pour karaoké ; cache Android `v1` figé ; apostrophes LRCLIB |
-| **Fix** | Lead YouTube 0 · lag LRCLIB 2 s conservé · cache `v5` / prefs `plm_lyrics_cache_v2` · titre « Vie d artiste » |
+| **Cause** | Lead 500 ms trop tôt ; puis lag client 1,2–2 s **en plus** de `syncOffsetMs` API ; `coerceAtLeast(0)` / idx=0 avant la 1ʳᵉ ligne |
+| **Fix** | Lead lecture 0,35 s · lag LRCLIB 0,3 s · cache Android `v3` · normalize s/ms · intro sans highlight |
 | **Repro** | Keny *Capitale de la rupture* / *Vie d’artiste* |
 | **Tests** | docs/TESTS-SESSIONS.md **PROD P5** |
 
@@ -319,6 +319,82 @@ Perplexity a raison : **ExoPlayer 2004 = HTTP 502 du backend**, pas un codec.
 | **Surfaces** | Android HistorySheet · API |
 | **Fix** | Événements start/partial/complete/skip groupés par date · progress ≥5 % → history |
 | **Tests** | Compte → Historique · plusieurs jours · badges Complet/Partiel/Skip |
+
+### E33 — Scroll file d’attente → lecteur se réduit / se referme
+| | |
+|--|--|
+| **Status** | `fixed` (code) — overscroll file ne shrink plus le Now Playing |
+| **Surfaces** | Android NowPlayingScreen (aperçu + file expandue) |
+| **Cause** | `collapseWhenTop` + nested scroll dismiss : pull en haut de liste → `queueProgress` partiel (« petit lecteur ») |
+| **Fix** | Plus de collapse via scroll liste · snap binaire 0/1 · aperçu consomme l’overscroll (pas de dismiss) |
+| **Tests** | Ouvrir file · scroller haut/bas · rester plein · repli seulement chevron/poignée |
+
+### E34 — Paroles : 1ʳᵉ lettre coupée (encoche / bords)
+| | |
+|--|--|
+| **Status** | `fixed` (code) — padding + plus de scaleX |
+| **Surfaces** | Android InlineSyncedLyrics |
+| **Cause** | `scaleX/Y 1.04` + padding 14 dp → clip gauche sur Samsung/Blackview |
+| **Fix** | Padding 22 dp · pas de scale · softWrap |
+| **Tests** | Paroles sync · ligne active · punch-hole |
+
+### E26b — Transport absent au-dessus de la file (régression layout)
+| | |
+|--|--|
+| **Status** | `fixed` (code) — header file collé à la liste |
+| **Surfaces** | Android NowPlayingScreen file expandue |
+| **Cause** | Header transport en overlay Box séparé du body → souvent masqué / hors flux |
+| **Fix** | Column unique : transport sticky + titre + LazyColumn file |
+| **Tests** | Ouvrir file · play/prev/next visibles · scroll liste garde les boutons |
+
+### E35 — Paroles totalement désync vs audio
+| | |
+|--|--|
+| **Status** | `fixed` (code) — sync recalibré Android + web |
+| **Surfaces** | Android InlineSyncedLyrics · web NowPlaying |
+| **Cause** | Ligne 0 forcée en intro + lag LRCLIB client 1,2–2 s empilé sur offset API |
+| **Fix** | Pas de highlight avant 1ʳᵉ ligne · lead 350 ms · lag LRCLIB 300 ms · cache v3 |
+| **Tests** | Vie d’artiste · Trop tôt/Trop tard · intro sans fausse ligne |
+
+### E36 — Sync paroles : rythme qui dérive / besoin de recalage manuel
+| | |
+|--|--|
+| **Status** | `fixed` (code) — calage appui long + nudges fins |
+| **Surfaces** | Android · web paroles |
+| **Fix** | Appui long = « cette ligne est chantée maintenant » · −1 s / Trop tôt / Trop tard / +1 s · Reset · persisté par titre |
+| **Tests** | Dérive mid-track · long-press · reset |
+
+### E37 — Crash prod : ExoPlayer `wrong thread` (OfflineDownloadManager)
+| | |
+|--|--|
+| **Status** | `fixed` (code) — flag `playbackActive` + try/catch |
+| **Surfaces** | Android OfflineDownloadManager · Nothing p+1.3.31 logs |
+| **Cause** | `player.isPlaying` depuis `Dispatchers.IO` dans `enqueueAhead` |
+| **Fix** | `Holder.isPlaybackActiveSafe()` (volatile, MAJ thread main) · jamais toucher Exo depuis IO |
+| **Tests** | Lecture + DL offline · pas de crash wrong-thread |
+
+### E38 — Journal debug : vieux en haut
+| | |
+|--|--|
+| **Status** | `fixed` (code) — `recentLogText(newestFirst=true)` |
+| **Surfaces** | Android DebugLogsScreen · AppLog |
+| **Fix** | Inversion des lignes : plus récent en haut |
+
+### E39 — Sync paroles encore mauvaise (web + mobile)
+| | |
+|--|--|
+| **Status** | `fixed` (code) — stretch durée API v6 · lag client 0 |
+| **Surfaces** | API `alignTimedToTrack` · web lyricSync · Android |
+| **Fix** | Étirement linéaire LRC→durée YT · plus de lag client LRCLIB · lead 120 ms · cache v4/v6 |
+| **Tests** | Vie d’artiste web+Android · appui long si résidu |
+
+### E40 — Mode économiseur batterie système
+| | |
+|--|--|
+| **Status** | `fixed` (code) — `BatterySaver` suit PowerManager |
+| **Surfaces** | Android (pochettes, prefetch, OfflineKeeper) |
+| **Fix** | Si économiseur OS ON : placeholders listes, prefetch stream ×1, OfflineKeeper pause, covers warm OFF |
+| **Tests** | Activer économiseur Android · scroll home · lecture continue · logs « BatterySaver ON » |
 
 ---
 
