@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { saveMailOutbox } from './platform.js';
+import { markMailOutboxDelivered, saveMailOutbox } from './platform.js';
 
 function appUrl() {
   return (
@@ -133,6 +133,7 @@ export async function sendMail(opts: {
     },
   });
 
+  markMailOutboxDelivered(id);
   console.log(
     `[mail:${getAppEnv()}] sent id=${info.messageId} from="${from.name}" <${from.address}> → ${opts.to} atts=${opts.attachments?.length || 0}`,
   );

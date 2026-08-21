@@ -312,6 +312,10 @@ export function saveMailOutbox(to: string, subject: string, body: string) {
   return id;
 }
 
+export function markMailOutboxDelivered(id: string) {
+  db.prepare(`UPDATE mail_outbox SET delivered = 1 WHERE id = ?`).run(id);
+}
+
 export function listMailOutbox(limit = 50) {
   return db
     .prepare(`SELECT * FROM mail_outbox ORDER BY created_at DESC LIMIT ?`)

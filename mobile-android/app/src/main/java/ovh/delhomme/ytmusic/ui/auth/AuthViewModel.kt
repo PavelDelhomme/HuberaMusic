@@ -70,6 +70,10 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             _state.value = s.copy(error = "Email et mot de passe requis")
             return
         }
+        if (s.registerMode && password.length < 10) {
+            _state.value = s.copy(error = "Mot de passe trop court (10 caractères minimum)")
+            return
+        }
         viewModelScope.launch {
             _state.value = s.copy(loading = true, error = null, email = email, password = password)
             try {
