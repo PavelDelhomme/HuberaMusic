@@ -356,7 +356,7 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
                 } else {
                   await register(email, password, name || email.split('@')[0]);
                   setInfo(
-                    'Compte créé — un email de validation a été envoyé. En local : Admin → Boîte mail / logs serveur.',
+                    'Compte créé — vérifie ta boîte mail (et les spams) pour valider ton adresse, puis lie Google dans Importer pour synchroniser ta bibliothèque.',
                   );
                   await refresh();
                   await maybeOfferPasskey();
@@ -387,10 +387,10 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
             <input
               type={showPassword ? 'text' : 'password'}
               required
-              minLength={6}
+              minLength={10}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Mot de passe"
+              placeholder="Mot de passe (10 caractères min.)"
               className="w-full rounded-xl border border-yt-border bg-yt-bg px-3 py-2.5 pr-12 text-sm outline-none focus:border-white/30"
             />
             <button
