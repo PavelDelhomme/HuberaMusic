@@ -4,12 +4,14 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -56,7 +58,6 @@ import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.auth.PasskeyAuth
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.RefreshBody
-import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.UserDto
 
 /**
@@ -70,11 +71,9 @@ fun AccountScreen(
     onBack: () -> Unit,
     onOpenRecoPrefs: () -> Unit,
     onOpenDownloads: () -> Unit = {},
+    onOpenHistory: () -> Unit = {},
     onOpenDebugLogs: (() -> Unit)? = null,
     onOpenYtmImport: (() -> Unit)? = null,
-    onPlay: (List<TrackDto>, Int) -> Unit = { _, _ -> },
-    onMore: (TrackDto) -> Unit = {},
-    onOpenEntity: (TrackDto) -> Unit = {},
     onLoggedOut: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -83,7 +82,6 @@ fun AccountScreen(
     var passkeyInfo by remember { mutableStateOf<String?>(null) }
     var updateHint by remember { mutableStateOf<String?>(null) }
     var showEqualizer by remember { mutableStateOf(false) }
-    var showHistory by remember { mutableStateOf(false) }
     var ytmLinked by remember {
         mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
     }
@@ -104,6 +102,7 @@ fun AccountScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = { Text("Compte") },
@@ -118,8 +117,8 @@ fun AccountScreen(
         LazyColumn(
             Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .navigationBarsPadding(),
+                .padding(padding),
+            contentPadding = PaddingValues(bottom = 24.dp),
         ) {
             item {
                 Column(
@@ -224,7 +223,7 @@ fun AccountScreen(
                     icon = { Icon(Icons.Default.History, contentDescription = null) },
                     title = "Historique d'écoute",
                     subtitle = "Titres écoutés récemment",
-                    onClick = { showHistory = true },
+                    onClick = onOpenHistory,
                 )
             }
             item {
@@ -355,22 +354,11 @@ fun AccountScreen(
                 )
             }
 
-            // Marge sous mini-lecteur / nav — scroll jusqu’à déconnexion + version sur petits écrans
-            item { Spacer(Modifier.height(140.dp)) }
         }
     }
 
     if (showEqualizer) {
         EqualizerSheet(onDismiss = { showEqualizer = false })
-    }
-    if (showHistory) {
-        HistorySheet(
-            container = container,
-            onDismiss = { showHistory = false },
-            onPlay = onPlay,
-            onMore = onMore,
-            onOpenEntity = onOpenEntity,
-        )
     }
 }
 

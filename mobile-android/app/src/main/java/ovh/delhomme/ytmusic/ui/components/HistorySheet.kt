@@ -1,22 +1,32 @@
 package ovh.delhomme.ytmusic.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +47,44 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+/** Page Historique pleine écran (depuis Compte). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HistoryScreen(
+    container: AppContainer,
+    onBack: () -> Unit,
+    onPlay: (List<TrackDto>, Int) -> Unit,
+    onMore: (TrackDto) -> Unit,
+    onOpenEntity: ((TrackDto) -> Unit)? = null,
+) {
+    BackHandler(onBack = onBack)
+    Scaffold(
+        contentWindowInsets = WindowInsets.safeDrawing,
+        topBar = {
+            TopAppBar(
+                title = { Text("Historique d'écoute") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        HistoryBody(
+            container = container,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            showHeader = false,
+            onPlay = onPlay,
+            onMore = onMore,
+            onOpenEntity = onOpenEntity,
+            onConsumed = {},
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistorySheet(
@@ -47,6 +95,34 @@ fun HistorySheet(
     onOpenEntity: ((TrackDto) -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        HistoryBody(
+            container = container,
+            modifier = Modifier.fillMaxWidth(),
+            showHeader = true,
+            onPlay = onPlay,
+            onMore = onMore,
+            onOpenEntity = onOpenEntity,
+            onConsumed = onDismiss,
+        )
+    }
+}
+
+@Composable
+private fun HistoryBody(
+    container: AppContainer,
+    modifier: Modifier = Modifier,
+    showHeader: Boolean,
+    onPlay: (List<TrackDto>, Int) -> Unit,
+    onMore: (TrackDto) -> Unit,
+    onOpenEntity: ((TrackDto) -> Unit)?,
+    onConsumed: () -> Unit,
+) {
     var loading by remember { mutableStateOf(true) }
     var history by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
     var entities by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
@@ -87,23 +163,28 @@ fun HistorySheet(
         events.mapNotNull { it.track }.distinctBy { it.id }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        Text(
-            "Historique d'écoute",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-        )
-        Text(
-            "Lancés · partiels · complets — classés par date",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
-        )
+    Column(modifier) {
+        if (showHeader) {
+            Text(
+                "Historique d'écoute",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            Text(
+                "Lancés · partiels · complets — classés par date",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
+            )
+        } else {
+            Text(
+                "Lancés · partiels · complets — classés par date",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+        }
         when {
             loading -> {
                 Column(
@@ -122,7 +203,10 @@ fun HistorySheet(
                 )
             }
             else -> {
-                LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                ) {
                     if (entities.isNotEmpty()) {
                         item {
                             Text(
@@ -144,7 +228,7 @@ fun HistorySheet(
                                             .width(120.dp)
                                             .clickable {
                                                 onOpenEntity?.invoke(item)
-                                                onDismiss()
+                                                onConsumed()
                                             },
                                     ) {
                                         MediaCover(item, 120.dp, circle = item.isArtist())
@@ -196,7 +280,7 @@ fun HistorySheet(
                                             val idx = list.indexOfFirst { it.id == track.id }
                                                 .coerceAtLeast(0)
                                             onPlay(list, idx)
-                                            onDismiss()
+                                            onConsumed()
                                         },
                                         onMore = { onMore(track) },
                                     )
@@ -236,7 +320,7 @@ fun HistorySheet(
                                         history,
                                         history.indexOfFirst { it.id == track.id }.coerceAtLeast(0),
                                     )
-                                    onDismiss()
+                                    onConsumed()
                                 },
                                 onMore = { onMore(track) },
                             )
