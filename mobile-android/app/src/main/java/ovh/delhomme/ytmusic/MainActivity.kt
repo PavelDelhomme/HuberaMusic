@@ -1145,10 +1145,20 @@ private fun MainTabs(
             queueTitle = playerUi.queueTitle,
         ),
     ) {
+    val routeRoot = current
+        ?.substringBefore('/')
+        ?.substringBefore('?')
+        ?.takeIf { it.isNotBlank() }
+    val showBottomChrome =
+        !expanded && (routeRoot == null || routeRoot in setOf("home", "search", "library"))
     Scaffold(
-        contentWindowInsets = WindowInsets.safeDrawing,
+        contentWindowInsets = if (showBottomChrome) {
+            WindowInsets.safeDrawing
+        } else {
+            WindowInsets(0, 0, 0, 0)
+        },
         bottomBar = {
-            if (!expanded) {
+            if (showBottomChrome) {
                 Column(Modifier.navigationBarsPadding()) {
                     playerUi.track?.let { track ->
                         MiniPlayerBar(
@@ -1317,6 +1327,7 @@ private fun MainTabs(
                     onOpenRecoPrefs = { nav.navigate("reco_prefs") },
                     onOpenDebugLogs = { nav.navigate("debug_logs") },
                     onOpenYtmImport = { nav.navigate("ytm_import") },
+                    onOpenHistory = { nav.navigate("history") },
                     onOpenDownloads = {
                         LibraryFilter.pendingSelect = LibraryFilter.Downloads
                         nav.navigate(Tab.Library.route) {
@@ -1324,10 +1335,16 @@ private fun MainTabs(
                             launchSingleTop = true
                         }
                     },
+                    onLoggedOut = onLoggedOut,
+                )
+            }
+            composable("history") {
+                ovh.delhomme.ytmusic.ui.components.HistoryScreen(
+                    container = container,
+                    onBack = { nav.popBackStack() },
                     onPlay = onPlayTracks,
                     onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenEntity = ::openDetail,
-                    onLoggedOut = onLoggedOut,
                 )
             }
             composable("debug_logs") {
