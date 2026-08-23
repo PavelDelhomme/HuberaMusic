@@ -2473,7 +2473,56 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
   };
 
   const job = (async (): Promise<AudioFormat> => {
-    // yt-dlp d’abord : formats progressifs fiables (18/22)
+    const tryInnertubeVideo = async (signed: boolean): Promise<AudioFormat | null> => {
+      const yt = signed
+        ? await getSignedStreamYT().catch(() => null)
+        : await getYT();
+      if (!yt) return null;
+      const clients = signed
+        ? (['TV', 'MWEB', 'WEB', 'ANDROID'] as const)
+        : (['ANDROID_VR', 'TV', 'IOS', 'WEB_EMBEDDED', 'ANDROID'] as const);
+      let lastErr: unknown;
+      for (const client of clients) {
+        try {
+          const format = await Promise.race([
+            yt.getStreamingData(videoId, {
+              type: 'video+audio',
+              quality: '360p',
+              client,
+            } as any),
+            new Promise<never>((_, rej) =>
+              setTimeout(() => rej(new Error(`innertube video ${client} timeout`)), signed ? 20_000 : 10_000),
+            ),
+          ]);
+          const url = format.url || (await format.decipher(yt.session.player));
+          if (!url) throw new Error('empty video url');
+          const entry: AudioFormat = {
+            url,
+            mimeType: format.mime_type || 'video/mp4',
+            bitrate: format.bitrate,
+            contentLength: format.content_length,
+            expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+          };
+          if (!looksLikeVideo(entry.url, entry.mimeType)) {
+            throw new Error(`not a progressive video format (${entry.mimeType})`);
+          }
+          return entry;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      if (lastErr) console.warn('[getVideoFormat] innertube', String(lastErr).slice(0, 120));
+      return null;
+    };
+
+    // 1) Session OAuth TV signée (même chemin que l’audio VPS)
+    const viaSigned = await tryInnertubeVideo(true);
+    if (viaSigned) {
+      videoFormatCache.set(videoId, viaSigned);
+      return viaSigned;
+    }
+
+    // 2) yt-dlp progressif
     try {
       const entry = await videoFormatViaYtDlp(videoId);
       if (looksLikeVideo(entry.url, entry.mimeType)) {
@@ -2481,44 +2530,23 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
         return entry;
       }
     } catch {
-      /* try innertube */
+      /* try anonymous innertube */
     }
 
-    const innertube = await getYT();
-    const clients = ['ANDROID_VR', 'TV', 'IOS', 'WEB_EMBEDDED', 'ANDROID'] as const;
-    let lastErr: unknown;
-    for (const client of clients) {
-      try {
-        const format = await innertube.getStreamingData(videoId, {
-          type: 'video+audio',
-          quality: '360p',
-          client,
-        } as any);
-        const url = await format.decipher(innertube.session.player);
-        if (!url) throw new Error('empty video url');
-        const entry: AudioFormat = {
-          url,
-          mimeType: format.mime_type || 'video/mp4',
-          bitrate: format.bitrate,
-          contentLength: format.content_length,
-          expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
-        };
-        if (!looksLikeVideo(entry.url, entry.mimeType)) {
-          throw new Error(`not a progressive video format (${entry.mimeType})`);
-        }
-        videoFormatCache.set(videoId, entry);
-        if (videoFormatCache.size > 120) {
-          const stale = [...videoFormatCache.entries()]
-            .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
-            .slice(0, 40);
-          for (const [id] of stale) videoFormatCache.delete(id);
-        }
-        return entry;
-      } catch (err) {
-        lastErr = err;
+    // 3) Innertube anonyme
+    const viaAnon = await tryInnertubeVideo(false);
+    if (viaAnon) {
+      videoFormatCache.set(videoId, viaAnon);
+      if (videoFormatCache.size > 120) {
+        const stale = [...videoFormatCache.entries()]
+          .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
+          .slice(0, 40);
+        for (const [id] of stale) videoFormatCache.delete(id);
       }
+      return viaAnon;
     }
-    throw lastErr || new Error('Aucun format vidéo progressif');
+
+    throw new Error('Aucun format vidéo progressif');
   })().finally(() => {
     videoFormatInflight.delete(videoId);
   });
