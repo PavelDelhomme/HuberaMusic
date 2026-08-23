@@ -43,8 +43,9 @@ class AppContainer(context: Context) {
     }
     val offlineStore by lazy { LocalOfflineStore(appContext, moshi) }
     val localPlayback by lazy { LocalPlaybackStore(appContext, moshi) }
-    /** Scope application — downloads survivent à la fermeture des sheets Compose. */
+    /** Scope application — downloads / mutations biblio survivent aux sheets Compose. */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    fun appScope(): CoroutineScope = appScope
     val downloadManager by lazy {
         OfflineDownloadManager(
             scope = appScope,

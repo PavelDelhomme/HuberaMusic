@@ -488,6 +488,12 @@ fun NowPlayingScreen(
         }
     }
 
+    LaunchedEffect(showLyrics) {
+        if (showLyrics) {
+            runCatching { listState.scrollToItem(0) }
+        }
+    }
+
     LaunchedEffect(ui.playing, showLyrics) {
         while (isActive) {
             player.tick()
@@ -749,17 +755,22 @@ fun NowPlayingScreen(
                 }
                 if (!showQueuePanel) {
                 Column(Modifier.fillMaxSize()) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
+                Column(
+                    Modifier
                         .weight(if (landscapeLayout) 1f else 0.68f)
                         .fillMaxWidth()
                         .graphicsLayer {
                             alpha = (1f - qp * 1.05f).coerceIn(0f, 1f)
                             translationY = -qp * 48f
                         },
+                ) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    // Toujours scrollable en portrait (Samsung / grands écrans : seek + transport visibles)
+                    // Toujours scrollable en portrait (Samsung / grands écrans)
                     userScrollEnabled = true,
                 ) {
                     item {
@@ -1006,7 +1017,11 @@ fun NowPlayingScreen(
                                             tint = if (liked) MaterialTheme.colorScheme.primary else PlayerFg,
                                             showLabel = false,
                                         ) {
-                                            scope.launch {
+                                            val was = liked
+                                            onLikedChanged(
+                                                if (was) likedIds - track.id else likedIds + track.id,
+                                            )
+                                            container.appScope().launch {
                                                 runCatching {
                                                     AppLog.breadcrumb("like", track.id)
                                                     val r = container.api.like(track)
@@ -1021,7 +1036,13 @@ fun NowPlayingScreen(
                                                             "now_playing_like",
                                                         ),
                                                     )
-                                                }.onFailure { AppLog.e("like", "échec like ${track.id}", it) }
+                                                }.onFailure { e ->
+                                                    if (e is kotlinx.coroutines.CancellationException) throw e
+                                                    onLikedChanged(
+                                                        if (was) likedIds + track.id else likedIds - track.id,
+                                                    )
+                                                    AppLog.e("like", "échec like ${track.id}", e)
+                                                }
                                             }
                                         }
                                         PlayerChromeAction.Lyrics -> SecondaryChip(
@@ -1099,154 +1120,6 @@ fun NowPlayingScreen(
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
-                            val seekInteraction = remember { MutableInteractionSource() }
-                            val bufferedFrac = if (ui.durationMs > 0) {
-                                (ui.bufferedMs.toFloat() / ui.durationMs).coerceIn(0f, 1f)
-                            } else {
-                                0f
-                            }
-                            val seekColors = SliderDefaults.colors(
-                                thumbColor = Color.White,
-                                activeTrackColor = SeekRed,
-                                // Transparent : laisse voir le buffer gris dessous
-                                inactiveTrackColor = Color.Transparent,
-                            )
-                            Box(Modifier.fillMaxWidth()) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .height(3.dp)
-                                        .align(Alignment.Center)
-                                        .clip(RoundedCornerShape(1.5.dp))
-                                        .background(PlayerFg.copy(alpha = 0.14f)),
-                                ) {
-                                    Box(
-                                        Modifier
-                                            .fillMaxWidth(bufferedFrac)
-                                            .height(3.dp)
-                                            .background(PlayerFg.copy(alpha = 0.42f)),
-                                    )
-                                }
-                                Slider(
-                                    value = progress,
-                                    onValueChange = { scrub = it },
-                                    onValueChangeFinished = {
-                                        player.seek((scrub * duration).toLong())
-                                        scrub = -1f
-                                    },
-                                    colors = seekColors,
-                                    interactionSource = seekInteraction,
-                                    thumb = {
-                                        SliderDefaults.Thumb(
-                                            interactionSource = seekInteraction,
-                                            colors = seekColors,
-                                            enabled = true,
-                                            thumbSize = if (scrub >= 0f) DpSize(14.dp, 14.dp) else DpSize(10.dp, 10.dp),
-                                        )
-                                    },
-                                    track = { sliderState ->
-                                        SliderDefaults.Track(
-                                            sliderState = sliderState,
-                                            colors = seekColors,
-                                            enabled = true,
-                                            modifier = Modifier.height(3.dp),
-                                            thumbTrackGapSize = 0.dp,
-                                            drawStopIndicator = null,
-                                        )
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(if (landscape) 24.dp else 28.dp),
-                                )
-                            }
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                val remainingMs = (
-                                    ui.durationMs - (if (scrub >= 0f) (scrub * duration).toLong() else ui.positionMs)
-                                    ).coerceAtLeast(0L)
-                                Text(
-                                    "-${formatMs(remainingMs)}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = PlayerMuted,
-                                )
-                                Text(
-                                    formatMs(ui.durationMs.coerceAtLeast(0L)),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = PlayerMuted,
-                                )
-                            }
-                            Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                NowPlayingChrome.transportActions.forEach { slot ->
-                                    if (!slot.enabled) return@forEach
-                                    when (slot.id) {
-                                        PlayerChromeAction.Shuffle -> IconButton(onClick = player::toggleShuffle) {
-                                            Icon(
-                                                Icons.Default.Shuffle,
-                                                slot.label,
-                                                tint = if (ui.shuffle) MaterialTheme.colorScheme.primary else PlayerFg,
-                                            )
-                                        }
-                                        PlayerChromeAction.Previous -> HoldSeekIconButton(
-                                            onClick = {
-                                                val now = SystemClock.elapsedRealtime()
-                                                val double = now - lastPrevTap < 380L
-                                                lastPrevTap = now
-                                                player.skipPrevOrRestart(forcePrevious = double)
-                                            },
-                                            onHoldTick = { player.seekBy(-2_000L) },
-                                        ) {
-                                            Icon(
-                                                Icons.Default.SkipPrevious,
-                                                slot.label,
-                                                tint = PlayerFg,
-                                                modifier = Modifier.size(if (landscape) 34.dp else 40.dp),
-                                            )
-                                        }
-                                        PlayerChromeAction.PlayPause -> IconButton(onClick = player::toggle) {
-                                            Icon(
-                                                if (ui.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                                slot.label,
-                                                tint = PlayerFg,
-                                                modifier = Modifier.size(if (landscape) 48.dp else 56.dp),
-                                            )
-                                        }
-                                        PlayerChromeAction.Next -> HoldSeekIconButton(
-                                            onClick = player::skipNext,
-                                            onHoldTick = { player.seekBy(2_000L) },
-                                        ) {
-                                            Icon(
-                                                Icons.Default.SkipNext,
-                                                slot.label,
-                                                tint = PlayerFg,
-                                                modifier = Modifier.size(if (landscape) 34.dp else 40.dp),
-                                            )
-                                        }
-                                        PlayerChromeAction.Repeat -> IconButton(onClick = player::cycleRepeat) {
-                                            Icon(
-                                                when (ui.repeat) {
-                                                    RepeatMode.One -> Icons.Default.RepeatOne
-                                                    else -> Icons.Default.Repeat
-                                                },
-                                                slot.label,
-                                                tint = when (ui.repeat) {
-                                                    RepeatMode.Off -> PlayerMuted
-                                                    else -> MaterialTheme.colorScheme.primary
-                                                },
-                                            )
-                                        }
-                                        else -> Unit
-                                    }
-                                }
-                            }
-                            if (!landscape) Spacer(Modifier.height(16.dp))
                         }
 
                         Column(
@@ -1272,9 +1145,21 @@ fun NowPlayingScreen(
                                             .verticalScroll(rememberScrollState()),
                                     ) {
                                         metaAndControls()
+                                        NowPlayingSeekTransport(
+                                            ui = ui,
+                                            player = player,
+                                            progress = progress,
+                                            scrub = scrub,
+                                            onScrub = { scrub = it },
+                                            duration = duration,
+                                            landscape = true,
+                                            lastPrevTap = lastPrevTap,
+                                            onPrevTap = { lastPrevTap = it },
+                                        )
                                     }
                                 }
                             } else {
+                                // Portrait : cover/paroles + chips scrollables ; seek/transport épinglés dessous
                                 mediaBlock()
                                 metaAndControls()
                             }
@@ -1445,6 +1330,25 @@ fun NowPlayingScreen(
                 }
 
                 if (!landscapeLayout) {
+                    // Seek + transport épinglés (hors LazyColumn) — ne remontent plus avec les paroles
+                    NowPlayingSeekTransport(
+                        ui = ui,
+                        player = player,
+                        progress = progress,
+                        scrub = scrub,
+                        onScrub = { scrub = it },
+                        duration = duration,
+                        landscape = false,
+                        lastPrevTap = lastPrevTap,
+                        onPrevTap = { lastPrevTap = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp),
+                    )
+                }
+                } // Column lecteur (LazyColumn + transport épinglé)
+
+                if (!landscapeLayout) {
                     PortraitQueuePreview(
                         ui = ui,
                         player = player,
@@ -1501,6 +1405,172 @@ fun NowPlayingScreen(
     }
     if (showEqualizer) {
         EqualizerSheet(onDismiss = { showEqualizer = false })
+    }
+}
+
+/** Seek + shuffle/prev/play/next/repeat — hors scroll paroles pour rester ancré. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NowPlayingSeekTransport(
+    ui: PlayerUiState,
+    player: PlayerController,
+    progress: Float,
+    scrub: Float,
+    onScrub: (Float) -> Unit,
+    duration: Float,
+    landscape: Boolean,
+    lastPrevTap: Long,
+    onPrevTap: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
+        val seekInteraction = remember { MutableInteractionSource() }
+        val bufferedFrac = if (ui.durationMs > 0) {
+            (ui.bufferedMs.toFloat() / ui.durationMs).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        val seekColors = SliderDefaults.colors(
+            thumbColor = Color.White,
+            activeTrackColor = SeekRed,
+            inactiveTrackColor = Color.Transparent,
+        )
+        Box(Modifier.fillMaxWidth()) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(1.5.dp))
+                    .background(PlayerFg.copy(alpha = 0.14f)),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(bufferedFrac)
+                        .height(3.dp)
+                        .background(PlayerFg.copy(alpha = 0.42f)),
+                )
+            }
+            Slider(
+                value = progress,
+                onValueChange = onScrub,
+                onValueChangeFinished = {
+                    player.seek((scrub * duration).toLong())
+                    onScrub(-1f)
+                },
+                colors = seekColors,
+                interactionSource = seekInteraction,
+                thumb = {
+                    SliderDefaults.Thumb(
+                        interactionSource = seekInteraction,
+                        colors = seekColors,
+                        enabled = true,
+                        thumbSize = if (scrub >= 0f) DpSize(14.dp, 14.dp) else DpSize(10.dp, 10.dp),
+                    )
+                },
+                track = { sliderState ->
+                    SliderDefaults.Track(
+                        sliderState = sliderState,
+                        colors = seekColors,
+                        enabled = true,
+                        modifier = Modifier.height(3.dp),
+                        thumbTrackGapSize = 0.dp,
+                        drawStopIndicator = null,
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (landscape) 24.dp else 28.dp),
+            )
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            val remainingMs = (
+                ui.durationMs - (if (scrub >= 0f) (scrub * duration).toLong() else ui.positionMs)
+                ).coerceAtLeast(0L)
+            Text(
+                "-${formatMs(remainingMs)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = PlayerMuted,
+            )
+            Text(
+                formatMs(ui.durationMs.coerceAtLeast(0L)),
+                style = MaterialTheme.typography.labelSmall,
+                color = PlayerMuted,
+            )
+        }
+        Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            NowPlayingChrome.transportActions.forEach { slot ->
+                if (!slot.enabled) return@forEach
+                when (slot.id) {
+                    PlayerChromeAction.Shuffle -> IconButton(onClick = player::toggleShuffle) {
+                        Icon(
+                            Icons.Default.Shuffle,
+                            slot.label,
+                            tint = if (ui.shuffle) MaterialTheme.colorScheme.primary else PlayerFg,
+                        )
+                    }
+                    PlayerChromeAction.Previous -> HoldSeekIconButton(
+                        onClick = {
+                            val now = SystemClock.elapsedRealtime()
+                            val double = now - lastPrevTap < 380L
+                            onPrevTap(now)
+                            player.skipPrevOrRestart(forcePrevious = double)
+                        },
+                        onHoldTick = { player.seekBy(-2_000L) },
+                    ) {
+                        Icon(
+                            Icons.Default.SkipPrevious,
+                            slot.label,
+                            tint = PlayerFg,
+                            modifier = Modifier.size(if (landscape) 34.dp else 40.dp),
+                        )
+                    }
+                    PlayerChromeAction.PlayPause -> IconButton(onClick = player::toggle) {
+                        Icon(
+                            if (ui.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            slot.label,
+                            tint = PlayerFg,
+                            modifier = Modifier.size(if (landscape) 48.dp else 56.dp),
+                        )
+                    }
+                    PlayerChromeAction.Next -> HoldSeekIconButton(
+                        onClick = player::skipNext,
+                        onHoldTick = { player.seekBy(2_000L) },
+                    ) {
+                        Icon(
+                            Icons.Default.SkipNext,
+                            slot.label,
+                            tint = PlayerFg,
+                            modifier = Modifier.size(if (landscape) 34.dp else 40.dp),
+                        )
+                    }
+                    PlayerChromeAction.Repeat -> IconButton(onClick = player::cycleRepeat) {
+                        Icon(
+                            when (ui.repeat) {
+                                RepeatMode.One -> Icons.Default.RepeatOne
+                                else -> Icons.Default.Repeat
+                            },
+                            slot.label,
+                            tint = when (ui.repeat) {
+                                RepeatMode.Off -> PlayerMuted
+                                else -> MaterialTheme.colorScheme.primary
+                            },
+                        )
+                    }
+                    else -> Unit
+                }
+            }
+        }
+        if (!landscape) Spacer(Modifier.height(8.dp))
     }
 }
 

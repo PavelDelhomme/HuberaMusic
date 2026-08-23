@@ -3,6 +3,9 @@ package ovh.delhomme.ytmusic.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,19 +69,27 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 loading = !fromUser && !hadContent,
                 refreshing = fromUser,
                 error = null,
+                // Pull user : invalide mosaïques immédiatement (sinon « Mixés » semble figé)
+                radioPreviews = if (fromUser) emptyMap() else _state.value.radioPreviews,
             )
+            if (fromUser) {
+                runCatching { container.mixCache.clearAll() }
+            }
             try {
                 container.ensureFreshToken()
                 runCatching { container.quickAccess.syncFromApi(container.api) }
                 val home = container.api.home()
                 val savedMixes = runCatching {
-                    container.api.library().mixes.map { it.id }.toSet()
-                }.getOrDefault(emptySet())
+                    container.api.library(light = 1, limit = 1).mixes.map { it.id }.toSet()
+                }.getOrElse {
+                    runCatching {
+                        container.api.library().mixes.map { it.id }.toSet()
+                    }.getOrDefault(emptySet())
+                }
                 container.homeCache.write(home)
                 _state.value = HomeUiState(
                     loading = false,
-                    refreshing = false,
-                    // Accès rapide = pins syncés ; on masque le rayon « Épinglé » doublon.
+                    refreshing = fromUser, // reste true le temps des previews si pull
                     shelves = home.shelves.filter {
                         it.items.isNotEmpty() && !it.title.equals("Épinglé", ignoreCase = true)
                     },
@@ -88,7 +99,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     seeds = home.seeds.orEmpty(),
                     hasMore = home.hasMore == true,
                     page = 0,
-                    radioPreviews = _state.value.radioPreviews,
+                    radioPreviews = emptyMap(),
                 )
                 val spokenShelves = buildList {
                     runCatching { container.api.exploreSpoken("podcast") }.getOrNull()
@@ -103,30 +114,32 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         shelves = (_state.value.shelves + spokenShelves).distinctBy { it.title },
                     )
                 }
-                // Mosaïques mix (preview) : d’abord les 2 visibles, puis le reste
-                val previews = mutableMapOf<String, List<TrackDto>>()
-                home.radios.take(2).forEach { radio ->
+                // Mosaïques en parallèle (2 visibles d’abord, puis le reste)
+                suspend fun loadPreview(radioId: String): Pair<String, List<TrackDto>>? =
                     runCatching {
-                        container.api.recoRadio(radio.id, preview = 1).tracks.take(4)
-                    }.onSuccess { tracks ->
-                        if (tracks.isNotEmpty()) {
-                            previews[radio.id] = tracks
-                            _state.value = _state.value.copy(
-                                radioPreviews = _state.value.radioPreviews + previews,
-                            )
-                        }
+                        radioId to container.api.recoRadio(radioId, preview = 1).tracks.take(4)
+                    }.getOrNull()?.takeIf { it.second.isNotEmpty() }
+
+                coroutineScope {
+                    home.radios.take(2).map { radio ->
+                        async { loadPreview(radio.id) }
+                    }.awaitAll().filterNotNull().forEach { (id, tracks) ->
+                        _state.value = _state.value.copy(
+                            radioPreviews = _state.value.radioPreviews + (id to tracks),
+                        )
                     }
                 }
-                home.radios.drop(2).take(6).forEach { radio ->
-                    runCatching {
-                        container.api.recoRadio(radio.id, preview = 1).tracks.take(4)
-                    }.onSuccess { tracks ->
-                        if (tracks.isNotEmpty()) previews[radio.id] = tracks
-                    }
+                val more = coroutineScope {
+                    home.radios.drop(2).take(6).map { radio ->
+                        async { loadPreview(radio.id) }
+                    }.awaitAll().filterNotNull().toMap()
                 }
-                if (previews.isNotEmpty()) {
-                    _state.value = _state.value.copy(radioPreviews = _state.value.radioPreviews + previews)
+                if (more.isNotEmpty()) {
+                    _state.value = _state.value.copy(
+                        radioPreviews = _state.value.radioPreviews + more,
+                    )
                 }
+                _state.value = _state.value.copy(refreshing = false)
             } catch (e: Exception) {
                 val offline = !NetworkMonitor.isOnline()
                 _state.value = _state.value.copy(

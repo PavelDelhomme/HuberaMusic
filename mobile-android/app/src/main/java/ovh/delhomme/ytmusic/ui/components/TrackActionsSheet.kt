@@ -94,6 +94,7 @@ import ovh.delhomme.ytmusic.data.CreatePlaylistBody
 import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.RecoFeedbackBody
 import ovh.delhomme.ytmusic.data.TrackDto
+import ovh.delhomme.ytmusic.data.apiMessage
 import ovh.delhomme.ytmusic.data.buildRadioQueue
 import ovh.delhomme.ytmusic.data.buildRadioQueueContinuation
 import ovh.delhomme.ytmusic.data.resolveArtistId
@@ -311,7 +312,12 @@ fun TrackActionsSheet(
             if (enriched.isPlayable()) {
                 IconButton(
                     onClick = {
-                        scope.launch {
+                        val was = liked
+                        liked = !was
+                        onLikedChanged(
+                            if (!was) likedIds + enriched.id else likedIds - enriched.id,
+                        )
+                        container.appScope().launch {
                             runCatching {
                                 AppLog.breadcrumb("like", enriched.id)
                                 val r = container.api.like(enriched)
@@ -319,10 +325,6 @@ fun TrackActionsSheet(
                                 onLikedChanged(
                                     if (r.liked) likedIds + enriched.id else likedIds - enriched.id,
                                 )
-                                r.library?.let { lib ->
-                                    songInLibrary = lib.songs.any { it.id == enriched.id } ||
-                                        (lib.songs.isEmpty() && lib.liked.any { it.id == enriched.id })
-                                }
                                 container.api.recoFeedback(
                                     RecoFeedbackBody(
                                         enriched.id,
@@ -330,7 +332,14 @@ fun TrackActionsSheet(
                                         "actions_like",
                                     ),
                                 )
-                            }.onFailure { AppLog.e("like", "échec like ${enriched.id}", it) }
+                            }.onFailure { e ->
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                liked = was
+                                onLikedChanged(
+                                    if (was) likedIds + enriched.id else likedIds - enriched.id,
+                                )
+                                AppLog.e("like", "échec like ${enriched.id}", e)
+                            }
                         }
                     },
                 ) {
@@ -450,29 +459,25 @@ fun TrackActionsSheet(
                 if (songInLibrary) "Dans la bibliothèque" else "Enregistrer dans la bibliothèque",
                 if (songInLibrary) "Retirer (sans toucher au J'aime)" else "Sans ajouter aux J'aime",
             ) {
-                scope.launch {
+                val next = !songInLibrary
+                songInLibrary = next
+                container.appScope().launch {
                     runCatching {
                         container.ensureFreshToken()
-                        // Optimistic immédiat
-                        val next = !songInLibrary
-                        songInLibrary = next
                         val r = container.api.toggleLibrarySong(enriched)
                         songInLibrary = r.saved
-                        r.library?.let { lib ->
-                            songInLibrary = lib.songs.any { it.id == enriched.id } || r.saved
-                        }
                         container.bumpLibraryEpoch()
                         Toast.makeText(
                             context,
                             if (r.saved) "Dans la bibliothèque" else "Retiré de la bibliothèque",
                             Toast.LENGTH_SHORT,
                         ).show()
-                        // Garde la sheet ouverte pour voir le libellé mis à jour
-                    }.onFailure {
-                        songInLibrary = !songInLibrary // rollback
+                    }.onFailure { e ->
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        songInLibrary = !next
                         Toast.makeText(
                             context,
-                            it.message ?: "Impossible de modifier la bibliothèque",
+                            e.apiMessage().ifBlank { "Impossible de modifier la bibliothèque" },
                             Toast.LENGTH_SHORT,
                         ).show()
                     }

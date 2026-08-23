@@ -1516,7 +1516,7 @@ export async function getArtistSongs(
 
 const LYRICS_CACHE_MAX = 400;
 /** bump pour invalider d’anciens timed mal alignés / écrasés */
-const LYRICS_CACHE_VER = 'v6';
+const LYRICS_CACHE_VER = 'v7';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
@@ -1683,6 +1683,13 @@ async function fetchLrclibTimed(
     return null;
   };
 
+  const fold = (s: string) =>
+    s
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
   const cleanTitle = title
     .replace(/\s*[\[(【].*?[\])】]/g, ' ')
     .replace(/\s{2,}/g, ' ')
@@ -1695,32 +1702,65 @@ async function fetchLrclibTimed(
     cleanTitle.replace(/['’]/g, "'"),
   ].filter((t, i, arr) => t && arr.indexOf(t) === i);
 
+  // Variantes artiste (chaîne YT ≠ nom LRCLIB : « VelourVoix », « Topic », feat…)
+  const artistVariants = [
+    artist,
+    artist.replace(/\s*[-–—]\s*Topic\s*$/i, '').trim(),
+    artist.replace(/\s*VEVO\s*$/i, '').trim(),
+    artist.replace(/([a-z])([A-Z])/g, '$1 $2').trim(), // VelourVoix → Velour Voix
+    artist.split(/[,&/]| feat\.? | ft\.? /i)[0]?.trim() || '',
+    '',
+  ].filter((a, i, arr) => arr.indexOf(a) === i);
+
   // 1) get exact (avec durée) → 2) get sans durée → 3) search
-  for (const t of titleVariants) {
-    const hit =
-      (await tryGet(artist, t, true).catch(() => null)) ||
-      (await tryGet(artist, t, false).catch(() => null)) ||
-      (await tryGet('', t, true).catch(() => null));
-    if (hit?.timed?.length || hit?.lyrics) return hit;
+  for (const a of artistVariants) {
+    for (const t of titleVariants) {
+      const hit =
+        (await tryGet(a, t, true).catch(() => null)) ||
+        (await tryGet(a, t, false).catch(() => null));
+      if (hit?.timed?.length || hit?.lyrics) return hit;
+    }
   }
 
-  const q = [artist, cleanTitle || title].filter(Boolean).join(' ').slice(0, 180);
-  if (!q) return null;
-  const searchRes = await fetch(
-    `https://lrclib.net/api/search?${new URLSearchParams({ q })}`,
-    { signal: ctrl, headers },
-  ).catch(() => null);
-  if (!searchRes?.ok) return null;
-  const results = (await searchRes.json()) as Array<{
+  const searchQueries = [
+    [artist, cleanTitle || title].filter(Boolean).join(' '),
+    cleanTitle || title,
+    [artistVariants[1] || artist, cleanTitle].filter(Boolean).join(' '),
+  ]
+    .map((q) => q.slice(0, 180).trim())
+    .filter((q, i, arr) => q && arr.indexOf(q) === i);
+
+  type SearchHit = {
     artistName?: string;
     trackName?: string;
     syncedLyrics?: string | null;
     plainLyrics?: string | null;
     duration?: number;
-  }>;
-  if (!Array.isArray(results) || !results.length) return null;
+  };
+  const results: SearchHit[] = [];
+  for (const q of searchQueries) {
+    const searchRes = await fetch(
+      `https://lrclib.net/api/search?${new URLSearchParams({ q })}`,
+      { signal: ctrl, headers },
+    ).catch(() => null);
+    if (!searchRes?.ok) continue;
+    const batch = (await searchRes.json()) as SearchHit[];
+    if (Array.isArray(batch)) results.push(...batch);
+    if (results.length >= 12) break;
+  }
+  if (!results.length) return null;
 
-  const scoreHit = (r: (typeof results)[number]) => {
+  const wantTitle = fold(cleanTitle || title);
+  const wantArtist = fold(artist);
+  const tokenOverlap = (a: string, b: string) => {
+    const ta = new Set(a.split(' ').filter((x) => x.length > 1));
+    const tb = new Set(b.split(' ').filter((x) => x.length > 1));
+    if (!ta.size || !tb.size) return 0;
+    let n = 0;
+    for (const t of ta) if (tb.has(t)) n += 1;
+    return n / Math.max(ta.size, tb.size);
+  };
+  const scoreHit = (r: SearchHit) => {
     let s = 0;
     if (r.syncedLyrics?.trim()) s += 20;
     else if (r.plainLyrics?.trim()) s += 5;
@@ -1731,10 +1771,23 @@ async function fetchLrclibTimed(
       else if (d <= 10) s += 10;
       else if (d > 20) s -= 50;
     }
+    const rt = fold(r.trackName || '');
+    const ra = fold(r.artistName || '');
+    if (wantTitle && rt) {
+      if (rt === wantTitle) s += 40;
+      else if (rt.includes(wantTitle) || wantTitle.includes(rt)) s += 25;
+      else s += Math.round(tokenOverlap(wantTitle, rt) * 30);
+    }
+    if (wantArtist && ra) {
+      if (ra === wantArtist) s += 25;
+      else if (ra.includes(wantArtist) || wantArtist.includes(ra)) s += 15;
+      else s += Math.round(tokenOverlap(wantArtist, ra) * 20);
+    }
     return s;
   };
   const ranked = [...results].sort((a, b) => scoreHit(b) - scoreHit(a));
   const best =
+    ranked.find((r) => (r.syncedLyrics?.trim() || r.plainLyrics?.trim()) && scoreHit(r) >= 25) ||
     ranked.find((r) => r.syncedLyrics?.trim() && scoreHit(r) >= 20) ||
     ranked.find((r) => r.plainLyrics?.trim()) ||
     ranked[0];
