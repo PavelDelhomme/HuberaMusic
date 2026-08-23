@@ -428,6 +428,15 @@ export async function handleStream(req: Request, res: Response) {
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
+  // ExoPlayer / Media3 ouvre souvent SANS Range ou avec `bytes=0-` (illimité).
+  // Le relais maison + resolve full plantent alors en 502 JSON → lecture morte.
+  // On borne la 1ʳᵉ ouverture à 1 MiB ; le client enchaîne avec de vraies Ranges.
+  if (!wantVideo) {
+    const rangeRaw = String(req.headers.range || '').trim();
+    if (!rangeRaw || /^bytes=0-$/i.test(rangeRaw)) {
+      req.headers.range = 'bytes=0-1048575';
+    }
+  }
   // Vidéo : resolve + fetch GV souvent plus lent (yt-dlp -g / pipe)
   const deadlineAt = Date.now() + (wantVideo ? 40_000 : 22_000);
   const ensureTime = (label: string) => {
