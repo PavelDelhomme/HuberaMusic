@@ -219,6 +219,18 @@ class PlayerController(
         this.userQueueEnd = (userQueueEnd ?: playable.size).coerceIn(0, playable.size)
         userWantsPlaying = true
         pendingAutoplay = true
+        if (playable.isNotEmpty()) {
+            val idx = startIndex.coerceIn(0, playable.lastIndex)
+            val base = streamUrl("_").substringBefore("/api/stream/")
+            StreamPrefetcher.warmTrackFormatOnly(base, playable[idx].id)
+            StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                base,
+                playable.map { it.id },
+                idx,
+                count = 6,
+                ignoreQuiet = true,
+            )
+        }
         val c = controller
         if (c != null) {
             playNow(c, tracks, startIndex)
@@ -832,12 +844,13 @@ class PlayerController(
         if (track.id.length == 11) {
             StreamPrefetcher.quietPrefetch(320L)
             StreamPrefetcher.warmTrackFormatOnly(base, track.id)
-            StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, index, radius = 2)
+            StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, index, radius = 3)
             StreamPrefetcher.prefetchUpcomingHeadsTiered(
                 base,
                 queue.map { it.id },
                 index,
-                count = 5,
+                count = 6,
+                ignoreQuiet = true,
             )
         }
         runCatching {
@@ -1001,7 +1014,7 @@ class PlayerController(
         val p = player() ?: return
         if (!p.isPlaying && p.playbackState != Player.STATE_READY) return
         val now = System.currentTimeMillis()
-        if (now - lastRollingMaintainAt < 10_000L) return
+        if (now - lastRollingMaintainAt < 5_000L) return
         lastRollingMaintainAt = now
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
@@ -1363,11 +1376,18 @@ class PlayerController(
         syncFrom(player)
     }
 
-    fun prefetchQueueFocus(centerIndex: Int, radius: Int = 2) {
+    fun prefetchQueueFocus(centerIndex: Int, radius: Int = 3) {
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val base = streamUrl("_").substringBefore("/api/stream/")
         StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, centerIndex, radius)
+        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+            base,
+            queue.map { it.id },
+            centerIndex,
+            count = 5,
+            ignoreQuiet = true,
+        )
     }
 
     private fun warmAround(tracks: List<TrackDto>, startIndex: Int) {
