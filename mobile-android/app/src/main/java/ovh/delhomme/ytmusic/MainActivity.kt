@@ -191,6 +191,7 @@ fun YtMusicAppContent(
     }
     var pendingApprove by remember { mutableStateOf<DeviceLoginDeepLink.Approve?>(null) }
     var deviceLoginBusy by remember { mutableStateOf(false) }
+    var pendingAppLink by remember { mutableStateOf<Uri?>(null) }
 
     fun handleDeviceLoginUri(uri: Uri?) {
         when (val link = MainActivity.parseDeviceLogin(uri)) {
@@ -214,7 +215,12 @@ fun YtMusicAppContent(
                 }
             }
             is DeviceLoginDeepLink.Approve -> pendingApprove = link
-            null -> Unit
+            null -> {
+                // Pas un login QR → lien app (watch / artiste / …)
+                if (uri != null && AppDeepLinks.parse(uri) != null) {
+                    pendingAppLink = uri
+                }
+            }
         }
     }
 
@@ -505,6 +511,8 @@ fun YtMusicAppContent(
                 player = player,
                 expanded = showNowPlaying,
                 playerFocusToken = playerFocusToken,
+                pendingAppLink = pendingAppLink,
+                onAppLinkConsumed = { pendingAppLink = null },
                 onOpenPlayer = {
                     showNowPlaying = true
                     playerFocusToken++
@@ -571,6 +579,8 @@ private fun MainTabs(
     player: PlayerController,
     expanded: Boolean,
     playerFocusToken: Int = 0,
+    pendingAppLink: Uri? = null,
+    onAppLinkConsumed: () -> Unit = {},
     onOpenPlayer: () -> Unit,
     onClosePlayer: () -> Unit,
     onPlayTracks: (List<TrackDto>, Int) -> Unit,
@@ -592,6 +602,66 @@ private fun MainTabs(
 
     LaunchedEffect(current) {
         if (!current.isNullOrBlank()) AppLog.breadcrumb("nav", current)
+    }
+
+    LaunchedEffect(pendingAppLink) {
+        val uri = pendingAppLink ?: return@LaunchedEffect
+        val link = AppDeepLinks.parse(uri) ?: run {
+            onAppLinkConsumed()
+            return@LaunchedEffect
+        }
+        AppLog.breadcrumb("deeplink", uri.toString())
+        when (link) {
+            is AppDeepLink.Watch -> {
+                runCatching {
+                    container.ensureFreshToken()
+                    val track = container.api.track(link.trackId).track
+                    onPlayTracks(listOf(track), 0)
+                    onOpenPlayer()
+                }.onFailure {
+                    Toast.makeText(
+                        context,
+                        it.message ?: "Impossible d’ouvrir ce titre",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            is AppDeepLink.Detail -> {
+                onClosePlayer()
+                nav.navigate("detail/${link.kind}/${Uri.encode(link.id)}") {
+                    launchSingleTop = true
+                }
+            }
+            AppDeepLink.Library -> {
+                onClosePlayer()
+                nav.navigate(Tab.Library.route) {
+                    popUpTo(nav.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
+            AppDeepLink.Search, AppDeepLink.Explore -> {
+                onClosePlayer()
+                nav.navigate(Tab.Search.route) {
+                    popUpTo(nav.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
+            AppDeepLink.Profile -> {
+                onClosePlayer()
+                nav.navigate("account") { launchSingleTop = true }
+            }
+            AppDeepLink.Home -> {
+                onClosePlayer()
+                nav.navigate(Tab.Home.route) {
+                    popUpTo(nav.graph.startDestinationId) { inclusive = false }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
+        }
+        onAppLinkConsumed()
     }
 
     fun openDetail(item: TrackDto) {

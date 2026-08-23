@@ -840,7 +840,7 @@ app.get('/api/auth/passkeys', authRequired, (req, res) => {
   res.json({ passkeys: listPasskeys(req.userId!) });
 });
 
-/** Digital Asset Links — Passkeys / Credential Manager Android (prod + flavor .dev) */
+/** Digital Asset Links — Passkeys / Credential Manager + App Links Android */
 app.get('/.well-known/assetlinks.json', (_req, res) => {
   const fps = (process.env.ANDROID_SHA256_FINGERPRINTS || '')
     .split(',')
@@ -858,7 +858,9 @@ app.get('/.well-known/assetlinks.json', (_req, res) => {
   );
   // Flavor debug / Samsung DEV
   if (packages.has('ovh.delhomme.ytmusic')) packages.add('ovh.delhomme.ytmusic.dev');
-  res.json(
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.status(200).json(
     [...packages].map((package_name) => ({
       relation: [
         'delegate_permission/common.handle_all_urls',
