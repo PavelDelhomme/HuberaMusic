@@ -78,27 +78,46 @@ export function cachePath(videoId: string) {
 }
 
 /** Base URL de l’API maison (env ou fichier volume).
- *  Prod : désactivé sauf ALLOW_STREAM_UPSTREAM=1 — la prod doit tourner VPS-only.
+ *  Prod : désactivé sauf ALLOW_STREAM_UPSTREAM=1 ou fichier stream-upstream.url (tunnel maison).
  */
 export function resolveStreamUpstream(): string | null {
   const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || '').toLowerCase();
+  let fileUpstream: string | null = null;
+  try {
+    if (existsSync(STREAM_UPSTREAM_FILE)) {
+      const v = readFileSync(STREAM_UPSTREAM_FILE, 'utf8').trim().replace(/\/$/, '');
+      if (v.startsWith('http://') || v.startsWith('https://')) fileUpstream = v;
+    }
+  } catch {
+    /* ignore */
+  }
   const allow =
     process.env.ALLOW_STREAM_UPSTREAM === '1' ||
-    process.env.ALLOW_STREAM_UPSTREAM === 'true';
+    process.env.ALLOW_STREAM_UPSTREAM === 'true' ||
+    Boolean(fileUpstream);
   const isProd = appEnv === 'production' || appEnv === 'prod';
   if (isProd && !allow) return null;
 
   const env = (process.env.STREAM_UPSTREAM || '').trim().replace(/\/$/, '');
   if (env) return env;
-  try {
-    if (existsSync(STREAM_UPSTREAM_FILE)) {
-      const v = readFileSync(STREAM_UPSTREAM_FILE, 'utf8').trim().replace(/\/$/, '');
-      if (v.startsWith('http://') || v.startsWith('https://')) return v;
-    }
-  } catch {
-    /* ignore */
+  return fileUpstream;
+}
+
+/** Prod : relais maison autorisé (env ou fichier tunnel sur le volume). */
+export function isStreamUpstreamAllowed(): boolean {
+  if (
+    process.env.ALLOW_STREAM_UPSTREAM === '1' ||
+    process.env.ALLOW_STREAM_UPSTREAM === 'true'
+  ) {
+    return true;
   }
-  return null;
+  try {
+    if (!existsSync(STREAM_UPSTREAM_FILE)) return false;
+    const v = readFileSync(STREAM_UPSTREAM_FILE, 'utf8').trim();
+    return v.startsWith('http://') || v.startsWith('https://');
+  } catch {
+    return false;
+  }
 }
 
 /** Relais stream vers l’API maison (évite le blocage IP datacenter YouTube). */

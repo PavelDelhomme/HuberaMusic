@@ -12,6 +12,10 @@ data class UserDto(
     val isAdmin: Boolean? = false,
     val emailVerified: Boolean? = false,
     val ytmLinked: Boolean? = false,
+    /** OAuth appareil — lecture fiable via PLM (persisté serveur, survit aux MAJ app). */
+    val ytmStreamReady: Boolean? = false,
+    /** Cookies YTM — biblio likes/playlists. */
+    val ytmLibraryReady: Boolean? = false,
     val hasGoogle: Boolean? = false,
 )
 

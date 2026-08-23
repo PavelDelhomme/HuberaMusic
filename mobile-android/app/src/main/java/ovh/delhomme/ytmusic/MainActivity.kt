@@ -736,6 +736,7 @@ private fun MainTabs(
     var forceOnboarding by remember { mutableStateOf(false) }
     var onboardingChecked by remember { mutableStateOf(false) }
     var showGoogleLink by remember { mutableStateOf(false) }
+    var pendingAutoStreamSetup by remember { mutableStateOf(false) }
 
     var sessionHydrated by remember { mutableStateOf(false) }
     var pendingRemoteLabel by remember { mutableStateOf<String?>(null) }
@@ -765,16 +766,27 @@ private fun MainTabs(
             }.getOrDefault(false)
             val me = runCatching { container.api.me().user }.getOrNull()
             val guest = me?.isGuest == true || me?.email?.contains("@local.ytmusic") == true
+            val ytmAccount = runCatching { container.api.ytmStatus().account }.getOrNull()
+            val streamReady = me?.ytmStreamReady == true || ytmAccount?.hasOauth == true
+            val setupPrefs = container.sharedPrefs("ytm_stream_setup")
             val dismissed = container.sharedPrefs("ytm_google_prompt")
                 .getLong("dismissed_at", 0L)
             val cool = System.currentTimeMillis() - dismissed < 3L * 24 * 3600 * 1000
-            val googleLinked = me?.ytmLinked == true ||
-                runCatching { container.api.ytmStatus().account.connected }.getOrDefault(false)
-            if (googleLinked) {
+            val googleLinked = me?.ytmLinked == true || ytmAccount?.connected == true
+            if (googleLinked || streamReady) {
                 container.sharedPrefs("ytm_google").edit().putBoolean("linked", true).apply()
+                if (streamReady) {
+                    setupPrefs.edit().putBoolean("oauth_done", true).apply()
+                }
             }
-            if (me != null && !guest && !googleLinked && !cool) {
-                showGoogleLink = true
+            if (me != null && !guest && !streamReady) {
+                val autoStarted = setupPrefs.getBoolean("auto_oauth_started", false)
+                if (!autoStarted && !forceOnboarding) {
+                    setupPrefs.edit().putBoolean("auto_oauth_started", true).apply()
+                    pendingAutoStreamSetup = true
+                } else if (!cool) {
+                    showGoogleLink = true
+                }
             }
         }
         if (!sessionHydrated) {
@@ -1350,6 +1362,14 @@ private fun MainTabs(
             composable("debug_logs") {
                 DebugLogsScreen(container = container, onBack = { nav.popBackStack() })
             }
+            composable("ytm_import?autoOauth={autoOauth}") { entry ->
+                val auto = entry.arguments?.getString("autoOauth") == "1"
+                YtmImportScreen(
+                    container = container,
+                    autoStartOauth = auto,
+                    onBack = { nav.popBackStack() },
+                )
+            }
             composable("ytm_import") {
                 YtmImportScreen(
                     container = container,
@@ -1532,6 +1552,13 @@ private fun MainTabs(
         }
     }
 
+    LaunchedEffect(pendingAutoStreamSetup, forceOnboarding) {
+        if (pendingAutoStreamSetup && !forceOnboarding) {
+            pendingAutoStreamSetup = false
+            nav.navigate("ytm_import?autoOauth=1")
+        }
+    }
+
     if (showCast) {
         CastSheet(container = container, player = player, onDismiss = { showCast = false })
     }
@@ -1543,18 +1570,19 @@ private fun MainTabs(
                     .putLong("dismissed_at", System.currentTimeMillis()).apply()
                 showGoogleLink = false
             },
-            title = { Text("Connecter Google") },
+            title = { Text("Configurer la lecture") },
             text = {
                 Text(
-                    "Un bouton : tu valides ton compte Google (gratuit, pas Premium). " +
-                        "PLM récupère tout seul likes et playlists — rien à coller.",
+                    "Une fois : choisis ton compte Google sur le téléphone (code appareil, sans mot de passe). " +
+                        "PLM signe tes streams avec ton compte — ça reste actif après les mises à jour. " +
+                        "Option biblio : likes / playlists ensuite.",
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     showGoogleLink = false
-                    nav.navigate("ytm_import")
-                }) { Text("Connecter") }
+                    nav.navigate("ytm_import?autoOauth=1")
+                }) { Text("Configurer") }
             },
             dismissButton = {
                 TextButton(onClick = {

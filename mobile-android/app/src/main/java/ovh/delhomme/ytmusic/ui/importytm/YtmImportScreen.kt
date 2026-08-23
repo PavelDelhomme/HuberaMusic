@@ -58,6 +58,7 @@ import java.util.Date
 fun YtmImportScreen(
     container: AppContainer,
     onBack: () -> Unit,
+    autoStartOauth: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -70,6 +71,7 @@ fun YtmImportScreen(
     var cookie by remember { mutableStateOf("") }
     var oauthCode by remember { mutableStateOf<String?>(null) }
     var oauthUrl by remember { mutableStateOf<String?>(null) }
+    var autoOauthLaunched by remember { mutableStateOf(false) }
 
     fun refresh() {
         scope.launch {
@@ -194,6 +196,12 @@ fun YtmImportScreen(
                             account = container.api.ytmStatus().account
                             oauthCode = null
                             oauthUrl = null
+                            container.sharedPrefs("ytm_stream_setup").edit()
+                                .putBoolean("oauth_done", true)
+                                .apply()
+                            container.sharedPrefs("ytm_google").edit()
+                                .putBoolean("linked", true)
+                                .apply()
                             message =
                                 if (account?.canSyncLibrary == true) {
                                     "OAuth Google OK — lecture + biblio prêtes"
@@ -230,6 +238,19 @@ fun YtmImportScreen(
                 )
             }
             busy = false
+        }
+    }
+
+    LaunchedEffect(autoStartOauth, account?.hasOauth) {
+        if (
+            autoStartOauth &&
+            !autoOauthLaunched &&
+            account != null &&
+            account?.hasOauth != true &&
+            !showLogin
+        ) {
+            autoOauthLaunched = true
+            startDeviceOauth(openBrowser = true)
         }
     }
 
