@@ -356,10 +356,17 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
                 } else {
                   await register(email, password, name || email.split('@')[0]);
                   setInfo(
-                    'Compte créé — vérifie ta boîte mail (et les spams) pour valider ton adresse, puis lie Google dans Importer pour synchroniser ta bibliothèque.',
+                    'Compte créé — sur Android, installe l’APK native (pas le raccourci web), puis connecte-toi avec le même email.',
                   );
                   await refresh();
-                  await maybeOfferPasskey();
+                  // Oriente vers l’install APK (Xiaomi / partage site)
+                  if (/android/i.test(navigator.userAgent)) {
+                    window.setTimeout(() => {
+                      window.location.assign('/install');
+                    }, 1200);
+                  } else {
+                    await maybeOfferPasskey();
+                  }
                 }
               } catch (err) {
                 setError(String((err as Error).message || err));

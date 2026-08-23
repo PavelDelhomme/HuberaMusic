@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Download, MonitorSmartphone, Share2, Smartphone, X } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import { isNativeApp } from '../../lib/util/native';
@@ -41,11 +42,11 @@ function installSteps(platform: Platform): { title: string; steps: string[] } {
       };
     case 'android':
       return {
-        title: 'Android (Chrome)',
+        title: 'Android — APK native',
         steps: [
-          'Ouvre le menu ⋮ en haut à droite.',
-          '« Installer l’application » ou « Ajouter à l’écran d’accueil ».',
-          'Confirme — l’icône PLM apparaît sur l’écran d’accueil.',
+          'Ouvre la page /install (bouton ci-dessous).',
+          'Télécharge PLM.apk — pas « Ajouter à l’écran d’accueil ».',
+          'Xiaomi : autorise les sources inconnues, ouvre le fichier dans Téléchargements.',
         ],
       };
     case 'windows':
@@ -79,14 +80,14 @@ function installSteps(platform: Platform): { title: string; steps: string[] } {
       return {
         title: 'Navigateur compatible',
         steps: [
-          'Utilise Chrome, Edge ou Chromium.',
-          'Menu → Installer l’application / Ajouter à l’écran d’accueil.',
+          'Sur téléphone Android : va sur /install pour l’APK native.',
+          'Sur ordinateur : menu → Installer l’application (PWA).',
         ],
       };
   }
 }
 
-/** Bannière d’install PWA — uniquement si pas déjà installée. */
+/** Bannière d’install — Android = APK native (/install), iOS/desktop = PWA. */
 export function InstallBanner() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [visible, setVisible] = useState(false);
@@ -94,9 +95,9 @@ export function InstallBanner() {
   const platform = useMemo(() => detectPlatform(), []);
   const guide = useMemo(() => installSteps(platform), [platform]);
   const dismissedKey = `ytm_install_dismissed:${location.host}`;
+  const isAndroid = platform === 'android';
 
   useEffect(() => {
-    // APK Capacitor / app déjà installée → jamais de bannière PWA
     if (isNativeApp() || isStandalone()) return;
     const forceInstall = new URLSearchParams(location.search).get('install') === '1';
     if (!forceInstall && localStorage.getItem(dismissedKey) === '1') return;
@@ -105,6 +106,11 @@ export function InstallBanner() {
     }
 
     const onBip = (e: Event) => {
+      // Sur Android on pousse l’APK, pas le beforeinstallprompt PWA
+      if (isAndroid) {
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       setDeferred(e as BeforeInstallPromptEvent);
       setVisible(true);
@@ -115,7 +121,6 @@ export function InstallBanner() {
     const onInstalled = () => {
       localStorage.setItem(dismissedKey, '1');
       setVisible(false);
-      // nettoie ?install=1 de l’URL
       if (forceInstall) {
         const u = new URL(location.href);
         u.searchParams.delete('install');
@@ -124,8 +129,7 @@ export function InstallBanner() {
     };
     window.addEventListener('appinstalled', onInstalled);
 
-    // Montrer tout de suite si ?install=1 (parcours make mobile-install-adb)
-    const delay = forceInstall ? 400 : platform === 'ios' ? 2500 : platform === 'android' ? 2000 : 5000;
+    const delay = forceInstall ? 400 : platform === 'ios' ? 2500 : platform === 'android' ? 1200 : 5000;
     const t = setTimeout(() => {
       if (!isStandalone()) {
         setVisible(true);
@@ -138,9 +142,11 @@ export function InstallBanner() {
       window.removeEventListener('beforeinstallprompt', onBip);
       window.removeEventListener('appinstalled', onInstalled);
     };
-  }, [dismissedKey, platform]);
+  }, [dismissedKey, platform, isAndroid]);
 
   if (isNativeApp() || !visible || isStandalone()) return null;
+  // Déjà sur /install → pas de bannière doublon
+  if (location.pathname.startsWith('/install')) return null;
 
   const dismiss = () => {
     localStorage.setItem(dismissedKey, '1');
@@ -149,6 +155,10 @@ export function InstallBanner() {
   };
 
   const install = async () => {
+    if (isAndroid) {
+      window.location.assign('/install');
+      return;
+    }
     if (deferred) {
       try {
         await deferred.prompt();
@@ -177,13 +187,19 @@ export function InstallBanner() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="font-display text-sm font-semibold">
-              {isPhone ? 'Installer l’app mobile' : 'Installer sur cet ordinateur'}
+              {isAndroid
+                ? 'Installer l’app Android (APK)'
+                : isPhone
+                  ? 'Installer l’app mobile'
+                  : 'Installer sur cet ordinateur'}
             </div>
             <p className="mt-0.5 text-xs text-yt-muted">
-              {guide.title} · {location.host} — gratuit, ton compte.
+              {isAndroid
+                ? 'Vraie application native — pas un raccourci web (Xiaomi / Chrome).'
+                : `${guide.title} · ${location.host}`}
             </p>
 
-            {showGuide && (
+            {showGuide && !isAndroid && (
               <ol className="mt-3 list-decimal space-y-1.5 rounded-xl bg-yt-elevated px-3 py-2.5 pl-5 text-[11px] leading-relaxed text-yt-muted">
                 {guide.steps.map((s) => (
                   <li key={s}>{s}</li>
@@ -197,28 +213,38 @@ export function InstallBanner() {
             )}
 
             <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void install()}
-                className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1.5 text-xs font-medium text-black"
-              >
-                {deferred ? (
-                  <>
-                    <Download className="h-3.5 w-3.5" /> Installer maintenant
-                  </>
-                ) : showGuide ? (
-                  'Masquer le guide'
-                ) : (
-                  <>
-                    {isPhone ? (
-                      <Smartphone className="h-3.5 w-3.5" />
-                    ) : (
-                      <MonitorSmartphone className="h-3.5 w-3.5" />
-                    )}
-                    Comment installer
-                  </>
-                )}
-              </button>
+              {isAndroid ? (
+                <Link
+                  to="/install"
+                  onClick={dismiss}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-yt-red px-3.5 py-1.5 text-xs font-medium text-white"
+                >
+                  <Download className="h-3.5 w-3.5" /> Télécharger l’APK
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void install()}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1.5 text-xs font-medium text-black"
+                >
+                  {deferred ? (
+                    <>
+                      <Download className="h-3.5 w-3.5" /> Installer maintenant
+                    </>
+                  ) : showGuide ? (
+                    'Masquer le guide'
+                  ) : (
+                    <>
+                      {isPhone ? (
+                        <Smartphone className="h-3.5 w-3.5" />
+                      ) : (
+                        <MonitorSmartphone className="h-3.5 w-3.5" />
+                      )}
+                      Comment installer
+                    </>
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={dismiss}

@@ -50,6 +50,14 @@ export default defineConfig(({ mode }) => {
         orientation: 'any',
         start_url: '/',
         scope: '/',
+        // Android : préférer l’APK native (page /install) plutôt que la PWA
+        prefer_related_applications: true,
+        related_applications: [
+          {
+            platform: 'webapp',
+            url: 'https://ytmusic.delhomme.ovh/install',
+          },
+        ],
         icons: [
           { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
