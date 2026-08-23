@@ -4,10 +4,17 @@ import android.util.Log
 import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -42,7 +49,7 @@ object SessionMediaMode {
 
 /**
  * Surface vidéo muette synchronisée sur la position audio principale.
- * Créée uniquement en mode Vidéo (économe) ; libérée au dispose / retour Titre.
+ * L’audio vient toujours du service (piste en cours) — jamais la piste audio du clip.
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -51,6 +58,8 @@ fun SyncedVideoSurface(
     positionMs: Long,
     playing: Boolean,
     active: Boolean = true,
+    fullscreen: Boolean = false,
+    onToggleFullscreen: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -60,7 +69,6 @@ fun SyncedVideoSurface(
     val latestPlaying by rememberUpdatedState(playing)
 
     val exo = remember {
-        // Pas le cache audio : sinon Exo peut croire que le clip est fini / 502 stale
         val factory = PlayerCache.videoDataSourceFactory(context)
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(factory))
@@ -94,11 +102,13 @@ fun SyncedVideoSurface(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     ready = true
+                    runCatching { exo.seekTo(latestPos.coerceAtLeast(0L)) }
                     if (ovh.delhomme.ytmusic.BuildConfig.DEBUG) {
                         Log.i(TAG, "video ready url=${streamUrl.take(80)}")
                     }
                 }
             }
+
             override fun onPlayerError(e: PlaybackException) {
                 val msg = e.message ?: "Vidéo indisponible"
                 error = msg
@@ -121,24 +131,46 @@ fun SyncedVideoSurface(
         }
         while (isActive) {
             val target = latestPos.coerceAtLeast(0L)
-            // Seuil large : un seek trop fréquent coupe le buffer vidéo
-            if (kotlin.math.abs(exo.currentPosition - target) > 480L) {
-                runCatching { exo.seekTo(target) }
+            when (exo.playbackState) {
+                Player.STATE_READY -> {
+                    val drift = kotlin.math.abs(exo.currentPosition - target)
+                    // Seek rare : évite les micro-coupures / crash buffer
+                    if (drift > 850L) {
+                        runCatching { exo.seekTo(target) }
+                    }
+                    when {
+                        !latestPlaying && exo.isPlaying -> exo.pause()
+                        latestPlaying && !exo.isPlaying -> exo.play()
+                    }
+                }
+                Player.STATE_BUFFERING -> Unit
+                else -> Unit
             }
-            when {
-                !latestPlaying && exo.isPlaying -> exo.pause()
-                latestPlaying && !exo.isPlaying && exo.playbackState == Player.STATE_READY -> exo.play()
-            }
-            delay(320)
+            delay(if (latestPlaying) 120L else 280L)
         }
     }
 
-    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+    Box(
+        modifier
+            .background(Color.Black)
+            .then(
+                if (!fullscreen && onToggleFullscreen != null) {
+                    Modifier.clickable(onClick = onToggleFullscreen)
+                } else {
+                    Modifier
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    resizeMode = if (fullscreen) {
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    } else {
+                        AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
                     player = exo
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -146,7 +178,10 @@ fun SyncedVideoSurface(
                     )
                 }
             },
-            update = { it.player = exo },
+            update = { view ->
+                view.player = exo
+                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            },
             modifier = Modifier.fillMaxSize(),
         )
         when {
@@ -156,6 +191,20 @@ fun SyncedVideoSurface(
                 strokeWidth = 2.dp,
                 modifier = Modifier.size(28.dp),
             )
+        }
+        if (onToggleFullscreen != null) {
+            IconButton(
+                onClick = onToggleFullscreen,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp),
+            ) {
+                Icon(
+                    if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                    contentDescription = if (fullscreen) "Quitter plein écran" else "Plein écran",
+                    tint = Color.White,
+                )
+            }
         }
     }
 }

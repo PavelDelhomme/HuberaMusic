@@ -3,6 +3,7 @@ package ovh.delhomme.ytmusic.ui.player
 import android.content.Context
 import android.os.SystemClock
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -213,6 +214,7 @@ fun NowPlayingScreen(
     var mediaSlideX by remember { mutableFloatStateOf(0f) }
     val queueProgress = remember { Animatable(0f) }
     var showLyrics by remember { mutableStateOf(false) }
+    var videoFullscreen by remember { mutableStateOf(false) }
     var showEqualizer by remember { mutableStateOf(false) }
     var showSaveQueue by remember { mutableStateOf(false) }
     var queuePanelTab by remember { mutableIntStateOf(0) } // 0 = file, 1 = similaires
@@ -504,15 +506,21 @@ fun NowPlayingScreen(
         mediaSlideX = 0f
     }
 
+    LaunchedEffect(SessionMediaMode.video) {
+        if (!SessionMediaMode.video) videoFullscreen = false
+    }
+
+    BackHandler(enabled = videoFullscreen) { videoFullscreen = false }
+
     LaunchedEffect(ui.queueIndex, ui.queue.size) {
         if (ui.queue.isEmpty()) return@LaunchedEffect
-        player.prefetchQueueFocus(ui.queueIndex.coerceIn(0, ui.queue.lastIndex), radius = 2)
+        player.prefetchQueueFocus(ui.queueIndex.coerceIn(0, ui.queue.lastIndex), radius = 3)
         val base = container.remoteStreamUrl("_").substringBefore("/api/stream/")
         StreamPrefetcher.maintainRollingPrefetch(
             base,
             ui.queue.map { it.id },
             ui.queueIndex.coerceIn(0, ui.queue.lastIndex),
-            window = 8,
+            window = 10,
         )
     }
 
@@ -751,7 +759,8 @@ fun NowPlayingScreen(
                             translationY = -qp * 48f
                         },
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    userScrollEnabled = qp < 0.45f || showLyrics,
+                    // Toujours scrollable en portrait (Samsung / grands écrans : seek + transport visibles)
+                    userScrollEnabled = true,
                 ) {
                     item {
                         val landscape = landscapeLayout
@@ -825,6 +834,8 @@ fun NowPlayingScreen(
                                                 positionMs = ui.positionMs,
                                                 playing = ui.playing,
                                                 active = sheetVisible && SessionMediaMode.video,
+                                                fullscreen = false,
+                                                onToggleFullscreen = { videoFullscreen = true },
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .height(coverH)
@@ -1457,6 +1468,23 @@ fun NowPlayingScreen(
             } // Box
         }
         }
+        if (videoFullscreen && visualVideoUrl != null && SessionMediaMode.video && track != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+            ) {
+                SyncedVideoSurface(
+                    streamUrl = visualVideoUrl!!,
+                    positionMs = ui.positionMs,
+                    playing = ui.playing,
+                    active = sheetVisible,
+                    fullscreen = true,
+                    onToggleFullscreen = { videoFullscreen = false },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
     }
 
     if (showSaveQueue) {
@@ -2058,6 +2086,27 @@ private fun QueueExpandedBody(
                 player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
             }
         }
+    }
+
+    LaunchedEffect(panelTab, listState, ui.queueIndex) {
+        if (panelTab != 0 || ui.queue.isEmpty()) return@LaunchedEffect
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
+                ui.queue.getOrNull(info.index)?.id
+            }
+        }.distinctUntilChanged().collect { ids ->
+            if (ids.isEmpty()) return@collect
+            StreamPrefetcher.prefetchTrackIds(container.resolvedApiBase(), ids, limit = 10)
+        }
+    }
+
+    LaunchedEffect(panelTab, similarTracks.size) {
+        if (panelTab != 1 || similarTracks.isEmpty()) return@LaunchedEffect
+        StreamPrefetcher.prefetchTrackIds(
+            container.resolvedApiBase(),
+            similarTracks.map { it.id },
+            limit = 14,
+        )
     }
 
     LaunchedEffect(seedId) {
