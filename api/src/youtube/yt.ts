@@ -1516,11 +1516,11 @@ export async function getArtistSongs(
 
 const LYRICS_CACHE_MAX = 400;
 /** bump pour invalider d’anciens timed mal alignés / écrasés */
-const LYRICS_CACHE_VER = 'v7';
+const LYRICS_CACHE_VER = 'v9';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | null;
+  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | null;
   /** Décalage appliqué aux timed (ms) — positif = paroles retardées (corrige avance) */
   syncOffsetMs?: number;
 };
@@ -1826,6 +1826,77 @@ async function fetchLrclibTimed(
   return tryGet(best.artistName || artist, best.trackName || cleanTitle || title, false);
 }
 
+/** Fallback niche : sous-titres YouTube (auto-générés inclus) via timedtext json3. */
+async function fetchYoutubeCaptionsTimed(
+  videoId: string,
+): Promise<{ lyrics: string; timed: { startMs: number; text: string }[] } | null> {
+  try {
+    const innertube = await getYT();
+    const info = await innertube.getBasicInfo(videoId);
+    const tracks = (info as any)?.captions?.caption_tracks as
+      | Array<{ base_url?: string; language_code?: string; kind?: string; name?: unknown }>
+      | undefined;
+    if (!tracks?.length) return null;
+    const prefer = (langs: string[]) =>
+      tracks.find((t) => langs.some((l) => (t.language_code || '').toLowerCase().startsWith(l)));
+    const track =
+      prefer(['fr']) ||
+      prefer(['en']) ||
+      tracks.find((t) => !(t.kind || '').includes('asr')) ||
+      tracks[0];
+    const base = track?.base_url;
+    if (!base) return null;
+    const url = new URL(base);
+    url.searchParams.set('fmt', 'json3');
+    const res = await fetch(url.toString(), {
+      signal: AbortSignal.timeout(5000),
+      headers: { 'User-Agent': 'PLM/1.0 (self-hosted)' },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      events?: Array<{ tStartMs?: number; segs?: Array<{ utf8?: string }> }>;
+    };
+    const timed: { startMs: number; text: string }[] = [];
+    let buf = '';
+    let bufStart = 0;
+    const flush = () => {
+      const text = buf.replace(/\s+/g, ' ').trim();
+      if (text) timed.push({ startMs: bufStart, text });
+      buf = '';
+    };
+    for (const ev of data.events || []) {
+      const start = Number(ev.tStartMs);
+      if (!Number.isFinite(start)) continue;
+      const piece = (ev.segs || []).map((s) => s.utf8 || '').join('');
+      if (!piece) continue;
+      if (!buf) bufStart = start;
+      buf += piece;
+      // Nouvelle ligne / fin de phrase → ligne karaoké
+      if (piece.includes('\n') || /[.!?…]$/.test(buf.trim()) || buf.length > 72) {
+        flush();
+      }
+    }
+    flush();
+    // Fusionne micro-fragments ASR trop courts
+    const merged: { startMs: number; text: string }[] = [];
+    for (const line of timed) {
+      const last = merged[merged.length - 1];
+      if (last && last.text.length < 18 && line.startMs - last.startMs < 2500) {
+        last.text = `${last.text} ${line.text}`.replace(/\s+/g, ' ').trim();
+      } else {
+        merged.push({ ...line });
+      }
+    }
+    if (merged.length < 2) return null;
+    return {
+      lyrics: merged.map((l) => l.text).join('\n'),
+      timed: merged,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getLyrics(videoId: string): Promise<LyricsResult> {
   const cached = lyricsCache.get(lyricsCacheKey(videoId));
   if (cached) {
@@ -1902,6 +1973,20 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
     }
   }
 
+  // Fallback niche : captions YouTube (auto) si pas de timed (YTM/LRCLIB)
+  if (!timed?.length) {
+    try {
+      const caps = await fetchYoutubeCaptionsTimed(videoId);
+      if (caps?.timed?.length) {
+        timed = caps.timed;
+        if (!text) text = caps.lyrics;
+        source = 'captions';
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   // Texte LRC brut → timed
   if (!timed?.length && text) {
     const fromText = parseLrcBlock(text);
@@ -1912,7 +1997,8 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
   }
 
   // Dernier filet : timings hors durée du titre → texte seul
-  if (timed?.length) {
+  // (sauf captions YT : l’ASR couvre souvent toute la vidéo, timings OK même si durée méta floue)
+  if (timed?.length && source !== 'captions') {
     try {
       const meta = await getTrack(videoId, { light: true }).catch(() => null);
       const dur =
@@ -1933,7 +2019,7 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
   const result: LyricsResult = {
     lyrics: text,
     timed: timed?.length ? timed : null,
-    source: timed?.length ? source : null,
+    source: timed?.length ? source : text ? source : null,
     syncOffsetMs: timed?.length ? syncOffsetMs : 0,
   };
   putLyricsCache(videoId, result);
