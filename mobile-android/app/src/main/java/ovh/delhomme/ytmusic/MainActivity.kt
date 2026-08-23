@@ -605,26 +605,29 @@ private fun MainTabs(
     }
 
     LaunchedEffect(pendingAppLink) {
-        val uri = pendingAppLink ?: return@LaunchedEffect
+        val uri = pendingAppLink
+            ?: (context as? ComponentActivity)?.intent?.data?.takeIf {
+                AppDeepLinks.parse(it) != null && MainActivity.parseDeviceLogin(it) == null
+            }
+            ?: return@LaunchedEffect
         val link = AppDeepLinks.parse(uri) ?: run {
-            onAppLinkConsumed()
+            if (pendingAppLink != null) onAppLinkConsumed()
             return@LaunchedEffect
         }
-        AppLog.breadcrumb("deeplink", uri.toString())
+        // Laisse la session / Exo se brancher (cold start depuis un lien)
+        kotlinx.coroutines.delay(350)
+        AppLog.breadcrumb("deeplink", "${link::class.simpleName} $uri")
         when (link) {
             is AppDeepLink.Watch -> {
-                runCatching {
+                val track = runCatching {
                     container.ensureFreshToken()
-                    val track = container.api.track(link.trackId).track
-                    onPlayTracks(listOf(track), 0)
-                    onOpenPlayer()
-                }.onFailure {
-                    Toast.makeText(
-                        context,
-                        it.message ?: "Impossible d’ouvrir ce titre",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    container.api.track(link.trackId).track
+                }.getOrElse {
+                    AppLog.e("deeplink", "track ${link.trackId}", it)
+                    TrackDto(id = link.trackId, title = "Titre", type = "song")
                 }
+                onPlayTracks(listOf(track), 0)
+                onOpenPlayer()
             }
             is AppDeepLink.Detail -> {
                 onClosePlayer()
@@ -661,6 +664,8 @@ private fun MainTabs(
                 }
             }
         }
+        // Évite de rejouer le même intent au retour arrière
+        (context as? ComponentActivity)?.intent?.data = null
         onAppLinkConsumed()
     }
 
