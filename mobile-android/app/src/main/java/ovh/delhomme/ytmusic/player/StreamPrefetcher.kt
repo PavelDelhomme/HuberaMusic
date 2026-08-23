@@ -83,6 +83,7 @@ object StreamPrefetcher {
     }
 
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
+    private val diskPrefetchInFlight = ConcurrentHashMap.newKeySet<String>()
     private val recent = object : LinkedHashMap<String, Long>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean =
             size > 64
@@ -120,6 +121,48 @@ object StreamPrefetcher {
 
     private fun isLocalOffline(trackId: String): Boolean =
         runCatching { YtMusicApp.instance.container.offlineStore.has(trackId) }.getOrDefault(false)
+
+    /**
+     * Pré-télécharge le .m4a côté API (cache disque serveur) pour les seeks mid-range.
+     * Fire-and-forget — POST /api/download/:id (peut prendre 30–90 s sur le relais maison).
+     */
+    fun requestServerDiskCache(baseApi: String, trackId: String) {
+        if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
+        val key = "disk:$trackId"
+        synchronized(recent) {
+            val last = recent[key]
+            if (last != null && System.currentTimeMillis() - last < 180_000L) return
+        }
+        if (!diskPrefetchInFlight.add(trackId)) return
+        val builder = Request.Builder()
+            .url("${baseApi.trimEnd('/')}/api/download/$trackId")
+            .header("X-YTM-Client", "android")
+            .tag("ytm-disk-prefetch")
+            .post(ByteArray(0).toRequestBody(null))
+        authHeader()?.let { builder.header("Authorization", it) }
+        val diskClient = client.newBuilder()
+            .readTimeout(130, TimeUnit.SECONDS)
+            .callTimeout(130, TimeUnit.SECONDS)
+            .build()
+        diskClient.newCall(builder.build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                diskPrefetchInFlight.remove(trackId)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.close()
+                diskPrefetchInFlight.remove(trackId)
+                if (response.isSuccessful) {
+                    markStreamOk()
+                    synchronized(recent) {
+                        recent[key] = System.currentTimeMillis()
+                    }
+                } else if (response.code in 500..599) {
+                    noteNetworkFailure()
+                }
+            }
+        })
+    }
 
     fun warm(resolveUrl: String) {
         if (resolveUrl.isBlank() || isStreamDown()) return

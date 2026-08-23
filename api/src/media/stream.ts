@@ -126,6 +126,7 @@ async function proxyStreamToHome(
   res: Response,
   homeBase: string,
   videoId: string,
+  timeoutMs = 52_000,
 ) {
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   const q = wantVideo ? '?type=video' : '';
@@ -138,7 +139,7 @@ async function proxyStreamToHome(
   if (auth) headers.Authorization = String(auth);
   const upstream = await fetch(url, {
     headers,
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(Math.max(15_000, timeoutMs)),
   });
   if (upstream.status >= 400) {
     const detail = await upstream.text().catch(() => '');
@@ -489,8 +490,44 @@ export async function handleStream(req: Request, res: Response) {
     ]);
   };
 
+  const homeUpstream = resolveStreamUpstream();
+
   // Tête RAM (lazy warm) — avant disque / upstream
   if (!wantVideo && tryServeRamHead(req, res, videoId)) return;
+
+  // Relais maison en priorité (IP résidentielle) — avant downloadTrack VPS (bot / LOGIN_REQUIRED).
+  // Mid-range : le relais peut devoir télécharger le .m4a complet (30–90 s) → timeout allongé.
+  if (homeUpstream) {
+    const proxyTimeoutMs = midNeedsDisk ? 130_000 : 52_000;
+    try {
+      await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs);
+      return;
+    } catch (err) {
+      if (endIfHeadersSent(res)) return;
+      const msg = String((err as Error).message || err);
+      console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
+      if (process.env.STREAM_UPSTREAM_FALLBACK !== '1') {
+        const isDown =
+          /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
+            msg,
+          );
+        const homeStatus = /home stream (\d{3})/.exec(msg);
+        const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
+        res.status(status).json({
+          error: midNeedsDisk ? 'Seek en cours de préparation' : 'Impossible de streamer audio',
+          detail: msg.slice(0, 240),
+          retryAfter: midNeedsDisk ? 3 : undefined,
+          hint: isDown
+            ? 'Relais maison KO — sur le PC : bash scripts/deploy/link-home-stream.sh (laisser allumé).'
+            : midNeedsDisk
+              ? 'Le titre se charge — réessaie le seek dans quelques secondes.'
+              : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
+        });
+        return;
+      }
+      console.warn('[stream] STREAM_UPSTREAM fallback local VPS (STREAM_UPSTREAM_FALLBACK=1)');
+    }
+  }
 
   // Cache disque = audio only — ne pas servir .m4a pour ?type=video
   if (!wantVideo) {
@@ -555,38 +592,6 @@ export async function handleStream(req: Request, res: Response) {
       const { createReadStream } = await import('node:fs');
       createReadStream(cached).pipe(res);
       return;
-    }
-  }
-
-  // VPS → PC maison (IP résidentielle) : STREAM_UPSTREAM ou data/stream-upstream.url
-  const homeUpstream = resolveStreamUpstream();
-  if (homeUpstream) {
-    try {
-      await proxyStreamToHome(req, res, homeUpstream, videoId);
-      return;
-    } catch (err) {
-      if (endIfHeadersSent(res)) return;
-      const msg = String((err as Error).message || err);
-      console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
-      // Par défaut PAS de fallback VPS : IP datacenter → getAudioFormat deadline / 502
-      // en cascade + mails télémétrie. Opt-in : STREAM_UPSTREAM_FALLBACK=1.
-      if (process.env.STREAM_UPSTREAM_FALLBACK !== '1') {
-        const isDown =
-          /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
-            msg,
-          );
-        const homeStatus = /home stream (\d{3})/.exec(msg);
-        const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
-        res.status(status).json({
-          error: 'Impossible de streamer audio',
-          detail: msg.slice(0, 240),
-          hint: isDown
-            ? 'Relais maison KO — sur le PC : bash scripts/deploy/link-home-stream.sh (laisser allumé).'
-            : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
-        });
-        return;
-      }
-      console.warn('[stream] STREAM_UPSTREAM fallback local VPS (STREAM_UPSTREAM_FALLBACK=1)');
     }
   }
 
@@ -722,6 +727,17 @@ export async function handleStream(req: Request, res: Response) {
         hint: 'Format progressif indisponible pour ce titre',
       });
     }
+    return;
+  }
+
+  // Seek mid-range : les pipes yt-dlp / Innertube partent du début (HTTP 200) → Exo rebobine.
+  if (midNeedsDisk && !res.headersSent) {
+    res.status(503).json({
+      error: 'Seek en cours de préparation',
+      detail: 'Cache disque absent — téléchargement en cours ou indisponible',
+      retryAfter: 3,
+      hint: 'Réessaie le seek dans quelques secondes (le titre peut encore se charger).',
+    });
     return;
   }
 
@@ -984,29 +1000,17 @@ export async function downloadTrack(videoId: string): Promise<string> {
         }
       }
       if (!existsSync(out) || !statSync(out).size) {
+        try {
+          await downloadTrackViaInnertube(videoId, out);
+          if (existsSync(out) && statSync(out).size > 0) return out;
+        } catch (innErr) {
+          if (lastErr) throw lastErr;
+          throw innErr instanceof Error ? innErr : new Error(String(innErr));
+        }
         if (lastErr) throw lastErr;
       }
     } else {
-      const innertube = await getYT();
-      const stream = await innertube.download(videoId, {
-        type: 'audio',
-        quality: 'best',
-      });
-      const file = createWriteStream(out);
-      const reader = stream.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          if (!file.write(Buffer.from(value))) {
-            await new Promise<void>((r) => file.once('drain', () => r()));
-          }
-        }
-      }
-      await new Promise<void>((resolve, reject) => {
-        file.end(() => resolve());
-        file.on('error', reject);
-      });
+      await downloadTrackViaInnertube(videoId, out);
     }
 
     return out;
@@ -1016,6 +1020,44 @@ export async function downloadTrack(videoId: string): Promise<string> {
 
   downloadInflight.set(videoId, job);
   return job;
+}
+
+async function downloadTrackViaInnertube(videoId: string, out: string): Promise<void> {
+  const { getSignedStreamYT } = await import('../youtube/streamAuth.js');
+  const innertube = (await getSignedStreamYT().catch(() => null)) || (await getYT());
+  let stream: ReadableStream<Uint8Array> | null = null;
+  let lastErr: unknown;
+  for (const client of ['ANDROID_VR', 'TV', 'IOS', 'WEB_EMBEDDED', 'MWEB'] as const) {
+    try {
+      stream = await innertube.download(videoId, {
+        type: 'audio',
+        quality: 'best',
+        format: 'any',
+        client,
+      } as any);
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!stream) {
+    throw lastErr instanceof Error ? lastErr : new Error('Innertube download indisponible');
+  }
+  const file = createWriteStream(out);
+  const reader = stream.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      if (!file.write(Buffer.from(value))) {
+        await new Promise<void>((r) => file.once('drain', () => r()));
+      }
+    }
+  }
+  await new Promise<void>((resolve, reject) => {
+    file.end(() => resolve());
+    file.on('error', reject);
+  });
 }
 
 void pipeline;
