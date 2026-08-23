@@ -813,6 +813,7 @@ fun NowPlayingScreen(
                                     ),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
+                                // Paroles = même emplacement / hauteur que cover|vidéo ; titre + artiste restent dessous.
                                 if (showLyrics) {
                                     InlineSyncedLyrics(
                                         container = container,
@@ -823,118 +824,116 @@ fun NowPlayingScreen(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(lyricsH)
-                                            .clip(RoundedCornerShape(16.dp))
+                                            .clip(RoundedCornerShape(12.dp))
                                             .background(Color.Black.copy(alpha = 0.42f)),
                                     )
-                                } else {
-                                    if (SessionMediaMode.video) {
-                                        when {
-                                            visualVideoUrl != null -> SyncedVideoSurface(
-                                                streamUrl = visualVideoUrl!!,
-                                                positionMs = ui.positionMs,
-                                                playing = ui.playing,
-                                                active = sheetVisible && SessionMediaMode.video,
-                                                fullscreen = false,
-                                                onToggleFullscreen = { videoFullscreen = true },
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(coverH)
-                                                    .clip(RoundedCornerShape(12.dp)),
-                                            )
-                                            visualVideoError != null -> Box(
-                                                Modifier
-                                                    .fillMaxWidth()
-                                                    .height(coverH)
-                                                    .clip(RoundedCornerShape(12.dp)),
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                AsyncImage(
-                                                    model = track.coverUrl(400),
-                                                    contentDescription = track.title,
-                                                    contentScale = ContentScale.Crop,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                )
-                                                Text(
-                                                    visualVideoError!!,
-                                                    color = PlayerMuted,
-                                                    modifier = Modifier
-                                                        .align(Alignment.BottomCenter)
-                                                        .padding(12.dp),
-                                                )
-                                            }
-                                            else -> Box(
-                                                Modifier
-                                                    .fillMaxWidth()
-                                                    .height(coverH)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(Color.Black.copy(alpha = 0.35f)),
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                Text("Chargement vidéo…", color = PlayerMuted)
-                                            }
-                                        }
-                                    } else {
-                                        AsyncImage(
-                                            model = track.coverUrl(if (landscape) 600 else 800),
-                                            contentDescription = track.title,
-                                            contentScale = ContentScale.Crop,
+                                } else if (SessionMediaMode.video) {
+                                    when {
+                                        visualVideoUrl != null -> SyncedVideoSurface(
+                                            streamUrl = visualVideoUrl!!,
+                                            positionMs = ui.positionMs,
+                                            playing = ui.playing,
+                                            active = sheetVisible && SessionMediaMode.video,
+                                            fullscreen = false,
+                                            onToggleFullscreen = { videoFullscreen = true },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(coverH)
                                                 .clip(RoundedCornerShape(12.dp)),
                                         )
+                                        visualVideoError != null -> Box(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .height(coverH)
+                                                .clip(RoundedCornerShape(12.dp)),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            AsyncImage(
+                                                model = track.coverUrl(400),
+                                                contentDescription = track.title,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize(),
+                                            )
+                                            Text(
+                                                visualVideoError!!,
+                                                color = PlayerMuted,
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomCenter)
+                                                    .padding(12.dp),
+                                            )
+                                        }
+                                        else -> Box(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .height(coverH)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Color.Black.copy(alpha = 0.35f)),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text("Chargement vidéo…", color = PlayerMuted)
+                                        }
                                     }
-                                    if (!landscape) {
-                                        Spacer(Modifier.height(18.dp))
-                                        Text(
-                                            track.title,
-                                            style = MaterialTheme.typography.headlineSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = PlayerFg,
+                                } else {
+                                    AsyncImage(
+                                        model = track.coverUrl(if (landscape) 600 else 800),
+                                        contentDescription = track.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(coverH)
+                                            .clip(RoundedCornerShape(12.dp)),
+                                    )
+                                }
+                                if (!landscape) {
+                                    Spacer(Modifier.height(18.dp))
+                                    Text(
+                                        track.title,
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = PlayerFg,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Clip,
+                                        textAlign = TextAlign.Start,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .basicMarquee(
+                                                iterations = Int.MAX_VALUE,
+                                                initialDelayMillis = 1200,
+                                            ),
+                                    )
+                                    if (onOpenArtist != null) {
+                                        ArtistLinksText(
+                                            track = track,
+                                            onOpenArtist = onOpenArtist,
+                                            color = PlayerMuted,
+                                            style = MaterialTheme.typography.bodyLarge,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Clip,
-                                            textAlign = TextAlign.Start,
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .basicMarquee(
                                                     iterations = Int.MAX_VALUE,
-                                                    initialDelayMillis = 1200,
+                                                    initialDelayMillis = 1600,
                                                 ),
                                         )
-                                        if (onOpenArtist != null) {
-                                            ArtistLinksText(
-                                                track = track,
-                                                onOpenArtist = onOpenArtist,
-                                                color = PlayerMuted,
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                maxLines = 1,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .basicMarquee(
-                                                        iterations = Int.MAX_VALUE,
-                                                        initialDelayMillis = 1600,
-                                                    ),
-                                            )
-                                        } else {
-                                            Text(
-                                                track.artistLine(),
-                                                color = PlayerMuted,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Clip,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .basicMarquee(
-                                                        iterations = Int.MAX_VALUE,
-                                                        initialDelayMillis = 1600,
-                                                    ),
-                                            )
-                                        }
+                                    } else {
+                                        Text(
+                                            track.artistLine(),
+                                            color = PlayerMuted,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Clip,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .basicMarquee(
+                                                    iterations = Int.MAX_VALUE,
+                                                    initialDelayMillis = 1600,
+                                                ),
+                                        )
                                     }
                                 }
                             }
                         }
                         val metaAndControls: @Composable () -> Unit = {
-                            if (landscape && !showLyrics) {
+                            if (landscape) {
                                 Text(
                                     track.title,
                                     style = MaterialTheme.typography.titleLarge,
@@ -2789,51 +2788,36 @@ private fun InlineSyncedLyrics(
         ).show()
     }
 
-    Column(modifier = modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
-        if (timed.isNotEmpty()) {
-            Column(
+    Column(modifier = modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
+        // Sync compact : pas d’indication « appui long » ni Trop tôt/tard (place pour les paroles).
+        if (timed.isNotEmpty() && userOffsetMs != 0L) {
+            Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .padding(bottom = 2.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "Appui long sur une ligne pour recaler le rythme",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = PlayerMuted,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(bottom = 4.dp),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
+                TextButton(
+                    onClick = { nudgeOffset(1000L) },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                 ) {
-                    TextButton(onClick = { nudgeOffset(1000L) }) {
-                        Text("−1 s", style = MaterialTheme.typography.labelSmall)
-                    }
-                    TextButton(onClick = { nudgeOffset(200L) }) {
-                        Text("Trop tôt", style = MaterialTheme.typography.labelSmall)
-                    }
-                    Text(
-                        if (userOffsetMs == 0L) "sync"
-                        else String.format("%+.1f s", userOffsetMs / 1000.0),
-                        color = if (userOffsetMs == 0L) PlayerMuted else SeekRed,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 4.dp),
-                    )
-                    TextButton(onClick = { nudgeOffset(-200L) }) {
-                        Text("Trop tard", style = MaterialTheme.typography.labelSmall)
-                    }
-                    TextButton(onClick = { nudgeOffset(-1000L) }) {
-                        Text("+1 s", style = MaterialTheme.typography.labelSmall)
-                    }
+                    Text("−1 s", style = MaterialTheme.typography.labelSmall)
                 }
-                if (userOffsetMs != 0L) {
-                    TextButton(onClick = { persistOffset(0L) }) {
-                        Text("Réinitialiser sync", style = MaterialTheme.typography.labelSmall)
-                    }
+                Text(
+                    String.format("%+.1f s", userOffsetMs / 1000.0),
+                    color = SeekRed,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .clickable { persistOffset(0L) },
+                )
+                TextButton(
+                    onClick = { nudgeOffset(-1000L) },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text("+1 s", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -2846,7 +2830,7 @@ private fun InlineSyncedLyrics(
             timed.isNotEmpty() -> {
                 LazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 20.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 12.dp),
                     modifier = Modifier.fillMaxSize(),
                     userScrollEnabled = true,
                 ) {
@@ -2878,8 +2862,8 @@ private fun InlineSyncedLyrics(
                                     onClick = { onSeek(line.startMsLong()) },
                                     onLongClick = { calibrateToLine(line.startMsLong()) },
                                 )
-                                .padding(horizontal = 12.dp)
-                                .padding(vertical = if (isActive) 14.dp else 7.dp),
+                                .padding(horizontal = 8.dp)
+                                .padding(vertical = if (isActive) 12.dp else 6.dp),
                         )
                     }
                 }
@@ -2892,7 +2876,7 @@ private fun InlineSyncedLyrics(
                             color = PlayerFg,
                             style = MaterialTheme.typography.bodyLarge,
                             softWrap = true,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 16.dp),
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
                         )
                     }
                 }
