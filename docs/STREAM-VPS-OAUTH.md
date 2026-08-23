@@ -37,7 +37,9 @@ Fichiers clés :
 - `GET /api/admin/youtube-stream-oauth`
 - `DELETE /api/admin/youtube-stream-oauth`
 
-En prod, `STREAM_UPSTREAM` / fichier `stream-upstream.url` est **ignoré** sauf `ALLOW_STREAM_UPSTREAM=1` (réservé DEV).
+**Users / apps mobiles :** procédure unique (OAuth appareil + cookies biblio) → [`YTM-GOOGLE-CLIENTS.md`](./YTM-GOOGLE-CLIENTS.md).
+
+En prod, `STREAM_UPSTREAM` / fichier `stream-upstream.url` est **ignoré** sauf `ALLOW_STREAM_UPSTREAM=1` (secours). Si ALLOW=1, garder `STREAM_UPSTREAM_FALLBACK=1` pour ne pas perdre la lecture quand le PC coupe.
 
 ---
 

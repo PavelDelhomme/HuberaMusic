@@ -359,6 +359,16 @@ app.get('/api/health', (_req, res) => {
       streamHeadCache: streamHeadStats(),
     },
     streamUpstream: resolveStreamUpstream(),
+    /** Ops : filet VPS + opt-in relais maison — survivent au recreate si volume + env Portainer OK. */
+    streamAuth: {
+      serverOauth: streamOauthConfigured(),
+      upstreamAllowed:
+        process.env.ALLOW_STREAM_UPSTREAM === '1' ||
+        process.env.ALLOW_STREAM_UPSTREAM === 'true',
+      upstreamFallback: process.env.STREAM_UPSTREAM_FALLBACK === '1',
+      hint:
+        'OAuth TV + ytm_accounts sur volume ytmusic_data. Ne pas Remove volumes ni changer JWT_SECRET.',
+    },
   });
 });
 

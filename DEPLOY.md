@@ -104,7 +104,9 @@ ayant le droit `read:packages`.
 Si Portainer refuse le deploy → Networks : vérifie que ces noms existent  
 (ou adapte les `name:` en bas du YAML comme sur tes autres stacks).
 
-⚠️ Ne **jamais** cocher « Remove volumes » plus tard.
+⚠️ Ne **jamais** cocher « Remove volumes » plus tard.  
+Ne **jamais** changer `JWT_SECRET` sur une stack déjà peuplée (OAuth / cookies YTM illisibles).  
+Liaison Google multi-clients + checklist post-update : [`docs/YTM-GOOGLE-CLIENTS.md`](docs/YTM-GOOGLE-CLIENTS.md).
 
 ---
 

@@ -437,8 +437,25 @@ export async function handleStream(req: Request, res: Response) {
       req.headers.range = 'bytes=0-1048575';
     }
   }
+  const audioRangeStart = (() => {
+    if (wantVideo) return 0;
+    const m = /bytes=(\d+)/.exec(String(req.headers.range || ''));
+    return m ? Number(m[1]) : 0;
+  })();
+  // Googlevideo (MWEB/IOS…) refuse souvent les Ranges mid au-delà ~1 MiB → 403.
+  // Dès le début : télécharge le .m4a en fond pour les Ranges suivantes.
+  if (!wantVideo && audioRangeStart === 0) {
+    void downloadTrack(videoId).catch((err) => {
+      console.warn(
+        '[stream] prefetch downloadTrack KO:',
+        String((err as Error).message || err).slice(0, 120),
+      );
+    });
+  }
+  // Mid-range : deadline plus longue (yt-dlp peut prendre 30–90 s la 1ʳᵉ fois).
+  const midNeedsDisk = !wantVideo && audioRangeStart > 0;
   // Vidéo : resolve + fetch GV souvent plus lent (yt-dlp -g / pipe)
-  const deadlineAt = Date.now() + (wantVideo ? 40_000 : 22_000);
+  const deadlineAt = Date.now() + (wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 22_000);
   const ensureTime = (label: string) => {
     if (Date.now() >= deadlineAt) throw new Error(`stream deadline (${label})`);
   };
@@ -459,7 +476,18 @@ export async function handleStream(req: Request, res: Response) {
   // Cache disque = audio only — ne pas servir .m4a pour ?type=video
   if (!wantVideo) {
     const cached = cachePath(videoId);
-    if (existsSync(cached)) {
+    // Mid-range : forcer le téléchargement si pas encore en cache (GV mid ≈ 403).
+    if (midNeedsDisk && (!existsSync(cached) || !statSync(cached).size)) {
+      try {
+        await withDeadline('downloadTrack', downloadTrack(videoId));
+      } catch (err) {
+        console.warn(
+          '[stream] mid-range downloadTrack KO:',
+          String((err as Error).message || err).slice(0, 160),
+        );
+      }
+    }
+    if (existsSync(cached) && statSync(cached).size > 0) {
       const size = statSync(cached).size;
       const range = req.headers.range;
       if (range) {
@@ -883,78 +911,92 @@ function wantsDirectRedirect(req: Request): boolean {
   return String(req.query.redirect || '') === '1';
 }
 
+/** Évite N yt-dlp parallèles pour le même titre (ExoPlayer multi-Range). */
+const downloadInflight = new Map<string, Promise<string>>();
+
 export async function downloadTrack(videoId: string): Promise<string> {
   ensureCache();
   const out = cachePath(videoId);
   if (existsSync(out) && statSync(out).size > 0) {
     return out;
   }
+  const pending = downloadInflight.get(videoId);
+  if (pending) return pending;
 
-  if (existsSync(YTDLP)) {
-    let lastErr: Error | null = null;
-    const cookieSets = ytDlpCookieArgSets();
-    for (const cookieArgs of cookieSets) {
-      for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
-        try {
-          await new Promise<void>((resolve, reject) => {
-            const proc = spawn(
-              YTDLP,
-              [
-                '-f',
-                format,
-                '-x',
-                '--audio-format',
-                'm4a',
-                '--audio-quality',
-                '0',
-                '-o',
-                out,
-                '--no-playlist',
-                '--quiet',
-                '--no-warnings',
-                ...cookieArgs,
-                `https://www.youtube.com/watch?v=${videoId}`,
-              ],
-              { stdio: 'inherit' },
-            );
-            proc.on('close', (code) =>
-              code === 0 ? resolve() : reject(new Error(`yt-dlp ${code}`)),
-            );
-            proc.on('error', reject);
-          });
-          if (existsSync(out) && statSync(out).size > 0) return out;
-        } catch (err) {
-          lastErr = err instanceof Error ? err : new Error(String(err));
+  const job = (async (): Promise<string> => {
+    if (existsSync(out) && statSync(out).size > 0) return out;
+
+    if (existsSync(YTDLP)) {
+      let lastErr: Error | null = null;
+      const cookieSets = ytDlpCookieArgSets();
+      for (const cookieArgs of cookieSets) {
+        for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
+          try {
+            await new Promise<void>((resolve, reject) => {
+              const proc = spawn(
+                YTDLP,
+                [
+                  '-f',
+                  format,
+                  '-x',
+                  '--audio-format',
+                  'm4a',
+                  '--audio-quality',
+                  '0',
+                  '-o',
+                  out,
+                  '--no-playlist',
+                  '--quiet',
+                  '--no-warnings',
+                  ...cookieArgs,
+                  `https://www.youtube.com/watch?v=${videoId}`,
+                ],
+                { stdio: 'inherit' },
+              );
+              proc.on('close', (code) =>
+                code === 0 ? resolve() : reject(new Error(`yt-dlp ${code}`)),
+              );
+              proc.on('error', reject);
+            });
+            if (existsSync(out) && statSync(out).size > 0) return out;
+          } catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
+          }
         }
       }
-    }
-    if (!existsSync(out) || !statSync(out).size) {
-      if (lastErr) throw lastErr;
-    }
-  } else {
-    const innertube = await getYT();
-    const stream = await innertube.download(videoId, {
-      type: 'audio',
-      quality: 'best',
-    });
-    const file = createWriteStream(out);
-    const reader = stream.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        if (!file.write(Buffer.from(value))) {
-          await new Promise<void>((r) => file.once('drain', () => r()));
+      if (!existsSync(out) || !statSync(out).size) {
+        if (lastErr) throw lastErr;
+      }
+    } else {
+      const innertube = await getYT();
+      const stream = await innertube.download(videoId, {
+        type: 'audio',
+        quality: 'best',
+      });
+      const file = createWriteStream(out);
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          if (!file.write(Buffer.from(value))) {
+            await new Promise<void>((r) => file.once('drain', () => r()));
+          }
         }
       }
+      await new Promise<void>((resolve, reject) => {
+        file.end(() => resolve());
+        file.on('error', reject);
+      });
     }
-    await new Promise<void>((resolve, reject) => {
-      file.end(() => resolve());
-      file.on('error', reject);
-    });
-  }
 
-  return out;
+    return out;
+  })().finally(() => {
+    downloadInflight.delete(videoId);
+  });
+
+  downloadInflight.set(videoId, job);
+  return job;
 }
 
 void pipeline;
