@@ -54,6 +54,10 @@ export type User = {
   emailVerified?: boolean;
   totpEnabled?: boolean;
   ytmLinked?: boolean;
+  /** OAuth appareil — streams signés (persisté serveur). */
+  ytmStreamReady?: boolean;
+  /** Cookies YTM — biblio. */
+  ytmLibraryReady?: boolean;
 };
 
 const TOKEN_KEY = 'ytm_token';
