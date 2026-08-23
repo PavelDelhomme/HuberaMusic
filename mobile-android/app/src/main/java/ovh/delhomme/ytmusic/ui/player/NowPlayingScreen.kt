@@ -664,20 +664,94 @@ fun NowPlayingScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // Lecteur « plein » : cover + contrôles + aperçu file (portrait : file ancrée en bas)
                 val landscapeLayout = isLandscape()
+                // File ouverte (≥ ~15 %) : panneau dédié (mini-lecteur + onglets + liste), pas un overlay semi-transparent
+                val showQueuePanel = qp > 0.15f
+                if (showQueuePanel) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background)
+                            .navigationBarsPadding()
+                            .graphicsLayer {
+                                alpha = ((qp - 0.15f) / 0.85f).coerceIn(0f, 1f)
+                            },
+                    ) {
+                        QueueExpandedHeader(
+                            track = track,
+                            playing = ui.playing,
+                            shuffle = ui.shuffle,
+                            repeat = ui.repeat,
+                            queueTitle = ui.queueTitle,
+                            progressHint = qp,
+                            positionMs = ui.positionMs,
+                            durationMs = ui.durationMs,
+                            onSeek = { player.seek(it) },
+                            onCollapse = { collapseQueue() },
+                            onToggle = player::toggle,
+                            onSkipPrev = {
+                                val now = SystemClock.elapsedRealtime()
+                                val double = now - lastPrevTap < 380L
+                                lastPrevTap = now
+                                player.skipPrevOrRestart(forcePrevious = double)
+                            },
+                            onSkipNext = player::skipNext,
+                            onToggleShuffle = player::toggleShuffle,
+                            onCycleRepeat = player::cycleRepeat,
+                            onOpenArtist = onOpenArtist,
+                            onQueueDrag = ::onQueueDrag,
+                            onQueueDragEnd = { settleQueue(it) },
+                            onSwipeToSimilar = { queuePanelTab = 1 },
+                            onSwipeToQueue = { queuePanelTab = 0 },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        QueueExpandedBody(
+                            ui = ui,
+                            container = container,
+                            player = player,
+                            listState = queueListState,
+                            panelTab = queuePanelTab,
+                            onPanelTabChange = { queuePanelTab = it },
+                            similarListState = similarListState,
+                            similarPanelCache = similarPanelCache,
+                            onPlayAt = player::playAt,
+                            onMore = onMore,
+                            onMove = player::moveInQueue,
+                            onSave = { showSaveQueue = true },
+                            onClear = {
+                                player.clearUpcomingFromQueue()
+                                Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
+                            },
+                            onStartMix = {
+                                val t = ui.track ?: return@QueueExpandedBody
+                                scope.launch {
+                                    val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
+                                    if (mix.isNotEmpty()) {
+                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            onToggleAutoplay = player::toggleAutoplaySuggestions,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .fillMaxHeight(),
+                        )
+                    }
+                }
+                if (!showQueuePanel) {
                 Column(Modifier.fillMaxSize()) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
-                        .weight(if (landscapeLayout || queueInteractive) 1f else 0.68f)
+                        .weight(if (landscapeLayout) 1f else 0.68f)
                         .fillMaxWidth()
                         .graphicsLayer {
-                            // File ouverte : lecteur plein totalement masqué (évite doublons boutons)
-                            val hide = if (queueInteractive) 1f else (qp * 1.05f)
-                            alpha = (1f - hide).coerceIn(0f, 1f)
+                            alpha = (1f - qp * 1.05f).coerceIn(0f, 1f)
                             translationY = -qp * 48f
                         },
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    userScrollEnabled = !queueInteractive && (qp < 0.45f || showLyrics),
+                    userScrollEnabled = qp < 0.45f || showLyrics,
                 ) {
                     item {
                         val landscape = landscapeLayout
@@ -1360,7 +1434,7 @@ fun NowPlayingScreen(
                     }
                 }
 
-                if (!landscapeLayout && !queueInteractive) {
+                if (!landscapeLayout) {
                     PortraitQueuePreview(
                         ui = ui,
                         player = player,
@@ -1378,82 +1452,9 @@ fun NowPlayingScreen(
                             .navigationBarsPadding(),
                     )
                 }
-                }
-
-                // File plein écran : transport sticky + liste (pas d’overlay séparé du header)
-                if (queueInteractive) {
-                    Column(
-                        Modifier
-                            .fillMaxSize()
-                            .navigationBarsPadding()
-                            .graphicsLayer {
-                                alpha = (qp * 1.1f).coerceIn(0f, 1f)
-                                translationY = (1f - qp) * 96f
-                            },
-                    ) {
-                        QueueExpandedHeader(
-                            track = track,
-                            playing = ui.playing,
-                            shuffle = ui.shuffle,
-                            repeat = ui.repeat,
-                            queueTitle = ui.queueTitle,
-                            progressHint = qp,
-                            positionMs = ui.positionMs,
-                            durationMs = ui.durationMs,
-                            onSeek = { player.seek(it) },
-                            onCollapse = { collapseQueue() },
-                            onToggle = player::toggle,
-                            onSkipPrev = {
-                                val now = SystemClock.elapsedRealtime()
-                                val double = now - lastPrevTap < 380L
-                                lastPrevTap = now
-                                player.skipPrevOrRestart(forcePrevious = double)
-                            },
-                            onSkipNext = player::skipNext,
-                            onToggleShuffle = player::toggleShuffle,
-                            onCycleRepeat = player::cycleRepeat,
-                            onOpenArtist = onOpenArtist,
-                            onQueueDrag = ::onQueueDrag,
-                            onQueueDragEnd = { settleQueue(it) },
-                            onSwipeToSimilar = { queuePanelTab = 1 },
-                            onSwipeToQueue = { queuePanelTab = 0 },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        QueueExpandedBody(
-                            ui = ui,
-                            container = container,
-                            player = player,
-                            listState = queueListState,
-                            panelTab = queuePanelTab,
-                            onPanelTabChange = { queuePanelTab = it },
-                            similarListState = similarListState,
-                            similarPanelCache = similarPanelCache,
-                            onPlayAt = player::playAt,
-                            onMore = onMore,
-                            onMove = player::moveInQueue,
-                            onSave = { showSaveQueue = true },
-                            onClear = {
-                                player.clearUpcomingFromQueue()
-                                Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
-                            },
-                            onStartMix = {
-                                val t = ui.track ?: return@QueueExpandedBody
-                                scope.launch {
-                                    val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
-                                    if (mix.isNotEmpty()) {
-                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            },
-                            onToggleAutoplay = player::toggleAutoplaySuggestions,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth(),
-                        )
-                    }
-                }
-            }
+                } // Column lecteur plein
+                } // if (!showQueuePanel)
+            } // Box
         }
         }
     }
@@ -2188,12 +2189,15 @@ private fun QueueExpandedBody(
         }
 
         if (panelTab == 0) {
-            LazyColumn(
-                modifier = Modifier
+            Box(
+                Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                state = listState,
             ) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                ) {
                 if (playedBefore.isNotEmpty()) {
                     item {
                         Text(
@@ -2298,13 +2302,17 @@ private fun QueueExpandedBody(
                 }
                 item { Spacer(Modifier.height(48.dp)) }
             }
+            }
         } else {
             // Découverte type YTM — cache par titre + scroll infini
-            LazyColumn(
-                modifier = Modifier
+            Box(
+                Modifier
                     .fillMaxWidth()
                     .weight(1f)
                     .navigationBarsPadding(),
+            ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
                 state = similarListState,
             ) {
                 item {
@@ -2393,6 +2401,7 @@ private fun QueueExpandedBody(
                     }
                 }
                 item { Spacer(Modifier.height(72.dp)) }
+            }
             }
         }
     }
