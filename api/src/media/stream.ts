@@ -532,6 +532,14 @@ export async function handleStream(req: Request, res: Response) {
   // Cache disque = audio only — ne pas servir .m4a pour ?type=video
   if (!wantVideo) {
     const cached = cachePath(videoId);
+    if (existsSync(cached) && !statSync(cached).size) {
+      try {
+        const { unlinkSync } = await import('node:fs');
+        unlinkSync(cached);
+      } catch {
+        /* ignore */
+      }
+    }
     // Mid-range : forcer le téléchargement si pas encore en cache (GV mid ≈ 403).
     if (midNeedsDisk && (!existsSync(cached) || !statSync(cached).size)) {
       try {
@@ -952,8 +960,16 @@ const downloadInflight = new Map<string, Promise<string>>();
 export async function downloadTrack(videoId: string): Promise<string> {
   ensureCache();
   const out = cachePath(videoId);
-  if (existsSync(out) && statSync(out).size > 0) {
-    return out;
+  if (existsSync(out)) {
+    const size = statSync(out).size;
+    if (size > 0) return out;
+    // Fichier 0 octet (yt-dlp interrompu) → ne pas bloquer les retries
+    try {
+      const { unlinkSync } = await import('node:fs');
+      unlinkSync(out);
+    } catch {
+      /* ignore */
+    }
   }
   const pending = downloadInflight.get(videoId);
   if (pending) return pending;

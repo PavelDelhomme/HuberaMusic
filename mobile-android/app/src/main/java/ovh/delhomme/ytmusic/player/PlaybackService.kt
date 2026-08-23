@@ -528,9 +528,20 @@ class PlaybackService : MediaSessionService() {
                 val maxSameTrack = if (httpStatus != null && httpStatus >= 500) 2 else 4
                 if (streak <= maxSameTrack) {
                     val attempt = recoverGen.incrementAndGet()
-                    val resumePos = exo.currentPosition.coerceAtLeast(0L)
-                    scope.launch {
-                        runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
+                val resumePos = exo.currentPosition.coerceAtLeast(0L)
+                val truncatedMid =
+                    !localFile &&
+                        resumePos in 50_000L..120_000L &&
+                        dur >= 120_000L &&
+                        (httpStatus == null || httpStatus >= 500)
+                scope.launch {
+                    runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
+                    if (truncatedMid || resumePos > 45_000L) {
+                        StreamPrefetcher.requestServerDiskCache(
+                            Holder.resolvedApiBase(),
+                            id,
+                        )
+                    }
                         // Bust format côté API (URL googlevideo morte / 403) — timeout court
                         // pour éviter toast « Reprise… » après 1+ min alors que rien n’a repris
                         val resolveOk = runCatching {
@@ -538,13 +549,8 @@ class PlaybackService : MediaSessionService() {
                                 container?.api?.streamResolveUrl(id)
                             }
                         }.isSuccess
-                        if (pos > 45_000L) {
-                            StreamPrefetcher.requestServerDiskCache(
-                                Holder.resolvedApiBase(),
-                                id,
-                            )
-                        }
                         val retryDelay = when {
+                            truncatedMid -> 2_500L * streak
                             httpStatus != null && httpStatus >= 500 && pos > 45_000L ->
                                 800L * streak
                             httpStatus != null && httpStatus >= 500 -> 140L * streak
