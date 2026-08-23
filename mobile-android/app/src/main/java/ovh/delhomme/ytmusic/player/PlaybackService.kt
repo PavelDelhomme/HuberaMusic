@@ -538,7 +538,19 @@ class PlaybackService : MediaSessionService() {
                                 container?.api?.streamResolveUrl(id)
                             }
                         }.isSuccess
-                        delay(if (httpStatus != null && httpStatus >= 500) 140L * streak else 250L * streak)
+                        if (pos > 45_000L) {
+                            StreamPrefetcher.requestServerDiskCache(
+                                Holder.resolvedApiBase(),
+                                id,
+                            )
+                        }
+                        val retryDelay = when {
+                            httpStatus != null && httpStatus >= 500 && pos > 45_000L ->
+                                800L * streak
+                            httpStatus != null && httpStatus >= 500 -> 140L * streak
+                            else -> 250L * streak
+                        }
+                        delay(retryDelay)
                         if (attempt != recoverGen.get()) return@launch
                         if (exo.currentMediaItem?.mediaId != id) return@launch
                         val rebuilt = runCatching {
