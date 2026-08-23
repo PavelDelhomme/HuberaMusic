@@ -42,6 +42,10 @@ data class LibraryResponse(
     val history: List<TrackDto> = emptyList(),
     val recentEntities: List<TrackDto> = emptyList(),
     val downloaded: List<String> = emptyList(),
+    /** true si réponse `?light=1` (échantillon). */
+    val partial: Boolean? = null,
+    val totalSongs: Int? = null,
+    val totalLiked: Int? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -559,7 +563,10 @@ interface YtMusicApi {
     suspend fun similar(@Path("trackId") trackId: String): SimilarResponse
 
     @GET("api/library")
-    suspend fun library(): LibraryResponse
+    suspend fun library(
+        @Query("light") light: Int? = null,
+        @Query("limit") limit: Int? = null,
+    ): LibraryResponse
 
     @POST("api/library/like")
     suspend fun like(@Body track: TrackDto): LikeResponse

@@ -45,6 +45,10 @@ class MixCacheStore(context: Context) {
         prefs.edit().remove(key).apply()
     }
 
+    fun clearAll() {
+        prefs.edit().clear().apply()
+    }
+
     companion object {
         const val MIX_TARGET = 200
         const val TTL_MS = 12L * 60L * 60L * 1000L

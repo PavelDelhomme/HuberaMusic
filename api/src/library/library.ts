@@ -184,7 +184,10 @@ export function isTrackLiked(userId: string, trackId: string) {
 
 /** Ajoute / retire un titre de la bibliothèque (indépendant du J’aime). */
 export function toggleLibraryTrack(userId: string, track: Track) {
-  upsertTrack(track);
+  if (!track?.id || !/^[a-zA-Z0-9_-]{11}$/.test(track.id)) {
+    throw new Error('id titre invalide');
+  }
+  upsertTrack(sanitizeTrack(track));
   const existing = db
     .prepare('SELECT 1 FROM library_tracks WHERE user_id = ? AND track_id = ?')
     .get(userId, track.id);
