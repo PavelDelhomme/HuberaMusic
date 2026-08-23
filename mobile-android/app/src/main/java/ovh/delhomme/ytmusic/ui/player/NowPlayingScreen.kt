@@ -257,13 +257,31 @@ fun NowPlayingScreen(
         }
     }
 
-    // Pré-chauffe le resolve vidéo (évite erreur Exo au premier frame)
+    // Pré-chauffe + resolve clip visuel (fallback titre+artiste si ATV sans vidéo)
+    var visualVideoUrl by remember { mutableStateOf<String?>(null) }
+    var visualVideoError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(ui.track?.id, SessionMediaMode.video) {
-        val id = ui.track?.id ?: return@LaunchedEffect
-        if (!SessionMediaMode.video) return@LaunchedEffect
+        val track = ui.track
+        visualVideoUrl = null
+        visualVideoError = null
+        if (track == null || !SessionMediaMode.video) return@LaunchedEffect
         runCatching {
             container.ensureFreshToken()
-            container.api.streamResolveUrl(id, "video")
+            val vis = container.api.trackVisual(
+                track.id,
+                title = track.title,
+                artist = track.artistLine().takeIf { it != "Artiste" },
+                durationSeconds = track.durationSeconds,
+            )
+            val vid = vis.visualId?.takeIf { it.isNotBlank() }
+            if (vid == null) {
+                visualVideoError = "Pas de clip vidéo"
+                return@runCatching
+            }
+            runCatching { container.api.streamResolveUrl(vid, "video") }
+            visualVideoUrl = container.videoStreamUrl(vid)
+        }.onFailure {
+            visualVideoError = it.message ?: "Vidéo indisponible"
         }
     }
 
@@ -692,16 +710,49 @@ fun NowPlayingScreen(
                                     )
                                 } else {
                                     if (SessionMediaMode.video) {
-                                        SyncedVideoSurface(
-                                            streamUrl = container.videoStreamUrl(track.id),
-                                            positionMs = ui.positionMs,
-                                            playing = ui.playing,
-                                            active = sheetVisible && SessionMediaMode.video,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(coverH)
-                                                .clip(RoundedCornerShape(12.dp)),
-                                        )
+                                        when {
+                                            visualVideoUrl != null -> SyncedVideoSurface(
+                                                streamUrl = visualVideoUrl!!,
+                                                positionMs = ui.positionMs,
+                                                playing = ui.playing,
+                                                active = sheetVisible && SessionMediaMode.video,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(coverH)
+                                                    .clip(RoundedCornerShape(12.dp)),
+                                            )
+                                            visualVideoError != null -> Box(
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .height(coverH)
+                                                    .clip(RoundedCornerShape(12.dp)),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                AsyncImage(
+                                                    model = track.coverUrl(400),
+                                                    contentDescription = track.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize(),
+                                                )
+                                                Text(
+                                                    visualVideoError!!,
+                                                    color = PlayerMuted,
+                                                    modifier = Modifier
+                                                        .align(Alignment.BottomCenter)
+                                                        .padding(12.dp),
+                                                )
+                                            }
+                                            else -> Box(
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .height(coverH)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(Color.Black.copy(alpha = 0.35f)),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                Text("Chargement vidéo…", color = PlayerMuted)
+                                            }
+                                        }
                                     } else {
                                         AsyncImage(
                                             model = track.coverUrl(if (landscape) 600 else 800),
@@ -1304,6 +1355,9 @@ fun NowPlayingScreen(
                             repeat = ui.repeat,
                             queueTitle = ui.queueTitle,
                             progressHint = qp,
+                            positionMs = ui.positionMs,
+                            durationMs = ui.durationMs,
+                            onSeek = { player.seek(it) },
                             onCollapse = { collapseQueue() },
                             onToggle = player::toggle,
                             onSkipPrev = {
@@ -1686,6 +1740,9 @@ private fun QueueExpandedHeader(
     repeat: RepeatMode,
     queueTitle: String,
     progressHint: Float,
+    positionMs: Long,
+    durationMs: Long,
+    onSeek: (Long) -> Unit,
     onCollapse: () -> Unit,
     onToggle: () -> Unit,
     onSkipPrev: () -> Unit,
@@ -1760,6 +1817,63 @@ private fun QueueExpandedHeader(
                 .clip(RoundedCornerShape(2.dp))
                 .background(PlayerFg.copy(alpha = (0.25f + 0.2f * progressHint).coerceIn(0.25f, 0.55f))),
         )
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            MediaCover(track, 48.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    track.title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                    color = PlayerFg,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000),
+                )
+                Text(
+                    track.artistLine(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = PlayerMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            IconButton(onClick = onCollapse) {
+                Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
+            }
+        }
+        if (queueTitle.isNotBlank()) {
+            Text(
+                queueTitle,
+                style = MaterialTheme.typography.labelMedium,
+                color = PlayerMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(bottom = 4.dp, start = 4.dp),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        val dur = durationMs.coerceAtLeast(1L)
+        val pos = positionMs.coerceIn(0L, dur)
+        Slider(
+            value = pos.toFloat() / dur.toFloat(),
+            onValueChange = { onSeek((it * dur).toLong()) },
+            colors = SliderDefaults.colors(
+                thumbColor = SeekRed,
+                activeTrackColor = SeekRed,
+                inactiveTrackColor = PlayerMuted.copy(alpha = 0.35f),
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(formatMs(pos), style = MaterialTheme.typography.labelSmall, color = PlayerMuted)
+            Text(formatMs(dur), style = MaterialTheme.typography.labelSmall, color = PlayerMuted)
+        }
         Row(
             Modifier
                 .fillMaxWidth()
@@ -1806,58 +1920,6 @@ private fun QueueExpandedHeader(
                 )
             }
         }
-        Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MediaCover(track, 48.dp)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    track.title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Clip,
-                    color = PlayerFg,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000),
-                )
-                if (onOpenArtist != null) {
-                    ArtistLinksText(
-                        track = track,
-                        onOpenArtist = onOpenArtist,
-                        color = PlayerMuted,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1400),
-                    )
-                } else {
-                    Text(
-                        track.artistLine(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Clip,
-                        color = PlayerMuted,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1400),
-                    )
-                }
-            }
-            IconButton(onClick = onCollapse) {
-                Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
-            }
-        }
-        Text(
-            if (queueTitle.startsWith("Mix à partir de")) queueTitle
-            else if (queueTitle.equals("Mix", ignoreCase = true) || queueTitle.equals("File d'attente", ignoreCase = true))
-                queueTitle
-            else "Mix · $queueTitle",
-            style = MaterialTheme.typography.labelMedium,
-            color = PlayerMuted,
-            modifier = Modifier.padding(top = 4.dp, start = 4.dp),
-        )
     }
 }
 

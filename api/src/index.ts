@@ -82,6 +82,7 @@ import {
 } from './library/library.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream } from './media/stream.js';
 import { streamHeadStats } from './media/streamHeadCache.js';
+import { resolveVisualVideo } from './media/visualResolve.js';
 import { importByKind, importByQueryOrUrl } from './media/import.js';
 import { handleOfflineStatus, startOfflineCollection } from './library/offline.js';
 import { handleImageProxy } from './media/img.js';
@@ -1561,6 +1562,34 @@ app.get('/api/track/:id', accountRequired, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+/** Clip vidéo pour mode multimédia (même ID ou fallback titre+artiste). */
+app.get('/api/track/:id/visual', accountRequired, async (req, res) => {
+  try {
+    const id = p(req.params.id);
+    const title = typeof req.query.title === 'string' ? req.query.title : undefined;
+    const artist = typeof req.query.artist === 'string' ? req.query.artist : undefined;
+    const durationRaw = req.query.durationSeconds;
+    const durationSeconds =
+      durationRaw != null && String(durationRaw).trim() !== ''
+        ? Number(durationRaw)
+        : undefined;
+    const resolved = await resolveVisualVideo(id, {
+      title,
+      artist,
+      durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : undefined,
+    });
+    res.json({
+      ok: true,
+      ...resolved,
+      streamPath: resolved.visualId
+        ? `/api/stream/${resolved.visualId}?type=video`
+        : null,
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
   }
 });
 

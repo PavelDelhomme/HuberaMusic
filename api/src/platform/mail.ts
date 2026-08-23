@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import { markMailOutboxDelivered, saveMailOutbox } from './platform.js';
 
-function appUrl() {
+export function appUrl() {
   return (
     process.env.APP_URL ||
     process.env.WEBAUTHN_ORIGIN ||
@@ -218,5 +218,3 @@ export async function testSmtp(to?: string) {
     };
   }
 }
-
-export { appUrl };

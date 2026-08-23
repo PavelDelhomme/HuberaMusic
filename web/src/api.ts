@@ -706,6 +706,26 @@ export const api = {
     req<{ url: string; expiresAt: number; mimeType: string | null; kind?: string }>(
       `/api/stream/${id}/url${type === 'video' ? '?type=video' : ''}`,
     ),
+  /** Clip multimédia : même ID ou fallback recherche titre+artiste. */
+  trackVisual: (
+    id: string,
+    hints?: { title?: string; artist?: string; durationSeconds?: number },
+  ) => {
+    const q = new URLSearchParams();
+    if (hints?.title) q.set('title', hints.title);
+    if (hints?.artist) q.set('artist', hints.artist);
+    if (hints?.durationSeconds != null) q.set('durationSeconds', String(hints.durationSeconds));
+    const qs = q.toString();
+    return req<{
+      ok: boolean;
+      audioId: string;
+      visualId: string | null;
+      source: 'same' | 'search' | 'none';
+      title?: string;
+      artist?: string;
+      streamPath: string | null;
+    }>(`/api/track/${id}/visual${qs ? `?${qs}` : ''}`);
+  },
   artist: (id: string) =>
     req<{
       artist: { id: string; name: string; subscribers?: string; thumbnails: Track['thumbnails']; description?: string };

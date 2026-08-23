@@ -67,7 +67,6 @@ import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.resolvePlayableTracks
-import ovh.delhomme.ytmusic.ui.components.AccountSheet
 import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
 import ovh.delhomme.ytmusic.ui.components.MediaCover
@@ -84,11 +83,8 @@ fun HomeScreen(
     onMore: (TrackDto) -> Unit,
     onOpenDetail: (TrackDto) -> Unit,
     onOpenArtist: ((String?, String) -> Unit)? = null,
-    onOpenRecoPrefs: () -> Unit = {},
-    onOpenDebugLogs: () -> Unit = {},
-    onOpenYtmImport: () -> Unit = {},
+    onOpenAccount: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
-    onLoggedOut: () -> Unit = {},
     onMoreMix: ((id: String, title: String, covers: List<TrackDto>) -> Unit)? = null,
     vm: HomeViewModel = viewModel(factory = HomeViewModel.factory(container)),
 ) {
@@ -96,7 +92,6 @@ fun HomeScreen(
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
     val pinIds = remember(pins) { pins.map { it.id }.toHashSet() }
     val scope = rememberCoroutineScope()
-    var showAccount by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var userPicture by remember { mutableStateOf<String?>(null) }
 
@@ -143,7 +138,7 @@ fun HomeScreen(
             title = "PLM",
             showBrandLogo = true,
             userPictureUrl = userPicture,
-            onAccountClick = { showAccount = true },
+            onAccountClick = onOpenAccount,
         )
 
         when {
@@ -503,18 +498,6 @@ fun HomeScreen(
         }
     }
 
-    if (showAccount) {
-        AccountSheet(
-            container = container,
-            onDismiss = { showAccount = false },
-            onOpenRecoPrefs = onOpenRecoPrefs,
-            onOpenHistory = { showHistory = true },
-            onOpenDownloads = onOpenDownloads,
-            onOpenDebugLogs = onOpenDebugLogs,
-            onOpenYtmImport = onOpenYtmImport,
-            onLoggedOut = onLoggedOut,
-        )
-    }
     if (showHistory) {
         HistorySheet(
             container = container,

@@ -2342,7 +2342,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
 
   cycleRepeat: () => {
     set((s) => ({
-      repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
+      repeat: s.repeat === 'one' ? 'all' : s.repeat === 'all' ? 'off' : 'one',
     }));
     if (!isActivePlayer()) sendCmd({ action: 'repeat', value: get().repeat });
     else publish();

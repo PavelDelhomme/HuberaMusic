@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Vérifie / télécharge / installe l’APK publiée sur le serveur (`/api/deploy/apk`)
- * sans passer par l’UI GitHub — entièrement in-app.
+ * — toujours la **dernière** version seule (pas de chaîne d’intermédiaires).
  */
 class ApkUpdateManager(
     private val context: Context,
@@ -40,35 +40,52 @@ class ApkUpdateManager(
         return now - last >= PERIODIC_INTERVAL_MS
     }
 
+    /** Snooze « Plus tard » pour ce versionCode distant — jusqu’à un code plus récent. */
+    fun dismissForVersion(versionCode: Int) {
+        prefs.edit().putInt(KEY_SNOOZED_CODE, versionCode).apply()
+    }
+
+    fun isSnoozed(versionCode: Int): Boolean =
+        prefs.getInt(KEY_SNOOZED_CODE, 0) == versionCode && versionCode > 0
+
     /** Au cold start : toujours interroger le serveur (une fois par process). */
     suspend fun checkOnStartup(): CheckResult = check(force = true)
 
-    suspend fun check(force: Boolean = false): CheckResult = withContext(Dispatchers.IO) {
-        if (!force && !shouldAutoCheck()) {
-            return@withContext CheckResult(available = false, message = "check récent")
-        }
-        runCatching {
-            container.ensureFreshToken()
-            val info = container.api.apkInfo()
-            prefs.edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
-            val remote = info.versionCode ?: 0
-            val local = BuildConfig.VERSION_CODE
-            if (info.ready != true) {
-                CheckResult(false, info, local, "APK pas encore publiée")
-            } else if (remote <= local) {
-                CheckResult(false, info, local, "À jour (v$local)")
-            } else {
-                CheckResult(true, info, local, "v$remote disponible")
+    suspend fun check(force: Boolean = false, respectSnooze: Boolean = true): CheckResult =
+        withContext(Dispatchers.IO) {
+            if (!force && !shouldAutoCheck()) {
+                return@withContext CheckResult(available = false, message = "check récent")
             }
-        }.getOrElse {
-            AppLog.w("apk-update", "check failed: ${it.message}")
-            CheckResult(false, message = it.message ?: "Échec vérif")
+            runCatching {
+                container.ensureFreshToken()
+                val info = container.api.apkInfo()
+                prefs.edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
+                val remote = info.versionCode ?: 0
+                val local = BuildConfig.VERSION_CODE
+                when {
+                    info.ready != true ->
+                        CheckResult(false, info, local, "APK pas encore publiée")
+                    remote <= local -> {
+                        // À jour → efface snooze éventuel
+                        if (prefs.getInt(KEY_SNOOZED_CODE, 0) > 0) {
+                            prefs.edit().remove(KEY_SNOOZED_CODE).apply()
+                        }
+                        CheckResult(false, info, local, "À jour (v$local)")
+                    }
+                    respectSnooze && isSnoozed(remote) ->
+                        CheckResult(false, info, local, "Reportée (v$remote)")
+                    else ->
+                        CheckResult(true, info, local, "v$remote disponible")
+                }
+            }.getOrElse {
+                AppLog.w("apk-update", "check failed: ${it.message}")
+                CheckResult(false, message = it.message ?: "Échec vérif")
+            }
         }
-    }
 
     /**
-     * Télécharge l’APK puis lance l’installateur système.
-     * Nécessite « Installer des apps inconnues » pour ce package sur Android 8+.
+     * Télécharge l’APK **courante** sur le serveur puis lance l’installateur.
+     * Re-fetch toujours `apkInfo()` (ignore un snapshot stale du dialogue).
      */
     suspend fun downloadAndInstall(info: ApkInfoResponse? = null): String = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
@@ -83,7 +100,7 @@ class ApkUpdateManager(
             return@withContext "Autorise l’installation pour PLM, puis réessaie"
         }
         container.ensureFreshToken()
-        val meta = info ?: container.api.apkInfo()
+        val meta = container.api.apkInfo()
         if (meta.ready != true) return@withContext "APK pas encore publiée"
         val remote = meta.versionCode ?: 0
         if (remote <= BuildConfig.VERSION_CODE) return@withContext "Déjà à jour"
@@ -95,6 +112,12 @@ class ApkUpdateManager(
         } ?: "$base$path"
 
         val dir = File(context.cacheDir, "apk-updates").apply { mkdirs() }
+        // Nettoie les vieux APK locaux — une seule cible : latest
+        dir.listFiles()?.forEach { f ->
+            if (f.name.startsWith("plm-update-") && f.name != "plm-update-$remote.apk") {
+                f.delete()
+            }
+        }
         val out = File(dir, "plm-update-$remote.apk")
         if (out.exists()) out.delete()
 
@@ -113,6 +136,7 @@ class ApkUpdateManager(
             return@withContext "APK trop petite (${out.length()} o)"
         }
         AppLog.i("apk-update", "downloaded ${out.length()} bytes → install v$remote")
+        prefs.edit().remove(KEY_SNOOZED_CODE).apply()
         withContext(Dispatchers.Main) { installApkViaView(out) }
         "Installation lancée (v$remote)"
     }
@@ -132,7 +156,7 @@ class ApkUpdateManager(
 
     companion object {
         private const val KEY_LAST_CHECK = "last_check_at"
-        /** Vérif périodique en session (à optimiser après campagne batterie). */
+        private const val KEY_SNOOZED_CODE = "snoozed_version_code"
         private val PERIODIC_INTERVAL_MS = TimeUnit.HOURS.toMillis(6)
     }
 }

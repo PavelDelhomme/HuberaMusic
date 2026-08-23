@@ -127,11 +127,11 @@ export function diagnoseTelemetryEvent(ev: {
       likelyCause:
         'YouTube bloque l’IP datacenter (LOGIN_REQUIRED / unavailable) → Innertube ne trouve pas de format audio → l’API répond 502. Autres causes : reverse proxy timeout, OAuth TV non validé, cookies vides, upstream mort.',
       actions: [
-        'curl -I « https://ytmusic.delhomme.ovh/api/stream/<trackId> » (Range bytes=0-1) : 502 = serveur, pas Android',
-        'Comparer avec dQw4w9WgXcQ (souvent 206) vs un titre musical',
+        'curl -I « https://ytmusic.delhomme.ovh/api/stream/<trackId> » -H « Range: bytes=0-1 » : 502 = serveur, pas Android',
+        'Comparer avec dQw4w9WgXcQ (souvent 206) vs le titre listé dans « Titres concernés »',
         'Valider OAuth TV : POST /api/admin/youtube-stream-oauth/start puis https://www.google.com/device (docs/STREAM-VPS-OAUTH.md)',
         'Logs API au timestamp du mail : LOGIN_REQUIRED / NO_UPSTREAM / getAudioFormat vide',
-        'Côté app : ne pas spammer 4 DL offline pendant la panne (circuit-breaker stream down)',
+        'Côté app : circuit-breaker stream down (coupe DL offline) — build ≥ p+1.3.47',
       ],
       surface,
     };
