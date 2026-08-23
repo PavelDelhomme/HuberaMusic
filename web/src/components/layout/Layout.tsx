@@ -562,11 +562,12 @@ export function Layout() {
     <div className="flex h-full min-h-0 flex-col bg-yt-bg">
       <ProxyHealthBanner />
       <OfflineBanner />
-      {user && !user.isGuest && user.ytmLinked === false && location.pathname !== '/import' && (
+      {user && !user.isGuest && user.ytmStreamReady === false && location.pathname !== '/import' && (
         <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-center text-sm">
-          Lie un compte Google <strong>gratuit</strong> (pas Premium) pour signer tes streams.{' '}
+          Lie ton Google (code appareil, compte déjà sur le téléphone) pour des streams fiables —{' '}
+          <strong>gratuit</strong>, persisté après MAJ.{' '}
           <Link to="/import" className="font-medium text-white underline">
-            Lier maintenant
+            Configurer maintenant
           </Link>
         </div>
       )}

@@ -292,11 +292,15 @@ export function publicUser(u: UserRow) {
     totp_enabled?: number;
   };
   let ytmLinked = false;
+  let ytmStreamReady = false;
+  let ytmLibraryReady = false;
   try {
     const ytm = db.prepare('SELECT oauth_enc, cookie_enc FROM ytm_accounts WHERE user_id = ?').get(u.id) as
       | { oauth_enc: string | null; cookie_enc: string | null }
       | undefined;
-    ytmLinked = Boolean(ytm?.oauth_enc || ytm?.cookie_enc);
+    ytmStreamReady = Boolean(ytm?.oauth_enc);
+    ytmLibraryReady = Boolean(ytm?.cookie_enc);
+    ytmLinked = ytmStreamReady || ytmLibraryReady;
   } catch {
     ytmLinked = false;
   }
@@ -311,6 +315,10 @@ export function publicUser(u: UserRow) {
     emailVerified: Boolean(row.email_verified) || Boolean(u.google_id) || u.email.includes('@local.ytmusic'),
     totpEnabled: Boolean(row.totp_enabled),
     ytmLinked,
+    /** OAuth appareil user — streams signés (équivalent « proxy » adapté au compte). */
+    ytmStreamReady,
+    /** Cookies YTM — sync biblio likes/playlists. */
+    ytmLibraryReady,
   };
 }
 

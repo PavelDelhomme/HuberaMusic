@@ -54,9 +54,24 @@ Attendu typique prod VPS-only : `serverOauth: true`, `upstreamAllowed: false` (o
 
 ---
 
-## Relais maison (optionnel)
+## Installation app — setup automatique (par compte)
 
-- `ALLOW_STREAM_UPSTREAM=1` + `bash scripts/deploy/link-home-stream.sh`
+À la **1ʳᵉ connexion PLM** (Android) :
+
+1. Si `hasOauth` est absent → ouverture auto de **Compte Google** + lancement OAuth appareil (Chrome, compte déjà sur le téléphone).
+2. Les tokens sont stockés **sur le serveur** (`ytm_accounts`) → **survivent** aux MAJ APK et redeploy VPS (volume intact, `JWT_SECRET` stable).
+3. Option biblio : bouton « Session YouTube Music » (cookies) quand l’utilisateur veut likes/playlists.
+
+Champs API `user.ytmStreamReady` / `user.ytmLibraryReady` (plus `ytmLinked` = l’un ou l’autre).
+
+**Ce n’est pas le relais PC maison** : chaque user a **son** OAuth (streams signés en son nom). Le tunnel maison (`link-home-stream`) reste un **filet ops global** optionnel pour tous.
+
+---
+
+## Relais maison (optionnel, ops — tous les users)
+
+- `bash scripts/deploy/link-home-stream.sh`
+- Dès que `data/stream-upstream.url` existe sur le volume, prod **autorise** le relais sans retoucher `ALLOW_STREAM_UPSTREAM` dans Portainer (survit au recreate).
 - `STREAM_UPSTREAM_FALLBACK=1` (défaut compose) → si le PC coupe, fallback VPS au lieu d’un 502 définitif
 - Prod idéal long terme : **ALLOW vide** + OAuth TV + OAuth user
 
