@@ -95,7 +95,12 @@ import {
   startApkBuild,
   startBuild,
 } from './platform/admin.js';
-import { consumeApkTicket, issueApkTicket, latestLiveApkTicket } from './platform/apkTickets.js';
+import {
+  allowPublicApkTicket,
+  consumeApkTicket,
+  issueApkTicket,
+  latestLiveApkTicket,
+} from './platform/apkTickets.js';
 import { listAdminUsers } from './platform/adminUsers.js';
 import { loadRuntimeSettings, saveRuntimeSettings } from './platform/runtimeSettings.js';
 import {
@@ -1201,8 +1206,59 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
 
 app.post('/api/admin/apk/ticket', requireAdmin, (req, res) => {
   const reason = String(req.body?.reason || 'download') === 'register' ? 'register' : 'download';
-  const ticket = issueApkTicket(reason, req.userId, PORT);
+  const ticket = issueApkTicket(reason, req.userId, PORT, { exclusive: true, maxUses: 3 });
   res.json({ ok: true, ...ticket });
+});
+
+/** Meta APK publique (page /install) — pas de binaire. */
+app.get('/api/install/apk-info', (_req, res) => {
+  const info = deployInfo(PORT).apk;
+  res.json({
+    ready: Boolean(info.ready),
+    versionName: info.versionName,
+    versionCode: info.versionCode,
+    sizeBytes: info.sizeBytes,
+    builtAt: info.builtAt,
+    package: 'ovh.delhomme.ytmusic',
+    installPath: '/install',
+  });
+});
+
+/**
+ * Ticket public pour télécharger l’APK native (pas la PWA).
+ * Rate-limité ; multi-GET pour prefetch Xiaomi/Chrome.
+ */
+app.post('/api/install/apk-ticket', (req, res) => {
+  const ip = String(
+    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      '',
+  );
+  if (!allowPublicApkTicket(ip)) {
+    res.status(429).json({ error: 'Trop de demandes — réessaie dans quelques minutes' });
+    return;
+  }
+  const path = getApkPath();
+  if (!path) {
+    res.status(404).json({
+      error: 'APK non publiée',
+      hint: 'Admin → Déploiement mobile → Uploader l’APK',
+    });
+    return;
+  }
+  const ticket = issueApkTicket('public', undefined, PORT, {
+    exclusive: false,
+    maxUses: 8,
+    ttlMs: 2 * 60 * 60_000,
+  });
+  const info = deployInfo(PORT).apk;
+  res.json({
+    ok: true,
+    ...ticket,
+    versionName: info.versionName,
+    versionCode: info.versionCode,
+    sizeBytes: info.sizeBytes,
+  });
 });
 
 /** Mise en prod depuis Admin local : web (git→GHCR→redeploy CE) / apk / all */
@@ -1313,7 +1369,8 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
     return;
   }
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  res.setHeader('Content-Disposition', 'attachment; filename="plm.apk"');
+  res.setHeader('Content-Disposition', 'attachment; filename="PLM.apk"');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path);
 });

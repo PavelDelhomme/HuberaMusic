@@ -135,7 +135,6 @@ export function ProfilePage() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const [deployUrl, setDeployUrl] = useState('');
   const [editReco, setEditReco] = useState(false);
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -151,16 +150,6 @@ export function ProfilePage() {
     if (isGuest) return;
     void api.passkeys().then((r) => setPasskeys(r.passkeys)).catch(() => undefined);
   }, [isGuest]);
-
-  useEffect(() => {
-    void api
-      .deployInfo()
-      .then((r) => {
-        const lan = r.urls.find((u) => !u.includes('localhost')) || r.urls[0];
-        setDeployUrl(lan || window.location.origin);
-      })
-      .catch(() => setDeployUrl(window.location.origin));
-  }, []);
 
   if (!user) return <p className="text-yt-muted">Chargement…</p>;
 
@@ -399,19 +388,26 @@ export function ProfilePage() {
       <section className="rounded-2xl border border-yt-border bg-yt-surface p-5">
         <div className="mb-4 flex items-center gap-2">
           <Smartphone className="h-5 w-5 text-yt-red" />
-          <h2 className="font-display text-lg font-semibold">Ouvrir sur mobile</h2>
+          <h2 className="font-display text-lg font-semibold">App Android (APK native)</h2>
         </div>
         <p className="mb-4 text-sm text-yt-muted">
-          Scanne ce QR sur le même Wi‑Fi, puis « Installer l&apos;app » dans le navigateur.
+          Scanne ce QR pour ouvrir la page d’installation. Sur Xiaomi, télécharge{' '}
+          <strong className="text-white">PLM.apk</strong> — ne choisis pas « Ajouter à l’écran
+          d’accueil ».
         </p>
         <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
           <div className="rounded-2xl bg-white p-3">
-            <QRCodeSVG value={deployUrl || window.location.origin} size={160} />
+            <QRCodeSVG value={`${window.location.origin}/install`} size={160} />
           </div>
           <div className="text-sm">
-            <div className="break-all font-medium text-white">{deployUrl}</div>
+            <a
+              href="/install"
+              className="break-all font-medium text-white underline"
+            >
+              {window.location.origin}/install
+            </a>
             <p className="mt-2 text-xs text-yt-muted">
-              Android : menu ⋮ → Installer. iPhone : Partager → Sur l&apos;écran d&apos;accueil.
+              Android : APK native. iPhone : Safari → Partager → Sur l&apos;écran d&apos;accueil.
             </p>
           </div>
         </div>
