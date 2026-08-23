@@ -62,7 +62,6 @@ import ovh.delhomme.ytmusic.data.OfflineKeeper
 import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.Thumb
 import ovh.delhomme.ytmusic.data.TrackDto
-import ovh.delhomme.ytmusic.ui.components.AccountSheet
 import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
 import ovh.delhomme.ytmusic.ui.components.TrackRow
@@ -75,10 +74,7 @@ fun LibraryScreen(
     onMore: (TrackDto) -> Unit,
     onOpenDetail: (TrackDto) -> Unit,
     onOpenArtist: ((String?, String) -> Unit)? = null,
-    onOpenRecoPrefs: () -> Unit,
-    onOpenDebugLogs: () -> Unit = {},
-    onOpenYtmImport: () -> Unit = {},
-    onLoggedOut: () -> Unit,
+    onOpenAccount: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -93,7 +89,6 @@ fun LibraryScreen(
     var loading by remember { mutableStateOf(true) }
     var refreshing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var showAccount by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var userPicture by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf(LibraryFilter.defaultSelected) }
@@ -266,7 +261,7 @@ fun LibraryScreen(
         AppTopBar(
             title = "Bibliothèque",
             userPictureUrl = userPicture,
-            onAccountClick = { showAccount = true },
+            onAccountClick = onOpenAccount,
             onHistoryClick = null,
         )
 
@@ -308,8 +303,8 @@ fun LibraryScreen(
                     Button(onClick = { scope.launch { reloadLibrary(force = true, showSpinner = true) } }) {
                         Text("Réessayer")
                     }
-                    TextButton(onClick = onOpenDebugLogs) {
-                        Text("Régler l’URL API")
+                    TextButton(onClick = onOpenAccount) {
+                        Text("Ouvrir Compte (API & logs)")
                     }
                 }
             }
@@ -510,20 +505,6 @@ fun LibraryScreen(
         }
     }
 
-    if (showAccount) {
-        AccountSheet(
-            container = container,
-            onDismiss = { showAccount = false },
-            onOpenRecoPrefs = onOpenRecoPrefs,
-            onOpenHistory = { showHistory = true },
-            onOpenDownloads = {
-                selected = LibraryFilter.Downloads
-            },
-            onOpenDebugLogs = onOpenDebugLogs,
-            onOpenYtmImport = onOpenYtmImport,
-            onLoggedOut = onLoggedOut,
-        )
-    }
     if (showHistory) {
         HistorySheet(
             container = container,

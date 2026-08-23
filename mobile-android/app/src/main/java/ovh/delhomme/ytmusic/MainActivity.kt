@@ -372,7 +372,15 @@ fun YtMusicAppContent(
 
     pendingUpdate?.takeIf { it.available }?.let { upd ->
         AlertDialog(
-            onDismissRequest = { pendingUpdate = null },
+            onDismissRequest = {
+                upd.info?.versionCode?.let { code ->
+                    ovh.delhomme.ytmusic.update.ApkUpdateManager(
+                        context.applicationContext,
+                        container,
+                    ).dismissForVersion(code)
+                }
+                pendingUpdate = null
+            },
             title = { Text("Mise à jour disponible") },
             text = {
                 Text(
@@ -391,7 +399,7 @@ fun YtMusicAppContent(
                                 container,
                             )
                             val msg = runCatching {
-                                updater.downloadAndInstall(upd.info)
+                                updater.downloadAndInstall(null)
                             }.getOrElse { it.message ?: "Échec" }
                             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             updateInstalling = false
@@ -401,7 +409,15 @@ fun YtMusicAppContent(
                 ) { Text(if (updateInstalling) "…" else "Installer") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingUpdate = null }) { Text("Plus tard") }
+                TextButton(onClick = {
+                    upd.info?.versionCode?.let { code ->
+                        ovh.delhomme.ytmusic.update.ApkUpdateManager(
+                            context.applicationContext,
+                            container,
+                        ).dismissForVersion(code)
+                    }
+                    pendingUpdate = null
+                }) { Text("Plus tard") }
             },
         )
     }
@@ -1180,9 +1196,7 @@ private fun MainTabs(
                     onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenDetail = ::openDetail,
                     onOpenArtist = ::openArtist,
-                    onOpenRecoPrefs = { nav.navigate("reco_prefs") },
-                    onOpenDebugLogs = { nav.navigate("debug_logs") },
-                    onOpenYtmImport = { nav.navigate("ytm_import") },
+                    onOpenAccount = { nav.navigate("account") },
                     onOpenDownloads = {
                         LibraryFilter.pendingSelect = LibraryFilter.Downloads
                         nav.navigate(Tab.Library.route) {
@@ -1190,7 +1204,6 @@ private fun MainTabs(
                             restoreState = true
                         }
                     },
-                    onLoggedOut = onLoggedOut,
                     onMoreMix = { id, title, covers ->
                         menuTrack = TrackDto(
                             id = id,
@@ -1219,9 +1232,26 @@ private fun MainTabs(
                     onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenDetail = ::openDetail,
                     onOpenArtist = ::openArtist,
+                    onOpenAccount = { nav.navigate("account") },
+                )
+            }
+            composable("account") {
+                ovh.delhomme.ytmusic.ui.components.AccountScreen(
+                    container = container,
+                    onBack = { nav.popBackStack() },
                     onOpenRecoPrefs = { nav.navigate("reco_prefs") },
                     onOpenDebugLogs = { nav.navigate("debug_logs") },
                     onOpenYtmImport = { nav.navigate("ytm_import") },
+                    onOpenDownloads = {
+                        LibraryFilter.pendingSelect = LibraryFilter.Downloads
+                        nav.navigate(Tab.Library.route) {
+                            popUpTo("account") { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                    onPlay = onPlayTracks,
+                    onMore = { menuTrack = it; menuPlaylistId = null },
+                    onOpenEntity = ::openDetail,
                     onLoggedOut = onLoggedOut,
                 )
             }

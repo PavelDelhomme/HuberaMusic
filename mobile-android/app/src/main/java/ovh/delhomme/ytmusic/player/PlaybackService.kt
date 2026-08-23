@@ -976,15 +976,19 @@ class PlaybackService : MediaSessionService() {
             val p = session.player
             when (customCommand.customAction) {
                 ACTION_TOGGLE_SHUFFLE -> {
-                    p.shuffleModeEnabled = !p.shuffleModeEnabled
+                    Holder.onToggleShuffle?.invoke()
+                        ?: run { p.shuffleModeEnabled = !p.shuffleModeEnabled }
                     refreshMediaButtons()
                 }
                 ACTION_CYCLE_REPEAT -> {
-                    p.repeatMode = when (p.repeatMode) {
-                        Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                        Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                        else -> Player.REPEAT_MODE_OFF
-                    }
+                    Holder.onCycleRepeat?.invoke()
+                        ?: run {
+                            p.repeatMode = when (p.repeatMode) {
+                                Player.REPEAT_MODE_ONE -> Player.REPEAT_MODE_ALL
+                                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_OFF
+                                else -> Player.REPEAT_MODE_ONE
+                            }
+                        }
                     refreshMediaButtons()
                 }
                 ACTION_TOGGLE_LIKE -> {
@@ -1589,6 +1593,9 @@ class PlaybackService : MediaSessionService() {
         @Volatile var onLikedIdsChanged: ((Set<String>) -> Unit)? = null
         /** Skip à la fin de file (1 titre) → fill autoplay côté UI. */
         @Volatile var onSkipAtEnd: (() -> Unit)? = null
+        /** Shuffle « suite only » / cycle repeat — délégué au PlayerController UI. */
+        @Volatile var onToggleShuffle: (() -> Unit)? = null
+        @Volatile var onCycleRepeat: (() -> Unit)? = null
         /** Frontière file utilisateur / suggestions. */
         @Volatile var userQueueEnd: Int = 0
         /** Auto-avance dans « À suivre » (sinon stop en fin de file user). */

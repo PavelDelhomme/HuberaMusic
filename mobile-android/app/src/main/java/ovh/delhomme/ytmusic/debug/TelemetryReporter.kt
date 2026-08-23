@@ -150,6 +150,10 @@ object TelemetryReporter {
         val http = httpStatus ?: extractHttpStatus(blob)
         val serious = isSeriousStreamFailure(code, http, blob, local)
         val diag = diagnosePlayerError(code, trackId, networkish, local, streak, http, blob)
+        val trackMeta = runCatching {
+            ovh.delhomme.ytmusic.player.PlaybackService.Holder.queue.firstOrNull { it.id == trackId }
+        }.getOrNull()
+        val artistLabel = trackMeta?.artistLine()?.takeIf { it != "Artiste" }.orEmpty()
         report(
             level = "error",
             kind = "android.player",
@@ -157,6 +161,11 @@ object TelemetryReporter {
                 append("onPlayerError code=$code")
                 if (http != null) append(" http=$http")
                 append(" id=$trackId streak=$streak network=$networkish local=$local")
+                if (trackMeta != null) {
+                    append('\n')
+                    append(trackMeta.title)
+                    if (artistLabel.isNotBlank()) append(" — ").append(artistLabel)
+                }
                 append("\n\nPré-diagnostic Android : ")
                 append(diag)
             },
@@ -165,6 +174,8 @@ object TelemetryReporter {
                 "errorCode" to code,
                 "httpStatus" to http,
                 "trackId" to trackId,
+                "title" to trackMeta?.title,
+                "artist" to artistLabel.ifBlank { null },
                 "streak" to streak,
                 "networkish" to networkish,
                 "local" to local,

@@ -769,4 +769,24 @@ interface YtMusicApi {
         @Path("id") id: String,
         @Query("type") type: String? = null,
     ): Map<String, Any>
+
+    /** Clip multimédia (même ID ou fallback titre+artiste). */
+    @GET("api/track/{id}/visual")
+    suspend fun trackVisual(
+        @Path("id") id: String,
+        @Query("title") title: String? = null,
+        @Query("artist") artist: String? = null,
+        @Query("durationSeconds") durationSeconds: Int? = null,
+    ): TrackVisualResponse
 }
+
+@JsonClass(generateAdapter = false)
+data class TrackVisualResponse(
+    val ok: Boolean? = true,
+    val audioId: String? = null,
+    val visualId: String? = null,
+    val source: String? = null,
+    val title: String? = null,
+    val artist: String? = null,
+    val streamPath: String? = null,
+)
