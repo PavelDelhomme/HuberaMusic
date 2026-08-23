@@ -2400,6 +2400,11 @@ export async function getAudioFormatViaYtDlpOnly(videoId: string): Promise<Audio
 const videoFormatCache = new Map<string, AudioFormat>();
 const videoFormatInflight = new Map<string, Promise<AudioFormat>>();
 
+export function invalidateVideoFormat(videoId: string) {
+  videoFormatCache.delete(videoId);
+  videoFormatInflight.delete(videoId);
+}
+
 async function videoFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
   const { spawn } = await import('node:child_process');
   const { existsSync } = await import('node:fs');

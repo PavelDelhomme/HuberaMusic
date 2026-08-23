@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import type { Request, Response } from 'express';
-import { getAudioFormat, getAudioFormatViaYtDlpOnly, getVideoFormat, getYT, invalidateAudioFormat } from '../youtube/yt.js';
+import { getAudioFormat, getAudioFormatViaYtDlpOnly, getVideoFormat, getYT, invalidateAudioFormat, invalidateVideoFormat } from '../youtube/yt.js';
 import {
   ytDlpCookieArgSets,
   resolveYoutubeCookieHeader,
@@ -235,6 +235,16 @@ function spawnYtDlpAudioPipe(
   cookieArgs: string[],
   res: Response,
 ): Promise<void> {
+  return spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'audio/mp4');
+}
+
+function spawnYtDlpMediaPipe(
+  videoId: string,
+  format: string,
+  cookieArgs: string[],
+  res: Response,
+  contentType: string,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (!existsSync(YTDLP)) {
       reject(new Error('yt-dlp introuvable'));
@@ -284,7 +294,7 @@ function spawnYtDlpAudioPipe(
     // Sans 1er octet rapidement → passe au format / backend suivant (évite buffering mobile)
     const firstByteTimer = setTimeout(() => {
       fail(new Error('yt-dlp first-byte timeout'));
-    }, 10_000);
+    }, 12_000);
 
     proc.stdout.once('data', (chunk: Buffer) => {
       if (settled) return;
@@ -296,7 +306,7 @@ function spawnYtDlpAudioPipe(
         }
         started = true;
         res.status(200);
-        res.setHeader('Content-Type', 'audio/mp4');
+        res.setHeader('Content-Type', contentType);
         res.setHeader('Transfer-Encoding', 'chunked');
         res.setHeader('Cache-Control', 'public, max-age=3600');
         res.write(chunk);
@@ -356,6 +366,31 @@ async function streamViaYtDlp(videoId: string, res: Response) {
   throw lastErr || new Error('yt-dlp audio indisponible');
 }
 
+/** Pipe progressif vidéo (fallback quand googlevideo 403 depuis le VPS). */
+async function streamViaYtDlpVideo(videoId: string, res: Response) {
+  const cookieSets = ytDlpCookieArgSets();
+  const formats = [
+    '18',
+    '22',
+    'best[height<=480][acodec!=none][vcodec!=none]',
+    'best[height<=720][acodec!=none][vcodec!=none]/best',
+  ];
+  let lastErr: Error | null = null;
+  for (const cookieArgs of cookieSets) {
+    for (const format of formats) {
+      if (res.headersSent) throw new Error('headers already sent');
+      try {
+        await spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'video/mp4');
+        return;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        if (res.headersSent) throw lastErr;
+      }
+    }
+  }
+  throw lastErr || new Error('yt-dlp video indisponible');
+}
+
 /** Sert une Range entièrement couverte par la tête RAM (TTFB ≪ 50–100 ms). */
 function tryServeRamHead(req: Request, res: Response, videoId: string): boolean {
   const head = peekStreamHead(videoId);
@@ -393,7 +428,8 @@ export async function handleStream(req: Request, res: Response) {
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
-  const deadlineAt = Date.now() + 22_000;
+  // Vidéo : resolve + fetch GV souvent plus lent (yt-dlp -g / pipe)
+  const deadlineAt = Date.now() + (wantVideo ? 40_000 : 22_000);
   const ensureTime = (label: string) => {
     if (Date.now() >= deadlineAt) throw new Error(`stream deadline (${label})`);
   };
@@ -517,6 +553,7 @@ export async function handleStream(req: Request, res: Response) {
       // URL morte / anti-bot → invalide le cache format et retente 1× avant fallbacks
       if (upstream.status === 403 || upstream.status === 401 || upstream.status === 404) {
         invalidateAudioFormat(videoId);
+        invalidateVideoFormat(videoId);
         invalidateStreamHead(videoId);
         format = wantVideo
           ? await withDeadline('getVideoFormat2', getVideoFormat(videoId))
@@ -542,6 +579,7 @@ export async function handleStream(req: Request, res: Response) {
       // Toujours 403 → laisser les fallbacks yt-dlp / Innertube (log soft, pas d’alarme)
       if (upstream.status >= 400) {
         invalidateAudioFormat(videoId);
+        invalidateVideoFormat(videoId);
         invalidateStreamHead(videoId);
         throw new Error(`upstream ${wantVideo ? 'video' : 'audio'} ${upstream.status}`);
       }
@@ -611,8 +649,17 @@ export async function handleStream(req: Request, res: Response) {
     }
   }
 
-  // Fallbacks audio-only — yt-dlp avant Innertube download (souvent « No valid URL to decipher »)
+  // Fallbacks — vidéo : pipe yt-dlp progressif ; audio : yt-dlp puis Innertube
   if (wantVideo) {
+    try {
+      ensureTime('ytdlpVideo');
+      await withDeadline('ytdlpVideoPipe', streamViaYtDlpVideo(videoId, res));
+      return;
+    } catch (err) {
+      if (endIfHeadersSent(res)) return;
+      const msg = String((err as Error).message || err);
+      console.warn('[stream] yt-dlp video KO:', msg.slice(0, 160));
+    }
     if (!res.headersSent) {
       res.status(502).json({
         error: 'Impossible de streamer la vidéo',
