@@ -552,17 +552,20 @@ class PlayerController(
         when {
             p.hasNextMediaItem() -> {
                 p.seekToNextMediaItem()
-                p.prepare()
+                if (p.playbackState == Player.STATE_IDLE) p.prepare()
+                p.playWhenReady = true
                 p.play()
             }
             repeatMode == RepeatMode.All && p.mediaItemCount > 0 -> {
                 p.seekTo(0, 0L)
-                p.prepare()
+                if (p.playbackState == Player.STATE_IDLE) p.prepare()
+                p.playWhenReady = true
                 p.play()
             }
             p.mediaItemCount > 1 -> {
                 p.seekTo(nextIdx, 0L)
-                p.prepare()
+                if (p.playbackState == Player.STATE_IDLE) p.prepare()
+                p.playWhenReady = true
                 p.play()
             }
             else -> {
@@ -751,7 +754,14 @@ class PlayerController(
 
     fun seek(ms: Long) {
         val target = ms.coerceAtLeast(0L)
-        player()?.seekTo(target) ?: PlaybackService.Holder.player?.seekTo(target)
+        val p = player() ?: PlaybackService.Holder.player
+        if (p != null) {
+            // Seek in-place — ne pas prepare/rebind (sinon retour au début sur mid-range)
+            p.seekTo(target)
+            if (!p.playWhenReady && userWantsPlaying == true) {
+                p.playWhenReady = true
+            }
+        }
         // Met à jour la timeline UI même en pause (sync multi-appareils)
         _state.value = _state.value.copy(positionMs = target)
     }
@@ -841,23 +851,18 @@ class PlayerController(
         pendingAutoplay = true
         val track = queue[index]
         val base = streamUrl("_").substringBefore("/api/stream/")
+        // Prefetch en arrière-plan — ne bloque pas le saut
         if (track.id.length == 11) {
-            StreamPrefetcher.quietPrefetch(320L)
-            StreamPrefetcher.warmTrackFormatOnly(base, track.id)
-            StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, index, radius = 3)
-            StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                base,
-                queue.map { it.id },
-                index,
-                count = 6,
-                ignoreQuiet = true,
-            )
+            scope.launch {
+                StreamPrefetcher.quietPrefetch(200L)
+                StreamPrefetcher.warmTrackFormatOnly(base, track.id)
+                StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, index, radius = 2)
+            }
         }
-        runCatching {
-            p.replaceMediaItem(index, mediaItemFor(track, streamUrl, queueTitle))
-        }
+        // seekTo suffit si l’item est déjà dans Exo — éviter replace+prepare (lag UI)
         p.seekTo(index, 0L)
-        p.prepare()
+        if (p.playbackState == Player.STATE_IDLE) p.prepare()
+        p.playWhenReady = true
         p.play()
         warmAround(queue, index)
         PlaybackService.Holder.service?.notifyQueueJump()

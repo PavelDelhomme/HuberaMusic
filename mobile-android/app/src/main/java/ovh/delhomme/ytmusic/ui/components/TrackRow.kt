@@ -376,18 +376,17 @@ fun MiniPlayerBar(
                 Text(
                     track.title,
                     maxLines = 1,
-                    overflow = TextOverflow.Clip,
+                    overflow = TextOverflow.Ellipsis,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFFF5F5F5),
-                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000),
+                    modifier = Modifier.basicMarquee(iterations = 2, initialDelayMillis = 2_000),
                 )
                 Text(
                     track.artistLine(),
                     maxLines = 1,
-                    overflow = TextOverflow.Clip,
+                    overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFFCFCFCF),
-                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1400),
                 )
             }
             if (onCast != null) {

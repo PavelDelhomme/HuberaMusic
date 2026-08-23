@@ -263,11 +263,11 @@ fun NowPlayingScreen(
     // Pré-chauffe + resolve clip visuel (fallback titre+artiste si ATV sans vidéo)
     var visualVideoUrl by remember { mutableStateOf<String?>(null) }
     var visualVideoError by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(ui.track?.id, SessionMediaMode.video) {
+    LaunchedEffect(ui.track?.id, SessionMediaMode.video, sheetVisible) {
         val track = ui.track
         visualVideoUrl = null
         visualVideoError = null
-        if (track == null || !SessionMediaMode.video) return@LaunchedEffect
+        if (!sheetVisible || track == null || !SessionMediaMode.video) return@LaunchedEffect
         runCatching {
             container.ensureFreshToken()
             val vis = container.api.trackVisual(
@@ -494,14 +494,15 @@ fun NowPlayingScreen(
         }
     }
 
-    LaunchedEffect(ui.playing, showLyrics) {
+    LaunchedEffect(ui.playing, showLyrics, sheetVisible) {
+        if (!sheetVisible) return@LaunchedEffect
         while (isActive) {
             player.tick()
             delay(
                 when {
-                    showLyrics && ui.playing -> 80L
-                    ui.playing -> 200L
-                    else -> 800L
+                    showLyrics && ui.playing -> 120L
+                    ui.playing -> 400L
+                    else -> 1_200L
                 },
             )
         }
@@ -578,16 +579,16 @@ fun NowPlayingScreen(
             .nestedScroll(dismissScroll),
     ) {
         val track = ui.track
-        // Ambient blur YTM
-        if (track != null) {
+        // Ambient blur YTM — uniquement sheet visible (coûteux en GPU)
+        if (track != null && sheetVisible) {
             AsyncImage(
-                model = track.coverUrl(320),
+                model = track.coverUrl(160),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .blur(56.dp)
-                    .alpha(0.42f),
+                    .blur(48.dp)
+                    .alpha(0.38f),
             )
             Box(
                 Modifier
@@ -687,7 +688,9 @@ fun NowPlayingScreen(
                             .background(MaterialTheme.colorScheme.background)
                             .navigationBarsPadding()
                             .graphicsLayer {
-                                alpha = ((qp - 0.15f) / 0.85f).coerceIn(0f, 1f)
+                                // Slide opaque (pas d’alpha → plus de grisé pendant le swipe)
+                                val t = ((qp - 0.15f) / 0.85f).coerceIn(0f, 1f)
+                                translationY = (1f - t) * 56f
                             },
                     ) {
                         QueueExpandedHeader(
@@ -760,8 +763,8 @@ fun NowPlayingScreen(
                         .weight(if (landscapeLayout) 1f else 0.68f)
                         .fillMaxWidth()
                         .graphicsLayer {
-                            alpha = (1f - qp * 1.05f).coerceIn(0f, 1f)
-                            translationY = -qp * 48f
+                            // Léger slide sans assombrir (évite lag + grisé)
+                            translationY = -qp * 24f
                         },
                 ) {
                 LazyColumn(
@@ -903,13 +906,19 @@ fun NowPlayingScreen(
                                         fontWeight = FontWeight.Bold,
                                         color = PlayerFg,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Clip,
+                                        overflow = TextOverflow.Ellipsis,
                                         textAlign = TextAlign.Start,
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .basicMarquee(
-                                                iterations = Int.MAX_VALUE,
-                                                initialDelayMillis = 1200,
+                                            .then(
+                                                if (sheetVisible && !queueInteractive) {
+                                                    Modifier.basicMarquee(
+                                                        iterations = 3,
+                                                        initialDelayMillis = 1_800,
+                                                    )
+                                                } else {
+                                                    Modifier
+                                                },
                                             ),
                                     )
                                     if (onOpenArtist != null) {
@@ -919,25 +928,15 @@ fun NowPlayingScreen(
                                             color = PlayerMuted,
                                             style = MaterialTheme.typography.bodyLarge,
                                             maxLines = 1,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .basicMarquee(
-                                                    iterations = Int.MAX_VALUE,
-                                                    initialDelayMillis = 1600,
-                                                ),
+                                            modifier = Modifier.fillMaxWidth(),
                                         )
                                     } else {
                                         Text(
                                             track.artistLine(),
                                             color = PlayerMuted,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Clip,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .basicMarquee(
-                                                    iterations = Int.MAX_VALUE,
-                                                    initialDelayMillis = 1600,
-                                                ),
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.fillMaxWidth(),
                                         )
                                     }
                                 }
@@ -1975,13 +1974,11 @@ private fun QueueExpandedHeader(
                 Text(
                     track.title,
                     maxLines = 1,
-                    overflow = TextOverflow.Clip,
+                    overflow = TextOverflow.Ellipsis,
                     color = PlayerFg,
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000),
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
                     track.artistLine(),
@@ -2689,23 +2686,19 @@ private fun QueueTrackRow(
                 Text(
                     track.title,
                     maxLines = 1,
-                    overflow = TextOverflow.Clip,
+                    overflow = TextOverflow.Ellipsis,
                     color = if (highlighted) MaterialTheme.colorScheme.primary else PlayerFg,
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 900),
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Row {
                     Text(
                         track.artistLine(),
                         maxLines = 1,
-                        overflow = TextOverflow.Clip,
+                        overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
                         color = PlayerMuted,
-                        modifier = Modifier
-                            .weight(1f, fill = false)
-                            .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1200),
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     track.durationLabel()?.let {
                         Text(" · $it", style = MaterialTheme.typography.bodySmall, color = PlayerMuted)

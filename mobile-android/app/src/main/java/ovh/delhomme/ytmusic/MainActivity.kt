@@ -1138,11 +1138,10 @@ private fun MainTabs(
     }
 
     LaunchedEffect(playerUi.playing, playerUi.track?.id, expanded, playerSheetMounted) {
-        // NowPlaying (monté) gère son tick — éviter double tick / travail inutile
-        if (playerSheetMounted) return@LaunchedEffect
+        // Tick mini-bar seulement si NowPlaying n’est pas ouvert (évite double travail)
+        if (playerSheetMounted && expanded) return@LaunchedEffect
         while (playerUi.playing && playerUi.track != null) {
             player.tick()
-            // Mini-bar : tick plus lent = moins de recompositions / batterie
             delay(if (expanded) 500 else 900)
         }
     }
@@ -1506,12 +1505,12 @@ private fun MainTabs(
     // Garde NowPlaying en composition une fois ouvert — évite remount / rebuffer à chaque expand
     val sheetAlpha by animateFloatAsState(
         targetValue = if (expanded) 1f else 0f,
-        animationSpec = tween(220),
+        animationSpec = tween(160),
         label = "np-alpha",
     )
     val sheetSlide by animateFloatAsState(
         targetValue = if (expanded) 0f else 1f,
-        animationSpec = tween(240),
+        animationSpec = tween(180),
         label = "np-slide",
     )
     if (playerSheetMounted) {
