@@ -566,6 +566,7 @@ private fun QuickAccessHomeCard(
             HorizontalPager(
                 state = pagerState,
                 contentPadding = PaddingValues(horizontal = 10.dp),
+                pageSpacing = 10.dp,
                 modifier = Modifier.fillMaxWidth(),
             ) { page ->
                 val slots = pages.getOrElse(page) { emptyList() }
@@ -573,6 +574,7 @@ private fun QuickAccessHomeCard(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    // Aléatoire en tête de la 1ʳᵉ page pour un espacement homogène avec les pins
                     slots.forEach { slot ->
                         Box(Modifier.weight(1f)) {
                             when (slot) {
@@ -659,8 +661,9 @@ private sealed class QuickAccessSlot {
 private fun buildQuickAccessPages(pins: List<TrackDto>): List<List<QuickAccessSlot>> {
     if (pins.isEmpty()) return listOf(listOf(QuickAccessSlot.Shuffle))
     val pages = mutableListOf<List<QuickAccessSlot>>()
+    // Page 1 : Aléatoire + 2 pins (même gap 10.dp partout, y compris après Aléatoire)
     val firstPins = pins.take(2).map { QuickAccessSlot.Pin(it) }
-    pages += firstPins + QuickAccessSlot.Shuffle
+    pages += listOf(QuickAccessSlot.Shuffle) + firstPins
     var i = 2
     while (i < pins.size) {
         pages += pins.subList(i, minOf(i + 3, pins.size)).map { QuickAccessSlot.Pin(it) }

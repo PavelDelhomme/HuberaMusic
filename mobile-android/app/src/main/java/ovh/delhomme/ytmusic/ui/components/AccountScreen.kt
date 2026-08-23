@@ -257,6 +257,17 @@ fun AccountScreen(
                         onClick = onOpenYtmImport,
                     )
                 }
+            } else {
+                // Toujours afficher la ligne (évite UI « vide » si callback omis)
+                item {
+                    val linked = user?.ytmLinked == true || ytmLinked
+                    AccountRow(
+                        icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
+                        title = if (linked) "Compte Google" else "Connecter Google",
+                        subtitle = "Indisponible dans cette session — rouvre Compte depuis Accueil",
+                        onClick = {},
+                    )
+                }
             }
             item {
                 AccountRow(
@@ -299,7 +310,10 @@ fun AccountScreen(
                     icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
                     title = "API & logs",
                     subtitle = "${container.apiEnvLabel()} · ${container.resolvedApiBase()}",
-                    onClick = { onOpenDebugLogs?.invoke() },
+                    onClick = {
+                        onOpenDebugLogs?.invoke()
+                            ?: Toast.makeText(context, "Ouvre Compte depuis Accueil", Toast.LENGTH_SHORT).show()
+                    },
                 )
             }
 
@@ -341,8 +355,8 @@ fun AccountScreen(
                 )
             }
 
-            // Marge sous mini-lecteur / nav pour pouvoir scroller jusqu’à déconnexion
-            item { Spacer(Modifier.height(96.dp)) }
+            // Marge sous mini-lecteur / nav — scroll jusqu’à déconnexion + version sur petits écrans
+            item { Spacer(Modifier.height(140.dp)) }
         }
     }
 
