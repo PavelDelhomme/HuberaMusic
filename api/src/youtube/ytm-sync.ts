@@ -532,16 +532,19 @@ export async function startYtmDeviceOauth(userId: string) {
   };
 }
 
+/** Statut OAuth appareil user (pas cookies). Pending d’abord, sinon tokens sauvés. */
 export function getYtmOauthStatus(userId: string) {
-  const account = getYtmCredentials(userId);
-  if (account) return { status: 'connected' as const };
   const pending = pendingOauth.get(userId);
-  if (!pending) return { status: 'idle' as const };
-  if (pending.error) return { status: 'error' as const, error: pending.error };
-  if (pending.done) return { status: 'connected' as const };
-  return {
-    status: 'pending' as const,
-    verificationUrl: pending.verificationUrl,
-    userCode: pending.userCode,
-  };
+  if (pending) {
+    if (pending.error) return { status: 'error' as const, error: pending.error };
+    if (pending.done) return { status: 'connected' as const };
+    return {
+      status: 'pending' as const,
+      verificationUrl: pending.verificationUrl,
+      userCode: pending.userCode,
+    };
+  }
+  const creds = getYtmCredentials(userId);
+  if (creds?.oauth) return { status: 'connected' as const };
+  return { status: 'idle' as const };
 }

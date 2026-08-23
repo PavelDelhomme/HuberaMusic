@@ -13,8 +13,9 @@
 | 2024–2025 | PWA web + API Express ; sync bibliothèque YouTube Music (import Google) |
 | 2025 | Client Android natif Kotlin + Compose + Media3 (remplace WebView / Capacitor) |
 | 2025–2026 | Flavors **prod** (`p+`) / **dev** (`d+`) ; Nothing = prod, Samsung = dev LAN |
-| 2026 | OAuth TV VPS — flux audio sans PC local ; télémétrie mail **PLM** |
+| 2026-08 | OAuth TV VPS — flux audio sans PC local ; télémétrie mail **PLM** |
 | 2026-08 | Stabilisation lecteur Nothing : EOS, prefetch non bloquant, offline sans saturer `/api/stream`, idle BG 20 min |
+| 2026-08 | Compte Google Android : OAuth appareil (Chrome, sans MDP) + session YTM ; doc clients `docs/YTM-GOOGLE-CLIENTS.md` |
 
 ## Package Java `ovh.delhomme.ytmusic`
 
