@@ -638,21 +638,28 @@ fun NowPlayingScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
-                        .weight(if (landscapeLayout || queueInteractive) 1f else 0.62f)
+                        .weight(if (landscapeLayout || queueInteractive) 1f else 0.68f)
                         .fillMaxWidth()
                         .graphicsLayer {
                             alpha = (1f - qp * 1.05f).coerceIn(0f, 1f)
                             translationY = -qp * 48f
                         },
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    userScrollEnabled = (qp < 0.45f && landscapeLayout) || showLyrics,
+                    userScrollEnabled = qp < 0.45f || showLyrics,
                 ) {
                     item {
                         val landscape = landscapeLayout
+                        // Petits écrans (Nothing, etc.) : cover plus basse pour laisser seek + transport visibles
                         val coverH = if (landscape) {
                             (screenHeightDp() * 0.62f).dp.coerceIn(110.dp, 200.dp)
                         } else {
-                            (screenHeightDp() * 0.34f).dp.coerceIn(200.dp, 272.dp)
+                            val h = screenHeightDp()
+                            val frac = when {
+                                h < 700 -> 0.26f
+                                h < 780 -> 0.30f
+                                else -> 0.34f
+                            }
+                            (h * frac).dp.coerceIn(160.dp, 272.dp)
                         }
                         val lyricsH = if (landscape) {
                             (screenHeightDp() * 0.72f).dp.coerceIn(130.dp, 240.dp)
@@ -1330,7 +1337,7 @@ fun NowPlayingScreen(
                         onQueueDrag = ::onQueueDrag,
                         onQueueDragEnd = { settleQueue(it) },
                         modifier = Modifier
-                            .weight(0.38f)
+                            .weight(0.32f)
                             .fillMaxWidth()
                             .navigationBarsPadding(),
                     )
@@ -1511,34 +1518,36 @@ private fun PortraitQueuePreview(
         val target = ui.queueIndex.coerceIn(0, ui.queue.lastIndex)
         runCatching { previewList.scrollToItem(target.coerceAtLeast(0)) }
     }
-    LazyColumn(
-        modifier = modifier.nestedScroll(blockParentDismiss),
-        state = previewList,
-    ) {
-        item {
-            QueueSectionHeader(
-                title = "File d'attente",
-                canClear = ui.queue.size > 1,
-                onExpand = onExpand,
-                onSave = onSave,
-                onClear = {
-                    player.clearUpcomingFromQueue()
-                    Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
-                },
-                onStartMix = {
-                    val t = ui.track ?: return@QueueSectionHeader
-                    scope.launch {
-                        val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
-                        if (mix.isNotEmpty()) {
-                            player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                            Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
-                        }
+    // Header Mix sticky hors LazyColumn — reste visible pendant le scroll
+    Column(modifier = modifier.nestedScroll(blockParentDismiss)) {
+        QueueSectionHeader(
+            title = ui.track?.title?.ifBlank { null } ?: "File d'attente",
+            canClear = ui.queue.size > 1,
+            onExpand = onExpand,
+            onSave = onSave,
+            onClear = {
+                player.clearUpcomingFromQueue()
+                Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
+            },
+            onStartMix = {
+                val t = ui.track ?: return@QueueSectionHeader
+                scope.launch {
+                    val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
+                    if (mix.isNotEmpty()) {
+                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
                     }
-                },
-                onQueueDrag = onQueueDrag,
-                onQueueDragEnd = onQueueDragEnd,
-            )
-        }
+                }
+            },
+            onQueueDrag = onQueueDrag,
+            onQueueDragEnd = onQueueDragEnd,
+        )
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = false),
+            state = previewList,
+        ) {
         val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
         if (playedBefore.isNotEmpty()) {
             item {
@@ -1654,6 +1663,7 @@ private fun PortraitQueuePreview(
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
+    }
     }
 }
 
@@ -2100,10 +2110,10 @@ private fun QueueExpandedBody(
         }
     }
 
-    // Scroll file = liste uniquement. Repli via chevron / poignée header, jamais via overscroll.
+    // Scroll file = liste uniquement. Sticky : Mix + actions, puis onglets, puis liste.
     Column(
         modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .pointerInput(panelTab) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
@@ -2118,6 +2128,54 @@ private fun QueueExpandedBody(
                 )
             },
     ) {
+        // Toujours visible (File + Similaires) : Mix / vider / enregistrer
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Mix à partir de",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = PlayerMuted,
+                )
+                Text(
+                    ui.track?.title?.ifBlank { null } ?: "File d'attente",
+                    fontWeight = FontWeight.SemiBold,
+                    color = PlayerFg,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (ui.queue.size > 1) {
+                IconButton(onClick = onClear) {
+                    Icon(
+                        Icons.Default.ClearAll,
+                        contentDescription = "Vider la file",
+                        tint = PlayerFg,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+            IconButton(onClick = onStartMix) {
+                Icon(
+                    MixIcon,
+                    contentDescription = "Lancer un mix",
+                    tint = SeekRed,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            IconButton(onClick = onSave) {
+                Icon(
+                    Icons.Default.Save,
+                    contentDescription = "Enregistrer la file",
+                    tint = PlayerFg,
+                )
+            }
+        }
+
         Row(
             Modifier
                 .fillMaxWidth()
@@ -2139,40 +2197,12 @@ private fun QueueExpandedBody(
         }
 
         if (panelTab == 0) {
-            Row(
-                Modifier
+            LazyColumn(
+                modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 0.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.End,
+                    .weight(1f),
+                state = listState,
             ) {
-                if (ui.queue.size > 1) {
-                    IconButton(onClick = onClear) {
-                        Icon(
-                            Icons.Default.ClearAll,
-                            contentDescription = "Vider la file",
-                            tint = PlayerFg,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-                IconButton(onClick = onStartMix) {
-                    Icon(
-                        MixIcon,
-                        contentDescription = "Lancer un mix",
-                        tint = SeekRed,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                IconButton(onClick = onSave) {
-                    Icon(
-                        Icons.Default.Save,
-                        contentDescription = "Enregistrer la file",
-                        tint = PlayerFg,
-                    )
-                }
-            }
-            LazyColumn(modifier.fillMaxSize(), state = listState) {
                 if (playedBefore.isNotEmpty()) {
                     item {
                         Text(
@@ -2279,7 +2309,13 @@ private fun QueueExpandedBody(
             }
         } else {
             // Découverte type YTM — cache par titre + scroll infini
-            LazyColumn(Modifier.fillMaxSize().navigationBarsPadding(), state = similarListState) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .navigationBarsPadding(),
+                state = similarListState,
+            ) {
                 item {
                     Row(
                         Modifier
