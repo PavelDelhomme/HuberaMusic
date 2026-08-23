@@ -15,7 +15,7 @@ export type VisualResolve = {
 
 const cache = new Map<string, { at: number; value: VisualResolve }>();
 const TTL_MS = 60 * 60 * 1000;
-const PROBE_MS = 8_000;
+const PROBE_MS = 15_000;
 
 function normalize(s: string): string {
   return s
@@ -152,6 +152,20 @@ export async function resolveVisualVideo(
         cache.set(id, { at: Date.now(), value });
         return value;
       }
+    }
+    // Probe KO (souvent 403 GV côté VPS) — renvoie quand même le meilleur candidat :
+    // le stream vidéo a un fallback yt-dlp pipe.
+    if (ranked[0]) {
+      const t = ranked[0].t;
+      const value: VisualResolve = {
+        audioId: id,
+        visualId: t.id,
+        source: 'search',
+        title: t.title || title || undefined,
+        artist: artistLine(t) || artist || undefined,
+      };
+      cache.set(id, { at: Date.now(), value });
+      return value;
     }
   } catch (err) {
     console.warn('[visual-resolve] search failed', id, err);
