@@ -1692,17 +1692,20 @@ private class YtmForwardingPlayer(
             }
             exo.hasNextMediaItem() && !(offline && store != null) -> {
                 exo.seekToNextMediaItem()
-                exo.prepare()
+                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
+                exo.playWhenReady = true
                 exo.play()
             }
             exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 0 -> {
                 exo.seekTo(/* mediaItemIndex */ 0, /* positionMs */ 0L)
-                exo.prepare()
+                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
+                exo.playWhenReady = true
                 exo.play()
             }
             exo.mediaItemCount > 1 && !(offline && store != null) -> {
                 exo.seekTo(nextIdx, 0L)
-                exo.prepare()
+                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
+                exo.playWhenReady = true
                 exo.play()
             }
             offline && store != null -> {

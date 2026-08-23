@@ -457,7 +457,6 @@ fun TrackActionsSheet(
             SheetAction(
                 if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                 if (songInLibrary) "Dans la bibliothèque" else "Enregistrer dans la bibliothèque",
-                if (songInLibrary) "Retirer (sans toucher au J'aime)" else "Sans ajouter aux J'aime",
             ) {
                 val next = !songInLibrary
                 songInLibrary = next
