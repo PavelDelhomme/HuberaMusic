@@ -2542,7 +2542,13 @@ app.put('/api/session/state', accountRequired, (req, res) => {
 const clientDist = join(ROOT, 'web', 'dist');
 if (existsSync(clientDist)) {
   app.use(express.static(clientDist));
-  app.get(/.*/, (_req, res) => {
+  // Ne jamais servir le SPA pour /api ou well-known (sinon 200 HTML sur routes API manquantes)
+  app.get(/.*/, (req, res) => {
+    const p = req.path || '';
+    if (p.startsWith('/api/') || p.startsWith('/.well-known/') || p.startsWith('/ws')) {
+      res.status(404).json({ error: 'not found', path: p });
+      return;
+    }
     res.sendFile(join(clientDist, 'index.html'));
   });
 }
