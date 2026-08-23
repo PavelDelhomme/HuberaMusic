@@ -28,6 +28,8 @@ import java.util.concurrent.TimeUnit
 object StreamPrefetcher {
     /** ~10 s audio typique YT (~160–256 kb/s) + marge conteneur. */
     const val HEAD_3S = 1_400L * 1024L
+    /** Titre suivant pendant lecture — assez pour un skip quasi immédiat. */
+    private const val HEAD_NEXT_PLAYING = 4_200L * 1024L
     /** Tête générique Wi‑Fi (~1.5 Mo ≈ ~45–60 s audio). */
     private const val HEAD_WIFI = 1_800 * 1024L
     /** Titre suivant Wi‑Fi. */
@@ -276,8 +278,9 @@ object StreamPrefetcher {
             val unmetered = isUnmetered()
             val bytes = when {
                 !unmetered -> if (dist == 1) HEAD_NEXT_METERED else HEAD_3S
-                playing && dist == 1 -> (2_800 * 1024L).coerceAtMost(HEAD_NEAR_WIFI)
-                playing && dist == 2 -> HEAD_3S + 550 * 1024L
+                // Pendant lecture : le suivant doit être le plus chaud (pas plafonné à HEAD_NEAR)
+                playing && dist == 1 -> HEAD_NEXT_PLAYING
+                playing && dist == 2 -> HEAD_NEAR_WIFI
                 playing && dist <= 4 -> HEAD_3S + 350 * 1024L
                 !playing && dist == 1 -> HEAD_NEXT_WIFI
                 !playing && dist <= 3 -> HEAD_NEAR_WIFI
@@ -306,9 +309,10 @@ object StreamPrefetcher {
         queueIds: List<String>,
         fromIndex: Int,
         count: Int = 5,
+        ignoreQuiet: Boolean = false,
     ) {
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
-        if (isQuiet()) return
+        if (!ignoreQuiet && isQuiet()) return
         val idx = fromIndex.coerceIn(0, queueIds.lastIndex.coerceAtLeast(0))
         val playing = isPlaybackActive()
         val unmetered = isUnmetered()
@@ -322,8 +326,8 @@ object StreamPrefetcher {
                 !unmetered -> if (i == 0) HEAD_NEXT_METERED else HEAD_3S
                 !playing && i == 0 -> HEAD_NEXT_WIFI
                 !playing && i <= 2 -> HEAD_NEAR_WIFI
-                playing && i == 0 -> (2_600 * 1024L).coerceAtMost(HEAD_NEAR_WIFI)
-                playing && i == 1 -> HEAD_3S + 450 * 1024L
+                playing && i == 0 -> HEAD_NEXT_PLAYING
+                playing && i == 1 -> HEAD_NEAR_WIFI
                 else -> HEAD_3S
             }
             PlayerCache.prefetchHead(YtMusicApp.instance, url, id, bytes)

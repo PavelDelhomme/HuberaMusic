@@ -1687,18 +1687,22 @@ private class YtmForwardingPlayer(
             offline && store != null && nextIdx != cur &&
                 store.has(PlaybackService.Holder.queue.getOrNull(nextIdx)?.id.orEmpty()) -> {
                 exo.seekTo(nextIdx, 0L)
+                exo.prepare()
                 exo.play()
             }
             exo.hasNextMediaItem() && !(offline && store != null) -> {
                 exo.seekToNextMediaItem()
+                exo.prepare()
                 exo.play()
             }
             exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 0 -> {
                 exo.seekTo(/* mediaItemIndex */ 0, /* positionMs */ 0L)
+                exo.prepare()
                 exo.play()
             }
             exo.mediaItemCount > 1 && !(offline && store != null) -> {
                 exo.seekTo(nextIdx, 0L)
+                exo.prepare()
                 exo.play()
             }
             offline && store != null -> {
@@ -1726,8 +1730,13 @@ private class YtmForwardingPlayer(
         if (queue.isEmpty()) return
         val api = PlaybackService.Holder.resolvedApiBase()
         StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 6, behind = 0)
-        StreamPrefetcher.prefetchUpcomingHeadsTiered(api, queue.map { it.id }, index, count = 5)
-        StreamPrefetcher.prefetchUpcomingHeads(api, queue.map { it.id }, index, count = 3)
+        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+            api,
+            queue.map { it.id },
+            index,
+            count = 5,
+            ignoreQuiet = true,
+        )
         CoverPrefetcher.warmCovers(queue, index, ahead = 3, behind = 0)
     }
 
@@ -1749,7 +1758,7 @@ fun ExoPlayer.playTracks(baseStreamUrl: (String) -> String, tracks: List<TrackDt
     val idx = startIndex.coerceIn(0, playable.lastIndex)
     PlaybackService.Holder.queue = playable
     PlaybackService.Holder.index = idx
-    StreamPrefetcher.quietPrefetch(600L)
+    StreamPrefetcher.quietPrefetch(320L)
     val current = playable.getOrNull(idx)
     if (current != null && current.id.length == 11) {
         StreamPrefetcher.warmTrackFormatOnly(PlaybackService.Holder.resolvedApiBase(), current.id)
