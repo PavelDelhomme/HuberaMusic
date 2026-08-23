@@ -40,6 +40,11 @@ services:
       SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
       SMTP_SECURE: ${SMTP_SECURE:-1}
       SMTP_USE_SSL: ${SMTP_USE_SSL:-1}
+      # Stream : laisser vides en prod VPS-only (OAuth TV + OAuth user sur volume).
+      # Opt-in relais maison : ALLOW_STREAM_UPSTREAM=1 + link-home-stream.sh
+      # FALLBACK=1 → si le PC coupe, le VPS reprend (évite lecture morte après update).
+      ALLOW_STREAM_UPSTREAM: ${ALLOW_STREAM_UPSTREAM:-}
+      STREAM_UPSTREAM_FALLBACK: ${STREAM_UPSTREAM_FALLBACK:-1}
     volumes:
       - ytmusic_data:/app/data
     networks:

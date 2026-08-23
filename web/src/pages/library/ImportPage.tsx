@@ -157,10 +157,10 @@ export function ImportPage() {
             <h2 className="font-display text-lg font-semibold">Compte YouTube Music</h2>
           </div>
           <p className="mb-4 text-sm text-yt-muted">
-            Sur le téléphone : un bouton « Connecter Google » dans l’app (connexion dans la page,
-            rien à coller). Ici sur le web, le navigateur n’autorise pas de récupérer la session
-            YouTube tout seul — colle les cookies une fois. Compte Google <strong>gratuit</strong>,
-            Premium non requis.
+            Mobile : Compte → Compte Google → « Lier Google (compte déjà sur le téléphone) » (OAuth
+            appareil, sans MDP), puis session YouTube Music pour la biblio. Web : code appareil +
+            cookies ci-dessous. Compte Google <strong>gratuit</strong>, Premium non requis. Voir{' '}
+            <code className="text-xs">docs/YTM-GOOGLE-CLIENTS.md</code>.
           </p>
 
           {account?.hint && (
@@ -248,53 +248,18 @@ export function ImportPage() {
               )}
 
               <div className="rounded-xl border border-yt-border bg-yt-bg p-4">
-                <h3 className="mb-2 text-sm font-medium text-white">1. Coller les cookies (requis)</h3>
-                <ol className="mb-3 list-decimal space-y-1 pl-4 text-xs text-yt-muted">
-                  <li>
-                    Ouvre{' '}
-                    <a
-                      href="https://music.youtube.com"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-yt-red underline"
-                    >
-                      music.youtube.com
-                    </a>{' '}
-                    connecté à ton compte Google
-                  </li>
-                  <li>F12 → onglet Réseau → recharge la page</li>
-                  <li>Clique une requête vers music.youtube.com (ex. browse)</li>
-                  <li>En-têtes → copie toute la valeur de Cookie (SAPISID / __Secure-1PSID…)</li>
-                </ol>
-                <textarea
-                  value={cookie}
-                  onChange={(e) => setCookie(e.target.value)}
-                  rows={4}
-                  className="w-full rounded-xl border border-yt-border bg-yt-elevated px-3 py-2 text-xs outline-none"
-                  placeholder="SID=…; HSID=…; SSID=…; APISID=…; SAPISID=…; __Secure-1PSID=…"
-                />
-                <button
-                  type="button"
-                  disabled={ytmBusy || cookie.length < 20}
-                  className="mt-2 inline-flex items-center gap-2 rounded-full bg-yt-red px-4 py-2 text-sm font-medium disabled:opacity-50"
-                  onClick={saveCookiesAndSync}
-                >
-                  {ytmBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  Enregistrer & synchroniser
-                </button>
-              </div>
-
-              <details className="rounded-xl border border-yt-border bg-yt-bg p-3 text-sm">
-                <summary className="cursor-pointer text-yt-muted">
-                  Optionnel : code appareil Google (ne suffit pas pour la biblio)
-                </summary>
-                <p className="mt-2 text-xs text-yt-muted">
-                  Utile pour d’autres actions, mais Google renvoie 400 sur getLibrary sans cookies.
+                <h3 className="mb-2 text-sm font-medium text-white">
+                  1. Lier Google (code appareil — lecture)
+                </h3>
+                <p className="mb-2 text-xs text-yt-muted">
+                  Même flux que l’app Android : ouvre google.com/device, choisis ton compte Google
+                  (souvent déjà connecté), entre le code. Utile pour des streams stables depuis le VPS.
+                  Détail : docs/YTM-GOOGLE-CLIENTS.md
                 </p>
                 <button
                   type="button"
                   disabled={ytmBusy}
-                  className="mt-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
+                  className="rounded-full bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
                   onClick={() => {
                     setYtmBusy(true);
                     setYtmErr('');
@@ -332,7 +297,44 @@ export function ImportPage() {
                     </div>
                   </div>
                 )}
-              </details>
+              </div>
+
+              <div className="rounded-xl border border-yt-border bg-yt-bg p-4">
+                <h3 className="mb-2 text-sm font-medium text-white">2. Coller les cookies (biblio)</h3>
+                <ol className="mb-3 list-decimal space-y-1 pl-4 text-xs text-yt-muted">
+                  <li>
+                    Ouvre{' '}
+                    <a
+                      href="https://music.youtube.com"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-yt-red underline"
+                    >
+                      music.youtube.com
+                    </a>{' '}
+                    connecté à ton compte Google
+                  </li>
+                  <li>F12 → onglet Réseau → recharge la page</li>
+                  <li>Clique une requête vers music.youtube.com (ex. browse)</li>
+                  <li>En-têtes → copie toute la valeur de Cookie (SAPISID / __Secure-1PSID…)</li>
+                </ol>
+                <textarea
+                  value={cookie}
+                  onChange={(e) => setCookie(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-xl border border-yt-border bg-yt-elevated px-3 py-2 text-xs outline-none"
+                  placeholder="SID=…; HSID=…; SSID=…; APISID=…; SAPISID=…; __Secure-1PSID=…"
+                />
+                <button
+                  type="button"
+                  disabled={ytmBusy || cookie.length < 20}
+                  className="mt-2 inline-flex items-center gap-2 rounded-full bg-yt-red px-4 py-2 text-sm font-medium disabled:opacity-50"
+                  onClick={saveCookiesAndSync}
+                >
+                  {ytmBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Enregistrer & synchroniser
+                </button>
+              </div>
 
               {account?.connected && (
                 <button

@@ -1,5 +1,7 @@
 package ovh.delhomme.ytmusic.ui.importytm
 
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -13,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
@@ -36,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -64,6 +68,8 @@ fun YtmImportScreen(
     var showLogin by remember { mutableStateOf(false) }
     var showPaste by remember { mutableStateOf(false) }
     var cookie by remember { mutableStateOf("") }
+    var oauthCode by remember { mutableStateOf<String?>(null) }
+    var oauthUrl by remember { mutableStateOf<String?>(null) }
 
     fun refresh() {
         scope.launch {
@@ -147,6 +153,86 @@ fun YtmImportScreen(
         }
     }
 
+    fun openVerificationUrl(url: String) {
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onFailure {
+            error = "Impossible d’ouvrir le navigateur — saisis le code sur google.com/device"
+            AppLog.e("ytm", "open device url", it)
+        }
+    }
+
+    /** OAuth appareil : réutilise le Google déjà sur le téléphone (Chrome), sans MDP dans la WebView. */
+    fun startDeviceOauth(openBrowser: Boolean = true) {
+        busy = true
+        error = null
+        message = "Préparation du code Google…"
+        scope.launch {
+            try {
+                container.ensureFreshToken()
+                val started = container.api.ytmConnectOauth()
+                val url = started.verificationUrl?.ifBlank { null } ?: "https://www.google.com/device"
+                val code = started.userCode?.trim().orEmpty()
+                if (code.isEmpty()) {
+                    error = "Pas de code Google — réessaie"
+                    busy = false
+                    return@launch
+                }
+                oauthUrl = url
+                oauthCode = code
+                message = "Choisis le compte Google sur le téléphone, entre le code, sans mot de passe."
+                if (openBrowser) openVerificationUrl(url)
+                Toast.makeText(context, "Code : $code", Toast.LENGTH_LONG).show()
+
+                repeat(90) {
+                    delay(2_000)
+                    val st = container.api.ytmOauthStatus()
+                    when (st.status) {
+                        "connected" -> {
+                            account = container.api.ytmStatus().account
+                            oauthCode = null
+                            oauthUrl = null
+                            message =
+                                if (account?.canSyncLibrary == true) {
+                                    "OAuth Google OK — lecture + biblio prêtes"
+                                } else {
+                                    "OAuth Google OK — pour likes/playlists, lance aussi « Session YouTube Music »"
+                                }
+                            Toast.makeText(context, "Google lié (OAuth)", Toast.LENGTH_SHORT).show()
+                            if (account?.canSyncLibrary == true) {
+                                waitForLibrarySync(System.currentTimeMillis())
+                            }
+                            busy = false
+                            return@launch
+                        }
+                        "error" -> {
+                            error = st.error ?: "Échec liaison Google"
+                            busy = false
+                            return@launch
+                        }
+                        else -> {
+                            message = "En attente de validation sur google.com/device…"
+                        }
+                    }
+                }
+                message = "Toujours en attente — rouvre le lien et entre le code, ou réessaie."
+            } catch (e: Exception) {
+                error = e.apiMessage()
+                AppLog.e("ytm", "oauth ${e.apiMessage()}", e)
+                TelemetryReporter.report(
+                    level = "error",
+                    kind = "android.ytm.oauth",
+                    message = e.apiMessage(),
+                    stack = e.stackTraceToString(),
+                    force = true,
+                )
+            }
+            busy = false
+        }
+    }
+
     if (showLogin) {
         YtmGoogleLoginWebView(
             onCaptured = {
@@ -179,20 +265,29 @@ fun YtmImportScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Un bouton : tu te connectes à Google dans l’app, PLM récupère tout seul " +
-                    "likes, playlists et albums. Compte Google gratuit — YouTube Premium n’est pas requis.",
+                "Deux étapes stables (survivent aux mises à jour) : " +
+                    "1) OAuth appareil = lecture fiable sans proxy maison. " +
+                    "2) Session YouTube Music = likes / playlists. " +
+                    "Compte Google gratuit — Premium non requis.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             val acc = account
             val canSync = acc?.canSyncLibrary == true
+            val hasOauth = acc?.hasOauth == true
 
-            if (canSync) {
+            if (acc?.connected == true) {
                 Text(
                     buildString {
-                        append("Google connecté")
-                        acc?.lastSyncAt?.let {
+                        append("Google lié")
+                        when {
+                            hasOauth && canSync -> append(" · OAuth + biblio")
+                            hasOauth -> append(" · OAuth (lecture)")
+                            canSync -> append(" · session YTM (biblio)")
+                            else -> append(" · incomplet")
+                        }
+                        acc.lastSyncAt?.let {
                             append(" · ")
                             append(DateFormat.getDateTimeInstance().format(Date(it)))
                         }
@@ -200,16 +295,85 @@ fun YtmImportScreen(
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold,
                 )
-                if (acc?.syncRunning == true) {
+                if (acc.syncRunning == true) {
                     Text(
                         acc.hint ?: "Import de la bibliothèque en cours…",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
-                acc?.lastSyncSummary?.let {
+                acc.lastSyncSummary?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            }
+
+            if (!hasOauth) {
+                Button(
+                    enabled = !busy,
+                    onClick = { startDeviceOauth(openBrowser = true) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Default.OpenInBrowser, contentDescription = null)
+                    Spacer(Modifier.padding(4.dp))
+                    Text("Lier Google (compte déjà sur le téléphone)")
+                }
+                Text(
+                    "Ouvre Chrome / le navigateur, choisis le compte Google du téléphone, " +
+                        "entre le code — pas besoin de retaper le mot de passe.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                OutlinedButton(
+                    enabled = !busy,
+                    onClick = { startDeviceOauth(openBrowser = true) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Relier OAuth Google")
+                }
+            }
+
+            oauthCode?.let { code ->
+                Text(
+                    "Code à saisir sur google.com/device",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    code,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = !busy,
+                        onClick = { oauthUrl?.let { openVerificationUrl(it) } },
+                    ) {
+                        Text("Rouvrir le lien")
+                    }
+                }
+            }
+
+            if (!canSync) {
+                Button(
+                    enabled = !busy,
+                    onClick = {
+                        error = null
+                        showLogin = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Session YouTube Music (biblio)")
+                }
+                Text(
+                    "WebView dans l’app : capture la session music.youtube.com pour likes / playlists. " +
+                        "Si Google redemande un login, préfère l’OAuth ci-dessus pour la lecture, " +
+                        "puis réessaie ou colle les cookies (dépannage).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         enabled = !busy,
@@ -232,80 +396,44 @@ fun YtmImportScreen(
                     OutlinedButton(
                         enabled = !busy,
                         onClick = {
-                            scope.launch {
-                                runCatching { container.api.ytmDisconnect() }
-                                    .onSuccess {
-                                        account = it.account
-                                        message = "Compte Google déconnecté"
-                                    }
-                                    .onFailure { error = it.apiMessage() }
-                            }
+                            showLogin = true
                         },
                     ) {
-                        Text("Déconnecter")
+                        Text("Rafraîchir session YTM")
                     }
                 }
+            }
+
+            if (acc?.connected == true) {
                 OutlinedButton(
                     enabled = !busy,
                     onClick = {
-                        showLogin = true
+                        scope.launch {
+                            runCatching { container.api.ytmDisconnect() }
+                                .onSuccess {
+                                    account = it.account
+                                    oauthCode = null
+                                    oauthUrl = null
+                                    message = "Compte Google déconnecté"
+                                }
+                                .onFailure { error = it.apiMessage() }
+                        }
                     },
-                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Reconnecter Google")
-                }
-            } else {
-                if (acc?.connected == true) {
-                    Text(
-                        "Liaison incomplète — reconnecte Google (un tap, sans collage).",
-                        color = MaterialTheme.colorScheme.tertiary,
-                    )
-                }
-                Button(
-                    enabled = !busy,
-                    onClick = {
-                        error = null
-                        showLogin = true
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Connecter Google")
-                }
-                Text(
-                    "Tu valides le compte dans la page Google. Dès que YouTube Music s’ouvre, " +
-                        "la bibliothèque se synchronise. Si tu restes sur Comptes Google, appuie sur Continuer.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (acc?.connected == true) {
-                    OutlinedButton(
-                        enabled = !busy,
-                        onClick = {
-                            scope.launch {
-                                runCatching { container.api.ytmDisconnect() }
-                                    .onSuccess {
-                                        account = it.account
-                                        message = "Compte Google déconnecté"
-                                    }
-                                    .onFailure { error = it.apiMessage() }
-                            }
-                        },
-                    ) {
-                        Text("Déconnecter")
-                    }
+                    Text("Déconnecter")
                 }
             }
 
             if (busy) {
                 CircularProgressIndicator(Modifier.padding(8.dp))
                 Text(
-                    "Synchronisation de la bibliothèque…",
+                    message ?: "Patiente…",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             message?.let {
-                Text(it, color = MaterialTheme.colorScheme.primary)
+                if (!busy) Text(it, color = MaterialTheme.colorScheme.primary)
             }
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error)
