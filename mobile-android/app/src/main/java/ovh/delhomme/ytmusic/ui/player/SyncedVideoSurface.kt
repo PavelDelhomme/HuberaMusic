@@ -60,7 +60,8 @@ fun SyncedVideoSurface(
     val latestPlaying by rememberUpdatedState(playing)
 
     val exo = remember {
-        val factory = PlayerCache.dataSourceFactory(context)
+        // Pas le cache audio : sinon Exo peut croire que le clip est fini / 502 stale
+        val factory = PlayerCache.videoDataSourceFactory(context)
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(factory))
             .build()
@@ -120,14 +121,15 @@ fun SyncedVideoSurface(
         }
         while (isActive) {
             val target = latestPos.coerceAtLeast(0L)
-            if (kotlin.math.abs(exo.currentPosition - target) > 250L) {
+            // Seuil large : un seek trop fréquent coupe le buffer vidéo
+            if (kotlin.math.abs(exo.currentPosition - target) > 480L) {
                 runCatching { exo.seekTo(target) }
             }
             when {
                 !latestPlaying && exo.isPlaying -> exo.pause()
                 latestPlaying && !exo.isPlaying && exo.playbackState == Player.STATE_READY -> exo.play()
             }
-            delay(250)
+            delay(320)
         }
     }
 

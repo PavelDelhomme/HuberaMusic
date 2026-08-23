@@ -525,11 +525,13 @@ class PlayerController(
         if (!nid.isNullOrBlank()) {
             val base = streamUrl("_").substringBefore("/api/stream/")
             StreamPrefetcher.warmTrackFormatOnly(base, nid)
-            StreamPrefetcher.prefetchUpcomingHeads(
+            // Skip utilisateur : ignorer quietPrefetch pour chauffer le suivant tout de suite
+            StreamPrefetcher.prefetchUpcomingHeadsTiered(
                 base,
                 PlaybackService.Holder.queue.map { it.id },
-                nextIdx,
-                count = 3,
+                p.currentMediaItemIndex,
+                count = 4,
+                ignoreQuiet = true,
             )
         }
         // REPEAT_MODE_ONE bloque le next ExoPlayer : on le désactive le temps du saut
@@ -538,14 +540,17 @@ class PlayerController(
         when {
             p.hasNextMediaItem() -> {
                 p.seekToNextMediaItem()
+                p.prepare()
                 p.play()
             }
             repeatMode == RepeatMode.All && p.mediaItemCount > 0 -> {
                 p.seekTo(0, 0L)
+                p.prepare()
                 p.play()
             }
             p.mediaItemCount > 1 -> {
                 p.seekTo(nextIdx, 0L)
+                p.prepare()
                 p.play()
             }
             else -> {
@@ -825,7 +830,7 @@ class PlayerController(
         val track = queue[index]
         val base = streamUrl("_").substringBefore("/api/stream/")
         if (track.id.length == 11) {
-            StreamPrefetcher.quietPrefetch(600L)
+            StreamPrefetcher.quietPrefetch(320L)
             StreamPrefetcher.warmTrackFormatOnly(base, track.id)
             StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, index, radius = 2)
             StreamPrefetcher.prefetchUpcomingHeadsTiered(
@@ -1305,20 +1310,26 @@ class PlayerController(
         }
         val base = streamUrl("_").substringBefore("/api/stream/")
         val currentId = window.getOrNull(idx)?.id
-        // Exo démarre tout de suite (stream progressif). Warm API en parallèle,
-        // prefetch têtes des suivants dès ~700 ms (sans voler la bande au titre courant).
-        StreamPrefetcher.quietPrefetch(600L)
+        // Exo démarre tout de suite. Quiet court puis têtes des suivants.
+        StreamPrefetcher.quietPrefetch(320L)
         if (!currentId.isNullOrBlank()) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
         }
         if (autoplay) {
-            val ahead = window.drop(idx + 1).take(3)
+            val ahead = window.drop(idx + 1).take(4)
             val startId = currentId
             scope.launch {
-                delay(700)
+                delay(350)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
                 StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 8)
+                StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                    base,
+                    window.map { it.id },
+                    idx,
+                    count = 5,
+                    ignoreQuiet = true,
+                )
                 runCatching {
                     YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
                         window.drop(idx + 1),

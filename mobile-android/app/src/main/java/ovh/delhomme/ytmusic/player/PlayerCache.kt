@@ -63,8 +63,7 @@ object PlayerCache {
         }
     }
 
-    fun dataSourceFactory(context: Context): CacheDataSource.Factory {
-        val appCtx = context.applicationContext
+    private fun httpFactory(context: Context): DefaultHttpDataSource.Factory {
         val token = runCatching {
             ovh.delhomme.ytmusic.YtMusicApp.instance.container.tokenStore.peekAccess()
         }.getOrNull()
@@ -72,17 +71,27 @@ object PlayerCache {
         if (!token.isNullOrBlank()) {
             props["Authorization"] = "Bearer $token"
         }
-        val http = DefaultHttpDataSource.Factory()
+        return DefaultHttpDataSource.Factory()
             .setUserAgent("PLM-Android")
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(12_000)
             .setReadTimeoutMs(45_000)
             .setDefaultRequestProperties(props)
-        val upstream = DefaultDataSource.Factory(appCtx, http)
+    }
+
+    fun dataSourceFactory(context: Context): CacheDataSource.Factory {
+        val appCtx = context.applicationContext
+        val upstream = DefaultDataSource.Factory(appCtx, httpFactory(appCtx))
         return CacheDataSource.Factory()
             .setCache(get(appCtx))
             .setUpstreamDataSourceFactory(upstream)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+
+    /** Vidéo progressive : pas de SimpleCache audio (évite LENGTH figé / collision clés). */
+    fun videoDataSourceFactory(context: Context): DefaultDataSource.Factory {
+        val appCtx = context.applicationContext
+        return DefaultDataSource.Factory(appCtx, httpFactory(appCtx))
     }
 
     fun cancelPrefetch() {
