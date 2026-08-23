@@ -374,7 +374,12 @@ class PlaybackService : MediaSessionService() {
                 error,
             )
             if (httpStatus != null && httpStatus >= 500) {
-                StreamPrefetcher.markStreamDown(60_000L)
+                // Coupe prefetch + DL offline : ils saturent getAudioFormat et aggravent les 502.
+                StreamPrefetcher.markStreamDown(120_000L)
+                StreamPrefetcher.cancelIdle()
+                runCatching {
+                    ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.cancelAll()
+                }
             }
             runCatching {
                 ovh.delhomme.ytmusic.debug.TelemetryReporter.reportPlayerError(
