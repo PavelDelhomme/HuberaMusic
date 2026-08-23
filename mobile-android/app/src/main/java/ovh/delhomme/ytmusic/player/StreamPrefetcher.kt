@@ -29,7 +29,7 @@ object StreamPrefetcher {
     /** ~10 s audio typique YT (~160–256 kb/s) + marge conteneur. */
     const val HEAD_3S = 1_400L * 1024L
     /** Titre suivant pendant lecture — assez pour un skip quasi immédiat. */
-    private const val HEAD_NEXT_PLAYING = 4_200L * 1024L
+    private const val HEAD_NEXT_PLAYING = 5_500L * 1024L
     /** Tête générique Wi‑Fi (~1.5 Mo ≈ ~45–60 s audio). */
     private const val HEAD_WIFI = 1_800 * 1024L
     /** Titre suivant Wi‑Fi. */
@@ -356,8 +356,26 @@ object StreamPrefetcher {
             val url = "${baseApi.trimEnd('/')}/api/stream/$id"
             val dist = kotlin.math.abs(i - c)
             val bytes = when (dist) {
-                0 -> if (playing) 2_600 * 1024L else HEAD_NEXT_WIFI.coerceAtMost(4_500 * 1024L)
-                1 -> HEAD_3S + 512 * 1024L
+                0 -> HEAD_NEXT_PLAYING
+                1 -> HEAD_NEAR_WIFI
+                2 -> HEAD_3S + 768 * 1024L
+                else -> HEAD_3S
+            }
+            PlayerCache.prefetchHead(YtMusicApp.instance, url, id, bytes)
+        }
+    }
+
+    /** Liste arbitraire (similaires, biblio visible) — chauffe les têtes sans attendre quiet. */
+    fun prefetchTrackIds(baseApi: String, trackIds: List<String>, limit: Int = 16) {
+        if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(limit)
+        if (ids.isEmpty()) return
+        warmBatch(baseApi, ids.take(MAX_WARM))
+        ids.forEachIndexed { i, id ->
+            val url = "${baseApi.trimEnd('/')}/api/stream/$id"
+            val bytes = when (i) {
+                0 -> HEAD_NEXT_PLAYING
+                1, 2 -> HEAD_NEAR_WIFI
                 else -> HEAD_3S
             }
             PlayerCache.prefetchHead(YtMusicApp.instance, url, id, bytes)
