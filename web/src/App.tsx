@@ -16,12 +16,14 @@ import { AdminPage } from './pages/account/AdminPage';
 import { VerifyEmailPage } from './pages/account/VerifyEmailPage';
 import { LoginDevicePage } from './pages/account/LoginDevicePage';
 import { WatchPage } from './pages/browse/WatchPage';
+import { InstallPage } from './pages/account/InstallPage';
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="tv" element={<TvPage />} />
+        <Route path="install" element={<InstallPage />} />
         <Route element={<Layout />}>
           <Route index element={<HomePage />} />
           <Route path="explore" element={<ExplorePage />} />

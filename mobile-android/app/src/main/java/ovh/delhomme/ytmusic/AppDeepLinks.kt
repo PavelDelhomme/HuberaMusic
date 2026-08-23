@@ -83,6 +83,7 @@ object AppDeepLinks {
             "search" -> AppDeepLink.Search
             "explore" -> AppDeepLink.Explore
             "profile", "account", "admin" -> AppDeepLink.Profile
+            "install" -> AppDeepLink.Home
             else -> {
                 // ?v=ID style
                 uri.getQueryParameter("v")?.takeIf { it.length == 11 }?.let { AppDeepLink.Watch(it) }
