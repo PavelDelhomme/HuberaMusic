@@ -122,11 +122,20 @@ export async function resolveVisualVideo(
     return value;
   }
 
+  // Probe format KO (souvent timeout OAuth) — tente quand même le même ID :
+  // le stream ?type=video a un fallback yt-dlp.
+  const sameFallback: VisualResolve = {
+    audioId: id,
+    visualId: id,
+    source: 'same',
+    title: title || undefined,
+    artist: artist || undefined,
+  };
+
   const q = [title, artist].filter(Boolean).join(' ').trim();
   if (!q) {
-    const value: VisualResolve = { audioId: id, visualId: null, source: 'none' };
-    cache.set(id, { at: Date.now(), value });
-    return value;
+    cache.set(id, { at: Date.now(), value: sameFallback });
+    return sameFallback;
   }
 
   try {
@@ -153,8 +162,7 @@ export async function resolveVisualVideo(
         return value;
       }
     }
-    // Probe KO (souvent 403 GV côté VPS) — renvoie quand même le meilleur candidat :
-    // le stream vidéo a un fallback yt-dlp pipe.
+    // Probe KO — meilleur candidat search, sinon même ID
     if (ranked[0]) {
       const t = ranked[0].t;
       const value: VisualResolve = {
@@ -171,13 +179,7 @@ export async function resolveVisualVideo(
     console.warn('[visual-resolve] search failed', id, err);
   }
 
-  const value: VisualResolve = {
-    audioId: id,
-    visualId: null,
-    source: 'none',
-    title: title || undefined,
-    artist: artist || undefined,
-  };
-  cache.set(id, { at: Date.now(), value });
-  return value;
+  // Pas de meilleur clip : même ID (stream vidéo tentera yt-dlp)
+  cache.set(id, { at: Date.now(), value: sameFallback });
+  return sameFallback;
 }

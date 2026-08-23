@@ -65,6 +65,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -282,6 +283,35 @@ fun NowPlayingScreen(
             visualVideoUrl = container.videoStreamUrl(vid)
         }.onFailure {
             visualVideoError = it.message ?: "Vidéo indisponible"
+        }
+    }
+    // Prefetch clip du titre suivant (mode vidéo) pour enchaîner sans blanc
+    LaunchedEffect(ui.track?.id, ui.queueIndex, SessionMediaMode.video, ui.queue.size) {
+        if (!SessionMediaMode.video) return@LaunchedEffect
+        val next = ui.queue.getOrNull(ui.queueIndex + 1) ?: return@LaunchedEffect
+        runCatching {
+            container.ensureFreshToken()
+            val vis = container.api.trackVisual(
+                next.id,
+                title = next.title,
+                artist = next.artistLine().takeIf { it != "Artiste" },
+                durationSeconds = next.durationSeconds,
+            )
+            val vid = vis.visualId?.takeIf { it.isNotBlank() } ?: return@runCatching
+            runCatching { container.api.streamResolveUrl(vid, "video") }
+            // Tête HTTP légère pour chauffer le CDN / proxy
+            runCatching {
+                val url = container.videoStreamUrl(vid)
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val req = okhttp3.Request.Builder()
+                        .url(url)
+                        .header("Range", "bytes=0-65535")
+                        .header("X-YTM-Client", "android")
+                        .get()
+                        .build()
+                    container.httpPlain.newCall(req).execute().close()
+                }
+            }
         }
     }
 
@@ -641,11 +671,13 @@ fun NowPlayingScreen(
                         .weight(if (landscapeLayout || queueInteractive) 1f else 0.68f)
                         .fillMaxWidth()
                         .graphicsLayer {
-                            alpha = (1f - qp * 1.05f).coerceIn(0f, 1f)
+                            // File ouverte : lecteur plein totalement masqué (évite doublons boutons)
+                            val hide = if (queueInteractive) 1f else (qp * 1.05f)
+                            alpha = (1f - hide).coerceIn(0f, 1f)
                             translationY = -qp * 48f
                         },
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    userScrollEnabled = qp < 0.45f || showLyrics,
+                    userScrollEnabled = !queueInteractive && (qp < 0.45f || showLyrics),
                 ) {
                     item {
                         val landscape = landscapeLayout
@@ -661,11 +693,7 @@ fun NowPlayingScreen(
                             }
                             (h * frac).dp.coerceIn(160.dp, 272.dp)
                         }
-                        val lyricsH = if (landscape) {
-                            (screenHeightDp() * 0.72f).dp.coerceIn(130.dp, 240.dp)
-                        } else {
-                            380.dp
-                        }
+                        val lyricsH = coverH
                         val mediaBlock: @Composable () -> Unit = {
                             Column(
                                 Modifier
@@ -1048,12 +1076,20 @@ fun NowPlayingScreen(
                                         .height(if (landscape) 24.dp else 28.dp),
                                 )
                             }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
                                 val remainingMs = (
                                     ui.durationMs - (if (scrub >= 0f) (scrub * duration).toLong() else ui.positionMs)
                                     ).coerceAtLeast(0L)
                                 Text(
                                     "-${formatMs(remainingMs)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = PlayerMuted,
+                                )
+                                Text(
+                                    formatMs(ui.durationMs.coerceAtLeast(0L)),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = PlayerMuted,
                                 )
@@ -1767,6 +1803,8 @@ private fun QueueExpandedHeader(
     modifier: Modifier = Modifier,
 ) {
     var dragVelocity by remember { mutableFloatStateOf(0f) }
+    val dur = durationMs.coerceAtLeast(1L)
+    val pos = positionMs.coerceIn(0L, dur)
     Column(
         modifier
             .fillMaxWidth()
@@ -1817,7 +1855,7 @@ private fun QueueExpandedHeader(
                     },
                 )
             }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Box(
             Modifier
@@ -1828,8 +1866,12 @@ private fun QueueExpandedHeader(
                 .background(PlayerFg.copy(alpha = (0.25f + 0.2f * progressHint).coerceIn(0.25f, 0.55f))),
         )
         Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MediaCover(track, 48.dp)
+        // Barre type mini-lecteur (pas de gros transport / seek — évite doublons)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            MediaCover(track, 44.dp)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -1838,6 +1880,7 @@ private fun QueueExpandedHeader(
                     overflow = TextOverflow.Clip,
                     color = PlayerFg,
                     fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier
                         .fillMaxWidth()
                         .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000),
@@ -1847,89 +1890,37 @@ private fun QueueExpandedHeader(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = PlayerMuted,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelMedium,
                 )
             }
-            IconButton(onClick = onCollapse) {
-                Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
+            IconButton(onClick = onSkipPrev, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(26.dp))
             }
-        }
-        if (queueTitle.isNotBlank()) {
-            Text(
-                queueTitle,
-                style = MaterialTheme.typography.labelMedium,
-                color = PlayerMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(bottom = 4.dp, start = 4.dp),
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        val dur = durationMs.coerceAtLeast(1L)
-        val pos = positionMs.coerceIn(0L, dur)
-        Slider(
-            value = pos.toFloat() / dur.toFloat(),
-            onValueChange = { onSeek((it * dur).toLong()) },
-            colors = SliderDefaults.colors(
-                thumbColor = SeekRed,
-                activeTrackColor = SeekRed,
-                inactiveTrackColor = PlayerMuted.copy(alpha = 0.35f),
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(formatMs(pos), style = MaterialTheme.typography.labelSmall, color = PlayerMuted)
-            Text(formatMs(dur), style = MaterialTheme.typography.labelSmall, color = PlayerMuted)
-        }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 2.dp, bottom = 2.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onToggleShuffle) {
-                Icon(
-                    Icons.Default.Shuffle,
-                    "Aléatoire",
-                    tint = if (shuffle) MaterialTheme.colorScheme.primary else PlayerFg,
-                )
-            }
-            IconButton(onClick = onSkipPrev) {
-                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(36.dp))
-            }
-            IconButton(onClick = onToggle) {
+            IconButton(onClick = onToggle, modifier = Modifier.size(44.dp)) {
                 Icon(
                     if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                     "Lecture",
                     tint = PlayerFg,
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(30.dp),
                 )
             }
-            IconButton(onClick = onSkipNext) {
-                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(36.dp))
+            IconButton(onClick = onSkipNext, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(26.dp))
             }
-            IconButton(onClick = onCycleRepeat) {
-                Icon(
-                    when (repeat) {
-                        RepeatMode.One -> Icons.Default.RepeatOne
-                        else -> Icons.Default.Repeat
-                    },
-                    when (repeat) {
-                        RepeatMode.Off -> "Boucle désactivée"
-                        RepeatMode.All -> "Boucler la file"
-                        RepeatMode.One -> "Boucler le titre"
-                    },
-                    tint = when (repeat) {
-                        RepeatMode.Off -> PlayerMuted
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                )
+            IconButton(onClick = onCollapse, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
             }
         }
+        Spacer(Modifier.height(6.dp))
+        LinearProgressIndicator(
+            progress = { pos.toFloat() / dur.toFloat() },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+                .clip(RoundedCornerShape(1.dp)),
+            color = SeekRed,
+            trackColor = PlayerMuted.copy(alpha = 0.28f),
+        )
     }
 }
 
