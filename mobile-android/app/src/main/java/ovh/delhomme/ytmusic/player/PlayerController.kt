@@ -127,6 +127,8 @@ class PlayerController(
     fun connect() {
         ensureService()
         PlaybackService.Holder.onSkipAtEnd = { fillThenSkipFromEnd(fromUserSkip = true) }
+        PlaybackService.Holder.onToggleShuffle = { toggleShuffle() }
+        PlaybackService.Holder.onCycleRepeat = { cycleRepeat() }
         if (controller != null || controllerFuture != null) return
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
@@ -174,9 +176,10 @@ class PlayerController(
         clearSleepTimer()
         fillJob?.cancel()
         if (PlaybackService.Holder.onSkipAtEnd != null) {
-            // ne détache que si c’est encore notre callback (évite course)
             PlaybackService.Holder.onSkipAtEnd = null
         }
+        PlaybackService.Holder.onToggleShuffle = null
+        PlaybackService.Holder.onCycleRepeat = null
         controller?.removeListener(listener)
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controller = null
@@ -975,9 +978,9 @@ class PlayerController(
 
     fun cycleRepeat() {
         repeatMode = when (repeatMode) {
-            RepeatMode.Off -> RepeatMode.All
-            RepeatMode.All -> RepeatMode.One
-            RepeatMode.One -> RepeatMode.Off
+            RepeatMode.One -> RepeatMode.All
+            RepeatMode.All -> RepeatMode.Off
+            RepeatMode.Off -> RepeatMode.One
         }
         player()?.let {
             applyRepeatShuffle(it)

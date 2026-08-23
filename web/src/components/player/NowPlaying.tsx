@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent } from 'react';
-import { ListMusic, Mic2, MoreVertical, Radio, Repeat, Repeat1, Save, Shuffle, Sparkles } from 'lucide-react';
+import { ListMusic, Mic2, MoreVertical, Pause, Play, Radio, Repeat, Repeat1, Save, Shuffle, SkipBack, SkipForward, Sparkles } from 'lucide-react';
 import { api, artistNames, getToken, thumb, type Track } from '../../api';
 import { usePlayer } from '../../store/player';
 import { useItemActions } from '../../store/itemActions';
@@ -15,6 +15,13 @@ import {
   setLyricUserOffsetMs,
 } from '../../lib/player/lyricSync';
 
+function fmtClock(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return '0:00';
+  const s = Math.floor(sec);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, '0')}`;
+}
 export type NowPlayingTab = 'queue' | 'lyrics' | 'related';
 
 const QUEUE_PAGE = 24;
@@ -390,6 +397,12 @@ export function NowPlaying({
   const repeat = usePlayer((s) => s.repeat);
   const toggleShuffle = usePlayer((s) => s.toggleShuffle);
   const cycleRepeat = usePlayer((s) => s.cycleRepeat);
+  const toggle = usePlayer((s) => s.toggle);
+  const next = usePlayer((s) => s.next);
+  const prev = usePlayer((s) => s.prev);
+  const seek = usePlayer((s) => s.seek);
+  const progress = usePlayer((s) => s.progress);
+  const duration = usePlayer((s) => s.duration);
   const topUpAutoplay = usePlayer((s) => s.topUpAutoplay);
   const openActions = useItemActions((s) => s.open);
   const audioEl = usePlayer((s) => s.audioEl);
@@ -481,7 +494,7 @@ export function NowPlaying({
     };
   }, [open, tab, current?.id]);
 
-  // Charge l’URL vidéo seulement en mode Vidéo (économe : rien en mode Titre)
+  // Charge l’URL vidéo seulement en mode Vidéo — resolve visual (fallback clip)
   useEffect(() => {
     if (!open || mediaMode !== 'video' || !current?.id) {
       setVideoUrl(null);
@@ -493,19 +506,28 @@ export function NowPlaying({
     setVideoLoading(true);
     setVideoError(null);
     setVideoUrl(null);
-    // Warm resolve + URL proxy stable (évite 403 googlevideo côté navigateur)
+    const artist = artistNames(current);
     void api
-      .streamUrl(current.id, 'video')
-      .then((r) => {
+      .trackVisual(current.id, {
+        title: current.title,
+        artist: artist || undefined,
+        durationSeconds: current.durationSeconds ?? undefined,
+      })
+      .then(async (vis) => {
+        if (cancelled) return;
+        if (!vis.visualId) {
+          setVideoError('Pas de clip vidéo pour ce titre');
+          return;
+        }
+        // Warm resolve sur l’ID visuel
+        await api.streamUrl(vis.visualId, 'video').catch(() => null);
         if (cancelled) return;
         const tok = getToken();
-        // Toujours proxy API : googlevideo direct = 403 hors IP du resolve
         setVideoUrl(
-          `/api/stream/${current.id}?type=video${
+          `/api/stream/${vis.visualId}?type=video${
             tok ? `&access_token=${encodeURIComponent(tok)}` : ''
           }`,
         );
-        void r; // warm déjà fait via streamUrl
       })
       .catch((e) => {
         if (!cancelled) setVideoError(String(e?.message || e || 'Vidéo indisponible'));
@@ -516,7 +538,7 @@ export function NowPlaying({
     return () => {
       cancelled = true;
     };
-  }, [open, mediaMode, current?.id]);
+  }, [open, mediaMode, current?.id, current?.title]);
 
   // Sync image+son : vidéo muette calée sur l’audio (pause / seek inclus)
   useEffect(() => {
@@ -731,43 +753,87 @@ export function NowPlaying({
             {tab === 'queue' && (
               <div>
                 <section>
-                    <div className="mb-2 flex items-center justify-end gap-0.5 px-1 pt-0.5">
-                      <button
-                        type="button"
-                        onClick={cycleRepeat}
-                        title={
-                          repeat === 'off'
-                            ? 'Boucle désactivée'
-                            : repeat === 'all'
-                              ? 'Boucler toute la file'
-                              : 'Boucler le titre'
-                        }
-                        className={`flex h-8 w-8 items-center justify-center rounded-full transition ${
-                          repeat !== 'off' ? 'text-yt-red' : 'text-yt-muted hover:bg-white/10 hover:text-white'
-                        }`}
-                      >
-                        {repeat === 'one' ? <Repeat1 className="h-4 w-4" /> : <Repeat className="h-4 w-4" />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={toggleShuffle}
-                        title={shuffle ? 'Aléatoire activé' : 'Aléatoire'}
-                        className={`flex h-8 w-8 items-center justify-center rounded-full transition ${
-                          shuffle ? 'text-yt-red' : 'text-yt-muted hover:bg-white/10 hover:text-white'
-                        }`}
-                      >
-                        <Shuffle className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={saveTracks.length === 0}
-                        onClick={() => setSaveOpen(true)}
-                        className="flex h-8 w-8 items-center justify-center rounded-full text-yt-muted transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-                        title="Enregistrer la file dans une playlist"
-                      >
-                        <Save className="h-4 w-4" />
-                      </button>
-                  </div>
+                    <div className="mb-3 space-y-2 px-1 pt-1">
+                      <div className="flex items-center gap-2 text-[11px] tabular-nums text-yt-muted">
+                        <span className="w-9 shrink-0">{fmtClock(progress)}</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={Math.max(1, duration || 1)}
+                          step={0.25}
+                          value={Math.min(progress, duration || 0)}
+                          onChange={(e) => seek(Number(e.target.value))}
+                          className="h-1.5 w-full cursor-pointer accent-yt-red"
+                          aria-label="Position"
+                        />
+                        <span className="w-9 shrink-0 text-right">{fmtClock(duration)}</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={toggleShuffle}
+                          title={shuffle ? 'Aléatoire activé (suite)' : 'Aléatoire (suite)'}
+                          className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
+                            shuffle ? 'text-yt-red' : 'text-yt-muted hover:bg-white/10 hover:text-white'
+                          }`}
+                        >
+                          <Shuffle className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void prev()}
+                          title="Précédent"
+                          className="flex h-10 w-10 items-center justify-center rounded-full text-white hover:bg-white/10"
+                        >
+                          <SkipBack className="h-5 w-5 fill-current" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void toggle()}
+                          title={isPlaying ? 'Pause' : 'Lecture'}
+                          className="mx-1 flex h-12 w-12 items-center justify-center rounded-full bg-white text-black hover:scale-105"
+                        >
+                          {isPlaying ? (
+                            <Pause className="h-6 w-6 fill-current" />
+                          ) : (
+                            <Play className="h-6 w-6 fill-current" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void next()}
+                          title="Suivant"
+                          className="flex h-10 w-10 items-center justify-center rounded-full text-white hover:bg-white/10"
+                        >
+                          <SkipForward className="h-5 w-5 fill-current" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cycleRepeat}
+                          title={
+                            repeat === 'one'
+                              ? 'Boucler le titre'
+                              : repeat === 'all'
+                                ? 'Boucler toute la file'
+                                : 'Boucle désactivée'
+                          }
+                          className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
+                            repeat !== 'off' ? 'text-yt-red' : 'text-yt-muted hover:bg-white/10 hover:text-white'
+                          }`}
+                        >
+                          {repeat === 'one' ? <Repeat1 className="h-4 w-4" /> : <Repeat className="h-4 w-4" />}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={saveTracks.length === 0}
+                          onClick={() => setSaveOpen(true)}
+                          className="ml-1 flex h-10 w-10 items-center justify-center rounded-full text-yt-muted transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+                          title="Enregistrer la file dans une playlist"
+                        >
+                          <Save className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
 
                   {playedBefore.length > 0 && (
                     <div className="mb-3">
