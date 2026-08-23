@@ -2076,6 +2076,27 @@ app.get('/api/library/contains', accountRequired, (req, res) => {
 
 app.get('/api/library', accountRequired, async (req, res) => {
   try {
+    // light=1 : payload réduit (10–40 titres) pour 1ʳᵉ peinture mobile
+    const light = String(req.query.light || '') === '1';
+    if (light) {
+      const full = getFullLibrary(req.userId!);
+      const lim = Math.max(10, Math.min(40, Number(req.query.limit) || 12));
+      res.json({
+        ...full,
+        songs: (full.songs || []).slice(0, lim),
+        liked: (full.liked || []).slice(0, lim),
+        history: (full.history || []).slice(0, Math.min(20, lim)),
+        albums: (full.albums || []).slice(0, lim),
+        artists: (full.artists || []).slice(0, lim),
+        mixes: (full.mixes || []).slice(0, lim),
+        playlists: (full.playlists || []).slice(0, lim),
+        partial: true,
+        totalSongs: (full.songs || []).length,
+        totalLiked: (full.liked || []).length,
+      });
+      scheduleLibraryRepair(req.userId!);
+      return;
+    }
     // Réponse immédiate — repair méta / albums en fond (E4 : ne plus bloquer 2–3 s)
     const library = getFullLibrary(req.userId!);
     res.json(library);
@@ -2100,8 +2121,9 @@ app.post('/api/library/like', accountRequired, (req, res) => {
       res.status(400).json({ error: 'track requis' });
       return;
     }
+    // Pas de getFullLibrary : réponse légère (like UI instantanée côté client)
     const result = toggleLikeTrack(req.userId!, track);
-    res.json({ ...result, library: getFullLibrary(req.userId!) });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2115,8 +2137,13 @@ app.post('/api/library/songs', accountRequired, (req, res) => {
       res.status(400).json({ error: 'track requis' });
       return;
     }
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(String(track.id))) {
+      res.status(400).json({ error: 'id titre invalide' });
+      return;
+    }
+    // Pas de getFullLibrary (évite timeout / cancel Compose « coroutine scope left »)
     const result = toggleLibraryTrack(req.userId!, track);
-    res.json({ ...result, library: getFullLibrary(req.userId!) });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2124,7 +2151,7 @@ app.post('/api/library/songs', accountRequired, (req, res) => {
 
 app.delete('/api/library/songs/:id', accountRequired, (req, res) => {
   removeLibraryTrack(req.userId!, p(req.params.id));
-  res.json({ ok: true, saved: false, library: getFullLibrary(req.userId!) });
+  res.json({ ok: true, saved: false });
 });
 
 app.post('/api/library/like-playlist', accountRequired, (req, res) => {

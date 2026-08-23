@@ -103,6 +103,21 @@ fun LibraryScreen(
         if (showSpinner && lib == null) loading = true
         if (force && lib != null) refreshing = true
         val localTracks = container.offlineStore.listTracks()
+        // Phase 1 : 12 premiers titres (réponse légère) → UI immédiate
+        if (lib == null || force) {
+            runCatching {
+                container.ensureFreshToken()
+                container.api.library(light = 1, limit = 12)
+            }.onSuccess {
+                val mergedIds = (it.downloaded + localTracks.map { t -> t.id }).distinct()
+                lib = it.copy(downloaded = mergedIds)
+                loading = false
+                error = null
+                if (localTracks.isNotEmpty()) {
+                    downloadMeta = downloadMeta + localTracks.associateBy { t -> t.id }
+                }
+            }
+        }
         runCatching {
             container.ensureFreshToken()
             container.api.library()
