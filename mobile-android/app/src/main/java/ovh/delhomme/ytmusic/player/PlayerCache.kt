@@ -75,7 +75,7 @@ object PlayerCache {
             .setUserAgent("PLM-Android")
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(12_000)
-            .setReadTimeoutMs(45_000)
+            .setReadTimeoutMs(120_000)
             .setDefaultRequestProperties(props)
     }
 

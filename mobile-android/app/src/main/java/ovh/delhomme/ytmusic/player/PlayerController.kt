@@ -754,6 +754,17 @@ class PlayerController(
 
     fun seek(ms: Long) {
         val target = ms.coerceAtLeast(0L)
+        val trackId = _state.value.track?.id
+            ?: player()?.currentMediaItem?.mediaId
+            ?: PlaybackService.Holder.queue.getOrNull(_state.value.queueIndex)?.id
+        if (target > 45_000L && !trackId.isNullOrBlank()) {
+            runCatching {
+                StreamPrefetcher.requestServerDiskCache(
+                    PlaybackService.Holder.resolvedApiBase(),
+                    trackId,
+                )
+            }
+        }
         val p = player() ?: PlaybackService.Holder.player
         if (p != null) {
             // Seek in-place — ne pas prepare/rebind (sinon retour au début sur mid-range)
