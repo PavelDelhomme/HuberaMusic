@@ -3,7 +3,7 @@ package ovh.delhomme.ytmusic
 import android.net.Uri
 
 /**
- * Liens https://ytmusic.delhomme.ovh/… (et schéma ytmusic://) → navigation in-app.
+ * Liens https://plm.delhomme.ovh/… (alias ytmusic / pue-la-merde) → navigation in-app.
  * Sans app installée, le navigateur ouvre la page web normalement.
  */
 sealed class AppDeepLink {
@@ -18,14 +18,19 @@ sealed class AppDeepLink {
 
 object AppDeepLinks {
     private val APP_HOSTS = setOf(
+        "plm.delhomme.ovh",
+        "www.plm.delhomme.ovh",
         "ytmusic.delhomme.ovh",
         "ytmusic-preprod.delhomme.ovh",
         "www.ytmusic.delhomme.ovh",
+        "pue-la-merde.delhomme.ovh",
     )
 
     fun isOurHost(host: String?): Boolean {
         val h = host?.lowercase()?.trim().orEmpty()
-        return h in APP_HOSTS || h.endsWith(".delhomme.ovh") && h.contains("ytmusic")
+        if (h in APP_HOSTS) return true
+        if (!h.endsWith(".delhomme.ovh")) return false
+        return h.contains("plm") || h.contains("ytmusic") || h.contains("pue-la-merde")
     }
 
     fun parse(uri: Uri?): AppDeepLink? {

@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.SpatialAudioOff
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SyncDisabled
 import androidx.compose.material.icons.filled.ThumbDown
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -415,7 +416,7 @@ fun TrackActionsSheet(
                 QuickAction(Icons.Default.Share, "Partager") {
                     val shareBase = ovh.delhomme.ytmusic.BuildConfig.PUBLIC_API_URL
                         .trimEnd('/')
-                        .ifBlank { "https://ytmusic.delhomme.ovh" }
+                        .ifBlank { "https://plm.delhomme.ovh" }
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(
@@ -492,14 +493,23 @@ fun TrackActionsSheet(
                     )
                 },
                 label = when {
-                    downloaded -> "Sur l'appareil"
+                    downloaded -> "Supprimer de l'appareil"
                     downloadProgress != null -> "Annuler le téléchargement (${(downloadProgress!! * 100).toInt()} %)"
                     else -> "Télécharger"
                 },
                 enabled = true,
             ) {
                 if (downloaded) {
-                    Toast.makeText(context, "Déjà sur l'appareil (lisible hors-ligne)", Toast.LENGTH_SHORT).show()
+                    scope.launch {
+                        runCatching {
+                            container.downloadManager.cancel(enriched.id)
+                            container.offlineStore.remove(enriched.id)
+                        }
+                        downloaded = false
+                        container.bumpLibraryEpoch()
+                        Toast.makeText(context, "Supprimé de l'appareil", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    }
                     return@SheetAction
                 }
                 if (downloadProgress != null) {
@@ -725,6 +735,41 @@ fun TrackActionsSheet(
                         if (player.state.value.track?.id == enriched.id) {
                             player.skipNext()
                         }
+                    }
+                    onDismiss()
+                }
+            }
+
+            SheetAction(
+                Icons.Default.BugReport,
+                "Signaler un problème",
+                "Envoie les logs récents à l’équipe (comme une erreur auto)",
+            ) {
+                scope.launch {
+                    runCatching {
+                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                            level = "error",
+                            kind = "android.user_report",
+                            message = buildString {
+                                append("Signalement manuel utilisateur")
+                                append("\nid=").append(enriched.id)
+                                append("\n").append(enriched.title)
+                                val a = enriched.artistLine().takeIf { it != "Artiste" }
+                                if (!a.isNullOrBlank()) append(" — ").append(a)
+                            },
+                            stack = ovh.delhomme.ytmusic.debug.AppLog.recentLogText(40_000),
+                            meta = mapOf(
+                                "trackId" to enriched.id,
+                                "title" to enriched.title,
+                                "artist" to enriched.artistLine(),
+                                "manual" to true,
+                                "breadcrumbs" to ovh.delhomme.ytmusic.debug.AppLog.breadcrumbSnapshot(),
+                            ),
+                            force = true,
+                        )
+                        Toast.makeText(context, "Rapport envoyé", Toast.LENGTH_SHORT).show()
+                    }.onFailure {
+                        Toast.makeText(context, it.message ?: "Échec envoi", Toast.LENGTH_SHORT).show()
                     }
                     onDismiss()
                 }

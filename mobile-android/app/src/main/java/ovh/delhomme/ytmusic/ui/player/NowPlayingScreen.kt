@@ -64,6 +64,8 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.LinearProgressIndicator
@@ -1115,6 +1117,12 @@ fun NowPlayingScreen(
                                             if (ovh.delhomme.ytmusic.player.AudioEqualizer.isEnabled()) SeekRed else PlayerFg,
                                             showLabel = false,
                                         ) { showEqualizer = true }
+                                        PlayerChromeAction.Speed -> SecondaryChip(
+                                            Icons.Default.Speed,
+                                            speedLabel(ui.playbackSpeed),
+                                            if (kotlin.math.abs(ui.playbackSpeed - 1f) > 0.02f) SeekRed else PlayerFg,
+                                            showLabel = true,
+                                        ) { player.cyclePlaybackSpeed() }
                                         else -> Unit
                                     }
                                 }
@@ -1963,7 +1971,14 @@ private fun QueueExpandedHeader(
                 .background(PlayerFg.copy(alpha = (0.25f + 0.2f * progressHint).coerceIn(0.25f, 0.55f))),
         )
         Spacer(Modifier.height(6.dp))
-        // Barre type mini-lecteur (pas de gros transport / seek — évite doublons)
+        // Seek + transport shuffle|prev|play|next|repeat (file plein écran)
+        var scrub by remember(track.id) { mutableFloatStateOf(-1f) }
+        val seekInteraction = remember { MutableInteractionSource() }
+        val seekColors = SliderDefaults.colors(
+            thumbColor = SeekRed,
+            activeTrackColor = SeekRed,
+            inactiveTrackColor = PlayerMuted.copy(alpha = 0.28f),
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
@@ -1988,34 +2003,79 @@ private fun QueueExpandedHeader(
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
-            IconButton(onClick = onSkipPrev, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(26.dp))
-            }
-            IconButton(onClick = onToggle, modifier = Modifier.size(44.dp)) {
-                Icon(
-                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    "Lecture",
-                    tint = PlayerFg,
-                    modifier = Modifier.size(30.dp),
-                )
-            }
-            IconButton(onClick = onSkipNext, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(26.dp))
-            }
             IconButton(onClick = onCollapse, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
             }
         }
-        Spacer(Modifier.height(6.dp))
-        LinearProgressIndicator(
-            progress = { pos.toFloat() / dur.toFloat() },
+        Spacer(Modifier.height(4.dp))
+        Slider(
+            value = if (scrub >= 0f) scrub else (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f),
+            onValueChange = { scrub = it },
+            onValueChangeFinished = {
+                if (scrub >= 0f) {
+                    onSeek((scrub * dur).toLong())
+                    scrub = -1f
+                }
+            },
+            colors = seekColors,
+            interactionSource = seekInteraction,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(2.dp)
-                .clip(RoundedCornerShape(1.dp)),
-            color = SeekRed,
-            trackColor = PlayerMuted.copy(alpha = 0.28f),
+                .height(28.dp),
         )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                formatMs(if (scrub >= 0f) (scrub * dur).toLong() else pos),
+                style = MaterialTheme.typography.labelSmall,
+                color = PlayerMuted,
+            )
+            Text(formatMs(dur), style = MaterialTheme.typography.labelSmall, color = PlayerMuted)
+        }
+        Spacer(Modifier.height(2.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onToggleShuffle) {
+                Icon(
+                    Icons.Default.Shuffle,
+                    "Aléatoire",
+                    tint = if (shuffle) MaterialTheme.colorScheme.primary else PlayerFg,
+                )
+            }
+            IconButton(onClick = onSkipPrev, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(28.dp))
+            }
+            IconButton(onClick = onToggle, modifier = Modifier.size(52.dp)) {
+                Icon(
+                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    "Lecture",
+                    tint = PlayerFg,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+            IconButton(onClick = onSkipNext, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(28.dp))
+            }
+            IconButton(onClick = onCycleRepeat) {
+                Icon(
+                    when (repeat) {
+                        RepeatMode.One -> Icons.Default.RepeatOne
+                        else -> Icons.Default.Repeat
+                    },
+                    when (repeat) {
+                        RepeatMode.One -> "Boucler le titre"
+                        RepeatMode.All -> "Boucler la file"
+                        RepeatMode.Off -> "Boucle désactivée"
+                    },
+                    tint = if (repeat != RepeatMode.Off) MaterialTheme.colorScheme.primary else PlayerFg,
+                )
+            }
+        }
     }
 }
 
@@ -2944,11 +3004,46 @@ private fun InlineSyncedLyrics(
                     }
                 }
             }
-            else -> Text(
-                "Paroles indisponibles",
-                color = PlayerMuted,
-                modifier = Modifier.padding(top = 24.dp),
-            )
+            else -> Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("Paroles indisponibles", color = PlayerMuted)
+                Spacer(Modifier.height(12.dp))
+                TextButton(
+                    onClick = {
+                        val artist = track.artistLine().takeIf { it != "Artiste" }.orEmpty()
+                        val q = buildString {
+                            append(track.title)
+                            if (artist.isNotBlank()) append(' ').append(artist)
+                        }
+                        // Genius d’abord (souvent mieux que Google pour les paroles)
+                        val geniusUri = android.net.Uri.parse(
+                            "https://genius.com/search?q=" +
+                                java.net.URLEncoder.encode(q, Charsets.UTF_8.name()),
+                        )
+                        val googleUri = android.net.Uri.parse(
+                            "https://www.google.com/search?q=" +
+                                java.net.URLEncoder.encode("$q paroles", Charsets.UTF_8.name()),
+                        )
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, geniusUri),
+                            )
+                        }.onFailure {
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(android.content.Intent.ACTION_VIEW, googleUri),
+                                )
+                            }
+                        }
+                    },
+                ) {
+                    Text("Chercher sur Genius / le web")
+                }
+            }
         }
     }
 }
@@ -3144,4 +3239,9 @@ private fun formatMs(ms: Long): String {
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+}
+
+private fun speedLabel(speed: Float): String {
+    val rounded = (kotlin.math.round(speed * 100f) / 100f)
+    return "×${"%.2f".format(rounded).trimEnd('0').trimEnd('.')}"
 }
