@@ -5,7 +5,7 @@ import { useItemActions } from '../../store/itemActions';
 import { TrackRow } from '../media/TrackRow';
 import { SaveQueueSheet } from './SaveQueueSheet';
 import { SyncedLyrics } from './NowPlaying';
-import { ListMusic, MoreVertical, Radio, Repeat, Repeat1, Save, Shuffle, Sparkles, Trash2, X } from 'lucide-react';
+import { ListMusic, MoreVertical, Radio, Save, Sparkles, Trash2, X } from 'lucide-react';
 
 type PanelTab = 'queue' | 'similar';
 
@@ -16,8 +16,6 @@ export function QueuePanel() {
   const queueIndex = usePlayer((s) => s.queueIndex);
   const userQueueEnd = usePlayer((s) => s.userQueueEnd);
   const autoplay = usePlayer((s) => s.autoplay);
-  const shuffle = usePlayer((s) => s.shuffle);
-  const repeat = usePlayer((s) => s.repeat);
   const lyrics = usePlayer((s) => s.lyrics);
   const lyricsTimed = usePlayer((s) => s.lyricsTimed);
   const related = usePlayer((s) => s.related);
@@ -25,8 +23,6 @@ export function QueuePanel() {
   const toggleQueue = usePlayer((s) => s.toggleQueue);
   const toggleLyrics = usePlayer((s) => s.toggleLyrics);
   const toggleAutoplay = usePlayer((s) => s.toggleAutoplay);
-  const toggleShuffle = usePlayer((s) => s.toggleShuffle);
-  const cycleRepeat = usePlayer((s) => s.cycleRepeat);
   const topUpAutoplay = usePlayer((s) => s.topUpAutoplay);
   const playAt = usePlayer((s) => s.playAt);
   const playUpcomingInQueue = usePlayer((s) => s.playUpcomingInQueue);
@@ -119,32 +115,7 @@ export function QueuePanel() {
           )}
           {!showLyrics && panelTab === 'queue' && (
             <>
-              <button
-                type="button"
-                onClick={cycleRepeat}
-                title={
-                  repeat === 'off'
-                    ? 'Boucle désactivée'
-                    : repeat === 'all'
-                      ? 'Boucler toute la file'
-                      : 'Boucler le titre'
-                }
-                className={`flex h-8 w-8 items-center justify-center rounded-full ${
-                  repeat !== 'off' ? 'text-yt-red' : 'text-yt-muted hover:bg-yt-hover hover:text-white'
-                }`}
-              >
-                {repeat === 'one' ? <Repeat1 className="h-4 w-4" /> : <Repeat className="h-4 w-4" />}
-              </button>
-              <button
-                type="button"
-                onClick={toggleShuffle}
-                title={shuffle ? 'Aléatoire activé' : 'Aléatoire'}
-                className={`flex h-8 w-8 items-center justify-center rounded-full ${
-                  shuffle ? 'text-yt-red' : 'text-yt-muted hover:bg-yt-hover hover:text-white'
-                }`}
-              >
-                <Shuffle className="h-4 w-4" />
-              </button>
+              {/* Transport shuffle/repeat : PlayerBar / NowPlaying — pas d’orphelins ici */}
               <button
                 type="button"
                 disabled={queue.length <= 1}

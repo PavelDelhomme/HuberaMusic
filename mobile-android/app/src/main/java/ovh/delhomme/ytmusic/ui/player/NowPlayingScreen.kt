@@ -66,7 +66,6 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -1963,7 +1962,14 @@ private fun QueueExpandedHeader(
                 .background(PlayerFg.copy(alpha = (0.25f + 0.2f * progressHint).coerceIn(0.25f, 0.55f))),
         )
         Spacer(Modifier.height(6.dp))
-        // Barre type mini-lecteur (pas de gros transport / seek — évite doublons)
+        // Seek interactive + transport shuffle|prev|play|next|repeat (plan vidéo & transport)
+        var scrub by remember(track.id) { mutableFloatStateOf(-1f) }
+        val seekInteraction = remember { MutableInteractionSource() }
+        val seekColors = SliderDefaults.colors(
+            thumbColor = SeekRed,
+            activeTrackColor = SeekRed,
+            inactiveTrackColor = PlayerMuted.copy(alpha = 0.28f),
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
@@ -1988,34 +1994,83 @@ private fun QueueExpandedHeader(
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
-            IconButton(onClick = onSkipPrev, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(26.dp))
-            }
-            IconButton(onClick = onToggle, modifier = Modifier.size(44.dp)) {
-                Icon(
-                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    "Lecture",
-                    tint = PlayerFg,
-                    modifier = Modifier.size(30.dp),
-                )
-            }
-            IconButton(onClick = onSkipNext, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(26.dp))
-            }
             IconButton(onClick = onCollapse, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Default.KeyboardArrowDown, "Replier la file", tint = PlayerFg)
             }
         }
-        Spacer(Modifier.height(6.dp))
-        LinearProgressIndicator(
-            progress = { pos.toFloat() / dur.toFloat() },
+        Spacer(Modifier.height(4.dp))
+        Slider(
+            value = if (scrub >= 0f) scrub else (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f),
+            onValueChange = { scrub = it },
+            onValueChangeFinished = {
+                if (scrub >= 0f) {
+                    onSeek((scrub * dur).toLong())
+                    scrub = -1f
+                }
+            },
+            colors = seekColors,
+            interactionSource = seekInteraction,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(2.dp)
-                .clip(RoundedCornerShape(1.dp)),
-            color = SeekRed,
-            trackColor = PlayerMuted.copy(alpha = 0.28f),
+                .height(28.dp),
         )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                formatMs(if (scrub >= 0f) (scrub * dur).toLong() else pos),
+                style = MaterialTheme.typography.labelSmall,
+                color = PlayerMuted,
+            )
+            Text(
+                formatMs(dur),
+                style = MaterialTheme.typography.labelSmall,
+                color = PlayerMuted,
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onToggleShuffle) {
+                Icon(
+                    Icons.Default.Shuffle,
+                    "Aléatoire",
+                    tint = if (shuffle) MaterialTheme.colorScheme.primary else PlayerFg,
+                )
+            }
+            IconButton(onClick = onSkipPrev, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Default.SkipPrevious, "Précédent", tint = PlayerFg, modifier = Modifier.size(28.dp))
+            }
+            IconButton(onClick = onToggle, modifier = Modifier.size(52.dp)) {
+                Icon(
+                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    "Lecture",
+                    tint = PlayerFg,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+            IconButton(onClick = onSkipNext, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Default.SkipNext, "Suivant", tint = PlayerFg, modifier = Modifier.size(28.dp))
+            }
+            IconButton(onClick = onCycleRepeat) {
+                Icon(
+                    when (repeat) {
+                        RepeatMode.One -> Icons.Default.RepeatOne
+                        else -> Icons.Default.Repeat
+                    },
+                    when (repeat) {
+                        RepeatMode.One -> "Boucler le titre"
+                        RepeatMode.All -> "Boucler la file"
+                        RepeatMode.Off -> "Boucle désactivée"
+                    },
+                    tint = if (repeat != RepeatMode.Off) MaterialTheme.colorScheme.primary else PlayerFg,
+                )
+            }
+        }
     }
 }
 
