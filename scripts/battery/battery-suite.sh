@@ -73,7 +73,7 @@ media_playing() {
       block+="$line"$'\n'
     fi
   done <<< "$dump"
-  [[ "$block" == *'state=PLAYING'* ]]
+  [[ "$block" == *'state=PLAYING'* || "$block" == *'state=BUFFERING'* ]]
 }
 
 media_paused() {
@@ -119,6 +119,10 @@ ensure_playing() {
       "$ADB" -s "$DEVICE" shell input swipe 540 1800 540 600 300 >/dev/null 2>&1 || true
     fi
     "$ADB" -s "$DEVICE" shell input keyevent 126 >/dev/null 2>&1 || true
+    "$ADB" -s "$DEVICE" shell cmd media_session dispatch play >/dev/null 2>&1 || true
+    if (( tries >= 3 )); then
+      "$ADB" -s "$DEVICE" shell input tap 540 1980 >/dev/null 2>&1 || true
+    fi
     sleep 4
     tries=$((tries + 1))
   done
@@ -244,14 +248,14 @@ run_phase() {
     screen_hint="${mode}:${wake}"
     local fields
     fields="$(echo "$dump" | awk -F': ' '
-      /USB powered:/{usb=$2}
-      /AC powered:/{ac=$2}
-      /Wireless powered:/{wl=$2}
+      /^  USB powered:/{usb=$2}
+      /^  AC powered:/{ac=$2}
+      /^  Wireless powered:/{wl=$2}
       /^  level:/{lvl=$2}
-      /temperature:/{temp=$2}
-      /Charge counter:/{cc=$2}
-      /voltage:/{volt=$2}
-      /status:/{st=$2}
+      /^  temperature:/{temp=$2}
+      /^  Charge counter:/{cc=$2}
+      /^  voltage:/{volt=$2}
+      /^  status:/{st=$2}
       END {
         gsub(/[ \t]/,"",usb); gsub(/[ \t]/,"",ac); gsub(/[ \t]/,"",wl)
         gsub(/[ \t]/,"",lvl); gsub(/[ \t]/,"",temp); gsub(/[ \t]/,"",cc)
@@ -299,7 +303,7 @@ l0=int(float(rows[0]['level'])); l1=int(float(rows[-1]['level']))
 c0=float(rows[0]['charge_counter']); c1=float(rows[-1]['charge_counter'])
 mins=max((t1-t0)/60, 0.01)
 mah=(c0-c1)/1000
-play=sum(1 for r in rows if r.get('playing')=='1')
+play=sum(1 for r in rows if str(r.get('playing','')).strip() in ('1','True','true'))
 print(f"mins={mins:.1f}")
 print(f"level_delta={l0-l1}")
 print(f"mah={mah:.1f}")

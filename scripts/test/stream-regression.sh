@@ -82,7 +82,7 @@ fi
 
 log "==> $(echo $IDS | wc -w) IDs à tester"
 
-HEAD_OK=0 HEAD_FAIL=0 MID_OK=0 MID_FAIL=0 MID_503=0
+HEAD_OK=0 HEAD_FAIL=0 MID_OK=0 MID_FAIL=0 MID_503=0 EOF_OK=0 EOF_FAIL=0
 FAIL_IDS=""
 
 for id in $IDS; do
@@ -92,6 +92,22 @@ for id in $IDS; do
   code_mid="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 130 \
     -H "Authorization: Bearer $TOKEN" -H "Range: bytes=1048576-2097151" \
     "$API/api/stream/$id")"
+
+  # Past-EOF : Exo demande bytes=SIZE- (start === fileSize) → 416, pas RangeError
+  cr_line="$(curl -sS -D - -o /dev/null --max-time 25 \
+    -H "Authorization: Bearer $TOKEN" -H "Range: bytes=0-1" \
+    "$API/api/stream/$id" 2>/dev/null | tr -d '\r' | awk -F'/' '/^[Cc]ontent-[Rr]ange:/{print $2; exit}')"
+  if [[ -n "${cr_line// }" && "$cr_line" =~ ^[0-9]+$ ]]; then
+    code_eof="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 \
+      -H "Authorization: Bearer $TOKEN" -H "Range: bytes=${cr_line}-" \
+      "$API/api/stream/$id")"
+    if [[ "$code_eof" == "416" ]]; then
+      EOF_OK=$((EOF_OK + 1))
+    else
+      EOF_FAIL=$((EOF_FAIL + 1))
+      FAIL_IDS="$FAIL_IDS $id(eof=$code_eof,size=$cr_line)"
+    fi
+  fi
 
   if [[ "$code_head" == "206" || "$code_head" == "200" ]]; then
     HEAD_OK=$((HEAD_OK + 1))
@@ -116,9 +132,11 @@ log "  head OK: $HEAD_OK / $TOTAL"
 log "  mid  OK: $MID_OK / $TOTAL (206/200)"
 log "  mid  503 (chargement): $MID_503 / $TOTAL"
 log "  mid  FAIL: $MID_FAIL / $TOTAL"
+log "  eof 416 OK: $EOF_OK / $TOTAL (past-EOF Range)"
+log "  eof FAIL: $EOF_FAIL / $TOTAL"
 [[ -n "${FAIL_IDS// }" ]] && log "  échecs:$FAIL_IDS"
 
-if [[ "$HEAD_FAIL" -gt 0 ]] || [[ "$MID_FAIL" -gt $((TOTAL / 4)) ]]; then
+if [[ "$HEAD_FAIL" -gt 0 ]] || [[ "$MID_FAIL" -gt $((TOTAL / 4)) ]] || [[ "$EOF_FAIL" -gt 0 ]]; then
   log "FAIL seuil dépassé"
   exit 1
 fi
