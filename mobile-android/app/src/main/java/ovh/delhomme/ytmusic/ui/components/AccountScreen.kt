@@ -81,6 +81,7 @@ fun AccountScreen(
     var user by remember { mutableStateOf<UserDto?>(null) }
     var passkeyInfo by remember { mutableStateOf<String?>(null) }
     var updateHint by remember { mutableStateOf<String?>(null) }
+    var updateAvailable by remember { mutableStateOf(false) }
     var showEqualizer by remember { mutableStateOf(false) }
     var ytmLinked by remember {
         mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
@@ -98,6 +99,36 @@ fun AccountScreen(
         if (user != null || status != null) {
             ytmLinked = linked
             container.sharedPrefs("ytm_google").edit().putBoolean("linked", linked).apply()
+        }
+        // Statut MAJ pour la ligne Compte (toujours, hors fenêtre horaire)
+        runCatching {
+            val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
+                context.applicationContext,
+                container,
+            )
+            val check = updater.check(force = true, respectSnooze = false)
+            val remoteCode = check.info?.versionCode ?: 0
+            val remoteName = check.info?.versionName
+            val local = BuildConfig.VERSION_NAME
+            when {
+                remoteCode > BuildConfig.VERSION_CODE && !updater.isSnoozed(remoteCode) -> {
+                    updateAvailable = true
+                    updateHint = "Mettre à jour l'application" +
+                        (remoteName?.let { " ($it)" } ?: "")
+                }
+                remoteCode > BuildConfig.VERSION_CODE -> {
+                    updateAvailable = false
+                    updateHint = "Installée $local · serveur $remoteName (ignorée)"
+                }
+                remoteCode > 0 -> {
+                    updateAvailable = false
+                    updateHint = "Installée $local · serveur ${remoteName ?: local}"
+                }
+                else -> {
+                    updateAvailable = false
+                    updateHint = "Installée $local"
+                }
+            }
         }
     }
 
@@ -176,10 +207,23 @@ fun AccountScreen(
 
             // MAJ en haut : visible sur petits écrans sans scroller toute la liste
             item {
+                val accentRed = Color(0xFFE53935)
                 AccountRow(
-                    icon = { Icon(Icons.Default.SystemUpdate, contentDescription = null) },
-                    title = "Mettre à jour l'app",
-                    subtitle = updateHint ?: "Installer la dernière version publiée",
+                    icon = {
+                        Icon(
+                            Icons.Default.SystemUpdate,
+                            contentDescription = null,
+                            tint = if (updateAvailable) accentRed else Color.Unspecified,
+                        )
+                    },
+                    title = if (updateAvailable) {
+                        "Mettre à jour l'application"
+                    } else {
+                        "Mettre à jour l'app"
+                    },
+                    subtitle = updateHint
+                        ?: "Installée ${BuildConfig.VERSION_NAME}",
+                    titleColor = if (updateAvailable) accentRed else Color.Unspecified,
                     onClick = {
                         scope.launch {
                             runCatching {
@@ -188,9 +232,13 @@ fun AccountScreen(
                                     container,
                                 )
                                 updateHint = "Vérification…"
-                                val check = updater.check(force = true)
-                                if (!check.available) {
-                                    updateHint = check.message ?: "À jour"
+                                // Clic manuel : toujours proposer si remote > local (ignore snooze fenêtre)
+                                val check = updater.check(force = true, respectSnooze = false)
+                                val remote = check.info?.versionCode ?: 0
+                                if (remote <= BuildConfig.VERSION_CODE) {
+                                    updateAvailable = false
+                                    updateHint = check.message
+                                        ?: "Installée ${BuildConfig.VERSION_NAME} · à jour"
                                     Toast.makeText(
                                         context,
                                         check.message ?: "Déjà à jour",
@@ -198,13 +246,13 @@ fun AccountScreen(
                                     ).show()
                                     return@launch
                                 }
-                                updateHint = check.message ?: "Téléchargement…"
+                                updateAvailable = true
+                                updateHint = "Mettre à jour l'application"
                                 Toast.makeText(
                                     context,
                                     "Téléchargement de la mise à jour…",
                                     Toast.LENGTH_SHORT,
                                 ).show()
-                                // Toujours re-fetch latest au moment de l’install
                                 val msg = updater.downloadAndInstall(null)
                                 updateHint = msg
                                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()

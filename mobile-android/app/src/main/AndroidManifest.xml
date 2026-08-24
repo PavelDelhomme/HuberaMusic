@@ -60,11 +60,27 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- App Links : https://ytmusic.delhomme.ovh/… → ouvre PLM (sinon navigateur) -->
+            <!-- App Links : plm (canonique) + alias ytmusic → ouvre PLM -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:path="/" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/watch" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/artist" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/album" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/playlist" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/local-playlist" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/mix" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/mood" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/library" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/search" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/explore" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/profile" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/install" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/login-device" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/import" />
+                <data android:scheme="https" android:host="plm.delhomme.ovh" android:pathPrefix="/offline" />
                 <data android:scheme="https" android:host="ytmusic.delhomme.ovh" android:path="/" />
                 <data android:scheme="https" android:host="ytmusic.delhomme.ovh" android:pathPrefix="/watch" />
                 <data android:scheme="https" android:host="ytmusic.delhomme.ovh" android:pathPrefix="/artist" />

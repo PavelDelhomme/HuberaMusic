@@ -9,6 +9,30 @@
 
 ---
 
+## Session 2026-08-24 (stream Content-Range / Exo 2008)
+
+### E30 — `RangeError start > end` sur `/api/stream` (createReadStream) → mails `unhandledRejection`
+| | |
+|--|--|
+| **Status** | `fixed` (branche `fix/stream-eof-home-update` / PR **#149**, `1.3.70`) — **pas encore en prod** |
+| **Surfaces** | API prod/local · Android (fin de titre / pause près EOF, ex. Don Choa) |
+| **Cause** | Exo demande `Range: bytes=N-` avec `N === fileSize` (past EOF) → `createReadStream({ start: N, end: N-1 })` plante |
+| **Fix** | `safeDiskRangeBounds()` → **416** si `start >= size` · try/catch + `rs.on('error')` · soft-ignore `ERR_OUT_OF_RANGE` · **meta.trackId** / `[stream ID]` dans télémétrie |
+| **Tests** | `curl -H 'Range: bytes=SIZE-'` sur un `.m4a` caché → 416, pas de crash process ; mail (si autre erreur stream) affiche le titre |
+| **PRs** | #149 |
+
+### E23 — `onPlayerError` code **2008** (READ_POSITION_OUT_OF_RANGE) + EOF ~64 s + DL « unexpected end of stream »
+| | |
+|--|--|
+| **Status** | `investigating` → fix dans PR **#149** (`1.3.69`/`1.3.70`) — **pas encore en prod** (`p+1.3.68`) |
+| **Surfaces** | Android prod (Blackview / Nothing) · offline DL |
+| **Cause** | Totaux `Content-Range` incohérents (relais maison vs cache disque) → Exo 2008 / EOF ; DL parallèle multi-Range coupé mid-stream |
+| **Fix** | Total Content-Range stable · EOF/2008 = retry flux avec seek arrière · DL retry en séquentiel · Accueil/MAJ 7h–17h · **E30** bornes Range disque |
+| **Tests** | Rejouer titres listés télémétrie > 2 min après deploy `p+1.3.70` |
+| **PRs** | #149 stream/UX · #148 vidéo/transport **à valider avant** merge prod |
+
+---
+
 ## Session 2026-08-12 (fin de titre = fausse erreur réseau)
 
 ### E13 — Fin de titre → « réseau instable » / file stoppée (prod mobile)

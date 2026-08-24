@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,13 +57,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import android.widget.Toast
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
@@ -73,6 +75,7 @@ import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.MixCollageCover
 import ovh.delhomme.ytmusic.ui.components.PinnedBadge
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.update.ApkUpdateManager
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -92,8 +95,43 @@ fun HomeScreen(
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
     val pinIds = remember(pins) { pins.map { it.id }.toHashSet() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var showHistory by remember { mutableStateOf(false) }
     var userPicture by remember { mutableStateOf<String?>(null) }
+    var updateInstalling by remember { mutableStateOf(false) }
+
+    state.updatePrompt?.takeIf { it.available }?.let { upd ->
+        AlertDialog(
+            onDismissRequest = { vm.dismissUpdatePrompt() },
+            title = { Text("Mise à jour disponible") },
+            text = {
+                Text(
+                    upd.info?.versionName?.let { "Version $it prête à installer." }
+                        ?: "Une nouvelle version PLM est disponible.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !updateInstalling,
+                    onClick = {
+                        scope.launch {
+                            updateInstalling = true
+                            val msg = runCatching {
+                                ApkUpdateManager(context.applicationContext, container)
+                                    .downloadAndInstall(null)
+                            }.getOrElse { it.message ?: "Échec" }
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            updateInstalling = false
+                            vm.consumeUpdatePrompt()
+                        }
+                    },
+                ) { Text(if (updateInstalling) "…" else "Installer") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissUpdatePrompt() }) { Text("Plus tard") }
+            },
+        )
+    }
 
     LaunchedEffect(Unit) {
         userPicture = runCatching {

@@ -24,6 +24,7 @@ import { DevicePicker } from '../auth/DevicePicker';
 import { PerfHud } from './PerfHud';
 import { InstallBanner } from './InstallBanner';
 import { UpdateBanner } from './UpdateBanner';
+import { MaintenanceBanner } from './MaintenanceBanner';
 import { ItemActionsSheet } from '../sheets/ItemActionsSheet';
 import { NowPlaying, type NowPlayingTab } from '../player/NowPlaying';
 import { OnboardingWizard } from '../auth/OnboardingWizard';
@@ -927,6 +928,7 @@ export function Layout() {
         initialTab={nowPlayingTab}
         onClose={() => setNowPlayingOpen(false)}
       />
+      <MaintenanceBanner />
       <InstallBanner />
       <UpdateBanner />
       <SearchIdentifySheet open={identifyOpen} onClose={() => setIdentifyOpen(false)} />

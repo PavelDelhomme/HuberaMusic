@@ -14,11 +14,16 @@ import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ApkInfoResponse
 import ovh.delhomme.ytmusic.debug.AppLog
 import java.io.File
+import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 /**
  * Vérifie / télécharge / installe l’APK publiée sur le serveur (`/api/deploy/apk`)
  * — toujours la **dernière** version seule (pas de chaîne d’intermédiaires).
+ *
+ * Prompt automatique (dialogue) : **au plus 2× / jour**, fenêtres ~7h et ~17h
+ * (pull Accueil ou check périodique). Hors fenêtre → pas de popup ; le menu Compte
+ * reste à jour (ligne rouge si MAJ dispo).
  */
 class ApkUpdateManager(
     private val context: Context,
@@ -30,6 +35,7 @@ class ApkUpdateManager(
         val available: Boolean,
         val info: ApkInfoResponse? = null,
         val localCode: Int = BuildConfig.VERSION_CODE,
+        val localName: String = BuildConfig.VERSION_NAME,
         val message: String? = null,
     )
 
@@ -48,8 +54,86 @@ class ApkUpdateManager(
     fun isSnoozed(versionCode: Int): Boolean =
         prefs.getInt(KEY_SNOOZED_CODE, 0) == versionCode && versionCode > 0
 
-    /** Au cold start : toujours interroger le serveur (une fois par process). */
-    suspend fun checkOnStartup(): CheckResult = check(force = true)
+    /**
+     * Fenêtre locale 7h ou 17h (± [WINDOW_HALF_MS]).
+     * Slot du jour : `"yyyy-MM-dd-7"` / `"yyyy-MM-dd-17"`.
+     */
+    fun promptSlotNow(now: Long = System.currentTimeMillis()): String? {
+        val cal = Calendar.getInstance().apply { timeInMillis = now }
+        val hour = cal.get(Calendar.HOUR_OF_DAY)
+        val minute = cal.get(Calendar.MINUTE)
+        val mins = hour * 60 + minute
+        val morning = 7 * 60
+        val evening = 17 * 60
+        val half = (WINDOW_HALF_MS / 60_000L).toInt()
+        val slotHour = when {
+            kotlin.math.abs(mins - morning) <= half -> 7
+            kotlin.math.abs(mins - evening) <= half -> 17
+            else -> return null
+        }
+        val day = "%04d-%02d-%02d".format(
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH) + 1,
+            cal.get(Calendar.DAY_OF_MONTH),
+        )
+        return "$day-$slotHour"
+    }
+
+    fun alreadyPromptedSlot(slot: String): Boolean =
+        prefs.getString(KEY_PROMPTED_SLOT, null) == slot
+
+    fun markPromptedSlot(slot: String) {
+        prefs.edit().putString(KEY_PROMPTED_SLOT, slot).apply()
+    }
+
+    /** True si on peut afficher un dialogue MAJ maintenant (fenêtre + pas déjà proposé ce slot). */
+    fun canOfferPromptDialog(now: Long = System.currentTimeMillis()): Boolean {
+        val slot = promptSlotNow(now) ?: return false
+        return !alreadyPromptedSlot(slot)
+    }
+
+    /** Au cold start : interroge le serveur ; dialogue seulement si fenêtre 7h/17h. */
+    suspend fun checkOnStartup(): CheckResult {
+        val result = check(force = true, respectSnooze = true)
+        if (result.available && canOfferPromptDialog()) {
+            promptSlotNow()?.let { markPromptedSlot(it) }
+            return result
+        }
+        // Hors fenêtre : pas de popup (le menu Compte affichera quand même la ligne rouge)
+        return if (result.available) {
+            result.copy(available = false, message = result.message ?: "MAJ dispo (menu Compte)")
+        } else {
+            result
+        }
+    }
+
+    /**
+     * Pull Accueil : vérifie toujours en arrière-plan pour le statut Compte,
+     * mais ne remonte `available=true` (dialogue) que dans les fenêtres 7h / 17h.
+     */
+    suspend fun checkOnPullRefresh(): CheckResult {
+        val result = check(force = true, respectSnooze = true)
+        // Toujours mémoriser le dernier remote pour le menu Compte
+        result.info?.versionCode?.let { remote ->
+            prefs.edit()
+                .putInt(KEY_LAST_REMOTE_CODE, remote)
+                .putString(KEY_LAST_REMOTE_NAME, result.info.versionName ?: "")
+                .apply()
+        }
+        if (!result.available) return result
+        if (!canOfferPromptDialog()) {
+            return result.copy(available = false, message = "MAJ dispo — voir Compte")
+        }
+        promptSlotNow()?.let { markPromptedSlot(it) }
+        return result
+    }
+
+    fun cachedRemoteHint(): Pair<Int, String>? {
+        val code = prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
+        if (code <= 0) return null
+        val name = prefs.getString(KEY_LAST_REMOTE_NAME, null).orEmpty()
+        return code to name
+    }
 
     suspend fun check(force: Boolean = false, respectSnooze: Boolean = true): CheckResult =
         withContext(Dispatchers.IO) {
@@ -59,23 +143,36 @@ class ApkUpdateManager(
             runCatching {
                 container.ensureFreshToken()
                 val info = container.api.apkInfo()
-                prefs.edit().putLong(KEY_LAST_CHECK, System.currentTimeMillis()).apply()
+                prefs.edit()
+                    .putLong(KEY_LAST_CHECK, System.currentTimeMillis())
+                    .putInt(KEY_LAST_REMOTE_CODE, info.versionCode ?: 0)
+                    .putString(KEY_LAST_REMOTE_NAME, info.versionName ?: "")
+                    .apply()
                 val remote = info.versionCode ?: 0
                 val local = BuildConfig.VERSION_CODE
                 when {
                     info.ready != true ->
-                        CheckResult(false, info, local, "APK pas encore publiée")
+                        CheckResult(false, info, local, message = "APK pas encore publiée")
                     remote <= local -> {
-                        // À jour → efface snooze éventuel
                         if (prefs.getInt(KEY_SNOOZED_CODE, 0) > 0) {
                             prefs.edit().remove(KEY_SNOOZED_CODE).apply()
                         }
-                        CheckResult(false, info, local, "À jour (v$local)")
+                        CheckResult(
+                            false,
+                            info,
+                            local,
+                            message = "À jour — ${BuildConfig.VERSION_NAME}",
+                        )
                     }
                     respectSnooze && isSnoozed(remote) ->
-                        CheckResult(false, info, local, "Reportée (v$remote)")
+                        CheckResult(
+                            false,
+                            info,
+                            local,
+                            message = "Reportée (v$remote) — prochaine version seulement",
+                        )
                     else ->
-                        CheckResult(true, info, local, "v$remote disponible")
+                        CheckResult(true, info, local, message = "v$remote disponible")
                 }
             }.getOrElse {
                 AppLog.w("apk-update", "check failed: ${it.message}")
@@ -103,7 +200,9 @@ class ApkUpdateManager(
         val meta = container.api.apkInfo()
         if (meta.ready != true) return@withContext "APK pas encore publiée"
         val remote = meta.versionCode ?: 0
-        if (remote <= BuildConfig.VERSION_CODE) return@withContext "Déjà à jour"
+        if (remote <= BuildConfig.VERSION_CODE) {
+            return@withContext "Déjà à jour — ${BuildConfig.VERSION_NAME}"
+        }
 
         val base = container.resolvedApiBase().trimEnd('/')
         val path = meta.downloadPath?.takeIf { it.startsWith("/") } ?: "/api/deploy/apk"
@@ -112,7 +211,6 @@ class ApkUpdateManager(
         } ?: "$base$path"
 
         val dir = File(context.cacheDir, "apk-updates").apply { mkdirs() }
-        // Nettoie les vieux APK locaux — une seule cible : latest
         dir.listFiles()?.forEach { f ->
             if (f.name.startsWith("plm-update-") && f.name != "plm-update-$remote.apk") {
                 f.delete()
@@ -157,6 +255,11 @@ class ApkUpdateManager(
     companion object {
         private const val KEY_LAST_CHECK = "last_check_at"
         private const val KEY_SNOOZED_CODE = "snoozed_version_code"
+        private const val KEY_PROMPTED_SLOT = "prompted_slot"
+        private const val KEY_LAST_REMOTE_CODE = "last_remote_code"
+        private const val KEY_LAST_REMOTE_NAME = "last_remote_name"
+        /** ±45 min autour de 7h et 17h. */
+        private val WINDOW_HALF_MS = TimeUnit.MINUTES.toMillis(45)
         private val PERIODIC_INTERVAL_MS = TimeUnit.HOURS.toMillis(6)
     }
 }

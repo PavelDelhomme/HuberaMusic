@@ -118,6 +118,23 @@ export function diagnoseTelemetryEvent(ev: {
     };
   }
 
+  if (/ERR_OUT_OF_RANGE|start" is out of range|start is out of range/i.test(core)) {
+    return {
+      family: 'stream-range',
+      title: 'Range disque invalide (start > end) sur /api/stream',
+      summary:
+        'createReadStream a reçu un Range past EOF (souvent Exo en fin de titre : start === fileSize). Sans garde-fou → unhandledRejection et mail sans trackId.',
+      likelyCause:
+        'Client demande bytes=SIZE- alors que le fichier fait SIZE octets (end = SIZE-1). Fix : safeDiskRangeBounds → 416 + meta.trackId.',
+      actions: [
+        'Déployer API ≥ 1.3.70 (PR #149) — ne plus planter, répondre 416',
+        'Vérifier « Titres concernés » (meta.trackId / [stream ID] dans le message)',
+        'Rejouer le titre jusqu’aux ~20 dernières secondes puis pause/seek',
+      ],
+      surface: 'server',
+    };
+  }
+
   if (player && (is502 || is503 || is504)) {
     return {
       family: 'stream-5xx',

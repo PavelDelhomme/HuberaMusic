@@ -102,7 +102,7 @@ import {
   latestLiveApkTicket,
 } from './platform/apkTickets.js';
 import { listAdminUsers } from './platform/adminUsers.js';
-import { loadRuntimeSettings, saveRuntimeSettings } from './platform/runtimeSettings.js';
+import { loadRuntimeSettings, saveRuntimeSettings, publicMaintenanceStatus } from './platform/runtimeSettings.js';
 import {
   deployAdminHints,
   getDeployJob,
@@ -367,6 +367,9 @@ app.get('/api/health', (_req, res) => {
       hint:
         'OAuth TV + ytm_accounts sur volume ytmusic_data. Ne pas Remove volumes ni changer JWT_SECRET.',
     },
+    maintenance: publicMaintenanceStatus(),
+    canonicalHost: 'plm.delhomme.ovh',
+    aliasHosts: ['ytmusic.delhomme.ovh', 'pue-la-merde.delhomme.ovh'],
   });
 });
 
@@ -1181,18 +1184,46 @@ app.get('/api/admin/settings', requireAdmin, (_req, res) => {
     updatedAt: rt.updatedAt,
     privateMode: authPrivateMode(),
     envAllowRegister: process.env.AUTH_ALLOW_REGISTER || null,
+    maintenance: rt.maintenance,
+    maintenanceMessage: rt.maintenanceMessage,
+    maintenanceUntil: rt.maintenanceUntil,
+    maintenanceBlockPlayback: rt.maintenanceBlockPlayback,
+    publicMaintenance: publicMaintenanceStatus(),
   });
 });
 
 app.put('/api/admin/settings', requireAdmin, (req, res) => {
-  const raw = req.body?.allowRegister;
-  if (typeof raw !== 'boolean') {
-    res.status(400).json({ error: 'allowRegister (boolean) requis' });
+  const body = req.body || {};
+  const patch: Parameters<typeof saveRuntimeSettings>[0] = {};
+  if (typeof body.allowRegister === 'boolean') {
+    patch.allowRegister = body.allowRegister;
+  }
+  if (typeof body.maintenance === 'boolean') {
+    patch.maintenance = body.maintenance;
+    if (!body.maintenance) {
+      patch.maintenanceMessage = null;
+      patch.maintenanceUntil = null;
+      patch.maintenanceBlockPlayback = false;
+    }
+  }
+  if (typeof body.maintenanceMessage === 'string' || body.maintenanceMessage === null) {
+    patch.maintenanceMessage = body.maintenanceMessage;
+  }
+  if (typeof body.maintenanceUntil === 'number' || body.maintenanceUntil === null) {
+    patch.maintenanceUntil = body.maintenanceUntil;
+  }
+  if (typeof body.maintenanceBlockPlayback === 'boolean') {
+    patch.maintenanceBlockPlayback = body.maintenanceBlockPlayback;
+  }
+  if (Object.keys(patch).length === 0) {
+    res.status(400).json({
+      error: 'Aucun champ reconnu (allowRegister, maintenance, maintenanceMessage, maintenanceUntil, maintenanceBlockPlayback)',
+    });
     return;
   }
-  const rt = saveRuntimeSettings({ allowRegister: raw });
+  const rt = saveRuntimeSettings(patch);
   let ticket: ReturnType<typeof issueApkTicket> | null = null;
-  if (raw) {
+  if (patch.allowRegister === true) {
     ticket = issueApkTicket('register', req.userId, PORT);
   }
   res.json({
@@ -1200,6 +1231,11 @@ app.put('/api/admin/settings', requireAdmin, (req, res) => {
     allowRegister: authAllowRegister(),
     allowRegisterOverride: rt.allowRegister,
     updatedAt: rt.updatedAt,
+    maintenance: rt.maintenance,
+    maintenanceMessage: rt.maintenanceMessage,
+    maintenanceUntil: rt.maintenanceUntil,
+    maintenanceBlockPlayback: rt.maintenanceBlockPlayback,
+    publicMaintenance: publicMaintenanceStatus(),
     apkTicket: ticket,
   });
 });
@@ -2652,16 +2688,32 @@ process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
   const err = reason instanceof Error ? reason : new Error(String(reason));
   // Client a coupé le flux (curl/tests/Exo abort) → yt-dlp SIGTERM → exit null : pas d’alerte mail
-  if (/yt-dlp exit null|yt-dlp first-byte timeout/i.test(err.message)) {
+  // Range EOF disque déjà géré (416) — anciennes races / start===size ne doivent plus spammer.
+  if (
+    /yt-dlp exit null|yt-dlp first-byte timeout|ERR_OUT_OF_RANGE|start" is out of range|start is out of range/i.test(
+      err.message,
+    )
+  ) {
     return;
   }
+  const trackIdFromErr = (() => {
+    const tagged = (err as { trackId?: unknown }).trackId;
+    if (typeof tagged === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(tagged)) return tagged;
+    const blob = `${err.message}\n${err.stack || ''}`;
+    const m =
+      /\[stream\s+([a-zA-Z0-9_-]{11})\]/.exec(blob) ||
+      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/.exec(blob);
+    return m?.[1];
+  })();
   try {
+    const meta = trackIdFromErr ? { trackId: trackIdFromErr } : undefined;
     const id = insertTelemetry({
       env: getAppEnv(),
       level: 'error',
       kind: 'server.unhandledRejection',
       message: err.message,
       stack: err.stack,
+      meta,
     });
     void import('./platform/telemetryAlert.js').then(({ maybeAlertTelemetryError }) =>
       maybeAlertTelemetryError({
@@ -2671,6 +2723,7 @@ process.on('unhandledRejection', (reason) => {
         kind: 'server.unhandledRejection',
         message: err.message,
         stack: err.stack,
+        meta,
       }),
     );
   } catch {

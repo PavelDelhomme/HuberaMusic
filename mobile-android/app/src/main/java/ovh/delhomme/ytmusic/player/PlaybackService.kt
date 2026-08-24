@@ -531,9 +531,15 @@ class PlaybackService : MediaSessionService() {
                 val resumePos = exo.currentPosition.coerceAtLeast(0L)
                 val truncatedMid =
                     !localFile &&
-                        resumePos in 50_000L..120_000L &&
-                        dur >= 120_000L &&
-                        (httpStatus == null || httpStatus >= 500)
+                        resumePos in 45_000L..130_000L &&
+                        (dur <= 0L || dur >= 90_000L) &&
+                        (httpStatus == null || httpStatus >= 500 || error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
+                // Reprendre AU MÊME offset après EOF ~1 MiB = boucle d’échec : reculer / repartir à 0.
+                val seekPos = when {
+                    truncatedMid && streak >= 2 -> 0L
+                    truncatedMid -> (resumePos - 20_000L).coerceAtLeast(0L)
+                    else -> resumePos
+                }
                 scope.launch {
                     runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
                     if (truncatedMid || resumePos > 45_000L) {
@@ -573,7 +579,7 @@ class PlaybackService : MediaSessionService() {
                             }
                             val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
                             exo.replaceMediaItem(idx, nextItem)
-                            exo.seekTo(idx, resumePos)
+                            exo.seekTo(idx, seekPos)
                             exo.prepare()
                             exo.playWhenReady = true
                             exo.play()
@@ -706,11 +712,15 @@ class PlaybackService : MediaSessionService() {
                 PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
                 PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
                 PlaybackException.ERROR_CODE_TIMEOUT,
+                // EOF mid-stream (souvent ~64 s / 1 MiB) = chaîne stream, pas un bug decode local
+                PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+                PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE,
                 -> return true
             }
             var c: Throwable? = error.cause
             var depth = 0
             while (c != null && depth++ < 6) {
+                if (c is java.io.EOFException) return true
                 val name = c.javaClass.name
                 if (
                     c is java.net.UnknownHostException ||
@@ -719,7 +729,8 @@ class PlaybackService : MediaSessionService() {
                     c is java.io.InterruptedIOException ||
                     name.contains("UnknownHost") ||
                     name.contains("ConnectException") ||
-                    name.contains("SocketTimeout")
+                    name.contains("SocketTimeout") ||
+                    name.contains("EOFException")
                 ) {
                     return true
                 }
@@ -731,7 +742,9 @@ class PlaybackService : MediaSessionService() {
                     "network is unreachable" in msg ||
                     "502" in msg ||
                     "503" in msg ||
-                    "504" in msg
+                    "504" in msg ||
+                    "unexpected end of stream" in msg ||
+                    "end of stream" in msg
                 ) {
                     return true
                 }
