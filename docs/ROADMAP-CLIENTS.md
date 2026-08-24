@@ -20,5 +20,6 @@ Ordre de livraison des clients natifs / desktop. Ne pas inverser sans décision 
 ## Liens
 
 - Identité / domaine : [`PLM.md`](./PLM.md) · migration : [`DOMAIN-PLM-MIGRATION.md`](./DOMAIN-PLM-MIGRATION.md)
+- Paroles / offline bundle : [`LYRICS-OFFLINE.md`](./LYRICS-OFFLINE.md)
 - Desktop : [`../desktop/`](../desktop/) · README racine § Desktop
 - Suivi bugs : [`../STATUS.md`](../STATUS.md) · [`../ERRORS.md`](../ERRORS.md)

@@ -23,6 +23,10 @@ import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
@@ -100,9 +104,20 @@ fun LibraryScreen(
     suspend fun reloadLibrary(force: Boolean = false, showSpinner: Boolean = false) {
         val now = System.currentTimeMillis()
         if (!force && now - lastFetchAt < 45_000L && lib != null) return
+        val localTracks = container.offlineStore.listTracks()
+        // Seed disque immédiat — pas de spinner si on a déjà des titres locaux
+        if (lib == null && localTracks.isNotEmpty()) {
+            downloadMeta = downloadMeta + localTracks.associateBy { t -> t.id }
+            lib = LibraryResponse(
+                downloaded = localTracks.map { t -> t.id },
+                songs = localTracks,
+                liked = localTracks,
+                history = localTracks.take(40),
+            )
+            loading = false
+        }
         if (showSpinner && lib == null) loading = true
         if (force && lib != null) refreshing = true
-        val localTracks = container.offlineStore.listTracks()
         // Phase 1 : 12 premiers titres (réponse légère) → UI immédiate
         if (lib == null || force) {
             runCatching {
@@ -223,9 +238,8 @@ fun LibraryScreen(
         }
     }
 
-    LaunchedEffect(selected) {
+    LaunchedEffect(selected, libraryEpoch) {
         if (selected != LibraryFilter.Mixes) return@LaunchedEffect
-        if (homeMixes.isNotEmpty()) return@LaunchedEffect
         runCatching {
             container.ensureFreshToken()
             container.api.home().radios.map { radio ->
@@ -239,25 +253,45 @@ fun LibraryScreen(
         }.onSuccess { homeMixes = it }
     }
 
-    // Enrichit les téléchargements dont on n’a que l’id
+    // OfflineStore revision → refresh immédiat du filtre Téléchargés (sans attendre l’API)
+    LaunchedEffect(offlineRev) {
+        if (offlineRev <= 0L) return@LaunchedEffect
+        val localTracks = container.offlineStore.listTracks()
+        val localMap = localTracks.associateBy { t -> t.id }
+        val localIds = localMap.keys
+        downloadMeta = downloadMeta.filterKeys { it in localIds } + localMap
+        val cur = lib
+        if (cur != null) {
+            lib = cur.copy(downloaded = (cur.downloaded.filter { it in localIds } + localIds).distinct())
+        }
+    }
+
+    // Enrichit les téléchargements dont on n’a que l’id (sans vider la liste) — online only
     LaunchedEffect(lib?.downloaded, selected) {
         if (selected != LibraryFilter.Downloads) return@LaunchedEffect
+        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) {
+            downloadsEnriching = false
+            return@LaunchedEffect
+        }
         val data = lib ?: return@LaunchedEffect
         val byId = (data.songs + data.liked + data.history).associateBy { it.id }
         val missing = data.downloaded.filter { id ->
             id.length == 11 && byId[id] == null && downloadMeta[id] == null
-        }.take(24)
+        }.take(16)
         if (missing.isEmpty()) {
             downloadsEnriching = false
             return@LaunchedEffect
         }
         downloadsEnriching = true
-        val fetched = mutableMapOf<String, TrackDto>()
-        for (id in missing) {
-            runCatching { container.api.track(id).track }
-                .getOrNull()
-                ?.takeIf { it.isPlayable() }
-                ?.let { fetched[id] = it }
+        val fetched = kotlinx.coroutines.coroutineScope {
+            missing.map { id ->
+                async {
+                    runCatching { container.api.track(id).track }
+                        .getOrNull()
+                        ?.takeIf { it.isPlayable() }
+                        ?.let { id to it }
+                }
+            }.awaitAll().filterNotNull().toMap()
         }
         if (fetched.isNotEmpty()) downloadMeta = downloadMeta + fetched
         downloadsEnriching = false
@@ -603,6 +637,9 @@ private fun buildLibraryContent(
 ): LibraryContent {
     fun az(tracks: List<TrackDto>) = tracks.sortedBy { it.title.lowercase() }
 
+    fun playlistKey(id: String): String =
+        id.removePrefix("local:").lowercase()
+
     fun playlistAsTrack(pl: PlaylistDto): TrackDto =
         TrackDto(
             id = if (pl.id.startsWith("local:")) pl.id else "local:${pl.id}",
@@ -655,8 +692,25 @@ private fun buildLibraryContent(
             }
             // Aimés / biblio toujours visibles s’ils sont DL
             val tracks = az(base.distinctBy { it.id })
+            val totalSec = tracks.sumOf { (it.durationSeconds ?: 0).coerceAtLeast(0).toLong() }
+            val hoursLabel = when {
+                totalSec <= 0L -> null
+                totalSec < 3600L -> "${totalSec / 60} min"
+                else -> {
+                    val h = totalSec / 3600.0
+                    String.format("%.1f h", h)
+                }
+            }
             LibraryContent(
-                headline = if (offlineOnly) "Titres hors ligne · A–Z" else "Titres · A–Z",
+                headline = buildString {
+                    append(if (offlineOnly) "Titres hors ligne" else "Titres")
+                    append(" · ")
+                    append(tracks.size)
+                    if (hoursLabel != null) {
+                        append(" · ")
+                        append(hoursLabel)
+                    }
+                },
                 rows = tracks,
                 playableQueue = tracks,
                 emptyMessage = if (offlineOnly) {
@@ -694,9 +748,9 @@ private fun buildLibraryContent(
             val rows = buildList {
                 addAll(data.playlists.map { playlistAsTrack(it) })
                 addAll(data.likedPlaylists.map { likedPlaylistAsTrack(it) })
-            }.distinctBy { it.id }.sortedBy { it.title.lowercase() }
+            }.distinctBy { playlistKey(it.id) }.sortedBy { it.title.lowercase() }
             LibraryContent(
-                headline = "Playlists · A–Z",
+                headline = if (rows.isEmpty()) "Playlists · A–Z" else "Playlists · ${rows.size}",
                 rows = rows,
                 playableQueue = emptyList(),
                 emptyMessage = "Aucune playlist. Crée-en une ou enregistre une playlist YT Music.",
@@ -848,27 +902,27 @@ private fun buildLibraryContent(
                 addAll(tracksDl)
             }
             val unresolved = rows.any { it.title == it.id && it.id.length == 11 }
-            val enriching = downloadsEnriching && (rows.isEmpty() || unresolved)
+            val enriching = downloadsEnriching && unresolved && rows.isNotEmpty()
             val playable = tracksDl.filter { it.isPlayable() }
             LibraryContent(
-                headline = "Téléchargés",
-                rows = if (enriching) emptyList() else rows,
-                playableQueue = if (enriching) emptyList() else playable,
-                emptyMessage = if (enriching) {
-                    "Chargement des téléchargements…"
-                } else {
-                    "Aucun téléchargement sur l'appareil. Menu ⋮ d'un titre → Télécharger."
+                headline = when {
+                    enriching -> "Téléchargés · ${rows.size} (infos…)"
+                    rows.isNotEmpty() -> "Téléchargés · ${rows.size}"
+                    else -> "Téléchargés"
                 },
-                showPlayAll = !enriching && playable.isNotEmpty(),
+                rows = rows,
+                playableQueue = playable,
+                emptyMessage = "Aucun téléchargement sur l'appareil. Menu ⋮ d'un titre → Télécharger.",
+                showPlayAll = playable.isNotEmpty(),
                 playLabel = "Tout lire",
                 shuffleLabel = "Mix hors-ligne",
                 collectionHint = when {
-                    enriching -> null
+                    enriching -> "Affichage immédiat — titres enrichis en arrière-plan."
                     playlistsDl.isNotEmpty() || albumsDl.isNotEmpty() ->
                         "Playlists → albums → titres. Lecture / mix = titres uniquement."
                     else -> null
                 },
-                loading = enriching,
+                loading = false,
             )
         }
         LibraryFilter.Profiles -> LibraryContent(

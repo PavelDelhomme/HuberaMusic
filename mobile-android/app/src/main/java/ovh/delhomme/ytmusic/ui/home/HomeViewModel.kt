@@ -292,6 +292,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 _state.value = _state.value.copy(
                     savedMixIds = _state.value.savedMixIds + categoryId,
                 )
+                container.bumpLibraryEpoch()
             }
         }
     }

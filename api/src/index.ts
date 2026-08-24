@@ -2688,16 +2688,32 @@ process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
   const err = reason instanceof Error ? reason : new Error(String(reason));
   // Client a coupé le flux (curl/tests/Exo abort) → yt-dlp SIGTERM → exit null : pas d’alerte mail
-  if (/yt-dlp exit null|yt-dlp first-byte timeout/i.test(err.message)) {
+  // Range EOF disque déjà géré (416) — anciennes races / start===size ne doivent plus spammer.
+  if (
+    /yt-dlp exit null|yt-dlp first-byte timeout|ERR_OUT_OF_RANGE|start" is out of range|start is out of range/i.test(
+      err.message,
+    )
+  ) {
     return;
   }
+  const trackIdFromErr = (() => {
+    const tagged = (err as { trackId?: unknown }).trackId;
+    if (typeof tagged === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(tagged)) return tagged;
+    const blob = `${err.message}\n${err.stack || ''}`;
+    const m =
+      /\[stream\s+([a-zA-Z0-9_-]{11})\]/.exec(blob) ||
+      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/.exec(blob);
+    return m?.[1];
+  })();
   try {
+    const meta = trackIdFromErr ? { trackId: trackIdFromErr } : undefined;
     const id = insertTelemetry({
       env: getAppEnv(),
       level: 'error',
       kind: 'server.unhandledRejection',
       message: err.message,
       stack: err.stack,
+      meta,
     });
     void import('./platform/telemetryAlert.js').then(({ maybeAlertTelemetryError }) =>
       maybeAlertTelemetryError({
@@ -2707,6 +2723,7 @@ process.on('unhandledRejection', (reason) => {
         kind: 'server.unhandledRejection',
         message: err.message,
         stack: err.stack,
+        meta,
       }),
     );
   } catch {

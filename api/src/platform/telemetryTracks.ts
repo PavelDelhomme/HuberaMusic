@@ -29,19 +29,34 @@ const ID_BLOCK = new Set([
 export function extractTrackIds(...blobs: Array<string | undefined | null>): string[] {
   const found: string[] = [];
   const seen = new Set<string>();
+  const push = (id: string | undefined | null) => {
+    if (!id || seen.has(id) || ID_BLOCK.has(id)) return;
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) return;
+    if (!/[a-zA-Z]/.test(id)) return;
+    if (/^[a-z]{11}$/.test(id) || /^[A-Z]{11}$/.test(id) || /^[A-Z_]+$/.test(id)) return;
+    seen.add(id);
+    found.push(id);
+  };
   for (const blob of blobs) {
     if (!blob) continue;
+    // Patterns explicites stream / tag serveur
+    for (const re of [
+      /\[stream\s+([a-zA-Z0-9_-]{11})\]/gi,
+      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/gi,
+      /\btrackId[=:]\s*([a-zA-Z0-9_-]{11})\b/gi,
+      /\bid=([a-zA-Z0-9_-]{11})\b/gi,
+    ]) {
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(blob))) {
+        push(m[1]);
+        if (found.length >= 12) return found;
+      }
+    }
     ID_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = ID_RE.exec(blob))) {
-      const id = m[1];
-      if (seen.has(id) || ID_BLOCK.has(id)) continue;
-      // YouTube IDs : base64url-ish. Rejette mots uniformes (application, TRUE…)
-      // mais accepte les IDs 100 % lettres à casse mixte (ex. TqyfmFaZlqw).
-      if (!/[a-zA-Z]/.test(id)) continue;
-      if (/^[a-z]{11}$/.test(id) || /^[A-Z]{11}$/.test(id) || /^[A-Z_]+$/.test(id)) continue;
-      seen.add(id);
-      found.push(id);
+      push(m[1]);
       if (found.length >= 12) return found;
     }
   }

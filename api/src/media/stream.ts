@@ -19,6 +19,7 @@ import {
   invalidateStreamHead,
   rememberAdvertisedTotal,
   stableContentTotal,
+  safeDiskRangeBounds,
 } from './streamHeadCache.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -539,18 +540,21 @@ export async function handleStream(req: Request, res: Response) {
     }
     if (existsSync(cached) && statSync(cached).size > 0) {
       const size = statSync(cached).size;
+      // Vérité disque pour les lectures ; total header ≈ stable (mais bounds toujours sur size).
       const advertised = stableContentTotal(videoId, size);
       rememberAdvertisedTotal(videoId, advertised);
+      const totalHdr = Math.min(advertised, size);
       const range = req.headers.range;
       if (range) {
-        const m = /bytes=(\d+)-(\d*)/.exec(String(range));
-        const start = m ? Number(m[1]) : 0;
-        const endRaw = m && m[2] ? Number(m[2]) : size - 1;
-        const end = Math.min(endRaw, size - 1, advertised - 1);
-        if (start < 0 || start >= size || start >= advertised || end < start) {
-          res.status(416).setHeader('Content-Range', `bytes */${advertised}`).end();
+        const bounds = safeDiskRangeBounds(size, String(range));
+        if (!bounds.ok) {
+          res.status(416);
+          res.setHeader('Content-Range', `bytes */${totalHdr}`);
+          res.setHeader('Accept-Ranges', 'bytes');
+          res.end();
           return;
         }
+        const { start, end } = bounds;
         const len = end - start + 1;
         if (start === 0 && len > 0 && len <= 1024 * 1024) {
           try {
@@ -559,9 +563,9 @@ export async function handleStream(req: Request, res: Response) {
             try {
               const buf = Buffer.alloc(len);
               readSync(fd, buf, 0, len, 0);
-              putStreamHead(videoId, buf, { totalSize: advertised, contentType: 'audio/mp4' });
+              putStreamHead(videoId, buf, { totalSize: totalHdr, contentType: 'audio/mp4' });
               res.status(206);
-              res.setHeader('Content-Range', `bytes 0-${len - 1}/${advertised}`);
+              res.setHeader('Content-Range', `bytes 0-${len - 1}/${totalHdr}`);
               res.setHeader('Accept-Ranges', 'bytes');
               res.setHeader('Content-Length', len);
               res.setHeader('Content-Type', 'audio/mp4');
@@ -575,23 +579,67 @@ export async function handleStream(req: Request, res: Response) {
             /* fallback pipe */
           }
         }
-        res.status(206);
-        res.setHeader('Content-Range', `bytes ${start}-${end}/${advertised}`);
-        res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Content-Length', len);
+        try {
+          res.status(206);
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${totalHdr}`);
+          res.setHeader('Accept-Ranges', 'bytes');
+          res.setHeader('Content-Length', len);
+          res.setHeader('Content-Type', 'audio/mp4');
+          res.setHeader('X-PLM-Stream-Cache', 'disk');
+          const { createReadStream } = await import('node:fs');
+          const rs = createReadStream(cached, { start, end });
+          rs.on('error', (err) => {
+            console.warn(
+              `[stream ${videoId}] disk range KO:`,
+              String(err?.message || err).slice(0, 120),
+            );
+            if (!res.headersSent) {
+              res.status(416);
+              res.setHeader('Content-Range', `bytes */${totalHdr}`);
+              res.end();
+            } else {
+              res.destroy();
+            }
+          });
+          rs.pipe(res);
+          return;
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          (e as { trackId?: string }).trackId = videoId;
+          e.message = `[stream ${videoId}] ${e.message}`;
+          console.warn('[stream] disk range KO:', e.message.slice(0, 160));
+          if (!res.headersSent) {
+            res.status(416);
+            res.setHeader('Content-Range', `bytes */${totalHdr}`);
+            res.end();
+          }
+          return;
+        }
+      }
+      try {
         res.setHeader('Content-Type', 'audio/mp4');
+        res.setHeader('Content-Length', size);
+        res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('X-PLM-Stream-Cache', 'disk');
         const { createReadStream } = await import('node:fs');
-        createReadStream(cached, { start, end }).pipe(res);
+        const rs = createReadStream(cached);
+        rs.on('error', (err) => {
+          console.warn(
+            `[stream ${videoId}] disk full KO:`,
+            String(err?.message || err).slice(0, 120),
+          );
+          if (!res.headersSent) res.status(500).json({ error: 'Cache disque illisible' });
+          else res.destroy();
+        });
+        rs.pipe(res);
+        return;
+      } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        (e as { trackId?: string }).trackId = videoId;
+        console.warn(`[stream ${videoId}] disk full KO:`, e.message.slice(0, 120));
+        if (!res.headersSent) res.status(500).json({ error: 'Cache disque illisible' });
         return;
       }
-      res.setHeader('Content-Type', 'audio/mp4');
-      res.setHeader('Content-Length', Math.min(size, advertised));
-      res.setHeader('Accept-Ranges', 'bytes');
-      res.setHeader('X-PLM-Stream-Cache', 'disk');
-      const { createReadStream } = await import('node:fs');
-      createReadStream(cached, { start: 0, end: Math.min(size, advertised) - 1 }).pipe(res);
-      return;
     }
   }
 

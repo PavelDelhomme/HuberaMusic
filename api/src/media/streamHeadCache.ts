@@ -101,13 +101,37 @@ export function stableContentTotal(videoId: string, fileSize: number): number {
   const headTotal = peekStreamHead(videoId)?.totalSize ?? null;
   const preferred = remembered ?? headTotal;
   if (preferred != null && preferred > 0) {
-    // Fichier un peu plus grand (yt-dlp vs GV) : garder le total déjà vu par Exo.
+    // Écart trop grand (home vs yt-dlp) → la vérité disque gagne, sinon Exo seek past EOF.
+    if (Math.abs(fileSize - preferred) > 64 * 1024) {
+      advertisedTotals.set(videoId, fileSize);
+      return fileSize;
+    }
     if (fileSize >= preferred) return preferred;
-    // Fichier plus petit : ne pas mentir au-delà de la taille réelle.
     return fileSize;
   }
   rememberAdvertisedTotal(videoId, fileSize);
   return fileSize;
+}
+
+/**
+ * Sert un Range depuis le .m4a disque sans jamais planter createReadStream
+ * (start > end → RangeError unhandledRejection en prod).
+ */
+export function safeDiskRangeBounds(
+  size: number,
+  rangeHdr: string,
+): { ok: false; status: 416 } | { ok: true; start: number; end: number } {
+  if (!Number.isFinite(size) || size <= 0) return { ok: false, status: 416 };
+  const m = /bytes=(\d+)-(\d*)/.exec(rangeHdr);
+  let start = m ? Number(m[1]) : 0;
+  let end = m && m[2] !== '' && m[2] != null ? Number(m[2]) : size - 1;
+  if (!Number.isFinite(start) || start < 0) start = 0;
+  if (!Number.isFinite(end)) end = size - 1;
+  // Past EOF (Exo en fin de titre demande souvent start === size)
+  if (start >= size) return { ok: false, status: 416 };
+  end = Math.min(end, size - 1);
+  if (end < start) return { ok: false, status: 416 };
+  return { ok: true, start, end };
 }
 
 /** Précharge une tête via Range sur googlevideo (ou équivalent). */

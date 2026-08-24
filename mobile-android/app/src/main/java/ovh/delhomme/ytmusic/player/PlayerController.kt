@@ -47,6 +47,8 @@ data class PlayerUiState(
     val sleepLabel: String? = null,
     val shuffle: Boolean = false,
     val repeat: RepeatMode = RepeatMode.Off,
+    /** Vitesse ExoPlayer (1f = normal). */
+    val playbackSpeed: Float = 1f,
     /** Libellé source : « File d'attente », nom de playlist, mix… */
     val queueTitle: String = "File d'attente",
     /** Fin exclusive de la file lancée par l’utilisateur ; au-delà = suggestions auto. */
@@ -491,6 +493,7 @@ class PlayerController(
             sleepLabel = null,
             shuffle = shuffleEnabled,
             repeat = repeatMode,
+            playbackSpeed = playbackSpeed,
             queueTitle = queueTitle,
             userQueueEnd = 0,
             autoplaySuggestions = autoplaySuggestions,
@@ -1024,6 +1027,31 @@ class PlayerController(
         }
     }
 
+    private var playbackSpeed: Float = 1f
+
+    /** Cycle : 1 → 0.75 → 0.5 → 0.8 → 0.7 → 0.6 → 1.25 → 1.5 → 1 */
+    fun cyclePlaybackSpeed() {
+        val steps = floatArrayOf(1f, 0.75f, 0.5f, 0.8f, 0.7f, 0.6f, 1.25f, 1.5f)
+        val idx = steps.indexOfFirst { kotlin.math.abs(it - playbackSpeed) < 0.01f }
+        playbackSpeed = steps[(idx + 1).coerceAtLeast(0) % steps.size]
+        player()?.let { p ->
+            runCatching { p.setPlaybackSpeed(playbackSpeed) }
+            syncFrom(p)
+        } ?: run {
+            _state.value = _state.value.copy(playbackSpeed = playbackSpeed)
+        }
+    }
+
+    fun setPlaybackSpeed(speed: Float) {
+        playbackSpeed = speed.coerceIn(0.5f, 2f)
+        player()?.let { p ->
+            runCatching { p.setPlaybackSpeed(playbackSpeed) }
+            syncFrom(p)
+        } ?: run {
+            _state.value = _state.value.copy(playbackSpeed = playbackSpeed)
+        }
+    }
+
     private var lastRollingMaintainAt = 0L
 
     fun tickPrefetch() {
@@ -1513,6 +1541,7 @@ class PlayerController(
             sleepLabel = sleepLabel,
             shuffle = shuffleEnabled,
             repeat = repeatMode,
+            playbackSpeed = playbackSpeed,
             queueTitle = queueTitle,
             userQueueEnd = userQueueEnd.coerceIn(0, queue.size),
             autoplaySuggestions = autoplaySuggestions,

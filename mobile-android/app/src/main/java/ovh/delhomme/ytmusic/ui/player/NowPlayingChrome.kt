@@ -11,6 +11,7 @@ enum class PlayerChromeAction {
     Download,
     Mix,
     Equalizer,
+    Speed,
     Shuffle,
     Previous,
     PlayPause,
@@ -36,6 +37,7 @@ object NowPlayingChrome {
         ChromeSlot(PlayerChromeAction.Download, "Télécharger"),
         ChromeSlot(PlayerChromeAction.Mix, "Mix"),
         ChromeSlot(PlayerChromeAction.Equalizer, "Égaliseur"),
+        ChromeSlot(PlayerChromeAction.Speed, "Vitesse"),
     )
 
     /** Sous la barre de seek. */

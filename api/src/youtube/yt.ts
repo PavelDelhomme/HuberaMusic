@@ -1516,11 +1516,11 @@ export async function getArtistSongs(
 
 const LYRICS_CACHE_MAX = 400;
 /** bump pour invalider d’anciens timed mal alignés / écrasés */
-const LYRICS_CACHE_VER = 'v9';
+const LYRICS_CACHE_VER = 'v10';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | null;
+  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'lyrics.ovh' | 'genius' | null;
   /** Décalage appliqué aux timed (ms) — positif = paroles retardées (corrige avance) */
   syncOffsetMs?: number;
 };
@@ -1636,6 +1636,37 @@ type LrclibHit = {
   sourceDurationSec?: number;
 };
 
+/** Plain lyrics via lyrics.ovh — secours quand LRCLIB/captions vides. */
+async function fetchLyricsOvh(artist: string, title: string): Promise<string | null> {
+  if (!title.trim()) return null;
+  const clean = (s: string) =>
+    s
+      .replace(/\s*[\[(【].*?[\])】]/g, ' ')
+      .replace(/,/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  const titles = [clean(title), title, clean(title).replace(/['’-]/g, ' ')].filter(
+    (t, i, a) => t && a.indexOf(t) === i,
+  );
+  const artists = [
+    artist,
+    artist.split(/[,&/]| feat\.? | ft\.? /i)[0]?.trim() || '',
+  ].filter((a, i, arr) => arr.indexOf(a) === i);
+  const ctrl = AbortSignal.timeout(4000);
+  for (const a of artists) {
+    for (const t of titles) {
+      if (!a.trim() || !t.trim()) continue;
+      const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(a)}/${encodeURIComponent(t)}`;
+      const res = await fetch(url, { signal: ctrl }).catch(() => null);
+      if (!res?.ok) continue;
+      const data = (await res.json().catch(() => null)) as { lyrics?: string } | null;
+      const plain = data?.lyrics?.trim();
+      if (plain && plain.length > 20) return plain.replace(/\r\n/g, '\n').trim();
+    }
+  }
+  return null;
+}
+
 async function fetchLrclibTimed(
   artist: string,
   title: string,
@@ -1700,6 +1731,11 @@ async function fetchLrclibTimed(
     cleanTitle.replace(/['’]/g, ''),
     cleanTitle.replace(/['’]/g, ' '),
     cleanTitle.replace(/['’]/g, "'"),
+    // FR : « Soleil, fais-moi ta fête » → sans virgule / tirets
+    cleanTitle.replace(/,/g, ''),
+    cleanTitle.replace(/,/g, ' ').replace(/\s{2,}/g, ' ').trim(),
+    cleanTitle.replace(/[-–—]/g, ' ').replace(/\s{2,}/g, ' ').trim(),
+    fold(cleanTitle),
   ].filter((t, i, arr) => t && arr.indexOf(t) === i);
 
   // Variantes artiste (chaîne YT ≠ nom LRCLIB : « VelourVoix », « Topic », feat…)
@@ -1981,6 +2017,33 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
         timed = caps.timed;
         if (!text) text = caps.lyrics;
         source = 'captions';
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Dernier recours texte : lyrics.ovh puis Genius.com
+  if (!text) {
+    try {
+      const meta = await getTrack(videoId, { light: true }).catch(() => null);
+      const title = meta?.track?.title || '';
+      const artist =
+        meta?.track?.artists?.map((a) => a.name).filter(Boolean).join(' ') ||
+        meta?.track?.artists?.[0]?.name ||
+        '';
+      const plain = await fetchLyricsOvh(artist, title);
+      if (plain) {
+        text = plain;
+        source = source || 'lyrics.ovh';
+      }
+      if (!text) {
+        const { fetchGeniusLyrics } = await import('./lyricsGenius.js');
+        const g = await fetchGeniusLyrics(artist, title);
+        if (g?.lyrics) {
+          text = g.lyrics;
+          source = 'genius';
+        }
       }
     } catch {
       /* ignore */
