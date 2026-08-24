@@ -308,8 +308,9 @@ class LocalOfflineStore(
     ) {
         val minBytes = minBytesFor(track)
         if (part.length() < minBytes) {
+            val got = part.length()
             part.delete()
-            error("Fichier trop petit (${part.length()} < $minBytes) — stream incomplet")
+            error("Fichier trop petit ($got < $minBytes) — stream incomplet")
         }
         if (total > 0 && readTotal < (total * 98 / 100)) {
             part.delete()

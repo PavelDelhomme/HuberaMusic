@@ -15,6 +15,7 @@ import ovh.delhomme.ytmusic.data.NetworkMonitor
 import ovh.delhomme.ytmusic.data.RadioCategoryDto
 import ovh.delhomme.ytmusic.data.ShelfDto
 import ovh.delhomme.ytmusic.data.TrackDto
+import ovh.delhomme.ytmusic.update.ApkUpdateManager
 
 data class HomeUiState(
     val loading: Boolean = true,
@@ -31,6 +32,8 @@ data class HomeUiState(
     val seeds: List<String> = emptyList(),
     val hasMore: Boolean = false,
     val page: Int = 0,
+    /** Résultat MAJ éventuel (fenêtre 7h / 17h uniquement). */
+    val updatePrompt: ApkUpdateManager.CheckResult? = null,
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -51,6 +54,18 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         refresh()
     }
 
+    fun dismissUpdatePrompt() {
+        val code = _state.value.updatePrompt?.info?.versionCode
+        if (code != null && code > 0) {
+            ApkUpdateManager(container.appContext, container).dismissForVersion(code)
+        }
+        _state.value = _state.value.copy(updatePrompt = null)
+    }
+
+    fun consumeUpdatePrompt() {
+        _state.value = _state.value.copy(updatePrompt = null)
+    }
+
     fun refresh(fromUser: Boolean = false) {
         viewModelScope.launch {
             if (!NetworkMonitor.isOnline()) {
@@ -65,31 +80,52 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 return@launch
             }
             val hadContent = _state.value.shelves.isNotEmpty() || _state.value.radios.isNotEmpty()
+            val keepPreviews = _state.value.radioPreviews
             _state.value = _state.value.copy(
                 loading = !fromUser && !hadContent,
                 refreshing = fromUser,
                 error = null,
-                // Pull user : invalide mosaïques immédiatement (sinon « Mixés » semble figé)
-                radioPreviews = if (fromUser) emptyMap() else _state.value.radioPreviews,
+                // Garde les mosaïques pendant le pull — remplacées au fur et à mesure
             )
             if (fromUser) {
                 runCatching { container.mixCache.clearAll() }
             }
+            // MAJ : check léger en parallèle (prompt seulement 7h / 17h, snooze respecté)
+            val updateJob = if (fromUser) {
+                async {
+                    runCatching {
+                        ApkUpdateManager(container.appContext, container)
+                            .checkOnPullRefresh()
+                    }.getOrNull()
+                }
+            } else {
+                null
+            }
             try {
                 container.ensureFreshToken()
-                runCatching { container.quickAccess.syncFromApi(container.api) }
-                val home = container.api.home()
-                val savedMixes = runCatching {
-                    container.api.library(light = 1, limit = 1).mixes.map { it.id }.toSet()
-                }.getOrElse {
-                    runCatching {
-                        container.api.library().mixes.map { it.id }.toSet()
-                    }.getOrDefault(emptySet())
+                // Pins / quick access + home en parallèle
+                val pinsJob = async {
+                    runCatching { container.quickAccess.syncFromApi(container.api) }
                 }
+                val homeJob = async { container.api.home() }
+                val savedJob = async {
+                    runCatching {
+                        container.api.library(light = 1, limit = 1).mixes.map { it.id }.toSet()
+                    }.getOrElse {
+                        runCatching {
+                            container.api.library().mixes.map { it.id }.toSet()
+                        }.getOrDefault(emptySet())
+                    }
+                }
+                pinsJob.await()
+                val home = homeJob.await()
+                val savedMixes = savedJob.await()
                 container.homeCache.write(home)
-                _state.value = HomeUiState(
+
+                // 1ʳᵉ peinture immédiate : shelves + radios (spinner peut tomber)
+                _state.value = _state.value.copy(
                     loading = false,
-                    refreshing = fromUser, // reste true le temps des previews si pull
+                    refreshing = fromUser,
                     shelves = home.shelves.filter {
                         it.items.isNotEmpty() && !it.title.equals("Épinglé", ignoreCase = true)
                     },
@@ -99,27 +135,35 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     seeds = home.seeds.orEmpty(),
                     hasMore = home.hasMore == true,
                     page = 0,
-                    radioPreviews = emptyMap(),
+                    // Conserve previews des radios encore présentes ; purge le reste
+                    radioPreviews = keepPreviews.filterKeys { id ->
+                        home.radios.any { it.id == id }
+                    },
                 )
-                val spokenShelves = buildList {
-                    runCatching { container.api.exploreSpoken("podcast") }.getOrNull()
-                        ?.items?.takeIf { it.isNotEmpty() }
-                        ?.let { add(ShelfDto("Podcasts", it.take(12))) }
-                    runCatching { container.api.exploreSpoken("audiobook") }.getOrNull()
-                        ?.items?.takeIf { it.isNotEmpty() }
-                        ?.let { add(ShelfDto("Livres audio", it.take(12))) }
+
+                // Spoken + MAJ en parallèle des previews
+                launch {
+                    val spokenShelves = buildList {
+                        runCatching { container.api.exploreSpoken("podcast") }.getOrNull()
+                            ?.items?.takeIf { it.isNotEmpty() }
+                            ?.let { add(ShelfDto("Podcasts", it.take(12))) }
+                        runCatching { container.api.exploreSpoken("audiobook") }.getOrNull()
+                            ?.items?.takeIf { it.isNotEmpty() }
+                            ?.let { add(ShelfDto("Livres audio", it.take(12))) }
+                    }
+                    if (spokenShelves.isNotEmpty()) {
+                        _state.value = _state.value.copy(
+                            shelves = (_state.value.shelves + spokenShelves).distinctBy { it.title },
+                        )
+                    }
                 }
-                if (spokenShelves.isNotEmpty()) {
-                    _state.value = _state.value.copy(
-                        shelves = (_state.value.shelves + spokenShelves).distinctBy { it.title },
-                    )
-                }
-                // Mosaïques en parallèle (2 visibles d’abord, puis le reste)
+
                 suspend fun loadPreview(radioId: String): Pair<String, List<TrackDto>>? =
                     runCatching {
                         radioId to container.api.recoRadio(radioId, preview = 1).tracks.take(4)
                     }.getOrNull()?.takeIf { it.second.isNotEmpty() }
 
+                // Mosaïques : 2 visibles d’abord (UI se met à jour une par une), puis le reste
                 coroutineScope {
                     home.radios.take(2).map { radio ->
                         async { loadPreview(radio.id) }
@@ -129,17 +173,26 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         )
                     }
                 }
-                val more = coroutineScope {
-                    home.radios.drop(2).take(6).map { radio ->
-                        async { loadPreview(radio.id) }
-                    }.awaitAll().filterNotNull().toMap()
-                }
-                if (more.isNotEmpty()) {
-                    _state.value = _state.value.copy(
-                        radioPreviews = _state.value.radioPreviews + more,
-                    )
-                }
+                // Spinner pull : on le coupe dès que le cœur + 2 mosaïques sont là
                 _state.value = _state.value.copy(refreshing = false)
+
+                val upd = updateJob?.await()
+                if (upd?.available == true) {
+                    _state.value = _state.value.copy(updatePrompt = upd)
+                }
+
+                launch {
+                    val more = coroutineScope {
+                        home.radios.drop(2).take(6).map { radio ->
+                            async { loadPreview(radio.id) }
+                        }.awaitAll().filterNotNull().toMap()
+                    }
+                    if (more.isNotEmpty()) {
+                        _state.value = _state.value.copy(
+                            radioPreviews = _state.value.radioPreviews + more,
+                        )
+                    }
+                }
             } catch (e: Exception) {
                 val offline = !NetworkMonitor.isOnline()
                 _state.value = _state.value.copy(

@@ -371,7 +371,8 @@ fun YtMusicAppContent(
         while (isActive) {
             delay(6L * 60L * 60L * 1000L)
             if (!updater.shouldAutoCheck()) continue
-            val check = runCatching { updater.check(force = false) }.getOrNull() ?: continue
+            // Même règle que le pull : dialogue seulement 7h / 17h
+            val check = runCatching { updater.checkOnPullRefresh() }.getOrNull() ?: continue
             if (check.available) pendingUpdate = check
         }
     }

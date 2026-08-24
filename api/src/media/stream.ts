@@ -17,6 +17,8 @@ import {
   warmStreamHead,
   warmStreamHeadsLazy,
   invalidateStreamHead,
+  rememberAdvertisedTotal,
+  stableContentTotal,
 } from './streamHeadCache.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -156,7 +158,19 @@ async function proxyStreamToHome(
   if (ct) res.setHeader('Content-Type', ct);
   else res.setHeader('Content-Type', wantVideo ? 'video/mp4' : 'audio/mp4');
   const cr = upstream.headers.get('content-range');
-  if (cr) res.setHeader('Content-Range', cr);
+  let outCr = cr;
+  if (cr) {
+    const tm = /\/(\d+)\s*$/.exec(cr);
+    if (tm) {
+      const upstreamTotal = Number(tm[1]);
+      rememberAdvertisedTotal(videoId, upstreamTotal);
+      const stable = stableContentTotal(videoId, upstreamTotal);
+      if (stable !== upstreamTotal) {
+        outCr = cr.replace(/\/\d+\s*$/, `/${stable}`);
+      }
+    }
+  }
+  if (outCr) res.setHeader('Content-Range', outCr);
   const cl = upstream.headers.get('content-length');
   if (cl) res.setHeader('Content-Length', cl);
   res.setHeader('Accept-Ranges', 'bytes');
@@ -428,7 +442,12 @@ function tryServeRamHead(req: Request, res: Response, videoId: string): boolean 
   // Demande au-delà de la tête avec borne explicite → upstream (Range complète).
   if (hasEnd && endReq >= head.buf.length) return false;
   const end = Math.min(endReq, head.buf.length - 1);
-  const total = head.totalSize != null ? String(head.totalSize) : '*';
+  if (head.totalSize != null) rememberAdvertisedTotal(videoId, head.totalSize);
+  const totalNum =
+    head.totalSize != null
+      ? stableContentTotal(videoId, head.totalSize)
+      : null;
+  const total = totalNum != null ? String(totalNum) : '*';
   const slice = head.buf.subarray(start, end + 1);
   res.status(206);
   res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
@@ -520,11 +539,18 @@ export async function handleStream(req: Request, res: Response) {
     }
     if (existsSync(cached) && statSync(cached).size > 0) {
       const size = statSync(cached).size;
+      const advertised = stableContentTotal(videoId, size);
+      rememberAdvertisedTotal(videoId, advertised);
       const range = req.headers.range;
       if (range) {
         const m = /bytes=(\d+)-(\d*)/.exec(String(range));
         const start = m ? Number(m[1]) : 0;
-        const end = m && m[2] ? Number(m[2]) : size - 1;
+        const endRaw = m && m[2] ? Number(m[2]) : size - 1;
+        const end = Math.min(endRaw, size - 1, advertised - 1);
+        if (start < 0 || start >= size || start >= advertised || end < start) {
+          res.status(416).setHeader('Content-Range', `bytes */${advertised}`).end();
+          return;
+        }
         const len = end - start + 1;
         if (start === 0 && len > 0 && len <= 1024 * 1024) {
           try {
@@ -533,9 +559,9 @@ export async function handleStream(req: Request, res: Response) {
             try {
               const buf = Buffer.alloc(len);
               readSync(fd, buf, 0, len, 0);
-              putStreamHead(videoId, buf, { totalSize: size, contentType: 'audio/mp4' });
+              putStreamHead(videoId, buf, { totalSize: advertised, contentType: 'audio/mp4' });
               res.status(206);
-              res.setHeader('Content-Range', `bytes 0-${len - 1}/${size}`);
+              res.setHeader('Content-Range', `bytes 0-${len - 1}/${advertised}`);
               res.setHeader('Accept-Ranges', 'bytes');
               res.setHeader('Content-Length', len);
               res.setHeader('Content-Type', 'audio/mp4');
@@ -550,7 +576,7 @@ export async function handleStream(req: Request, res: Response) {
           }
         }
         res.status(206);
-        res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${advertised}`);
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Content-Length', len);
         res.setHeader('Content-Type', 'audio/mp4');
@@ -560,11 +586,11 @@ export async function handleStream(req: Request, res: Response) {
         return;
       }
       res.setHeader('Content-Type', 'audio/mp4');
-      res.setHeader('Content-Length', size);
+      res.setHeader('Content-Length', Math.min(size, advertised));
       res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('X-PLM-Stream-Cache', 'disk');
       const { createReadStream } = await import('node:fs');
-      createReadStream(cached).pipe(res);
+      createReadStream(cached, { start: 0, end: Math.min(size, advertised) - 1 }).pipe(res);
       return;
     }
   }
@@ -695,6 +721,7 @@ export async function handleStream(req: Request, res: Response) {
             totalSize,
             contentType: ct || 'audio/mp4',
           });
+          if (totalSize != null) rememberAdvertisedTotal(videoId, totalSize);
         }
       }
       if (!res.write(Buffer.from(first.value))) {

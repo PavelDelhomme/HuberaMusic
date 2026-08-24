@@ -25,7 +25,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class AppContainer(context: Context) {
-    private val appContext = context.applicationContext
+    val appContext = context.applicationContext
     /** Pour caches locaux (home, recherche…) hors DataStore. */
     fun sharedPrefs(name: String) =
         appContext.getSharedPreferences(name, Context.MODE_PRIVATE)

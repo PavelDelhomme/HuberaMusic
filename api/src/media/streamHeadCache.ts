@@ -75,6 +75,39 @@ export function putStreamHead(
 export function invalidateStreamHead(videoId: string): void {
   heads.delete(videoId);
   inflight.delete(videoId);
+  advertisedTotals.delete(videoId);
+}
+
+/**
+ * Total Content-Range annoncé au client pour ce titre (1ʳᵉ réponse).
+ * ExoPlayer plante (EOF ~64 s) si home dit T1 puis le cache disque dit T2 ≠ T1.
+ */
+const advertisedTotals = new Map<string, number>();
+
+export function rememberAdvertisedTotal(videoId: string, total: number | null | undefined): void {
+  if (total == null || !Number.isFinite(total) || total <= 0) return;
+  if (!advertisedTotals.has(videoId)) {
+    advertisedTotals.set(videoId, Math.floor(total));
+  }
+  const head = heads.get(videoId);
+  if (head && head.totalSize == null) {
+    head.totalSize = Math.floor(total);
+  }
+}
+
+/** Total stable à remettre dans Content-Range (préfère le 1ʳᵉ annoncé). */
+export function stableContentTotal(videoId: string, fileSize: number): number {
+  const remembered = advertisedTotals.get(videoId);
+  const headTotal = peekStreamHead(videoId)?.totalSize ?? null;
+  const preferred = remembered ?? headTotal;
+  if (preferred != null && preferred > 0) {
+    // Fichier un peu plus grand (yt-dlp vs GV) : garder le total déjà vu par Exo.
+    if (fileSize >= preferred) return preferred;
+    // Fichier plus petit : ne pas mentir au-delà de la taille réelle.
+    return fileSize;
+  }
+  rememberAdvertisedTotal(videoId, fileSize);
+  return fileSize;
 }
 
 /** Précharge une tête via Range sur googlevideo (ou équivalent). */
