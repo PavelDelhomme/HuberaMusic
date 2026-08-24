@@ -74,7 +74,7 @@ export function apiOrigin(): string {
   try {
     if (Capacitor.isNativePlatform()) {
       const stored = localStorage.getItem('ytm_api_origin')?.replace(/\/$/, '');
-      return stored || 'https://ytmusic.delhomme.ovh';
+      return stored || 'https://plm.delhomme.ovh';
     }
   } catch {
     /* web */
@@ -469,12 +469,27 @@ export const api = {
       allowRegister: boolean;
       allowRegisterOverride: boolean | null;
       privateMode: boolean;
+      maintenance?: boolean;
+      maintenanceMessage?: string | null;
+      maintenanceUntil?: number | null;
+      maintenanceBlockPlayback?: boolean;
     }>('/api/admin/settings'),
-  adminSetSettings: (allowRegister: boolean) =>
-    req<{ ok: boolean; allowRegister: boolean; apkTicket?: { url: string } }>(
-      '/api/admin/settings',
-      { method: 'PUT', body: JSON.stringify({ allowRegister }) },
-    ),
+  adminSetSettings: (body: {
+    allowRegister?: boolean;
+    maintenance?: boolean;
+    maintenanceMessage?: string | null;
+    maintenanceUntil?: number | null;
+    maintenanceBlockPlayback?: boolean;
+  }) =>
+    req<{
+      ok: boolean;
+      allowRegister: boolean;
+      maintenance?: boolean;
+      apkTicket?: { url: string };
+    }>('/api/admin/settings', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
   adminUsers: () =>
     req<{
       users: Array<{

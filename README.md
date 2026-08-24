@@ -28,7 +28,8 @@ make android           # APK Kotlin sur device ADB (API LAN)
 
 - Web / PWA : http://localhost:5173  
 - API : http://localhost:8787  
-- Prod : https://ytmusic.delhomme.ovh — DNS & install : [`docs/DNS-ET-INSTALL.md`](docs/DNS-ET-INSTALL.md)
+- Prod : **https://plm.delhomme.ovh** (alias `ytmusic.delhomme.ovh`) — DNS & install : [`docs/DNS-ET-INSTALL.md`](docs/DNS-ET-INSTALL.md) · migration : [`docs/DOMAIN-PLM-MIGRATION.md`](docs/DOMAIN-PLM-MIGRATION.md)
+- Roadmap clients (Linux puis Windows, iOS, macOS) : [`docs/ROADMAP-CLIENTS.md`](docs/ROADMAP-CLIENTS.md)
 - Streams musique VPS (OAuth TV, sans PC) : [`docs/STREAM-VPS-OAUTH.md`](docs/STREAM-VPS-OAUTH.md)
 
 ## Tests manuels (ordre)
@@ -59,13 +60,19 @@ make status-watch      # process locaux + ADB (docker optionnel)
 
 ### Desktop
 
-```bash
-# Terminal 1
-make dev
+Shell Electron → **PWA prod** (UI toujours à jour). Windows **après** Linux (voir roadmap).
 
-# Terminal 2
-cd desktop && npm install && npm start
+```bash
+# Dev (Vite local)
+make dev   # terminal 1
+cd desktop && npm install && npm start   # terminal 2 — charge localhost:5173
+
+# Packagé Linux (AppImage) → https://plm.delhomme.ovh
+cd desktop && npm install && npm run dist:linux
+# sortie : desktop/dist/*.AppImage
 ```
+
+Override URL : `PLM_URL=https://plm.delhomme.ovh npm start`
 
 ### Mobile
 

@@ -178,7 +178,7 @@ export function AdminPage() {
             className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black"
             onClick={() => {
               const next = !allowRegister;
-              void api.adminSetSettings(next).then((r) => {
+              void api.adminSetSettings({ allowRegister: next }).then((r) => {
                 setAllowRegister(r.allowRegister);
                 if (r.apkTicket?.url) setApkTicketUrl(r.apkTicket.url);
               });
@@ -216,6 +216,15 @@ export function AdminPage() {
         )}
       </section>
 
+      <section className="mb-6 rounded-2xl border border-yt-border bg-yt-surface p-5">
+        <h3 className="font-display text-lg font-semibold">Maintenance</h3>
+        <p className="mt-1 mb-4 text-sm text-yt-muted">
+          Bannière pour les clients (web / apps) pendant DNS, cutover domaine, incident stream.
+          Tu peux fixer une fin automatique (heures).
+        </p>
+        <MaintenanceAdminBlock />
+      </section>
+
       <section className="mb-6 rounded-2xl border border-yt-red/40 bg-yt-surface p-5">
         <div className="mb-3 flex items-center gap-2">
           <Rocket className="h-5 w-5 text-yt-red" />
@@ -224,6 +233,7 @@ export function AdminPage() {
         <p className="mb-3 text-sm text-yt-muted">
           Guide pas-à-pas : <code className="text-white">DEPLOY.md</code>. Portainer CE ={' '}
           <strong className="text-white">pas de webhook Pro</strong> → installe la stack{' '}
+
           <code className="text-white">watchtower</code> une fois (
           <code className="text-white">deploy/watchtower-compose.yml</code>).
         </p>
@@ -1111,6 +1121,96 @@ function Stat({
       </div>
       <div className="font-display text-2xl font-semibold">{value}</div>
       {sub ? <div className="mt-1 text-xs text-yt-muted">{sub}</div> : null}
+    </div>
+  );
+}
+
+function MaintenanceAdminBlock() {
+  const [active, setActive] = useState(false);
+  const [message, setMessage] = useState('');
+  const [hours, setHours] = useState('2');
+  const [blockPlayback, setBlockPlayback] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [hint, setHint] = useState('');
+
+  useEffect(() => {
+    void api.adminSettings().then((s) => {
+      setActive(s.maintenance === true);
+      setMessage(s.maintenanceMessage || '');
+      setBlockPlayback(s.maintenanceBlockPlayback === true);
+    });
+  }, []);
+
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <span>
+          État :{' '}
+          <strong className={active ? 'text-amber-400' : 'text-emerald-400'}>
+            {active ? 'maintenance ON' : 'normal'}
+          </strong>
+        </span>
+        <button
+          type="button"
+          disabled={busy}
+          className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-black disabled:opacity-50"
+          onClick={() => {
+            setBusy(true);
+            const next = !active;
+            const until =
+              next && Number(hours) > 0
+                ? Date.now() + Number(hours) * 3600_000
+                : null;
+            void api
+              .adminSetSettings({
+                maintenance: next,
+                maintenanceMessage: next
+                  ? message.trim() ||
+                    'PLM est en maintenance — réessaie dans un instant.'
+                  : null,
+                maintenanceUntil: next ? until : null,
+                maintenanceBlockPlayback: next ? blockPlayback : false,
+              })
+              .then((r) => {
+                setActive(r.maintenance === true);
+                setHint(next ? 'Maintenance activée' : 'Maintenance coupée');
+              })
+              .finally(() => setBusy(false));
+          }}
+        >
+          {active ? 'Désactiver' : 'Activer'}
+        </button>
+      </div>
+      <label className="block text-yt-muted">
+        Message
+        <input
+          className="mt-1 w-full rounded-xl border border-yt-border bg-black/40 px-3 py-2 text-white"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder="Ex. Migration domaine plm.delhomme.ovh…"
+        />
+      </label>
+      <label className="inline-flex items-center gap-2 text-yt-muted">
+        Auto-off dans
+        <input
+          type="number"
+          min={0}
+          max={72}
+          className="w-16 rounded-lg border border-yt-border bg-black/40 px-2 py-1 text-white"
+          value={hours}
+          onChange={(e) => setHours(e.target.value)}
+        />
+        h (0 = manuel)
+      </label>
+      <label className="flex items-center gap-2 text-yt-muted">
+        <input
+          type="checkbox"
+          checked={blockPlayback}
+          onChange={(e) => setBlockPlayback(e.target.checked)}
+        />
+        Bloquer la lecture (stream) pendant la maintenance
+      </label>
+      {hint ? <p className="text-xs text-emerald-400">{hint}</p> : null}
     </div>
   );
 }

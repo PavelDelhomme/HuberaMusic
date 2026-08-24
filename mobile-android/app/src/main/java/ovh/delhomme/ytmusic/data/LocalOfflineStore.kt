@@ -135,11 +135,12 @@ class LocalOfflineStore(
             return@withContext Result.success(dest)
         }
         var lastError: Throwable? = null
-        repeat(2) { attempt ->
+        repeat(3) { attempt ->
             if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
                 return@withContext Result.failure(lastError ?: Exception("stream down"))
             }
-            val result = downloadOnce(track, streamUrl, onProgress, attempt)
+            val forceSequential = attempt > 0
+            val result = downloadOnce(track, streamUrl, onProgress, attempt, forceSequential)
             if (result.isSuccess) return@withContext result
             lastError = result.exceptionOrNull()
             val msg = lastError?.message.orEmpty()
@@ -158,6 +159,7 @@ class LocalOfflineStore(
         streamUrl: String,
         onProgress: ((Float) -> Unit)?,
         attempt: Int,
+        forceSequential: Boolean = false,
     ): Result<File> {
         val dest = audioFile(track.id)
         val part = File(dir, "${track.id}.part")
@@ -187,7 +189,8 @@ class LocalOfflineStore(
             val metered = !NetworkMonitor.isUnmeteredPreferred(
                 ovh.delhomme.ytmusic.YtMusicApp.instance,
             )
-            if (ranged && total > 512 * 1024L && !metered) {
+            // Parallel multi-Range : fragile si le proxy coupe mid-stream (« unexpected end of stream »)
+            if (!forceSequential && ranged && total > 512 * 1024L && !metered) {
                 downloadParallel(track, streamUrl, part, dest, total, onProgress, attempt)
             } else {
                 downloadSequential(track, streamUrl, part, dest, onProgress, attempt)

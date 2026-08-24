@@ -9,6 +9,20 @@
 
 ---
 
+## Session 2026-08-24 (stream Content-Range / Exo 2008)
+
+### E23 — `onPlayerError` code **2008** (READ_POSITION_OUT_OF_RANGE) + EOF ~64 s + DL « unexpected end of stream »
+| | |
+|--|--|
+| **Status** | `investigating` → fix dans PR **#149** (`1.3.69`) — **pas encore en prod** (`p+1.3.68`) |
+| **Surfaces** | Android prod (Blackview / Nothing) · offline DL |
+| **Cause** | Totaux `Content-Range` incohérents (relais maison vs cache disque) → Exo 2008 / EOF ; DL parallèle multi-Range coupé mid-stream |
+| **Fix** | Total Content-Range stable · EOF/2008 = retry flux avec seek arrière · DL retry en séquentiel · Accueil/MAJ 7h–17h |
+| **Tests** | Rejouer titres listés télémétrie > 2 min après deploy `p+1.3.69` |
+| **PRs** | #149 stream/UX · #148 vidéo/transport **à valider avant** merge prod |
+
+---
+
 ## Session 2026-08-12 (fin de titre = fausse erreur réseau)
 
 ### E13 — Fin de titre → « réseau instable » / file stoppée (prod mobile)
