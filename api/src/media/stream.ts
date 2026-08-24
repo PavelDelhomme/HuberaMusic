@@ -9,6 +9,7 @@ import {
   ytDlpCookieArgSets,
   resolveYoutubeCookieHeader,
   YTDLP_AUDIO_FORMAT_CANDIDATES,
+  ytDlpRuntimeArgs,
 } from '../youtube/youtubeCookies.js';
 import {
   peekStreamHead,
@@ -285,6 +286,7 @@ function spawnYtDlpMediaPipe(
         '--no-playlist',
         '--quiet',
         '--no-warnings',
+        ...ytDlpRuntimeArgs(),
         '--extractor-args',
         'youtube:player_client=android_vr,tv,ios,web_embedded',
         '--user-agent',
@@ -495,41 +497,7 @@ export async function handleStream(req: Request, res: Response) {
   // Tête RAM (lazy warm) — avant disque / upstream
   if (!wantVideo && tryServeRamHead(req, res, videoId)) return;
 
-  // Relais maison en priorité (IP résidentielle) — avant downloadTrack VPS (bot / LOGIN_REQUIRED).
-  // Mid-range : le relais peut devoir télécharger le .m4a complet (30–90 s) → timeout allongé.
-  if (homeUpstream) {
-    const proxyTimeoutMs = midNeedsDisk ? 130_000 : 52_000;
-    try {
-      await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs);
-      return;
-    } catch (err) {
-      if (endIfHeadersSent(res)) return;
-      const msg = String((err as Error).message || err);
-      console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
-      if (process.env.STREAM_UPSTREAM_FALLBACK !== '1') {
-        const isDown =
-          /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
-            msg,
-          );
-        const homeStatus = /home stream (\d{3})/.exec(msg);
-        const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
-        res.status(status).json({
-          error: midNeedsDisk ? 'Seek en cours de préparation' : 'Impossible de streamer audio',
-          detail: msg.slice(0, 240),
-          retryAfter: midNeedsDisk ? 3 : undefined,
-          hint: isDown
-            ? 'Relais maison KO — sur le PC : bash scripts/deploy/link-home-stream.sh (laisser allumé).'
-            : midNeedsDisk
-              ? 'Le titre se charge — réessaie le seek dans quelques secondes.'
-              : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
-        });
-        return;
-      }
-      console.warn('[stream] STREAM_UPSTREAM fallback local VPS (STREAM_UPSTREAM_FALLBACK=1)');
-    }
-  }
-
-  // Cache disque = audio only — ne pas servir .m4a pour ?type=video
+  // Cache disque AVANT relais maison — mid-range seek (GV coupe souvent après ~1 Mo).
   if (!wantVideo) {
     const cached = cachePath(videoId);
     if (existsSync(cached) && !statSync(cached).size) {
@@ -540,7 +508,6 @@ export async function handleStream(req: Request, res: Response) {
         /* ignore */
       }
     }
-    // Mid-range : forcer le téléchargement si pas encore en cache (GV mid ≈ 403).
     if (midNeedsDisk && (!existsSync(cached) || !statSync(cached).size)) {
       try {
         await withDeadline('downloadTrack', downloadTrack(videoId));
@@ -559,7 +526,6 @@ export async function handleStream(req: Request, res: Response) {
         const start = m ? Number(m[1]) : 0;
         const end = m && m[2] ? Number(m[2]) : size - 1;
         const len = end - start + 1;
-        // Petite Range en tête : lecture sync + cache RAM (≪ 50 ms)
         if (start === 0 && len > 0 && len <= 1024 * 1024) {
           try {
             const { openSync, readSync, closeSync } = await import('node:fs');
@@ -602,6 +568,43 @@ export async function handleStream(req: Request, res: Response) {
       return;
     }
   }
+
+  // Relais maison (IP résidentielle) — mid-range déjà tenté en local ci-dessus.
+  if (homeUpstream) {
+    const proxyTimeoutMs = midNeedsDisk ? 130_000 : 52_000;
+    try {
+      await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs);
+      return;
+    } catch (err) {
+      if (endIfHeadersSent(res)) return;
+      const msg = String((err as Error).message || err);
+      console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
+      if (process.env.STREAM_UPSTREAM_FALLBACK !== '1') {
+        // Mid-range : ne pas renvoyer 503 JSON si on peut encore tenter les backends locaux
+        if (!midNeedsDisk) {
+          const isDown =
+            /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
+              msg,
+            );
+          const homeStatus = /home stream (\d{3})/.exec(msg);
+          const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
+          res.status(status).json({
+            error: 'Impossible de streamer audio',
+            detail: msg.slice(0, 240),
+            hint: isDown
+              ? 'Relais maison KO — sur le PC : bash scripts/deploy/link-home-stream.sh (laisser allumé).'
+              : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
+          });
+          return;
+        }
+        console.warn('[stream] mid-range : relais KO — fallback backends locaux');
+      } else {
+        console.warn('[stream] STREAM_UPSTREAM fallback local VPS (STREAM_UPSTREAM_FALLBACK=1)');
+      }
+    }
+  }
+
+  // (cache disque déjà traité plus haut)
 
   try {
     ensureTime('format');
@@ -979,7 +982,7 @@ export async function downloadTrack(videoId: string): Promise<string> {
 
     if (existsSync(YTDLP)) {
       let lastErr: Error | null = null;
-      const cookieSets = ytDlpCookieArgSets();
+      const cookieSets = ytDlpCookieArgSets({ forDownload: true });
       for (const cookieArgs of cookieSets) {
         for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
           try {
@@ -999,6 +1002,7 @@ export async function downloadTrack(videoId: string): Promise<string> {
                   '--no-playlist',
                   '--quiet',
                   '--no-warnings',
+                  ...ytDlpRuntimeArgs(),
                   ...cookieArgs,
                   `https://www.youtube.com/watch?v=${videoId}`,
                 ],

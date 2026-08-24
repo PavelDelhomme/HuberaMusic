@@ -1,7 +1,7 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Innertube, UniversalCache, ClientType, YTNodes, Parser, Log } from 'youtubei.js';
-import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES } from './youtubeCookies.js';
+import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES, ytDlpRuntimeArgs } from './youtubeCookies.js';
 import { getSignedStreamYT } from './streamAuth.js';
 import { installYoutubeJsEvaluator } from './youtubeiEval.js';
 
@@ -2325,6 +2325,7 @@ async function ytDlpGetUrl(
       '-g',
       '--no-playlist',
       '--no-warnings',
+      ...ytDlpRuntimeArgs(),
       // Clients anonymes connus pour éviter LOGIN_REQUIRED / botcheck VPS
       '--extractor-args',
       'youtube:player_client=android_vr,tv,ios,web_embedded,web',
@@ -2558,6 +2559,7 @@ async function videoFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
         '-g',
         '--no-playlist',
         '--no-warnings',
+        ...ytDlpRuntimeArgs(),
         '--extractor-args',
         'youtube:player_client=android_vr,tv,ios,web_embedded',
         ...ytDlpCookieArgs(),
