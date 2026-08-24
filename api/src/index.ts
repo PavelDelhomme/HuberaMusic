@@ -2651,6 +2651,10 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
   const err = reason instanceof Error ? reason : new Error(String(reason));
+  // Client a coupé le flux (curl/tests/Exo abort) → yt-dlp SIGTERM → exit null : pas d’alerte mail
+  if (/yt-dlp exit null|yt-dlp first-byte timeout/i.test(err.message)) {
+    return;
+  }
   try {
     const id = insertTelemetry({
       env: getAppEnv(),

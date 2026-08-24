@@ -169,6 +169,14 @@ export function resolveYoutubeCookiesFileForYtDlp(): string | undefined {
 }
 
 /**
+ * Args communs yt-dlp (JS challenge solver).
+ * Sans `--js-runtimes node`, YouTube coupe souvent le média à ~1 Mo (403 mid-range).
+ */
+export function ytDlpRuntimeArgs(): string[] {
+  return ['--js-runtimes', 'node'];
+}
+
+/**
  * Args cookies pour yt-dlp.
  * Fichier Netscape uniquement par défaut.
  * `--cookies-from-browser` est opt-in (`YTDLP_COOKIES_FROM_BROWSER=1`) :
@@ -191,11 +199,16 @@ export function ytDlpCookieArgs(): string[] {
  * Ordre d’essai yt-dlp : **anonyme d’abord**, cookies ensuite (optionnel).
  * Évite de dépendre d’une session Premium / cookies périmés qui cassent les formats.
  * Override : `YTDLP_COOKIES_FIRST=1` pour l’ancien ordre (cookies → anon).
+ * Pour téléchargement disque (seek mid) : préférer cookies — `forDownload=true`.
  */
-export function ytDlpCookieArgSets(): string[][] {
+export function ytDlpCookieArgSets(opts?: { forDownload?: boolean }): string[][] {
   const withCookies = ytDlpCookieArgs();
   if (!withCookies.length) return [[]];
-  if (process.env.YTDLP_COOKIES_FIRST === '1') {
+  const cookiesFirst =
+    opts?.forDownload === true ||
+    process.env.YTDLP_COOKIES_FIRST === '1' ||
+    process.env.YTDLP_COOKIES_FIRST === 'true';
+  if (cookiesFirst) {
     return [withCookies, []];
   }
   return [[], withCookies];
