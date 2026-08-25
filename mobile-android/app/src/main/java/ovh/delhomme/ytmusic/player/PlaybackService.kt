@@ -1828,7 +1828,7 @@ fun mediaItemFor(
     return MediaItem.Builder()
         .setMediaId(t.id)
         .setUri(baseStreamUrl(t.id))
-        .setCustomCacheKey(t.id)
+        .setCustomCacheKey(PlayerCache.keyFor(t.id))
         .setMediaMetadata(meta.build())
         .build()
 }

@@ -27,6 +27,13 @@ import java.util.concurrent.atomic.AtomicInteger
 @OptIn(UnstableApi::class)
 object PlayerCache {
     private const val CACHE_DIR = "exo-media"
+    /**
+     * Génération de clé cache. Bumper (s3, s4…) si un bug a figé contentLength
+     * (ex. réponses API tronquées à 1 MiB → EOF ~64 s sur tous les titres déjà joués).
+     */
+    private const val CACHE_KEY_GEN = "s2"
+    private const val PREFS = "plm_player_cache"
+    private const val PREFS_GEN = "exo_cache_gen"
     /** Plafond disque — plafonné aussi selon la RAM dispo (évite OOM sur mid-range). */
     private const val CACHE_BYTES_CAP = 160L * 1024L * 1024L // 160 Mo max
     private const val CACHE_BYTES_FLOOR = 64L * 1024L * 1024L
@@ -34,6 +41,13 @@ object PlayerCache {
 
     @Volatile
     private var simpleCache: SimpleCache? = null
+
+    /** Clé Exo stable par titre + génération (évite cache empoisonné). */
+    fun keyFor(trackId: String): String {
+        val id = trackId.trim().substringBefore(':')
+        if (id.isEmpty()) return trackId.trim()
+        return "$id:$CACHE_KEY_GEN"
+    }
 
     private val prefetchExecutor = Executors.newFixedThreadPool(PREFETCH_PARALLEL) { r ->
         Thread(r, "ytm-exo-prefetch").apply { isDaemon = true }
@@ -51,10 +65,26 @@ object PlayerCache {
         return fromRam.coerceIn(CACHE_BYTES_FLOOR, CACHE_BYTES_CAP)
     }
 
+    /** Une fois par gen : purge le SimpleCache (LENGTH figé / spans tronqués). */
+    private fun migrateCacheGen(context: Context) {
+        val appCtx = context.applicationContext
+        val prefs = appCtx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getString(PREFS_GEN, "") == CACHE_KEY_GEN) return
+        runCatching {
+            simpleCache?.release()
+        }
+        simpleCache = null
+        runCatching {
+            File(appCtx.cacheDir, CACHE_DIR).deleteRecursively()
+        }
+        prefs.edit().putString(PREFS_GEN, CACHE_KEY_GEN).apply()
+    }
+
     @Synchronized
     fun get(context: Context): SimpleCache {
-        simpleCache?.let { return it }
         val appCtx = context.applicationContext
+        migrateCacheGen(appCtx)
+        simpleCache?.let { return it }
         val dir = File(appCtx.cacheDir, CACHE_DIR).apply { mkdirs() }
         val db = StandaloneDatabaseProvider(appCtx)
         val budget = cacheBudgetBytes(appCtx)
@@ -101,10 +131,17 @@ object PlayerCache {
 
     fun invalidate(context: Context, cacheKey: String) {
         if (cacheKey.isBlank()) return
+        val key = keyFor(cacheKey)
         runCatching {
-            get(context.applicationContext).removeResource(cacheKey)
+            get(context.applicationContext).removeResource(key)
         }
-        prefetchInFlight.remove(cacheKey)
+        // Ancienne clé sans gen (cache pré-s2) — au cas où.
+        val bare = cacheKey.trim().substringBefore(':')
+        if (bare.isNotBlank() && bare != key) {
+            runCatching { get(context.applicationContext).removeResource(bare) }
+        }
+        prefetchInFlight.remove(key)
+        prefetchInFlight.remove(bare)
     }
 
     /**
@@ -116,30 +153,31 @@ object PlayerCache {
      */
     fun prefetchHead(context: Context, streamUrl: String, cacheKey: String, bytes: Long) {
         if (streamUrl.isBlank() || cacheKey.isBlank() || bytes <= 0L) return
-        if (!prefetchInFlight.add(cacheKey)) return
+        val key = keyFor(cacheKey)
+        if (!prefetchInFlight.add(key)) return
         val myGen = gen.get()
         val appCtx = context.applicationContext
         prefetchExecutor.execute {
             try {
                 if (myGen != gen.get()) return@execute
                 val cache = get(appCtx)
-                val cached = cache.getCachedBytes(cacheKey, 0, bytes)
+                val cached = cache.getCachedBytes(key, 0, bytes)
                 if (cached >= (bytes * 3 / 4)) {
-                    unsetBogusContentLength(cache, cacheKey, bytes)
+                    unsetBogusContentLength(cache, key, bytes)
                     return@execute
                 }
                 val dataSource = dataSourceFactory(appCtx).createDataSource()
                 val dataSpec = DataSpec.Builder()
                     .setUri(Uri.parse(streamUrl))
                     .setLength(bytes)
-                    .setKey(cacheKey)
+                    .setKey(key)
                     .build()
                 CacheWriter(dataSource, dataSpec, /* temporaryBuffer= */ null, /* listener= */ null).cache()
-                unsetBogusContentLength(cache, cacheKey, bytes)
+                unsetBogusContentLength(cache, key, bytes)
             } catch (_: Exception) {
                 /* réseau / annulation — ignore */
             } finally {
-                prefetchInFlight.remove(cacheKey)
+                prefetchInFlight.remove(key)
             }
         }
     }

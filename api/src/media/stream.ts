@@ -471,10 +471,9 @@ export async function handleStream(req: Request, res: Response) {
   bumpWarmPriority(videoId);
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   // ExoPlayer / Media3 ouvre souvent SANS Range ou avec `bytes=0-` (illimité).
-  // Cold start (pas de .m4a disque) : borner à 1 MiB évite un full-GET googlevideo 502.
-  // MAIS si le cache disque est déjà là, NE PAS tronquer : une coupure nette à 1 MiB
-  // tombe souvent mid-mdat → FragmentedMp4Extractor EOFException (~64 s, code 2000)
-  // et spam télémétrie (« Paris, tu pues », etc.) alors que le fichier est complet.
+  // Cold start : borner à 1 MiB évite un full-GET googlevideo 502, MAIS coupe mid-mdat
+  // → EOFException ~64 s et cache Exo empoisonné. Donc : si disque prêt → fichier entier ;
+  // si client Android et disque absent → attendre brièvement downloadTrack avant de tronquer.
   if (!wantVideo) {
     const rangeRaw = String(req.headers.range || '').trim();
     const openEnded = !rangeRaw || /^bytes=0-$/i.test(rangeRaw);
@@ -485,6 +484,26 @@ export async function handleStream(req: Request, res: Response) {
         if (existsSync(cached)) diskBytes = statSync(cached).size;
       } catch {
         diskBytes = 0;
+      }
+      if (diskBytes <= 1024 * 1024) {
+        const isAndroid =
+          String(req.headers['x-ytm-client'] || '') === 'android' ||
+          /PLM-Android/i.test(String(req.headers['user-agent'] || ''));
+        if (isAndroid) {
+          try {
+            await Promise.race([
+              downloadTrack(videoId).then(() => true),
+              new Promise<boolean>((r) => setTimeout(() => r(false), 8_000)),
+            ]);
+          } catch {
+            /* ignore */
+          }
+          try {
+            if (existsSync(cached)) diskBytes = statSync(cached).size;
+          } catch {
+            diskBytes = 0;
+          }
+        }
       }
       if (diskBytes > 1024 * 1024) {
         // Fichier utilisable : sans Range → 200 + corps entier ; bytes=0- → 0..eof.
