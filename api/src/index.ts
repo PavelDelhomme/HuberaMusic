@@ -2690,7 +2690,7 @@ process.on('unhandledRejection', (reason) => {
   // Client a coupé le flux (curl/tests/Exo abort) → yt-dlp SIGTERM → exit null : pas d’alerte mail
   // Range EOF disque déjà géré (416) — anciennes races / start===size ne doivent plus spammer.
   if (
-    /yt-dlp exit null|yt-dlp first-byte timeout|ERR_OUT_OF_RANGE|start" is out of range|start is out of range/i.test(
+    /yt-dlp exit null|yt-dlp first-byte timeout|ERR_OUT_OF_RANGE|start" is out of range|start is out of range|must be <= "end"|must be <= 'end'/i.test(
       err.message,
     )
   ) {

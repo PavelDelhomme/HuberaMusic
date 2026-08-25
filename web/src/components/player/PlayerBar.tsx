@@ -15,7 +15,7 @@ import {
   ThumbsDown,
   Volume2,
   VolumeX,
-  X,
+  Gauge,
 } from 'lucide-react';
 import { api, artistNames } from '../../api';
 import { usePlayer } from '../../store/player';
@@ -53,6 +53,7 @@ export function PlayerBar({
     progress,
     duration,
     volume,
+    playbackSpeed,
     shuffle,
     repeat,
     toggle,
@@ -60,6 +61,7 @@ export function PlayerBar({
     prev,
     seek,
     setVolume,
+    setPlaybackSpeed,
     toggleShuffle,
     cycleRepeat,
     audioEl,
@@ -85,6 +87,7 @@ export function PlayerBar({
   const [liveProgress, setLiveProgress] = useState(progress);
   const [bufferedPct, setBufferedPct] = useState(0);
   const [sleepOpen, setSleepOpen] = useState(false);
+  const [speedOpen, setSpeedOpen] = useState(false);
   const prevVol = useRef(volume);
   const footerRef = useRef<HTMLElement | null>(null);
   const volumeWrapRef = useRef<HTMLDivElement | null>(null);
@@ -698,12 +701,58 @@ export function PlayerBar({
               </span>
             </div>
           </div>
+          <div className="relative" data-speed-menu onClick={stop} onPointerDown={stop}>
+            <button
+              type="button"
+              onClick={(e) => {
+                stop(e);
+                setSpeedOpen((v) => !v);
+                setSleepOpen(false);
+              }}
+              title={`Vitesse ×${playbackSpeed}`}
+              aria-label="Vitesse de lecture"
+              aria-expanded={speedOpen}
+              className={`flex h-11 min-w-11 items-center justify-center rounded-full px-1.5 text-xs font-semibold tabular-nums ${
+                Math.abs(playbackSpeed - 1) > 0.02
+                  ? 'text-yt-red'
+                  : 'text-yt-muted/70 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              <Gauge className="mr-0.5 h-4 w-4 sm:mr-1" />
+              <span className="hidden sm:inline">×{playbackSpeed.toFixed(2).replace(/\.?0+$/, '')}</span>
+            </button>
+            {speedOpen && (
+              <div className="absolute bottom-full right-0 z-[60] mb-2 w-40 overflow-hidden rounded-xl border border-yt-border bg-[#161616] py-1 shadow-2xl">
+                <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-yt-muted">
+                  Vitesse
+                </p>
+                {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((sp) => (
+                  <button
+                    key={sp}
+                    type="button"
+                    className={`flex w-full px-3 py-2.5 text-left text-sm hover:bg-white/10 ${
+                      Math.abs(playbackSpeed - sp) < 0.02 ? 'text-yt-red' : 'text-white'
+                    }`}
+                    onClick={(e) => {
+                      stop(e);
+                      setPlaybackSpeed(sp);
+                      setSpeedOpen(false);
+                    }}
+                  >
+                    ×{sp.toFixed(2).replace(/\.?0+$/, '')}
+                    {sp === 1 ? ' (normal)' : ''}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="relative" data-sleep-menu onClick={stop} onPointerDown={stop}>
             <button
               type="button"
               onClick={(e) => {
                 stop(e);
                 setSleepOpen((v) => !v);
+                setSpeedOpen(false);
               }}
               title={sleepLabel ? `Minuteur : ${sleepLabel}` : 'Mise en veille'}
               aria-label="Mise en veille"

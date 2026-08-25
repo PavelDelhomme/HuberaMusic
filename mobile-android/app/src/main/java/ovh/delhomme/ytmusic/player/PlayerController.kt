@@ -1029,17 +1029,16 @@ class PlayerController(
 
     private var playbackSpeed: Float = 1f
 
-    /** Cycle : 1 → 0.75 → 0.5 → 0.8 → 0.7 → 0.6 → 1.25 → 1.5 → 1 */
+    companion object {
+        /** Vitesses proposées dans le menu lecteur (×0.75 … ×1.50 + extrêmes). */
+        val PLAYBACK_SPEEDS = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+    }
+
+    /** Cycle rapide : 1 → 0.75 → 1.25 → 1.5 → 1 */
     fun cyclePlaybackSpeed() {
-        val steps = floatArrayOf(1f, 0.75f, 0.5f, 0.8f, 0.7f, 0.6f, 1.25f, 1.5f)
+        val steps = floatArrayOf(1f, 0.75f, 1.25f, 1.5f)
         val idx = steps.indexOfFirst { kotlin.math.abs(it - playbackSpeed) < 0.01f }
-        playbackSpeed = steps[(idx + 1).coerceAtLeast(0) % steps.size]
-        player()?.let { p ->
-            runCatching { p.setPlaybackSpeed(playbackSpeed) }
-            syncFrom(p)
-        } ?: run {
-            _state.value = _state.value.copy(playbackSpeed = playbackSpeed)
-        }
+        setPlaybackSpeed(steps[(idx + 1).coerceAtLeast(0) % steps.size])
     }
 
     fun setPlaybackSpeed(speed: Float) {
@@ -1058,15 +1057,18 @@ class PlayerController(
         val p = player() ?: return
         if (!p.isPlaying && p.playbackState != Player.STATE_READY) return
         val now = System.currentTimeMillis()
-        if (now - lastRollingMaintainAt < 5_000L) return
+        if (now - lastRollingMaintainAt < 12_000L) return
         lastRollingMaintainAt = now
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val idx = p.currentMediaItemIndex.coerceIn(0, queue.lastIndex)
         val base = streamUrl("_").substringBefore("/api/stream/")
         val ids = queue.map { it.id }
-        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 8)
-        if (!StreamPrefetcher.isStreamDown()) {
+        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 4)
+        if (
+            !StreamPrefetcher.isStreamDown() &&
+            !ovh.delhomme.ytmusic.data.BatterySaver.isActive()
+        ) {
             runCatching {
                 YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
                     queue.drop(idx + 1),
@@ -1379,19 +1381,14 @@ class PlayerController(
                 delay(350)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
-                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 8)
-                StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                    base,
-                    window.map { it.id },
-                    idx,
-                    count = 5,
-                    ignoreQuiet = true,
-                )
-                runCatching {
-                    YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
-                        window.drop(idx + 1),
-                        limit = 1,
-                    )
+                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 4)
+                if (!ovh.delhomme.ytmusic.data.BatterySaver.isActive()) {
+                    runCatching {
+                        YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
+                            window.drop(idx + 1),
+                            limit = 1,
+                        )
+                    }
                 }
             }
         }
