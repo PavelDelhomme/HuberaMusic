@@ -52,6 +52,7 @@ class PlaybackService : MediaSessionService() {
     private var player: ExoPlayer? = null
     private var sessionPlayer: Player? = null
     private var session: MediaSession? = null
+    private var audioFocus: PlayerAudioFocus? = null
     private val scope = CoroutineScope(
         SupervisorJob() + Dispatchers.Main.immediate + CrashReporter.coroutineHandler("PlaybackService"),
     )
@@ -183,6 +184,18 @@ class PlaybackService : MediaSessionService() {
             }
             if (events.contains(Player.EVENT_IS_PLAYING_CHANGED)) {
                 PlaybackIdleGuard.onPlayingChanged(player.isPlaying)
+            }
+            if (
+                events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
+                events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
+            ) {
+                if (player.playWhenReady && player.playbackState != Player.STATE_IDLE) {
+                    if (audioFocus?.requestIfNeeded() != true) {
+                        runCatching { player.pause() }
+                    }
+                } else if (!player.playWhenReady || player.playbackState == Player.STATE_IDLE) {
+                    audioFocus?.abandon()
+                }
             }
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
                 warmUpcoming(player.currentMediaItemIndex)
@@ -789,7 +802,9 @@ class PlaybackService : MediaSessionService() {
                     .setUsage(C.USAGE_MEDIA)
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .build(),
-                /* handleAudioFocus= */ true,
+                // false : Exo ne vole pas le focus (Netflix / YouTube) sur seek / prepare / ouverture.
+                // Le focus est demandé manuellement seulement quand playWhenReady=true (PlayerAudioFocus).
+                /* handleAudioFocus= */ false,
             )
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -797,6 +812,7 @@ class PlaybackService : MediaSessionService() {
             .build()
         exo.addListener(playerListener)
         player = exo
+        audioFocus = PlayerAudioFocus(this) { player }
         val forwarding = YtmForwardingPlayer(exo)
         sessionPlayer = forwarding
 
@@ -863,6 +879,8 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         persistPlaybackSnapshot(durable = true)
         scope.cancel()
+        audioFocus?.abandon()
+        audioFocus = null
         player?.removeListener(playerListener)
         session?.release()
         session = null
