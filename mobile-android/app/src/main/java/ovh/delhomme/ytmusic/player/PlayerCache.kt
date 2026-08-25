@@ -31,7 +31,7 @@ object PlayerCache {
      * Génération de clé cache. Bumper (s3, s4…) si un bug a figé contentLength
      * (ex. réponses API tronquées à 1 MiB → EOF ~64 s sur tous les titres déjà joués).
      */
-    private const val CACHE_KEY_GEN = "s2"
+    private const val CACHE_KEY_GEN = "s3"
     private const val PREFS = "plm_player_cache"
     private const val PREFS_GEN = "exo_cache_gen"
     /** Plafond disque — plafonné aussi selon la RAM dispo (évite OOM sur mid-range). */
