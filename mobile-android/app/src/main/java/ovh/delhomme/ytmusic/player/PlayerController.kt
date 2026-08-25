@@ -1029,17 +1029,16 @@ class PlayerController(
 
     private var playbackSpeed: Float = 1f
 
-    /** Cycle : 1 → 0.75 → 0.5 → 0.8 → 0.7 → 0.6 → 1.25 → 1.5 → 1 */
+    companion object {
+        /** Vitesses proposées dans le menu lecteur (×0.75 … ×1.50 + extrêmes). */
+        val PLAYBACK_SPEEDS = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+    }
+
+    /** Cycle rapide : 1 → 0.75 → 1.25 → 1.5 → 1 */
     fun cyclePlaybackSpeed() {
-        val steps = floatArrayOf(1f, 0.75f, 0.5f, 0.8f, 0.7f, 0.6f, 1.25f, 1.5f)
+        val steps = floatArrayOf(1f, 0.75f, 1.25f, 1.5f)
         val idx = steps.indexOfFirst { kotlin.math.abs(it - playbackSpeed) < 0.01f }
-        playbackSpeed = steps[(idx + 1).coerceAtLeast(0) % steps.size]
-        player()?.let { p ->
-            runCatching { p.setPlaybackSpeed(playbackSpeed) }
-            syncFrom(p)
-        } ?: run {
-            _state.value = _state.value.copy(playbackSpeed = playbackSpeed)
-        }
+        setPlaybackSpeed(steps[(idx + 1).coerceAtLeast(0) % steps.size])
     }
 
     fun setPlaybackSpeed(speed: Float) {

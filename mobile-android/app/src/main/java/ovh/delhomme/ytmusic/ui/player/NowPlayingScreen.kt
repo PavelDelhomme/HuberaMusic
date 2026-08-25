@@ -68,6 +68,8 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -218,6 +220,7 @@ fun NowPlayingScreen(
     var showLyrics by remember { mutableStateOf(false) }
     var videoFullscreen by remember { mutableStateOf(false) }
     var showEqualizer by remember { mutableStateOf(false) }
+    var showSpeedMenu by remember { mutableStateOf(false) }
     var showSaveQueue by remember { mutableStateOf(false) }
     var queuePanelTab by remember { mutableIntStateOf(0) } // 0 = file, 1 = similaires
     var lastPrevTap by remember { mutableLongStateOf(0L) }
@@ -1117,12 +1120,34 @@ fun NowPlayingScreen(
                                             if (ovh.delhomme.ytmusic.player.AudioEqualizer.isEnabled()) SeekRed else PlayerFg,
                                             showLabel = false,
                                         ) { showEqualizer = true }
-                                        PlayerChromeAction.Speed -> SecondaryChip(
-                                            Icons.Default.Speed,
-                                            speedLabel(ui.playbackSpeed),
-                                            if (kotlin.math.abs(ui.playbackSpeed - 1f) > 0.02f) SeekRed else PlayerFg,
-                                            showLabel = true,
-                                        ) { player.cyclePlaybackSpeed() }
+                                        PlayerChromeAction.Speed -> Box {
+                                            SecondaryChip(
+                                                Icons.Default.Speed,
+                                                speedLabel(ui.playbackSpeed),
+                                                if (kotlin.math.abs(ui.playbackSpeed - 1f) > 0.02f) SeekRed else PlayerFg,
+                                                showLabel = true,
+                                            ) { showSpeedMenu = true }
+                                            DropdownMenu(
+                                                expanded = showSpeedMenu,
+                                                onDismissRequest = { showSpeedMenu = false },
+                                            ) {
+                                                PlayerController.PLAYBACK_SPEEDS.forEach { sp ->
+                                                    val selected = kotlin.math.abs(ui.playbackSpeed - sp) < 0.02f
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                speedLabel(sp),
+                                                                color = if (selected) SeekRed else PlayerFg,
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            player.setPlaybackSpeed(sp)
+                                                            showSpeedMenu = false
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                        }
                                         else -> Unit
                                     }
                                 }

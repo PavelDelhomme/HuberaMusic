@@ -79,6 +79,8 @@ type PlayerState = {
   shuffleNatural: Track[] | null;
   repeat: RepeatMode;
   volume: number;
+  /** Vitesse HTMLAudioElement.playbackRate */
+  playbackSpeed: number;
   progress: number;
   duration: number;
   showQueue: boolean;
@@ -134,6 +136,8 @@ type PlayerState = {
   seekBy: (deltaSec: number) => void;
   setDuration: (n: number) => void;
   setVolume: (n: number) => void;
+  /** Vitesse de lecture HTMLAudio (0.5 … 2). */
+  setPlaybackSpeed: (n: number) => void;
   toggleShuffle: () => void;
   /** Like / dislike : réoriente les futures propositions sans toucher à la file déjà chargée. */
   refreshRecoAfterFeedback: (trackId: string, verdict: 'good' | 'bad') => void;
@@ -517,6 +521,7 @@ async function restoreAudioFromPersisted() {
     audioEl.dataset.trackId = current.id;
     audioEl.muted = false;
     audioEl.volume = volume > 0.02 ? volume : 0.9;
+    audioEl.playbackRate = usePlayer.getState().playbackSpeed || 1;
     const seekTo = progress > 0 ? progress : 0;
     const applySeek = () => {
       try {
@@ -1509,6 +1514,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   shuffleNatural: null,
   repeat: 'off',
   volume: 0.9,
+  playbackSpeed: 1,
   progress: 0,
   duration: 0,
   showQueue: false,
@@ -2248,6 +2254,14 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     }
     set({ volume: v });
     publish();
+  },
+
+  setPlaybackSpeed: (n) => {
+    const speed = Math.max(0.5, Math.min(2, Number(n) || 1));
+    const { audioEl, standbyEl } = get();
+    if (audioEl) audioEl.playbackRate = speed;
+    if (standbyEl) standbyEl.playbackRate = speed;
+    set({ playbackSpeed: speed });
   },
 
   toggleShuffle: () => {

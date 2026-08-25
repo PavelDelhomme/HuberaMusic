@@ -580,14 +580,29 @@ export async function handleStream(req: Request, res: Response) {
           }
         }
         try {
+          // Re-stat juste avant createReadStream : le .m4a peut encore grossir / être
+          // remplacé (téléchargement parallèle) → start > taille réelle = RangeError.
+          const sizeNow = existsSync(cached) ? statSync(cached).size : 0;
+          const again = safeDiskRangeBounds(sizeNow, String(range));
+          if (!again.ok) {
+            res.status(416);
+            res.setHeader('Content-Range', `bytes */${Math.min(totalHdr, Math.max(0, sizeNow))}`);
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.end();
+            return;
+          }
+          const start2 = again.start;
+          const end2 = again.end;
+          const len2 = end2 - start2 + 1;
+          const totalNow = Math.min(totalHdr, sizeNow);
           res.status(206);
-          res.setHeader('Content-Range', `bytes ${start}-${end}/${totalHdr}`);
+          res.setHeader('Content-Range', `bytes ${start2}-${end2}/${totalNow}`);
           res.setHeader('Accept-Ranges', 'bytes');
-          res.setHeader('Content-Length', len);
+          res.setHeader('Content-Length', len2);
           res.setHeader('Content-Type', 'audio/mp4');
           res.setHeader('X-PLM-Stream-Cache', 'disk');
           const { createReadStream } = await import('node:fs');
-          const rs = createReadStream(cached, { start, end });
+          const rs = createReadStream(cached, { start: start2, end: end2 });
           rs.on('error', (err) => {
             console.warn(
               `[stream ${videoId}] disk range KO:`,
@@ -595,7 +610,7 @@ export async function handleStream(req: Request, res: Response) {
             );
             if (!res.headersSent) {
               res.status(416);
-              res.setHeader('Content-Range', `bytes */${totalHdr}`);
+              res.setHeader('Content-Range', `bytes */${totalNow}`);
               res.end();
             } else {
               res.destroy();
