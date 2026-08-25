@@ -453,7 +453,7 @@ fun LibraryScreen(
                         ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(
                             container.resolvedApiBase(),
                             ids,
-                            limit = 36,
+                            limit = 8,
                         )
                     }
                 }

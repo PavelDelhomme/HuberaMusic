@@ -759,8 +759,8 @@ class PlaybackService : MediaSessionService() {
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs */ 25_000,
-                /* maxBufferMs */ 240_000,
+                /* minBufferMs */ 15_000,
+                /* maxBufferMs */ 90_000,
                 /* bufferForPlaybackMs */ 700,
                 /* bufferForPlaybackAfterRebufferMs */ 1_600,
             )
@@ -1431,26 +1431,22 @@ class PlaybackService : MediaSessionService() {
         val queue = Holder.queue
         if (queue.isEmpty()) return
         val base = resolvedApiBase()
+        // Un seul chemin : warmAround couvre déjà les têtes Exo proches.
         StreamPrefetcher.warmAround(
             base,
             queue.map { it.id },
             fromIndex,
-            ahead = 4,
-            behind = 1,
+            ahead = 3,
+            behind = 0,
         )
-        StreamPrefetcher.prefetchUpcomingHeads(
-            base,
-            queue.map { it.id },
-            fromIndex,
-            count = 3,
-        )
-        CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 3, behind = 1)
+        CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 2, behind = 0)
         enqueueOfflineAhead(fromIndex)
     }
 
-    /** Télécharge silencieusement les titres à +3 (Wi‑Fi) ; têtes Exo pour le courant/suivants. */
+    /** Télécharge silencieusement +1 titre offline (Wi‑Fi, hors BatterySaver). */
     private fun enqueueOfflineAhead(fromIndex: Int) {
         if (StreamPrefetcher.isQuiet()) return
+        if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) return
         val queue = Holder.queue
         if (queue.isEmpty()) return
         val ahead = queue.drop((fromIndex + 1).coerceAtLeast(0))
@@ -1763,15 +1759,8 @@ private class YtmForwardingPlayer(
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val api = PlaybackService.Holder.resolvedApiBase()
-        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 6, behind = 0)
-        StreamPrefetcher.prefetchUpcomingHeadsTiered(
-            api,
-            queue.map { it.id },
-            index,
-            count = 5,
-            ignoreQuiet = true,
-        )
-        CoverPrefetcher.warmCovers(queue, index, ahead = 3, behind = 0)
+        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 3, behind = 0)
+        CoverPrefetcher.warmCovers(queue, index, ahead = 2, behind = 0)
     }
 
     override fun seekToPrevious() = seekToPreviousMediaItem()
