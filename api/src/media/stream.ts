@@ -471,48 +471,51 @@ export async function handleStream(req: Request, res: Response) {
   bumpWarmPriority(videoId);
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   // ExoPlayer / Media3 ouvre souvent SANS Range ou avec `bytes=0-` (illimité).
-  // Cold start : borner à 1 MiB évite un full-GET googlevideo 502, MAIS coupe mid-mdat
-  // → EOFException ~64 s et cache Exo empoisonné. Donc : si disque prêt → fichier entier ;
-  // si client Android et disque absent → attendre brièvement downloadTrack avant de tronquer.
+  // NE JAMAIS tronquer à 1 MiB pour Android : une coupure mid-mdat → EOFException
+  // fatale (~64 s) + SimpleCache empoisonné (buf figé ~64500), même après invalidation.
+  // Android : attendre le .m4a disque (jusqu’à 45 s) puis servir entier ; sinon laisser
+  // le pipeline normal (relais / GV) sans borne artificielle.
+  // Autres clients : tête 1 MiB seulement si disque absent (TTFB web).
   if (!wantVideo) {
     const rangeRaw = String(req.headers.range || '').trim();
     const openEnded = !rangeRaw || /^bytes=0-$/i.test(rangeRaw);
     if (openEnded) {
       const cached = cachePath(videoId);
       let diskBytes = 0;
-      try {
-        if (existsSync(cached)) diskBytes = statSync(cached).size;
-      } catch {
-        diskBytes = 0;
-      }
+      const refreshDisk = () => {
+        try {
+          if (existsSync(cached)) diskBytes = statSync(cached).size;
+        } catch {
+          diskBytes = 0;
+        }
+      };
+      refreshDisk();
+      const isAndroid =
+        String(req.headers['x-ytm-client'] || '') === 'android' ||
+        /PLM-Android/i.test(String(req.headers['user-agent'] || ''));
       if (diskBytes <= 1024 * 1024) {
-        const isAndroid =
-          String(req.headers['x-ytm-client'] || '') === 'android' ||
-          /PLM-Android/i.test(String(req.headers['user-agent'] || ''));
-        if (isAndroid) {
+        const waitMs = isAndroid ? 45_000 : 0;
+        if (waitMs > 0) {
           try {
             await Promise.race([
               downloadTrack(videoId).then(() => true),
-              new Promise<boolean>((r) => setTimeout(() => r(false), 8_000)),
+              new Promise<boolean>((r) => setTimeout(() => r(false), waitMs)),
             ]);
           } catch {
             /* ignore */
           }
-          try {
-            if (existsSync(cached)) diskBytes = statSync(cached).size;
-          } catch {
-            diskBytes = 0;
-          }
+          refreshDisk();
         }
       }
       if (diskBytes > 1024 * 1024) {
-        // Fichier utilisable : sans Range → 200 + corps entier ; bytes=0- → 0..eof.
         if (/^bytes=0-$/i.test(rangeRaw)) {
           req.headers.range = `bytes=0-${diskBytes - 1}`;
         }
-      } else {
+        // sans Range → 200 + corps entier plus bas
+      } else if (!isAndroid) {
         req.headers.range = 'bytes=0-1048575';
       }
+      // Android sans disque : ne pas forcer 1 MiB — mieux un 502/retry qu’un cache toxique.
     }
   }
   const audioRangeStart = (() => {
