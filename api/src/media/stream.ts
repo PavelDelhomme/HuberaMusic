@@ -471,12 +471,29 @@ export async function handleStream(req: Request, res: Response) {
   bumpWarmPriority(videoId);
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   // ExoPlayer / Media3 ouvre souvent SANS Range ou avec `bytes=0-` (illimité).
-  // Le relais maison + resolve full plantent alors en 502 JSON → lecture morte.
-  // On borne la 1ʳᵉ ouverture à 1 MiB ; le client enchaîne avec de vraies Ranges.
+  // Cold start (pas de .m4a disque) : borner à 1 MiB évite un full-GET googlevideo 502.
+  // MAIS si le cache disque est déjà là, NE PAS tronquer : une coupure nette à 1 MiB
+  // tombe souvent mid-mdat → FragmentedMp4Extractor EOFException (~64 s, code 2000)
+  // et spam télémétrie (« Paris, tu pues », etc.) alors que le fichier est complet.
   if (!wantVideo) {
     const rangeRaw = String(req.headers.range || '').trim();
-    if (!rangeRaw || /^bytes=0-$/i.test(rangeRaw)) {
-      req.headers.range = 'bytes=0-1048575';
+    const openEnded = !rangeRaw || /^bytes=0-$/i.test(rangeRaw);
+    if (openEnded) {
+      const cached = cachePath(videoId);
+      let diskBytes = 0;
+      try {
+        if (existsSync(cached)) diskBytes = statSync(cached).size;
+      } catch {
+        diskBytes = 0;
+      }
+      if (diskBytes > 1024 * 1024) {
+        // Fichier utilisable : sans Range → 200 + corps entier ; bytes=0- → 0..eof.
+        if (/^bytes=0-$/i.test(rangeRaw)) {
+          req.headers.range = `bytes=0-${diskBytes - 1}`;
+        }
+      } else {
+        req.headers.range = 'bytes=0-1048575';
+      }
     }
   }
   const audioRangeStart = (() => {

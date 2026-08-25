@@ -36,14 +36,20 @@ function alertRecipients(): string {
 
 function fingerprint(level: string, kind: string, message: string, stack?: string): string {
   const msg = message || '';
-  if (/Response code:\s*502|HTTP 502|home stream 502|STREAM_UPSTREAM/i.test(msg + (stack || ''))) {
+  const blob = msg + (stack || '');
+  if (/Response code:\s*502|HTTP 502|home stream 502|STREAM_UPSTREAM/i.test(blob)) {
     return `${level}|${kind}|stream-502`;
   }
-  if (/early end\s+\S+/i.test(msg) && /unavailable|502|Source error/i.test(stack || msg)) {
+  if (/early end\s+\S+/i.test(msg) && /unavailable|502|Source error/i.test(blob)) {
     return `${level}|${kind}|early-end-stream`;
   }
-  if (/Player is accessed on the wrong thread|verifyApplicationThread/i.test(stack || msg)) {
+  if (/Player is accessed on the wrong thread|verifyApplicationThread/i.test(blob)) {
     return `${level}|${kind}|exo-wrong-thread`;
+  }
+  // EOF mid-titre (souvent même piste en boucle) — un seul mail / piste / fenêtre.
+  if (/EOFException/i.test(blob) && /Source error|onPlayerError|android\.player/i.test(blob)) {
+    const tid = /id=([a-zA-Z0-9_-]{11})/.exec(msg)?.[1] || 'unknown';
+    return `${level}|${kind}|exo-eof|${tid}`;
   }
   const tip = msg.slice(0, 120);
   const stackTip = (stack || '').split('\n').slice(0, 2).join('|').slice(0, 120);
@@ -132,10 +138,13 @@ export async function maybeAlertTelemetryError(ev: {
   const now = Date.now();
   const prev = lastSent.get(fp) || 0;
   const kind = String(ev.kind || '');
+  const gapPlayer = THROTTLE_PLAYER_MS;
   const gap =
-    kind.startsWith('android.') || kind.includes('player') || kind.includes('crash')
-      ? THROTTLE_PLAYER_MS
-      : THROTTLE_MS;
+    /\|exo-eof\|/.test(fp)
+      ? Math.max(gapPlayer, 180_000) // EOF même piste : 3 min
+      : kind.startsWith('android.') || kind.includes('player') || kind.includes('crash')
+        ? gapPlayer
+        : THROTTLE_MS;
   if (now - prev < gap) {
     suppressed.set(fp, (suppressed.get(fp) || 0) + 1);
     return { sent: false, reason: 'throttled' };
