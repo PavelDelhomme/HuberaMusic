@@ -26,24 +26,24 @@ import java.util.concurrent.TimeUnit
  * Annulé uniquement sur pause volontaire (pas pendant un rebuffer / skip).
  */
 object StreamPrefetcher {
-    /** ~10 s audio typique YT (~160–256 kb/s) + marge conteneur. */
-    const val HEAD_3S = 1_400L * 1024L
-    /** Titre suivant pendant lecture — assez pour un skip quasi immédiat. */
-    private const val HEAD_NEXT_PLAYING = 5_500L * 1024L
-    /** Tête générique Wi‑Fi (~1.5 Mo ≈ ~45–60 s audio). */
-    private const val HEAD_WIFI = 1_800 * 1024L
+    /** ~6–8 s audio typique YT (~160–256 kb/s) + marge conteneur. */
+    const val HEAD_3S = 900L * 1024L
+    /** Titre suivant pendant lecture — skip fluide sans saturer la radio. */
+    private const val HEAD_NEXT_PLAYING = 2_200L * 1024L
+    /** Tête générique Wi‑Fi. */
+    private const val HEAD_WIFI = 1_200 * 1024L
     /** Titre suivant Wi‑Fi. */
-    private const val HEAD_NEXT_WIFI = 4_500 * 1024L
+    private const val HEAD_NEXT_WIFI = 2_000 * 1024L
     /** +2 / +3 Wi‑Fi. */
-    private const val HEAD_NEAR_WIFI = 2_200 * 1024L
-    /** Suite lointaine Wi‑Fi — au minimum ~10 s. */
-    private const val HEAD_FAR_WIFI = 1_400 * 1024L
+    private const val HEAD_NEAR_WIFI = 1_200 * 1024L
+    /** Suite lointaine Wi‑Fi. */
+    private const val HEAD_FAR_WIFI = 900 * 1024L
 
     private const val HEAD_METERED = HEAD_3S
-    private const val HEAD_NEXT_METERED = 1_600 * 1024L
+    private const val HEAD_NEXT_METERED = 1_200 * 1024L
 
-    private const val MAX_WARM = 12
-    private const val AHEAD_WIFI = 6
+    private const val MAX_WARM = 6
+    private const val AHEAD_WIFI = 4
     private const val AHEAD_METERED = 2
     private const val DISK_CACHE_MB = 24L
     private val JSON = "application/json; charset=utf-8".toMediaType()
@@ -298,16 +298,17 @@ object StreamPrefetcher {
         baseApi: String,
         queueIds: List<String>,
         fromIndex: Int,
-        window: Int = 8,
+        window: Int = 4,
     ) {
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         if (queueIds.isEmpty()) return
         val idx = fromIndex.coerceIn(0, queueIds.lastIndex)
         val now = System.currentTimeMillis()
-        if (idx == rollingAnchor && now - rollingLastAt < 10_000L) return
+        if (idx == rollingAnchor && now - rollingLastAt < 12_000L) return
         rollingAnchor = idx
         rollingLastAt = now
-        val end = (idx + window.coerceIn(4, 10)).coerceAtMost(queueIds.lastIndex)
+        val win = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(window.coerceIn(2, 6))
+        val end = (idx + win).coerceAtMost(queueIds.lastIndex)
         if (end <= idx) return
         val slice = (idx + 1..end).mapNotNull { queueIds.getOrNull(it) }.filter {
             it.length == 11 && !isLocalOffline(it)
@@ -319,12 +320,14 @@ object StreamPrefetcher {
             val url = "${baseApi.trimEnd('/')}/api/stream/$id"
             val playing = isPlaybackActive()
             val unmetered = isUnmetered()
+            val saver = ovh.delhomme.ytmusic.data.BatterySaver.isActive()
             val bytes = when {
+                saver -> HEAD_3S
                 !unmetered -> if (dist == 1) HEAD_NEXT_METERED else HEAD_3S
-                // Pendant lecture : le suivant doit être le plus chaud (pas plafonné à HEAD_NEAR)
+                // Pendant lecture : le suivant doit être le plus chaud
                 playing && dist == 1 -> HEAD_NEXT_PLAYING
                 playing && dist == 2 -> HEAD_NEAR_WIFI
-                playing && dist <= 4 -> HEAD_3S + 350 * 1024L
+                playing && dist <= 4 -> HEAD_3S
                 !playing && dist == 1 -> HEAD_NEXT_WIFI
                 !playing && dist <= 3 -> HEAD_NEAR_WIFI
                 else -> HEAD_3S
@@ -451,10 +454,11 @@ object StreamPrefetcher {
      * Précharge ~3 s de tête pour une liste (file / biblio visible).
      * Limité pour ne pas saturer le réseau.
      */
-    fun warmHeads3s(baseApi: String, trackIds: List<String>, limit: Int = 24) {
+    fun warmHeads3s(baseApi: String, trackIds: List<String>, limit: Int = 12) {
         if (isQuiet()) return
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
-        val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(limit)
+        val capped = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(limit.coerceIn(1, 16))
+        val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(capped)
         if (ids.isEmpty()) return
         warmBatch(baseApi, ids.take(MAX_WARM))
         ids.forEach { id ->

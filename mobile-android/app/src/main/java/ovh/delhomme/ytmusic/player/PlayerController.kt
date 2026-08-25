@@ -1057,15 +1057,18 @@ class PlayerController(
         val p = player() ?: return
         if (!p.isPlaying && p.playbackState != Player.STATE_READY) return
         val now = System.currentTimeMillis()
-        if (now - lastRollingMaintainAt < 5_000L) return
+        if (now - lastRollingMaintainAt < 12_000L) return
         lastRollingMaintainAt = now
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val idx = p.currentMediaItemIndex.coerceIn(0, queue.lastIndex)
         val base = streamUrl("_").substringBefore("/api/stream/")
         val ids = queue.map { it.id }
-        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 8)
-        if (!StreamPrefetcher.isStreamDown()) {
+        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 4)
+        if (
+            !StreamPrefetcher.isStreamDown() &&
+            !ovh.delhomme.ytmusic.data.BatterySaver.isActive()
+        ) {
             runCatching {
                 YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
                     queue.drop(idx + 1),
@@ -1378,19 +1381,14 @@ class PlayerController(
                 delay(350)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
-                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 8)
-                StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                    base,
-                    window.map { it.id },
-                    idx,
-                    count = 5,
-                    ignoreQuiet = true,
-                )
-                runCatching {
-                    YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
-                        window.drop(idx + 1),
-                        limit = 1,
-                    )
+                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 4)
+                if (!ovh.delhomme.ytmusic.data.BatterySaver.isActive()) {
+                    runCatching {
+                        YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
+                            window.drop(idx + 1),
+                            limit = 1,
+                        )
+                    }
                 }
             }
         }
