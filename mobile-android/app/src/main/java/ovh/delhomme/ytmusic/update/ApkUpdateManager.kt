@@ -1,10 +1,15 @@
 package ovh.delhomme.ytmusic.update
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -13,6 +18,7 @@ import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ApkInfoResponse
 import ovh.delhomme.ytmusic.debug.AppLog
+import ovh.delhomme.ytmusic.player.PlaybackService
 import java.io.File
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
@@ -46,7 +52,6 @@ class ApkUpdateManager(
         return now - last >= PERIODIC_INTERVAL_MS
     }
 
-    /** Snooze « Plus tard » pour ce versionCode distant — jusqu’à un code plus récent. */
     fun dismissForVersion(versionCode: Int) {
         prefs.edit().putInt(KEY_SNOOZED_CODE, versionCode).apply()
     }
@@ -54,10 +59,6 @@ class ApkUpdateManager(
     fun isSnoozed(versionCode: Int): Boolean =
         prefs.getInt(KEY_SNOOZED_CODE, 0) == versionCode && versionCode > 0
 
-    /**
-     * Fenêtre locale 7h ou 17h (± [WINDOW_HALF_MS]).
-     * Slot du jour : `"yyyy-MM-dd-7"` / `"yyyy-MM-dd-17"`.
-     */
     fun promptSlotNow(now: Long = System.currentTimeMillis()): String? {
         val cal = Calendar.getInstance().apply { timeInMillis = now }
         val hour = cal.get(Calendar.HOUR_OF_DAY)
@@ -86,20 +87,17 @@ class ApkUpdateManager(
         prefs.edit().putString(KEY_PROMPTED_SLOT, slot).apply()
     }
 
-    /** True si on peut afficher un dialogue MAJ maintenant (fenêtre + pas déjà proposé ce slot). */
     fun canOfferPromptDialog(now: Long = System.currentTimeMillis()): Boolean {
         val slot = promptSlotNow(now) ?: return false
         return !alreadyPromptedSlot(slot)
     }
 
-    /** Au cold start : interroge le serveur ; dialogue seulement si fenêtre 7h/17h. */
     suspend fun checkOnStartup(): CheckResult {
         val result = check(force = true, respectSnooze = true)
         if (result.available && canOfferPromptDialog()) {
             promptSlotNow()?.let { markPromptedSlot(it) }
             return result
         }
-        // Hors fenêtre : pas de popup (le menu Compte affichera quand même la ligne rouge)
         return if (result.available) {
             result.copy(available = false, message = result.message ?: "MAJ dispo (menu Compte)")
         } else {
@@ -107,13 +105,8 @@ class ApkUpdateManager(
         }
     }
 
-    /**
-     * Pull Accueil : vérifie toujours en arrière-plan pour le statut Compte,
-     * mais ne remonte `available=true` (dialogue) que dans les fenêtres 7h / 17h.
-     */
     suspend fun checkOnPullRefresh(): CheckResult {
         val result = check(force = true, respectSnooze = true)
-        // Toujours mémoriser le dernier remote pour le menu Compte
         result.info?.versionCode?.let { remote ->
             prefs.edit()
                 .putInt(KEY_LAST_REMOTE_CODE, remote)
@@ -181,8 +174,8 @@ class ApkUpdateManager(
         }
 
     /**
-     * Télécharge l’APK **courante** sur le serveur puis lance l’installateur.
-     * Re-fetch toujours `apkInfo()` (ignore un snapshot stale du dialogue).
+     * Télécharge l’APK **courante** puis lance l’installateur (PackageInstaller).
+     * Coupe la lecture avant pour éviter ANR / session média zombie (Nothing).
      */
     suspend fun downloadAndInstall(info: ApkInfoResponse? = null): String = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
@@ -196,6 +189,16 @@ class ApkUpdateManager(
             }
             return@withContext "Autorise l’installation pour PLM, puis réessaie"
         }
+
+        // Pause + stop service avant DL (évite ANR + « rien en lecture » + vol Netflix)
+        withContext(Dispatchers.Main) {
+            runCatching {
+                PlaybackService.Holder.player?.pause()
+                PlaybackService.Holder.player?.stop()
+                context.stopService(Intent(context, PlaybackService::class.java))
+            }
+        }
+
         container.ensureFreshToken()
         val meta = container.api.apkInfo()
         if (meta.ready != true) return@withContext "APK pas encore publiée"
@@ -235,8 +238,69 @@ class ApkUpdateManager(
         }
         AppLog.i("apk-update", "downloaded ${out.length()} bytes → install v$remote")
         prefs.edit().remove(KEY_SNOOZED_CODE).apply()
-        withContext(Dispatchers.Main) { installApkViaView(out) }
-        "Installation lancée (v$remote)"
+        val ok = runCatching { installViaPackageInstaller(out) }.getOrElse { err ->
+            AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
+            withContext(Dispatchers.Main) { installApkViaView(out) }
+            true
+        }
+        if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur"
+    }
+
+    /** Session PackageInstaller (plus fiable que ACTION_VIEW sur Nothing / Android 14+). */
+    private fun installViaPackageInstaller(file: File): Boolean {
+        val installer = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(context.packageName)
+        val sessionId = installer.createSession(params)
+        installer.openSession(sessionId).use { session ->
+            file.inputStream().use { input ->
+                session.openWrite("base.apk", 0, file.length()).use { out ->
+                    input.copyTo(out)
+                    session.fsync(out)
+                }
+            }
+            val action = "${context.packageName}.UPDATE_INSTALL"
+            val intent = Intent(action).setPackage(context.packageName)
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_MUTABLE
+                } else {
+                    0
+                }
+            val pi = PendingIntent.getBroadcast(context, sessionId, intent, flags)
+            // Receiver one-shot pour loguer le statut
+            val filter = IntentFilter(action)
+            ContextCompat.registerReceiver(
+                context,
+                object : BroadcastReceiver() {
+                    override fun onReceive(ctx: Context?, intent: Intent?) {
+                        val status = intent?.getIntExtra(
+                            PackageInstaller.EXTRA_STATUS,
+                            PackageInstaller.STATUS_FAILURE,
+                        ) ?: PackageInstaller.STATUS_FAILURE
+                        AppLog.i("apk-update", "install status=$status")
+                        runCatching { ctx?.unregisterReceiver(this) }
+                        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                            val confirm = if (Build.VERSION.SDK_INT >= 33) {
+                                intent?.getParcelableExtra(
+                                    Intent.EXTRA_INTENT,
+                                    Intent::class.java,
+                                )
+                            } else {
+                                @Suppress("DEPRECATION")
+                                intent?.getParcelableExtra(Intent.EXTRA_INTENT)
+                            }
+                            confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            confirm?.let { ctx?.startActivity(it) }
+                        }
+                    }
+                },
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            session.commit(pi.intentSender)
+        }
+        return true
     }
 
     private fun installApkViaView(file: File) {
@@ -258,7 +322,6 @@ class ApkUpdateManager(
         private const val KEY_PROMPTED_SLOT = "prompted_slot"
         private const val KEY_LAST_REMOTE_CODE = "last_remote_code"
         private const val KEY_LAST_REMOTE_NAME = "last_remote_name"
-        /** ±45 min autour de 7h et 17h. */
         private val WINDOW_HALF_MS = TimeUnit.MINUTES.toMillis(45)
         private val PERIODIC_INTERVAL_MS = TimeUnit.HOURS.toMillis(6)
     }
