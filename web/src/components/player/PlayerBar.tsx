@@ -15,6 +15,7 @@ import {
   ThumbsDown,
   Volume2,
   VolumeX,
+  X,
   Gauge,
 } from 'lucide-react';
 import { api, artistNames } from '../../api';
