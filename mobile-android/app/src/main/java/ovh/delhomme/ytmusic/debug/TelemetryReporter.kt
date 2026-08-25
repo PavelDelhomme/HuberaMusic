@@ -149,13 +149,23 @@ object TelemetryReporter {
         val blob = detail.orEmpty()
         val http = httpStatus ?: extractHttpStatus(blob)
         val serious = isSeriousStreamFailure(code, http, blob, local)
+        val eofMid =
+            blob.contains("EOFException", ignoreCase = true) &&
+                !local &&
+                (http == null || http < 400)
+        // EOF récupérable (troncature 1 MiB / cache) : pas de mail à chaque reprise.
+        val level = when {
+            serious || streak >= 3 -> "error"
+            eofMid && streak < 3 -> "warn"
+            else -> "error"
+        }
         val diag = diagnosePlayerError(code, trackId, networkish, local, streak, http, blob)
         val trackMeta = runCatching {
             ovh.delhomme.ytmusic.player.PlaybackService.Holder.queue.firstOrNull { it.id == trackId }
         }.getOrNull()
         val artistLabel = trackMeta?.artistLine()?.takeIf { it != "Artiste" }.orEmpty()
         report(
-            level = "error",
+            level = level,
             kind = "android.player",
             message = buildString {
                 append("onPlayerError code=$code")
@@ -181,9 +191,10 @@ object TelemetryReporter {
                 "local" to local,
                 "diagnosis" to diag,
                 "serious" to serious,
+                "eofMid" to eofMid,
                 "recentLogs" to AppLog.recentLogText(12_000),
             ),
-            force = true,
+            force = level == "error",
         )
     }
 
@@ -226,6 +237,8 @@ object TelemetryReporter {
                 "Timeout ouverture flux — le serveur n’a pas renvoyé les en-têtes à temps (souvent le même incident que le 502)"
             blob.contains("connection abort", ignoreCase = true) ->
                 "Socket abort — connexion coupée pendant l’open HTTP (proxy / YouTube / trop de DL en parallèle)"
+            blob.contains("EOFException", ignoreCase = true) ->
+                "EOF mid-flux (souvent ouverture tronquée ~1 MiB / cache Exo) — pas un 502 serveur"
             local ->
                 "Fichier local illisible — purge et reprise stream"
             networkish ->
