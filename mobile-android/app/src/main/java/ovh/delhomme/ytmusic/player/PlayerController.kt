@@ -127,10 +127,24 @@ class PlayerController(
     }
 
     fun connect() {
-        ensureService()
         PlaybackService.Holder.onSkipAtEnd = { fillThenSkipFromEnd(fromUserSkip = true) }
         PlaybackService.Holder.onToggleShuffle = { toggleShuffle() }
         PlaybackService.Holder.onCycleRepeat = { cycleRepeat() }
+        if (controller != null || controllerFuture != null) return
+        // Ne démarre PAS le service à l’ouverture UI (évite session média PLM à côté de Netflix).
+        val alreadyRunning =
+            PlaybackService.Holder.service != null || PlaybackService.Holder.player != null
+        if (!alreadyRunning) return
+        bindMediaController()
+    }
+
+    private fun ensureServiceAndConnect() {
+        ensureService()
+        if (controller != null || controllerFuture != null) return
+        bindMediaController()
+    }
+
+    private fun bindMediaController() {
         if (controller != null || controllerFuture != null) return
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
@@ -215,8 +229,7 @@ class PlayerController(
             ?: tracks.firstOrNull()?.album?.id
         this.sourceKind = sourceKind
             ?: if (this.sourceId != null) "album" else null
-        ensureService()
-        connect()
+        ensureServiceAndConnect()
         val playable = tracks.filter { it.isPlayable() }
         this.userQueueEnd = (userQueueEnd ?: playable.size).coerceIn(0, playable.size)
         userWantsPlaying = true
@@ -824,27 +837,40 @@ class PlayerController(
             userWantsPlaying = autoplay
             pendingAutoplay = autoplay
         }
-        ensureService()
-        connect()
+        val wantPlay = autoplay || userWantsPlaying == true
+        if (!wantPlay) {
+            // Restauration silencieuse (sync multi-appareils) : pas de MediaSession.
+            pending = tracks to startIndex
+            pendingSeekMs = positionMs
+            pendingAutoplay = false
+            _state.value = _state.value.copy(
+                queue = tracks,
+                queueIndex = startIndex.coerceIn(0, tracks.lastIndex),
+                positionMs = positionMs.coerceAtLeast(0L),
+                track = tracks.getOrNull(startIndex),
+                playing = false,
+                queueTitle = queueTitle,
+                userQueueEnd = this.userQueueEnd,
+                queueSize = tracks.size,
+            )
+            return
+        }
+        ensureServiceAndConnect()
         val c = controller ?: PlaybackService.Holder.player
         if (c != null) {
-            val auto = autoplay || userWantsPlaying == true
+            val auto = true
             playNow(c, tracks, startIndex, autoplay = auto, startPositionMs = positionMs)
-            if (!auto) {
-                runCatching { c.pause() }
-            } else {
-                c.play()
-            }
+            c.play()
             syncFrom(c)
         } else {
             pending = tracks to startIndex
             pendingSeekMs = positionMs
-            pendingAutoplay = autoplay || userWantsPlaying == true
+            pendingAutoplay = true
         }
     }
 
     fun playAt(index: Int) {
-        connect()
+        ensureServiceAndConnect()
         val p = player() ?: PlaybackService.Holder.player ?: return
         val queue = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
         if (index !in queue.indices) return
