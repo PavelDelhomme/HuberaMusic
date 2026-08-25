@@ -131,6 +131,29 @@ export async function maybeAlertTelemetryError(ev: {
     return { sent: false, reason: 'disabled' };
   }
 
+  // EOF / Source error mid-titre : reste en DB télémétrie, PAS de mail.
+  // (APK ≤1.3.74 empoisonnés + boucles recovery = avalanche ; 1.3.75+ corrige la cause.)
+  const kind0 = String(ev.kind || '');
+  const blob0 = `${ev.message || ''}\n${ev.stack || ''}`;
+  const meta0 = asRecord(ev.meta);
+  const isEofSpam =
+    kind0.includes('android.player') &&
+    /EOFException|SampleDataQueue|FragmentedMp4Extractor/i.test(blob0) &&
+    meta0.local !== true &&
+    meta0.serious !== true;
+  if (isEofSpam) {
+    return { sent: false, reason: 'eof-no-mail' };
+  }
+  // APK obsolètes encore en prod : ignorer leurs alertes player non fatales.
+  const ver = String(meta0.appVersion || meta0.versionName || '');
+  if (
+    kind0.includes('android.player') &&
+    /p\+1\.3\.(6\d|7[0-4])\b/.test(ver) &&
+    level !== 'fatal'
+  ) {
+    return { sent: false, reason: 'stale-apk' };
+  }
+
   const to = alertRecipients();
   if (!to) return { sent: false, reason: 'no-recipients' };
 
