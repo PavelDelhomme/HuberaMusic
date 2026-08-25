@@ -529,11 +529,23 @@ class PlaybackService : MediaSessionService() {
                 if (streak <= maxSameTrack) {
                     val attempt = recoverGen.incrementAndGet()
                 val resumePos = exo.currentPosition.coerceAtLeast(0L)
+                val errBlob = runCatching { error.stackTraceToString() }.getOrDefault("")
+                val isEof = errBlob.contains("EOFException", ignoreCase = true)
+                // Coupe nette ~1 MiB (ouverture sans Range bornée) → EOF mid-mdat, souvent ~45–90 s.
                 val truncatedMid =
                     !localFile &&
-                        resumePos in 45_000L..130_000L &&
-                        (dur <= 0L || dur >= 90_000L) &&
-                        (httpStatus == null || httpStatus >= 500 || error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED)
+                        (
+                            isEof ||
+                                (
+                                    resumePos in 45_000L..130_000L &&
+                                        (dur <= 0L || dur >= 90_000L) &&
+                                        (
+                                            httpStatus == null ||
+                                                httpStatus >= 500 ||
+                                                error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED
+                                        )
+                                )
+                        )
                 // Reprendre AU MÊME offset après EOF ~1 MiB = boucle d’échec : reculer / repartir à 0.
                 val seekPos = when {
                     truncatedMid && streak >= 2 -> 0L
