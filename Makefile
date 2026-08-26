@@ -25,6 +25,7 @@ SAMPLE_SECS ?= 15
 	docker-dev docker-dev-down docker-build \
 	mobile-qr mobile-hint mobile-adb mobile-install-adb test-register-adb \
 	android-sync android-build android-install android-logs android-publish android-upload-apk android-prod android \
+	android-docker-image android-docker-apk \
 	android-capacitor android-capacitor-prod adb-fix \
 	adb-fix-keys \
 	adb-wifi adb-wifi-connect adb-wifi-status adb-wifi-wait-unplug adb-wifi-disconnect \
@@ -55,7 +56,7 @@ help: ## Affiche cette aide colorée
 	@grep -E '^(db-status|db-backup|seed-users):.*?##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-20s$(C_RESET) %s\n", $$1, $$2}'
 	@printf "  $(C_GREEN)▶ Mobile Android$(C_RESET)\n"
-	@grep -E '^(android|android-prod|android-install|android-build|android-logs|android-publish|android-upload-apk|mobile-[^:]+:|adb-[^:]+:|battery-[^:]+:).*?##' $(MAKEFILE_LIST) | \
+	@grep -E '^(android|android-prod|android-install|android-build|android-logs|android-publish|android-upload-apk|android-docker-|dual-endurance|mobile-[^:]+:|adb-[^:]+:|battery-[^:]+:).*?##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-28s$(C_RESET) %s\n", $$1, $$2}'
 	@echo ""
 	@printf "  $(C_GREEN)▶ Build / Docker / Git$(C_RESET)\n"
@@ -251,6 +252,21 @@ android-upload-apk: ## Build APK prod + upload vers Portainer (Admin QR en ligne
 	 DEPLOY_URL="$(or $(DEPLOY_URL),$(or $(PUBLIC_API_URL),$(APP_URL)))" \
 	 bash $(ROOT)/scripts/android/publish-apk-remote.sh
 
+android-docker-image: ## Build l’image Docker du builder APK (JDK17 + SDK 35)
+	@docker build -t "$(or $(ANDROID_DOCKER_IMAGE),plm-apk-builder:local)" \
+		-f $(ROOT)/mobile-android/docker/Dockerfile \
+		$(ROOT)/mobile-android/docker
+	@echo "==> Image prête : $(or $(ANDROID_DOCKER_IMAGE),plm-apk-builder:local)"
+
+android-docker-apk: ## Compile l’APK dans Docker (pas de SDK local) → data/public/android/
+	@chmod +x $(ROOT)/scripts/android/docker-build-apk.sh $(ROOT)/mobile-android/docker/entrypoint.sh
+	@API_BASE_URL="$(or $(API_BASE_URL),https://ytmusic.delhomme.ovh)" \
+	 FLAVOR="$(or $(FLAVOR),prod)" \
+	 BUILD_TYPE="$(or $(BUILD_TYPE),debug)" \
+	 OUT_DIR="$(or $(OUT_DIR),$(ROOT)/data/public/android)" \
+	 ANDROID_DOCKER_IMAGE="$(or $(ANDROID_DOCKER_IMAGE),plm-apk-builder:local)" \
+	 bash $(ROOT)/scripts/android/docker-build-apk.sh
+
 android: ## Raccourci : ensure-api + APK Kotlin native
 	@$(MAKE) android-install DEVICE="$(DEVICE)" API_BASE_URL="$(or $(API_BASE_URL),$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787))"
 
@@ -390,6 +406,14 @@ battery-test: ## Session batterie 30 min (Wi‑Fi ADB, débranché) + logs serve
 
 battery-test-short: ## Idem battery-test mais 3 min (smoke)
 	@$(MAKE) battery-test DURATION=180 SAMPLE_SECS=10 DEVICES="$(DEVICES)" REQUIRE_UNPLUGGED="$(or $(REQUIRE_UNPLUGGED),1)"
+
+dual-endurance: ## Endurance ~90 min Blackview + Samsung (son 0, mem/CPU/bat) — MAPS_STRESS=0
+	@chmod +x $(ROOT)/scripts/battery/dual-endurance-campaign.sh
+	@DURATION_MIN="$(or $(DURATION_MIN),90)" SAMPLE_SECS="$(or $(SAMPLE_SECS),30)" \
+	  DEVICE_BV="$(or $(DEVICE_BV),192.168.1.12:5555)" \
+	  DEVICE_SAM="$(or $(DEVICE_SAM),192.168.1.184:5555)" \
+	  PKG="$(or $(PKG),ovh.delhomme.ytmusic)" \
+	  bash $(ROOT)/scripts/battery/dual-endurance-campaign.sh
 
 battery-report: ## Affiche le dernier rapport batterie
 	@latest="$(ROOT)/logs/battery-session/latest/REPORT.md"; \

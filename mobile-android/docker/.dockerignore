@@ -1,0 +1,4 @@
+# Contexte = ce dossier uniquement (SDK dans l’image ; code monté au run).
+*
+!Dockerfile
+!entrypoint.sh
