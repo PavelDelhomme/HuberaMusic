@@ -56,7 +56,7 @@ help: ## Affiche cette aide colorée
 	@grep -E '^(db-status|db-backup|seed-users):.*?##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-20s$(C_RESET) %s\n", $$1, $$2}'
 	@printf "  $(C_GREEN)▶ Mobile Android$(C_RESET)\n"
-	@grep -E '^(android|android-prod|android-install|android-build|android-logs|android-publish|android-upload-apk|android-docker-|mobile-[^:]+:|adb-[^:]+:|battery-[^:]+:).*?##' $(MAKEFILE_LIST) | \
+	@grep -E '^(android|android-prod|android-install|android-build|android-logs|android-publish|android-upload-apk|android-docker-|dual-endurance|mobile-[^:]+:|adb-[^:]+:|battery-[^:]+:).*?##' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "    $(C_CYAN)%-28s$(C_RESET) %s\n", $$1, $$2}'
 	@echo ""
 	@printf "  $(C_GREEN)▶ Build / Docker / Git$(C_RESET)\n"
@@ -406,6 +406,14 @@ battery-test: ## Session batterie 30 min (Wi‑Fi ADB, débranché) + logs serve
 
 battery-test-short: ## Idem battery-test mais 3 min (smoke)
 	@$(MAKE) battery-test DURATION=180 SAMPLE_SECS=10 DEVICES="$(DEVICES)" REQUIRE_UNPLUGGED="$(or $(REQUIRE_UNPLUGGED),1)"
+
+dual-endurance: ## Endurance ~90 min Blackview + Samsung (son 0, mem/CPU/bat) — MAPS_STRESS=0
+	@chmod +x $(ROOT)/scripts/battery/dual-endurance-campaign.sh
+	@DURATION_MIN="$(or $(DURATION_MIN),90)" SAMPLE_SECS="$(or $(SAMPLE_SECS),30)" \
+	  DEVICE_BV="$(or $(DEVICE_BV),192.168.1.12:5555)" \
+	  DEVICE_SAM="$(or $(DEVICE_SAM),192.168.1.184:5555)" \
+	  PKG="$(or $(PKG),ovh.delhomme.ytmusic)" \
+	  bash $(ROOT)/scripts/battery/dual-endurance-campaign.sh
 
 battery-report: ## Affiche le dernier rapport batterie
 	@latest="$(ROOT)/logs/battery-session/latest/REPORT.md"; \

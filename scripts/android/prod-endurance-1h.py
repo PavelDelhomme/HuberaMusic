@@ -135,10 +135,16 @@ def dispatch(action: str) -> None:
         sh("shell", "media_session", "dispatch", action)
 
 
-def is_active(s: dict, prev_pos: int = -1) -> bool:
+def is_active(s: dict, prev_pos: int = -1, *, now: float = 0, last_pos_change: float = 0) -> bool:
+    """Lecture réellement en cours (pas figée ni en pause)."""
     if s["state"] in ("PLAYING", "BUFFERING"):
-        return True
-    if s["pos"] > 1500:
+        if (
+            now
+            and last_pos_change
+            and now - last_pos_change > STUCK_SECS
+            and s["pos"] > 500
+        ):
+            return False
         return True
     if prev_pos >= 0 and s["pos"] > prev_pos + 800:
         return True
@@ -174,7 +180,7 @@ def recover_stuck(prev_pos: int) -> None:
     s = session()
     if is_active(s, prev_pos):
         return
-    if s["state"] == "BUFFERING" and s["pos"] == prev_pos and prev_pos > 0:
+    if s["state"] in ("BUFFERING", "PLAYING") and s["pos"] == prev_pos and prev_pos > 0:
         dispatch("next")
         time.sleep(2.5)
         tap_play_ui()
@@ -366,9 +372,13 @@ def main() -> None:
 
             stuck = (
                 s["state"] in ("NONE", "STOPPED", "PAUSED", "ERROR")
-                or (s["state"] == "BUFFERING" and now - last_pos_change > STUCK_SECS)
+                or (
+                    s["state"] in ("PLAYING", "BUFFERING")
+                    and s["pos"] > 500
+                    and now - last_pos_change > STUCK_SECS
+                )
             )
-            if stuck and not is_active(s, last_pos):
+            if stuck and not is_active(s, last_pos, now=now, last_pos_change=last_pos_change):
                 stuck_events.append({"t": round(elapsed), **s})
                 log(f"STUCK {s}")
                 ensure_playing(last_pos)
