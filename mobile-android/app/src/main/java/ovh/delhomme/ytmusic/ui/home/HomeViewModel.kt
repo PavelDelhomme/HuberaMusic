@@ -54,10 +54,15 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         refresh()
     }
 
+    /** Ferme le dialogue sans snooze (back / extérieur / kill app). */
     fun dismissUpdatePrompt() {
-        val code = _state.value.updatePrompt?.info?.versionCode
-        if (code != null && code > 0) {
-            ApkUpdateManager(container.appContext, container).dismissForVersion(code)
+        _state.value = _state.value.copy(updatePrompt = null)
+    }
+
+    fun snoozeUpdatePrompt(option: ApkUpdateManager.SnoozeOption) {
+        val code = _state.value.updatePrompt?.info?.versionCode ?: 0
+        if (code > 0) {
+            ApkUpdateManager(container.appContext, container).snooze(option, code)
         }
         _state.value = _state.value.copy(updatePrompt = null)
     }

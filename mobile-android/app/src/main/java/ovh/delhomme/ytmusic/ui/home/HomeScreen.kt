@@ -101,35 +101,23 @@ fun HomeScreen(
     var updateInstalling by remember { mutableStateOf(false) }
 
     state.updatePrompt?.takeIf { it.available }?.let { upd ->
-        AlertDialog(
-            onDismissRequest = { vm.dismissUpdatePrompt() },
-            title = { Text("Mise à jour disponible") },
-            text = {
-                Text(
-                    upd.info?.versionName?.let { "Version $it prête à installer." }
-                        ?: "Une nouvelle version PLM est disponible.",
-                )
+        ovh.delhomme.ytmusic.update.UpdateAvailableDialog(
+            versionName = upd.info?.versionName,
+            installing = updateInstalling,
+            onInstall = {
+                scope.launch {
+                    updateInstalling = true
+                    val msg = runCatching {
+                        ApkUpdateManager(context.applicationContext, container)
+                            .downloadAndInstall(null)
+                    }.getOrElse { it.message ?: "Échec" }
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    updateInstalling = false
+                    vm.consumeUpdatePrompt()
+                }
             },
-            confirmButton = {
-                TextButton(
-                    enabled = !updateInstalling,
-                    onClick = {
-                        scope.launch {
-                            updateInstalling = true
-                            val msg = runCatching {
-                                ApkUpdateManager(context.applicationContext, container)
-                                    .downloadAndInstall(null)
-                            }.getOrElse { it.message ?: "Échec" }
-                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                            updateInstalling = false
-                            vm.consumeUpdatePrompt()
-                        }
-                    },
-                ) { Text(if (updateInstalling) "…" else "Installer") }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.dismissUpdatePrompt() }) { Text("Plus tard") }
-            },
+            onSnooze = { opt -> vm.snoozeUpdatePrompt(opt) },
+            onSoftDismiss = { vm.dismissUpdatePrompt() },
         )
     }
 
