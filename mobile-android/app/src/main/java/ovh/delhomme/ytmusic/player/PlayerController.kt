@@ -1452,7 +1452,7 @@ class PlayerController(
             base,
             queue.map { it.id },
             centerIndex,
-            count = 5,
+            count = 12,
             ignoreQuiet = true,
         )
     }
@@ -1466,10 +1466,10 @@ class PlayerController(
             base,
             playable.map { it.id },
             idx,
-            ahead = 6,
+            ahead = 12,
             behind = 1,
         )
-        CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)
+        CoverPrefetcher.warmCovers(playable, idx, ahead = 6, behind = 1)
     }
 
     private fun applyRepeatShuffle(player: Player) {
