@@ -27,9 +27,10 @@ import java.util.concurrent.TimeUnit
  * Vérifie / télécharge / installe l’APK publiée sur le serveur (`/api/deploy/apk`)
  * — toujours la **dernière** version seule (pas de chaîne d’intermédiaires).
  *
- * Prompt automatique (dialogue) : **au plus 2× / jour**, fenêtres ~7h et ~17h
- * (pull Accueil ou check périodique). Hors fenêtre → pas de popup ; le menu Compte
- * reste à jour (ligne rouge si MAJ dispo).
+ * « Plus tard » = snooze **temporel** choisi par l’utilisateur (pas un report
+ * jusqu’à la prochaine version). Fermer l’app / le dialogue sans choisir
+ * ne snooze pas → re-proposition au prochain lancement.
+ * Annulation de l’install système → re-proposition immédiate.
  */
 class ApkUpdateManager(
     private val context: Context,
@@ -45,6 +46,14 @@ class ApkUpdateManager(
         val message: String? = null,
     )
 
+    enum class SnoozeOption(val label: String) {
+        ONE_HOUR("Dans 1 heure"),
+        LATER_TODAY("Plus tard aujourd’hui"),
+        TOMORROW("Demain"),
+        THREE_DAYS("Dans 3 jours"),
+        ONE_WEEK("Dans 1 semaine"),
+    }
+
     fun lastCheckAt(): Long = prefs.getLong(KEY_LAST_CHECK, 0L)
 
     fun shouldAutoCheck(now: Long = System.currentTimeMillis()): Boolean {
@@ -52,12 +61,89 @@ class ApkUpdateManager(
         return now - last >= PERIODIC_INTERVAL_MS
     }
 
-    fun dismissForVersion(versionCode: Int) {
-        prefs.edit().putInt(KEY_SNOOZED_CODE, versionCode).apply()
+    /** Report explicite jusqu’à [untilMs] pour la version [versionCode]. */
+    fun snoozeUntil(versionCode: Int, untilMs: Long) {
+        prefs.edit()
+            .putInt(KEY_SNOOZE_CODE, versionCode)
+            .putLong(KEY_SNOOZE_UNTIL, untilMs.coerceAtLeast(System.currentTimeMillis()))
+            .remove(KEY_REPROMPT_INSTALL)
+            .apply()
     }
 
-    fun isSnoozed(versionCode: Int): Boolean =
-        prefs.getInt(KEY_SNOOZED_CODE, 0) == versionCode && versionCode > 0
+    fun snooze(option: SnoozeOption, versionCode: Int, now: Long = System.currentTimeMillis()) {
+        snoozeUntil(versionCode, resolveSnoozeUntil(option, now))
+    }
+
+    fun resolveSnoozeUntil(option: SnoozeOption, now: Long = System.currentTimeMillis()): Long {
+        val cal = Calendar.getInstance().apply { timeInMillis = now }
+        return when (option) {
+            SnoozeOption.ONE_HOUR -> now + TimeUnit.HOURS.toMillis(1)
+            SnoozeOption.LATER_TODAY -> {
+                // Ce soir 20h ; si déjà passé → +4 h (plafond minuit+1h)
+                val tonight = (cal.clone() as Calendar).apply {
+                    set(Calendar.HOUR_OF_DAY, 20)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                when {
+                    tonight.timeInMillis > now + TimeUnit.HOURS.toMillis(1) -> tonight.timeInMillis
+                    else -> now + TimeUnit.HOURS.toMillis(4)
+                }
+            }
+            SnoozeOption.TOMORROW -> {
+                cal.add(Calendar.DAY_OF_YEAR, 1)
+                cal.set(Calendar.HOUR_OF_DAY, 10)
+                cal.set(Calendar.MINUTE, 0)
+                cal.set(Calendar.SECOND, 0)
+                cal.set(Calendar.MILLISECOND, 0)
+                cal.timeInMillis
+            }
+            SnoozeOption.THREE_DAYS -> now + TimeUnit.DAYS.toMillis(3)
+            SnoozeOption.ONE_WEEK -> now + TimeUnit.DAYS.toMillis(7)
+        }
+    }
+
+    /** @deprecated Prefer [snooze] — ancien report « jusqu’à prochaine version ». */
+    fun dismissForVersion(versionCode: Int) {
+        // Soft dismiss : ne plus snoozer définitivement. No-op volontaire.
+        AppLog.i("apk-update", "dismiss soft (no permanent snooze) v$versionCode")
+    }
+
+    fun isSnoozed(versionCode: Int, now: Long = System.currentTimeMillis()): Boolean {
+        if (versionCode <= 0) return false
+        val until = prefs.getLong(KEY_SNOOZE_UNTIL, 0L)
+        val code = prefs.getInt(KEY_SNOOZE_CODE, 0)
+        if (until <= 0L || code != versionCode) return false
+        if (now >= until) {
+            prefs.edit().remove(KEY_SNOOZE_UNTIL).remove(KEY_SNOOZE_CODE).apply()
+            return false
+        }
+        return true
+    }
+
+    fun clearSnooze() {
+        prefs.edit().remove(KEY_SNOOZE_UNTIL).remove(KEY_SNOOZE_CODE).apply()
+    }
+
+    /** Install système annulée / échouée → forcer une nouvelle proposition. */
+    fun markInstallCancelled() {
+        prefs.edit()
+            .putBoolean(KEY_REPROMPT_INSTALL, true)
+            .remove(KEY_SNOOZE_UNTIL)
+            .remove(KEY_SNOOZE_CODE)
+            .apply()
+        AppLog.i("apk-update", "install cancelled → will re-prompt")
+    }
+
+    fun consumeRepromptAfterInstall(): Boolean {
+        if (!prefs.getBoolean(KEY_REPROMPT_INSTALL, false)) return false
+        prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
+        return true
+    }
+
+    fun shouldRepromptAfterInstall(): Boolean =
+        prefs.getBoolean(KEY_REPROMPT_INSTALL, false)
 
     fun promptSlotNow(now: Long = System.currentTimeMillis()): String? {
         val cal = Calendar.getInstance().apply { timeInMillis = now }
@@ -92,17 +178,22 @@ class ApkUpdateManager(
         return !alreadyPromptedSlot(slot)
     }
 
+    /**
+     * Au démarrage / reprise : propose si MAJ dispo et pas en snooze timer.
+     * Fermer l’app sans répondre → re-demande ici.
+     * Après annulation d’install → aussi ici.
+     */
     suspend fun checkOnStartup(): CheckResult {
-        val result = check(force = true, respectSnooze = true)
-        if (result.available && canOfferPromptDialog()) {
-            promptSlotNow()?.let { markPromptedSlot(it) }
-            return result
+        val forceReprompt = shouldRepromptAfterInstall()
+        val result = check(force = true, respectSnooze = !forceReprompt)
+        if (forceReprompt && result.info != null &&
+            (result.info.versionCode ?: 0) > BuildConfig.VERSION_CODE
+        ) {
+            consumeRepromptAfterInstall()
+            return result.copy(available = true, message = result.message ?: "Réessayer l’installation")
         }
-        return if (result.available) {
-            result.copy(available = false, message = result.message ?: "MAJ dispo (menu Compte)")
-        } else {
-            result
-        }
+        if (result.available) return result
+        return result
     }
 
     suspend fun checkOnPullRefresh(): CheckResult {
@@ -114,6 +205,11 @@ class ApkUpdateManager(
                 .apply()
         }
         if (!result.available) return result
+        // Pull : dialogue seulement dans les fenêtres 7h / 17h (sauf re-prompt install)
+        if (shouldRepromptAfterInstall()) {
+            consumeRepromptAfterInstall()
+            return result
+        }
         if (!canOfferPromptDialog()) {
             return result.copy(available = false, message = "MAJ dispo — voir Compte")
         }
@@ -147,9 +243,8 @@ class ApkUpdateManager(
                     info.ready != true ->
                         CheckResult(false, info, local, message = "APK pas encore publiée")
                     remote <= local -> {
-                        if (prefs.getInt(KEY_SNOOZED_CODE, 0) > 0) {
-                            prefs.edit().remove(KEY_SNOOZED_CODE).apply()
-                        }
+                        clearSnooze()
+                        prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
                         CheckResult(
                             false,
                             info,
@@ -162,10 +257,15 @@ class ApkUpdateManager(
                             false,
                             info,
                             local,
-                            message = "Reportée (v$remote) — prochaine version seulement",
+                            message = "Reportée jusqu’à plus tard",
                         )
-                    else ->
+                    else -> {
+                        // Migre l’ancien snooze permanent (ignoré désormais)
+                        if (prefs.contains(KEY_SNOOZED_CODE)) {
+                            prefs.edit().remove(KEY_SNOOZED_CODE).apply()
+                        }
                         CheckResult(true, info, local, message = "v$remote disponible")
+                    }
                 }
             }.getOrElse {
                 AppLog.w("apk-update", "check failed: ${it.message}")
@@ -237,7 +337,7 @@ class ApkUpdateManager(
             return@withContext "APK trop petite (${out.length()} o)"
         }
         AppLog.i("apk-update", "downloaded ${out.length()} bytes → install v$remote")
-        prefs.edit().remove(KEY_SNOOZED_CODE).apply()
+        clearSnooze()
         val ok = runCatching { installViaPackageInstaller(out) }.getOrElse { err ->
             AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
             withContext(Dispatchers.Main) { installApkViaView(out) }
@@ -268,7 +368,6 @@ class ApkUpdateManager(
                     0
                 }
             val pi = PendingIntent.getBroadcast(context, sessionId, intent, flags)
-            // Receiver one-shot pour loguer le statut
             val filter = IntentFilter(action)
             ContextCompat.registerReceiver(
                 context,
@@ -279,20 +378,37 @@ class ApkUpdateManager(
                             PackageInstaller.STATUS_FAILURE,
                         ) ?: PackageInstaller.STATUS_FAILURE
                         AppLog.i("apk-update", "install status=$status")
-                        runCatching { ctx?.unregisterReceiver(this) }
-                        if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-                            val confirm = if (Build.VERSION.SDK_INT >= 33) {
-                                intent?.getParcelableExtra(
-                                    Intent.EXTRA_INTENT,
-                                    Intent::class.java,
-                                )
-                            } else {
-                                @Suppress("DEPRECATION")
-                                intent?.getParcelableExtra(Intent.EXTRA_INTENT)
+                        when (status) {
+                            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                                val confirm = if (Build.VERSION.SDK_INT >= 33) {
+                                    intent?.getParcelableExtra(
+                                        Intent.EXTRA_INTENT,
+                                        Intent::class.java,
+                                    )
+                                } else {
+                                    @Suppress("DEPRECATION")
+                                    intent?.getParcelableExtra(Intent.EXTRA_INTENT)
+                                }
+                                confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                confirm?.let { ctx?.startActivity(it) }
+                                // Garder le receiver pour le statut final (OK / annulé)
+                                return
                             }
-                            confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            confirm?.let { ctx?.startActivity(it) }
+                            PackageInstaller.STATUS_SUCCESS -> {
+                                prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
+                            }
+                            PackageInstaller.STATUS_FAILURE_ABORTED,
+                            PackageInstaller.STATUS_FAILURE,
+                            PackageInstaller.STATUS_FAILURE_BLOCKED,
+                            PackageInstaller.STATUS_FAILURE_CONFLICT,
+                            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE,
+                            PackageInstaller.STATUS_FAILURE_INVALID,
+                            PackageInstaller.STATUS_FAILURE_STORAGE,
+                            -> {
+                                markInstallCancelled()
+                            }
                         }
+                        runCatching { ctx?.unregisterReceiver(this) }
                     }
                 },
                 filter,
@@ -318,7 +434,11 @@ class ApkUpdateManager(
 
     companion object {
         private const val KEY_LAST_CHECK = "last_check_at"
+        /** @deprecated legacy permanent snooze — migré vers KEY_SNOOZE_* */
         private const val KEY_SNOOZED_CODE = "snoozed_version_code"
+        private const val KEY_SNOOZE_CODE = "snooze_version_code"
+        private const val KEY_SNOOZE_UNTIL = "snooze_until_ms"
+        private const val KEY_REPROMPT_INSTALL = "reprompt_after_install_cancel"
         private const val KEY_PROMPTED_SLOT = "prompted_slot"
         private const val KEY_LAST_REMOTE_CODE = "last_remote_code"
         private const val KEY_LAST_REMOTE_NAME = "last_remote_name"

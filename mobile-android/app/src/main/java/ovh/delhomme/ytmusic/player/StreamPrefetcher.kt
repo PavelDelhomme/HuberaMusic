@@ -23,29 +23,33 @@ import java.util.concurrent.TimeUnit
  * 1) POST /api/stream/warm (batch) → chauffe le déchiffrement API
  * 2) CacheWriter → SimpleCache Exo (mêmes octets que la lecture)
  * 3) Éviction des titres déjà écoutés pour laisser la place à la suite
- * Annulé uniquement sur pause volontaire (pas pendant un rebuffer / skip).
+ * Annulé uniquement sur pause volontaire (pas pendant un rebuffer / skip / BG).
+ *
+ * En lecture (Wi‑Fi) : précharge une large fenêtre de la file par blocs
+ * (têtes généreuses proches, têtes ~3–6 s plus loin) pour enchaîner sans coupure.
  */
 object StreamPrefetcher {
     /** ~6–8 s audio typique YT (~160–256 kb/s) + marge conteneur. */
     const val HEAD_3S = 900L * 1024L
-    /** Titre suivant pendant lecture — skip fluide sans saturer la radio. */
-    private const val HEAD_NEXT_PLAYING = 2_200L * 1024L
-    /** Tête générique Wi‑Fi. */
-    private const val HEAD_WIFI = 1_200 * 1024L
+    /** ~12–15 s — titre suivant pendant lecture. */
+    private const val HEAD_NEXT_PLAYING = 3_200L * 1024L
+    /** Tête générique Wi‑Fi (~8 s). */
+    private const val HEAD_WIFI = 1_400 * 1024L
     /** Titre suivant Wi‑Fi. */
-    private const val HEAD_NEXT_WIFI = 2_000 * 1024L
+    private const val HEAD_NEXT_WIFI = 2_800 * 1024L
     /** +2 / +3 Wi‑Fi. */
-    private const val HEAD_NEAR_WIFI = 1_200 * 1024L
-    /** Suite lointaine Wi‑Fi. */
-    private const val HEAD_FAR_WIFI = 900 * 1024L
+    private const val HEAD_NEAR_WIFI = 1_800 * 1024L
+    /** Suite lointaine Wi‑Fi (~6 s). */
+    private const val HEAD_FAR_WIFI = 1_100 * 1024L
 
     private const val HEAD_METERED = HEAD_3S
-    private const val HEAD_NEXT_METERED = 1_200 * 1024L
+    private const val HEAD_NEXT_METERED = 1_600 * 1024L
 
-    private const val MAX_WARM = 6
-    private const val AHEAD_WIFI = 4
-    private const val AHEAD_METERED = 2
-    private const val DISK_CACHE_MB = 24L
+    private const val MAX_WARM = 12
+    /** Fenêtre avant sur Wi‑Fi (blocs de file / aléatoire). */
+    private const val AHEAD_WIFI = 12
+    private const val AHEAD_METERED = 4
+    private const val DISK_CACHE_MB = 48L
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
     @Volatile private var streamDownUntil = 0L
@@ -307,14 +311,15 @@ object StreamPrefetcher {
         if (idx == rollingAnchor && now - rollingLastAt < 12_000L) return
         rollingAnchor = idx
         rollingLastAt = now
-        val win = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(window.coerceIn(2, 6))
+        val win = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(window.coerceIn(4, 16))
         val end = (idx + win).coerceAtMost(queueIds.lastIndex)
         if (end <= idx) return
         val slice = (idx + 1..end).mapNotNull { queueIds.getOrNull(it) }.filter {
             it.length == 11 && !isLocalOffline(it)
         }
         if (slice.isEmpty()) return
-        warmBatch(baseApi, slice.take(MAX_WARM))
+        // Chauffe API par blocs de MAX_WARM
+        slice.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
         slice.forEachIndexed { i, id ->
             val dist = i + 1
             val url = "${baseApi.trimEnd('/')}/api/stream/$id"
@@ -324,12 +329,12 @@ object StreamPrefetcher {
             val bytes = when {
                 saver -> HEAD_3S
                 !unmetered -> if (dist == 1) HEAD_NEXT_METERED else HEAD_3S
-                // Pendant lecture : le suivant doit être le plus chaud
                 playing && dist == 1 -> HEAD_NEXT_PLAYING
                 playing && dist == 2 -> HEAD_NEAR_WIFI
-                playing && dist <= 4 -> HEAD_3S
+                playing && dist <= 4 -> HEAD_WIFI
+                playing && dist <= 8 -> HEAD_FAR_WIFI
                 !playing && dist == 1 -> HEAD_NEXT_WIFI
-                !playing && dist <= 3 -> HEAD_NEAR_WIFI
+                !playing && dist <= 4 -> HEAD_NEAR_WIFI
                 else -> HEAD_3S
             }
             PlayerCache.prefetchHead(YtMusicApp.instance, url, id, bytes)
@@ -363,17 +368,20 @@ object StreamPrefetcher {
         val playing = isPlaybackActive()
         val unmetered = isUnmetered()
         val saver = ovh.delhomme.ytmusic.data.BatterySaver.isActive()
-        val take = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(count.coerceIn(1, 8))
-        queueIds.drop(idx + 1).take(take).forEachIndexed { i, id ->
-            if (id.length != 11 || isLocalOffline(id)) return@forEachIndexed
+        val take = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(count.coerceIn(1, 16))
+        val upcoming = queueIds.drop(idx + 1).take(take).filter { it.length == 11 && !isLocalOffline(it) }
+        upcoming.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
+        upcoming.forEachIndexed { i, id ->
             val url = "${baseApi.trimEnd('/')}/api/stream/$id"
             val bytes = when {
                 saver -> HEAD_3S
                 !unmetered -> if (i == 0) HEAD_NEXT_METERED else HEAD_3S
                 !playing && i == 0 -> HEAD_NEXT_WIFI
-                !playing && i <= 2 -> HEAD_NEAR_WIFI
+                !playing && i <= 3 -> HEAD_NEAR_WIFI
                 playing && i == 0 -> HEAD_NEXT_PLAYING
                 playing && i == 1 -> HEAD_NEAR_WIFI
+                playing && i <= 4 -> HEAD_WIFI
+                playing && i <= 8 -> HEAD_FAR_WIFI
                 else -> HEAD_3S
             }
             PlayerCache.prefetchHead(YtMusicApp.instance, url, id, bytes)
@@ -505,7 +513,7 @@ object StreamPrefetcher {
             return
         }
         val unmetered = isUnmetered()
-        val aheadN = if (unmetered) ahead.coerceAtMost(AHEAD_WIFI) else AHEAD_METERED
+        val aheadN = if (unmetered) ahead.coerceAtMost(AHEAD_WIFI) else ahead.coerceAtMost(AHEAD_METERED)
         val behindN = if (unmetered) behind else 0
 
         // Libère le cache Exo des titres déjà écoutés (garde [behindN] derrière)
@@ -524,9 +532,11 @@ object StreamPrefetcher {
             }
         }
         val current = queueIds[idx]
-        warmBatch(baseApi, listOf(current) + nextIds + behindIds)
+        (listOf(current) + nextIds + behindIds).chunked(MAX_WARM).forEach { block ->
+            warmBatch(baseApi, block)
+        }
         if (isPlaybackActive()) {
-            prefetchUpcomingHeadsTiered(baseApi, queueIds, idx, count = aheadN.coerceAtMost(6))
+            prefetchUpcomingHeadsTiered(baseApi, queueIds, idx, count = aheadN)
         } else {
             nextIds.forEachIndexed { i, id ->
                 exoPrefetch(baseApi, id, distance = i + 1)

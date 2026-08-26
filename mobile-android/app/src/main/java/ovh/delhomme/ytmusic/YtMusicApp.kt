@@ -44,7 +44,14 @@ class YtMusicApp : Application(), ImageLoaderFactory {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
-            runCatching { StreamPrefetcher.cancelIdle() }
+            // UI cachée : ne coupe le prefetch que si rien ne joue
+            // (sinon coupures sur les titres suivants en arrière-plan).
+            val playing = runCatching {
+                ovh.delhomme.ytmusic.player.PlaybackService.Holder.isPlaybackActiveSafe()
+            }.getOrDefault(false)
+            if (!playing) {
+                runCatching { StreamPrefetcher.cancelIdle() }
+            }
             imageLoader?.memoryCache?.clear()
         }
         if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {

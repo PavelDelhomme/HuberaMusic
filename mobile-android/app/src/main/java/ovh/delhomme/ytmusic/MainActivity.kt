@@ -263,8 +263,8 @@ fun YtMusicAppContent(
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
                     player.flushPersist()
-                    // Économie batterie : coupe prefetch HTTP / Exo quand l’UI n’est plus visible
-                    runCatching { ovh.delhomme.ytmusic.player.StreamPrefetcher.cancelIdle() }
+                    // Ne PAS cancelIdle ici : en arrière-plan la lecture continue
+                    // et le prefetch de la file doit rester actif (sinon coupures).
                 }
                 else -> Unit
             }
@@ -346,7 +346,7 @@ fun YtMusicAppContent(
         }
     }
 
-    // Mise à jour : vérif au démarrage + toutes les 6 h (install in-app)
+    // Mise à jour : vérif au démarrage + reprise après annulation install + toutes les 6 h
     var pendingUpdate by remember {
         mutableStateOf<ovh.delhomme.ytmusic.update.ApkUpdateManager.CheckResult?>(null)
     }
@@ -362,6 +362,27 @@ fun YtMusicAppContent(
         if (check.available) pendingUpdate = check
     }
 
+    // Après retour de l’écran d’install système (annulé) → re-proposer
+    val updateLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(loggedIn, updateLifecycleOwner) {
+        if (loggedIn != true) return@DisposableEffect onDispose { }
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+            if (pendingUpdate?.available == true || updateInstalling) return@LifecycleEventObserver
+            val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
+                context.applicationContext,
+                container,
+            )
+            if (!updater.shouldRepromptAfterInstall()) return@LifecycleEventObserver
+            scope.launch {
+                val check = runCatching { updater.checkOnStartup() }.getOrNull() ?: return@launch
+                if (check.available) pendingUpdate = check
+            }
+        }
+        updateLifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { updateLifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     LaunchedEffect(loggedIn) {
         if (loggedIn != true) return@LaunchedEffect
         val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
@@ -371,61 +392,40 @@ fun YtMusicAppContent(
         while (isActive) {
             delay(6L * 60L * 60L * 1000L)
             if (!updater.shouldAutoCheck()) continue
-            // Même règle que le pull : dialogue seulement 7h / 17h
             val check = runCatching { updater.checkOnPullRefresh() }.getOrNull() ?: continue
             if (check.available) pendingUpdate = check
         }
     }
 
     pendingUpdate?.takeIf { it.available }?.let { upd ->
-        AlertDialog(
-            onDismissRequest = {
+        ovh.delhomme.ytmusic.update.UpdateAvailableDialog(
+            versionName = upd.info?.versionName,
+            installing = updateInstalling,
+            onInstall = {
+                scope.launch {
+                    updateInstalling = true
+                    val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
+                        context.applicationContext,
+                        container,
+                    )
+                    val msg = runCatching {
+                        updater.downloadAndInstall(null)
+                    }.getOrElse { it.message ?: "Échec" }
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    updateInstalling = false
+                    pendingUpdate = null
+                }
+            },
+            onSnooze = { opt ->
                 upd.info?.versionCode?.let { code ->
                     ovh.delhomme.ytmusic.update.ApkUpdateManager(
                         context.applicationContext,
                         container,
-                    ).dismissForVersion(code)
+                    ).snooze(opt, code)
                 }
                 pendingUpdate = null
             },
-            title = { Text("Mise à jour disponible") },
-            text = {
-                Text(
-                    upd.info?.versionName?.let { "Version $it prête à installer." }
-                        ?: "Une nouvelle version PLM est disponible.",
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !updateInstalling,
-                    onClick = {
-                        scope.launch {
-                            updateInstalling = true
-                            val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
-                                context.applicationContext,
-                                container,
-                            )
-                            val msg = runCatching {
-                                updater.downloadAndInstall(null)
-                            }.getOrElse { it.message ?: "Échec" }
-                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                            updateInstalling = false
-                            pendingUpdate = null
-                        }
-                    },
-                ) { Text(if (updateInstalling) "…" else "Installer") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    upd.info?.versionCode?.let { code ->
-                        ovh.delhomme.ytmusic.update.ApkUpdateManager(
-                            context.applicationContext,
-                            container,
-                        ).dismissForVersion(code)
-                    }
-                    pendingUpdate = null
-                }) { Text("Plus tard") }
-            },
+            onSoftDismiss = { pendingUpdate = null },
         )
     }
 
