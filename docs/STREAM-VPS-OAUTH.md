@@ -24,9 +24,9 @@ En résumé : **Premium = option Google que tu peux couper.** **OAuth TV = 2 min
 ## Contexte technique
 
 1. **IP VPS Contabo** = datacenter → YouTube laisse passer certains titres (ex. Rickroll) mais **bloque souvent la musique** (`LOGIN_REQUIRED`, formats vides).
-2. **Tunnel PC** (`scripts/deploy/link-home-stream.sh`) marche **en DEV** (IP résidentielle) mais **dépend du PC allumé**. En prod on **ne s’en sert pas** : le VPS + OAuth TV suffisent. Si le PC est éteint, la musique prod continue.
+2. **Tunnel PC** (`scripts/deploy/link-home-stream.sh`) : **déconseillé en prod** (PC allumé obligatoire, 50x si coupé). Relais maison = **opt-in** `ALLOW_STREAM_UPSTREAM=1` uniquement. Préférer **OAuth TV VPS** + **proxies HTTP gratuits** (`YOUTUBE_HTTP_PROXY_FREE`, rotation yt-dlp) pour bypasser les 50x / `LOGIN_REQUIRED`.
 3. **Cookies navigateur** aident un peu (anti-bot) mais **ne suffisent pas** seuls depuis cette IP pour la musique.
-4. **Solution logicielle retenue :** OAuth **appareil / TV** une fois → tokens chiffrés sur le volume Docker → Innertube signé pour `getAudioFormat`.
+4. **Solution logicielle retenue :** OAuth **appareil / TV** une fois → tokens chiffrés sur le volume Docker → Innertube signé pour `getAudioFormat` · filet yt-dlp via proxies gratuits si 50x.
 
 Fichiers clés :
 
@@ -39,7 +39,7 @@ Fichiers clés :
 
 **Users / apps mobiles :** procédure unique (OAuth appareil + cookies biblio) → [`YTM-GOOGLE-CLIENTS.md`](./YTM-GOOGLE-CLIENTS.md).
 
-En prod, `STREAM_UPSTREAM` / fichier `stream-upstream.url` est **ignoré** sauf `ALLOW_STREAM_UPSTREAM=1` (secours). Si ALLOW=1, garder `STREAM_UPSTREAM_FALLBACK=1` pour ne pas perdre la lecture quand le PC coupe.
+En prod, `STREAM_UPSTREAM` / fichier `stream-upstream.url` est **ignoré** sauf `ALLOW_STREAM_UPSTREAM=1` (opt-in). Même avec ALLOW, garder le fallback VPS (défaut ON ; opt-out `STREAM_UPSTREAM_FALLBACK=0`). Contre les 50x DC : `YOUTUBE_HTTP_PROXY_FREE=1` (défaut prod) ou `YOUTUBE_HTTP_PROXY=…`.
 
 ---
 
