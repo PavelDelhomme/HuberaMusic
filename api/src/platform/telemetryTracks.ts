@@ -15,7 +15,7 @@ export type ResolvedTrack = {
 };
 
 const ID_RE = /\b([a-zA-Z0-9_-]{11})\b/g;
-/** IDs trop génériques / non-vidéo courants dans les logs. */
+/** IDs trop génériques / non-vidéo courants dans les logs (stack Java, headers…). */
 const ID_BLOCK = new Set([
   'undefined',
   'null',
@@ -24,6 +24,17 @@ const ID_BLOCK = new Set([
   'Content-Typ',
   'application',
   'Authorization',
+  // Frames / symboles Java fréquents dans les stacks (11 chars) — faux positifs mails
+  'InetAddress',
+  'sendRequest',
+  'UnknownHost',
+  'getaddrinfo',
+  'HttpEngine',
+  'connect',
+  'Executor',
+  'HandlerThre',
+  'LoadTask',
+  'MediaPeriod',
 ]);
 
 export function extractTrackIds(...blobs: Array<string | undefined | null>): string[] {
@@ -34,12 +45,15 @@ export function extractTrackIds(...blobs: Array<string | undefined | null>): str
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) return;
     if (!/[a-zA-Z]/.test(id)) return;
     if (/^[a-z]{11}$/.test(id) || /^[A-Z]{11}$/.test(id) || /^[A-Z_]+$/.test(id)) return;
+    // camelCase / PascalCase Java (InetAddress, sendRequest) sans chiffre/_ 
+    if (!/[0-9_-]/.test(id) && /[a-z][A-Z]/.test(id)) return;
     seen.add(id);
     found.push(id);
   };
   for (const blob of blobs) {
     if (!blob) continue;
-    // Patterns explicites stream / tag serveur
+    const isStack = /(?:^|\n)\s*(?:at |Caused by:)/m.test(blob);
+    // Patterns explicites stream / tag serveur (OK même dans une stack)
     for (const re of [
       /\[stream\s+([a-zA-Z0-9_-]{11})\]/gi,
       /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/gi,
@@ -53,6 +67,8 @@ export function extractTrackIds(...blobs: Array<string | undefined | null>): str
         if (found.length >= 12) return found;
       }
     }
+    // Scan générique : JAMAIS sur les stacks (sinon InetAddress / sendRequest…)
+    if (isStack) continue;
     ID_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = ID_RE.exec(blob))) {
