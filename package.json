@@ -1,6 +1,6 @@
 {
   "name": "ytmusic",
-  "version": "1.3.65",
+  "version": "1.3.79",
   "private": true,
   "description": "PLM — musique web, API, Android & desktop",
   "scripts": {
