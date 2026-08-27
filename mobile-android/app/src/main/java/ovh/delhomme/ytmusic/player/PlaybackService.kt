@@ -1,9 +1,16 @@
 package ovh.delhomme.ytmusic.player
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.Bundle
 import androidx.annotation.OptIn
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
@@ -844,6 +851,10 @@ class PlaybackService : MediaSessionService() {
         notificationProvider.setSmallIcon(R.drawable.ic_stat_play)
         setMediaNotificationProvider(notificationProvider)
 
+        // Media3 peut appeler startForegroundService avant que la notif soit prête
+        // (Blackview API 28 → crash RemoteServiceException sous ~5 s). Annonce FGS tout de suite.
+        promoteToForegroundPlaceholder()
+
         Holder.player = exo
         Holder.service = this
         refreshPlaybackActiveFlag(exo)
@@ -859,6 +870,57 @@ class PlaybackService : MediaSessionService() {
                 val idx = p.currentMediaItemIndex
                 promoteUpcomingToLocal(p, idx + 1)
             }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        promoteToForegroundPlaceholder()
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    /**
+     * Notif FGS immédiate (même id que DefaultMediaNotificationProvider) pour respecter
+     * le délai Android après `startForegroundService`. Remplacée ensuite par la notif Media3.
+     */
+    private fun promoteToForegroundPlaceholder() {
+        runCatching {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= 26) {
+                val ch = NotificationChannel(
+                    DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID,
+                    getString(R.string.playback_channel_name),
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    setShowBadge(false)
+                    description = "Lecture PLM"
+                }
+                nm.createNotificationChannel(ch)
+            }
+            val notification: Notification = NotificationCompat.Builder(
+                this,
+                DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID,
+            )
+                .setContentTitle("PLM")
+                .setContentText("Lecture…")
+                .setSmallIcon(R.drawable.ic_stat_play)
+                .setContentIntent(sessionActivityPendingIntent())
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .build()
+            ServiceCompat.startForeground(
+                this,
+                DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID,
+                notification,
+                if (Build.VERSION.SDK_INT >= 29) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                } else {
+                    0
+                },
+            )
+        }.onFailure { err ->
+            AppLog.w("PlaybackService", "promoteToForegroundPlaceholder KO", err)
         }
     }
 

@@ -17,9 +17,9 @@
 | **Status** | `fixed` (`1.3.79`) |
 | **Surfaces** | API prod · Android (Blackview / Samsung / Nothing) — « erreurs sur plein de sons » |
 | **Cause** | `stream-upstream.url` présent + tunnel PC coupé → `STREAM_UPSTREAM KO` renvoyait **503** sans tenter OAuth TV / yt-dlp VPS. Côté app, après retries : **pause** mid-song au lieu de skip → silence long. |
-| **Fix** | Fallback VPS **par défaut** après relais KO (`STREAM_UPSTREAM_FALLBACK=0` pour opt-out) · skip auto au titre suivant après échecs · purge cache Exo `s4` |
+| **Fix** | Fallback VPS **par défaut** après relais KO (`STREAM_UPSTREAM_FALLBACK=0` pour opt-out) · skip auto au titre suivant après échecs · purge cache Exo `s4` · **FGS** : `startForeground` immédiat dans `PlaybackService` (évite RemoteServiceException Blackview) |
 | **Ops** | Remettre `link-home-stream.sh start` si le PC sert de relais ; ne plus éteindre l’API locale sans fallback |
-| **Tests** | `curl /api/stream/4wOLVrGHiIU` 206 avec tunnel UP ; simuler tunnel DOWN → 206 via VPS |
+| **Tests** | `curl /api/stream/4wOLVrGHiIU` 206 avec tunnel UP ; sans `stream-upstream.url` → 206 via VPS · force-stop + relaunch Blackview sans crash FGS |
 
 ---
 
