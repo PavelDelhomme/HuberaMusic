@@ -82,6 +82,7 @@ import {
 } from './library/library.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed } from './media/stream.js';
 import { streamHeadStats } from './media/streamHeadCache.js';
+import { youtubeProxyStats } from './youtube/youtubeProxy.js';
 import { resolveVisualVideo } from './media/visualResolve.js';
 import { importByKind, importByQueryOrUrl } from './media/import.js';
 import { handleOfflineStatus, startOfflineCollection } from './library/offline.js';
@@ -363,9 +364,14 @@ app.get('/api/health', (_req, res) => {
     streamAuth: {
       serverOauth: streamOauthConfigured(),
       upstreamAllowed: isStreamUpstreamAllowed(),
-      upstreamFallback: process.env.STREAM_UPSTREAM_FALLBACK === '1',
+      // Défaut ON : après relais KO → OAuth/yt-dlp VPS (opt-out STREAM_UPSTREAM_FALLBACK=0)
+      upstreamFallback: !(
+        process.env.STREAM_UPSTREAM_FALLBACK === '0' ||
+        process.env.STREAM_UPSTREAM_FALLBACK === 'false'
+      ),
+      youtubeProxy: youtubeProxyStats(),
       hint:
-        'OAuth TV + ytm_accounts sur volume ytmusic_data. Ne pas Remove volumes ni changer JWT_SECRET.',
+        'OAuth TV + ytm_accounts sur volume ytmusic_data. Proxies gratuits (YOUTUBE_HTTP_PROXY_FREE) contre 50x — pas de PC maison. Ne pas Remove volumes ni changer JWT_SECRET.',
     },
     maintenance: publicMaintenanceStatus(),
     canonicalHost: 'plm.delhomme.ovh',

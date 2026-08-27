@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Relie le stream du VPS à ton API locale (IP maison = YouTube OK, sans cookies DevTools).
+# Relie le stream du VPS à ton API locale (IP maison = YouTube OK).
+#
+# ⚠ DÉCONSEILLÉ EN PROD — préférer OAuth TV VPS + YOUTUBE_HTTP_PROXY_FREE.
+# Le fichier stream-upstream.url seul NE suffit plus : il faut aussi
+#   ALLOW_STREAM_UPSTREAM=1
+# dans l’env du conteneur (Portainer), sinon le VPS ignore le relais.
 #
 # Prérequis : API locale UP + SSH pavel-server + socat sur le VPS (recommandé).
 #
