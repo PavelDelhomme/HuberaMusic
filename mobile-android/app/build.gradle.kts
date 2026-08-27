@@ -72,8 +72,16 @@ val rawApiProp = (project.findProperty("API_BASE_URL") as String?)
     ?: rootEnv["API_BASE_URL"]
     ?: ""
 
-/** API LAN pour le flavor `dev` (téléphone physique ≠ 127.0.0.1). */
+/** API LAN pour le flavor `dev` (téléphone physique ≠ 127.0.0.1).
+ *  HTTPS explicite via `-PAPI_BASE_URL=https://…` autorisé (tests device vs prod). */
 fun resolveDevApiBase(): String {
+    val fromProp = (project.findProperty("API_BASE_URL") as String?)?.trim()?.trimEnd('/').orEmpty()
+    if (fromProp.startsWith("https://") &&
+        !fromProp.contains("127.0.0.1") &&
+        !fromProp.contains("localhost")
+    ) {
+        return fromProp
+    }
     val raw = rawApiProp
     return when {
         raw.isNotBlank() &&

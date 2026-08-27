@@ -58,7 +58,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ArtistRef
 import ovh.delhomme.ytmusic.data.LibraryResponse
@@ -66,6 +69,7 @@ import ovh.delhomme.ytmusic.data.OfflineKeeper
 import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.Thumb
 import ovh.delhomme.ytmusic.data.TrackDto
+import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
 import ovh.delhomme.ytmusic.ui.components.TrackRow
@@ -221,6 +225,21 @@ fun LibraryScreen(
     val libraryEpoch by container.libraryEpoch.collectAsState()
     LaunchedEffect(libraryEpoch) {
         if (libraryEpoch > 0L) reloadLibrary(force = true)
+    }
+
+    // Préchargement léger formats (pas de têtes audio) — accélère Aléatoire / 1er play biblio
+    LaunchedEffect(lib?.songs?.size) {
+        val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
+        if (songs.size < 8) return@LaunchedEffect
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return@LaunchedEffect
+        delay(900)
+        withContext(Dispatchers.IO) {
+            val sample = songs.shuffled().take(36).map { it.id }
+            StreamPrefetcher.warmFormatsLight(base, sample, limit = 36)
+            // Quelques têtes légères (~3 s) pour accélérer un prochain Aléatoire / play
+            StreamPrefetcher.warmHeads3s(base, sample.take(8), limit = 8)
+        }
     }
 
     // Sync live des DL locaux → liste / filtre Téléchargés sans pull-to-refresh
@@ -497,7 +516,36 @@ fun LibraryScreen(
                                         shuffleLabel = content.shuffleLabel,
                                         onPlay = { onPlay(content.playableQueue, 0) },
                                         onShuffle = {
-                                            onPlay(content.playableQueue.shuffled(), 0)
+                                            val queue = content.playableQueue
+                                            scope.launch {
+                                                val shuffled = withContext(Dispatchers.Default) {
+                                                    queue.shuffled()
+                                                }
+                                                val base = container.resolvedApiBase()
+                                                val firstId = shuffled.firstOrNull()?.id
+                                                if (!firstId.isNullOrBlank() && base.isNotBlank()) {
+                                                    withContext(Dispatchers.IO) {
+                                                        StreamPrefetcher.warmCurrentBlocking(
+                                                            base,
+                                                            firstId,
+                                                            timeoutMs = 1_100L,
+                                                            wait = true,
+                                                        )
+                                                        // Tête audio en cache avant Exo → démarrage quasi immédiat
+                                                        StreamPrefetcher.prefetchStartHead(base, firstId)
+                                                    }
+                                                }
+                                                onPlay(shuffled, 0)
+                                                if (base.isNotBlank()) {
+                                                    launch(Dispatchers.IO) {
+                                                        StreamPrefetcher.warmFormatsLight(
+                                                            base,
+                                                            shuffled.drop(1).take(8).map { it.id },
+                                                            limit = 8,
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         },
                                     )
                                 }

@@ -1161,8 +1161,20 @@ private fun MainTabs(
         ?.substringBefore('/')
         ?.substringBefore('?')
         ?.takeIf { it.isNotBlank() }
+    // Garde le mini-player ~220 ms à l’ouverture : même zone boutons, pas de click-through biblio
+    var holdChromeForSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            holdChromeForSheet = true
+            delay(220)
+            holdChromeForSheet = false
+        } else {
+            holdChromeForSheet = false
+        }
+    }
     val showBottomChrome =
-        !expanded && (routeRoot == null || routeRoot in setOf("home", "search", "library"))
+        (!expanded || holdChromeForSheet) &&
+            (routeRoot == null || routeRoot in setOf("home", "search", "library"))
     Scaffold(
         contentWindowInsets = if (showBottomChrome) {
             WindowInsets.safeDrawing
@@ -1503,18 +1515,27 @@ private fun MainTabs(
         )
     }
 
-    // Garde NowPlaying en composition une fois ouvert — évite remount / rebuffer à chaque expand
+    // Ouverture instantanée (pas de phase alpha transparente → click-through)
     val sheetAlpha by animateFloatAsState(
         targetValue = if (expanded) 1f else 0f,
-        animationSpec = tween(160),
+        animationSpec = if (expanded) tween(0) else tween(120),
         label = "np-alpha",
     )
     val sheetSlide by animateFloatAsState(
         targetValue = if (expanded) 0f else 1f,
-        animationSpec = tween(180),
+        animationSpec = if (expanded) tween(90) else tween(140),
         label = "np-slide",
     )
     if (playerSheetMounted) {
+        // Scrim opaque sous le sheet : absorbe les taps même si la liste se redessine
+        if (expanded) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .zIndex(9f)
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.92f)),
+            )
+        }
         Box(
             Modifier
                 .fillMaxSize()
