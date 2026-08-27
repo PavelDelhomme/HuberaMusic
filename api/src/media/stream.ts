@@ -707,28 +707,34 @@ export async function handleStream(req: Request, res: Response) {
       if (endIfHeadersSent(res)) return;
       const msg = String((err as Error).message || err);
       console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
-      if (process.env.STREAM_UPSTREAM_FALLBACK !== '1') {
-        // Mid-range : ne pas renvoyer 503 JSON si on peut encore tenter les backends locaux
-        if (!midNeedsDisk) {
-          const isDown =
-            /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
-              msg,
-            );
-          const homeStatus = /home stream (\d{3})/.exec(msg);
-          const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
-          res.status(status).json({
-            error: 'Impossible de streamer audio',
-            detail: msg.slice(0, 240),
-            hint: isDown
-              ? 'Relais maison KO — sur le PC : bash scripts/deploy/link-home-stream.sh (laisser allumé).'
-              : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
-          });
-          return;
-        }
-        console.warn('[stream] mid-range : relais KO — fallback backends locaux');
-      } else {
-        console.warn('[stream] STREAM_UPSTREAM fallback local VPS (STREAM_UPSTREAM_FALLBACK=1)');
+      // Toujours tenter les backends VPS (OAuth / cookies / yt-dlp) après un relais maison KO.
+      // Avant : sans STREAM_UPSTREAM_FALLBACK=1 on renvoyait 503 → erreurs player sur plein de titres
+      // dès que le PC/tunnel était coupé, alors que l’OAuth TV pouvait encore servir le flux.
+      // Opt-out explicite : STREAM_UPSTREAM_FALLBACK=0
+      const forceHomeOnly =
+        process.env.STREAM_UPSTREAM_FALLBACK === '0' ||
+        process.env.STREAM_UPSTREAM_FALLBACK === 'false';
+      if (forceHomeOnly && !midNeedsDisk) {
+        const isDown =
+          /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
+            msg,
+          );
+        const homeStatus = /home stream (\d{3})/.exec(msg);
+        const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
+        res.status(status).json({
+          error: 'Impossible de streamer audio',
+          detail: msg.slice(0, 240),
+          hint: isDown
+            ? 'Relais maison KO — sur le PC : bash scripts/deploy/link-home-stream.sh (laisser allumé).'
+            : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
+        });
+        return;
       }
+      console.warn(
+        midNeedsDisk
+          ? '[stream] mid-range : relais KO — fallback backends locaux'
+          : '[stream] STREAM_UPSTREAM KO — fallback backends locaux VPS',
+      );
     }
   }
 

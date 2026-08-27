@@ -487,7 +487,9 @@ class PlaybackService : MediaSessionService() {
                         if (exo.currentMediaItem?.mediaId != id) return@launch
                         val track = Holder.queue.firstOrNull { it.id == id }
                         val rebuilt = if (track != null) {
-                            mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle)
+                            // Fallback hors-ligne : forcer le fichier local (pas streamUrl→local
+                            // si le fichier vient d’être jugé KO ailleurs).
+                            mediaItemFor(track, { _ -> localUri.toString() }, Holder.queueTitle)
                         } else {
                             item.buildUpon().setUri(localUri).build()
                         }
@@ -635,21 +637,17 @@ class PlaybackService : MediaSessionService() {
                     }
                     return
                 }
-                // Échecs répétés : ne sauter que si le titre n’a presque pas démarré.
-                // Sinon pause — un skip mid-song est pire qu’un trou.
+                // Échecs répétés : passer au titre suivant (ne plus laisser PAUSED en silence).
+                // Un trou mid-song est pire qu’un skip — l’utilisateur pense que l’app est morte.
                 StreamPrefetcher.markStreamDown()
                 StreamPrefetcher.cancelIdle()
                 recoverGen.incrementAndGet()
                 val failIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
                 val nextIdx = failIdx + 1
-                if (pos < 8_000L && nextIdx < exo.mediaItemCount && nextIdx < Holder.queue.size) {
+                if (nextIdx < exo.mediaItemCount && nextIdx < Holder.queue.size) {
                     streamFailStreak.set(0)
                     runCatching {
-                        exo.seekTo(nextIdx, 0L)
-                        exo.prepare()
-                        exo.playWhenReady = true
-                        exo.play()
-                        Holder.index = nextIdx
+                        advanceToQueueIndex(exo, nextIdx)
                     }
                     android.os.Handler(mainLooper).post {
                         android.widget.Toast.makeText(
@@ -666,7 +664,7 @@ class PlaybackService : MediaSessionService() {
                 android.os.Handler(mainLooper).post {
                     android.widget.Toast.makeText(
                         this@PlaybackService,
-                        "Flux audio interrompu — relance le titre (pas de saut)",
+                        "Flux audio interrompu — plus de titre suivant",
                         android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
@@ -677,6 +675,20 @@ class PlaybackService : MediaSessionService() {
                 StreamPrefetcher.markStreamDown()
                 StreamPrefetcher.cancelIdle()
                 recoverGen.incrementAndGet()
+                val failIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                val nextIdx = failIdx + 1
+                if (nextIdx < exo.mediaItemCount) {
+                    streamFailStreak.set(0)
+                    runCatching { advanceToQueueIndex(exo, nextIdx) }
+                    android.os.Handler(mainLooper).post {
+                        android.widget.Toast.makeText(
+                            this@PlaybackService,
+                            "Lecture KO — titre suivant",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                    return
+                }
                 exo.playWhenReady = false
                 runCatching { exo.pause() }
                 streamFailStreak.set(0)
