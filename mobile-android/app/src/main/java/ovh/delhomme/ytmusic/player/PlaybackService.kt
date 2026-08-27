@@ -653,14 +653,26 @@ class PlaybackService : MediaSessionService() {
                 val nextIdx = failIdx + 1
                 if (nextIdx < exo.mediaItemCount && nextIdx < Holder.queue.size) {
                     streamFailStreak.set(0)
+                    val nextTitle =
+                        Holder.queue.getOrNull(nextIdx)?.title?.take(40)?.ifBlank { null }
                     runCatching {
                         advanceToQueueIndex(exo, nextIdx)
                     }
                     android.os.Handler(mainLooper).post {
+                        val reason =
+                            when {
+                                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                                    error.cause?.message?.contains("UnknownHost", ignoreCase = true) == true ->
+                                    "DNS/réseau KO"
+                                httpStatus != null && httpStatus >= 500 -> "Serveur ${httpStatus}"
+                                localFile -> "Fichier local KO"
+                                else -> "Flux KO"
+                            }
+                        val suffix = nextTitle?.let { " → $it" } ?: " — titre suivant"
                         android.widget.Toast.makeText(
                             this@PlaybackService,
-                            "Flux KO sur ce titre — passage au suivant",
-                            android.widget.Toast.LENGTH_SHORT,
+                            "$reason$suffix",
+                            android.widget.Toast.LENGTH_LONG,
                         ).show()
                     }
                     return
@@ -686,12 +698,23 @@ class PlaybackService : MediaSessionService() {
                 val nextIdx = failIdx + 1
                 if (nextIdx < exo.mediaItemCount) {
                     streamFailStreak.set(0)
+                    val nextTitle =
+                        Holder.queue.getOrNull(nextIdx)?.title?.take(40)?.ifBlank { null }
                     runCatching { advanceToQueueIndex(exo, nextIdx) }
                     android.os.Handler(mainLooper).post {
+                        val reason =
+                            when {
+                                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                                    error.cause?.message?.contains("UnknownHost", ignoreCase = true) == true ->
+                                    "DNS/réseau KO"
+                                httpStatus != null && httpStatus >= 500 -> "Serveur ${httpStatus}"
+                                else -> "Lecture KO"
+                            }
+                        val suffix = nextTitle?.let { " → $it" } ?: " — titre suivant"
                         android.widget.Toast.makeText(
                             this@PlaybackService,
-                            "Lecture KO — titre suivant",
-                            android.widget.Toast.LENGTH_SHORT,
+                            "$reason$suffix",
+                            android.widget.Toast.LENGTH_LONG,
                         ).show()
                     }
                     return
