@@ -202,14 +202,27 @@ object StreamPrefetcher {
         })
     }
 
-    fun warmCurrentBlocking(baseApi: String, trackId: String, timeoutMs: Long = 450L) {
+    /**
+     * Chauffe synchrone du titre courant avant Exo.
+     * [wait]=true → API résout le format avant de répondre (démarrage quasi instantané).
+     */
+    fun warmCurrentBlocking(
+        baseApi: String,
+        trackId: String,
+        timeoutMs: Long = 450L,
+        wait: Boolean = false,
+    ) {
         if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
         val key = "warm:$trackId"
-        synchronized(recent) {
-            val last = recent[key]
-            if (last != null && System.currentTimeMillis() - last < 60_000L) return
+        if (!wait) {
+            synchronized(recent) {
+                val last = recent[key]
+                if (last != null && System.currentTimeMillis() - last < 60_000L) return
+            }
         }
-        val body = JSONObject().put("ids", JSONArray(listOf(trackId))).toString().toRequestBody(JSON)
+        val payload = JSONObject().put("ids", JSONArray(listOf(trackId)))
+        if (wait) payload.put("wait", true)
+        val body = payload.toString().toRequestBody(JSON)
         val builder = Request.Builder()
             .url("${baseApi.trimEnd('/')}/api/stream/warm")
             .header("X-YTM-Client", "android")
@@ -236,6 +249,26 @@ object StreamPrefetcher {
         } catch (_: Exception) {
             /* timeout — Exo démarre quand même */
         }
+    }
+
+    /** Warm formats uniquement (léger) — pas de têtes Exo. Idéal biblio / aléatoire. */
+    fun warmFormatsLight(baseApi: String, trackIds: List<String>, limit: Int = 48) {
+        if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(limit.coerceIn(1, 64))
+        if (ids.isEmpty()) return
+        ids.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
+    }
+
+    /**
+     * Avant le 1er play (Aléatoire) : format + tête Exo (~8–12 s) en ignorant le quiet.
+     * À appeler hors Main (Dispatchers.IO).
+     */
+    fun prefetchStartHead(baseApi: String, trackId: String, bytes: Long = HEAD_NEXT_WIFI) {
+        if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
+        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        warmBatch(baseApi, listOf(trackId))
+        val url = "${baseApi.trimEnd('/')}/api/stream/$trackId"
+        PlayerCache.prefetchHead(YtMusicApp.instance, url, trackId, bytes)
     }
 
     private fun warmBatch(baseApi: String, trackIds: List<String>) {
