@@ -237,14 +237,31 @@ class PlayerController(
         if (playable.isNotEmpty()) {
             val idx = startIndex.coerceIn(0, playable.lastIndex)
             val base = streamUrl("_").substringBefore("/api/stream/")
-            StreamPrefetcher.warmTrackFormatOnly(base, playable[idx].id)
-            StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                base,
-                playable.map { it.id },
-                idx,
-                count = 6,
-                ignoreQuiet = true,
-            )
+            val firstId = playable[idx].id
+            // Priorité titre courant : quiet + warm format immédiat.
+            // Warm bloquant wait=1 en IO (jamais sur le Main — ANR).
+            // Les têtes N+1… sont différées après démarrage (bande passante pour #0).
+            StreamPrefetcher.quietPrefetch(420L)
+            StreamPrefetcher.warmTrackFormatOnly(base, firstId)
+            scope.launch(Dispatchers.IO) {
+                StreamPrefetcher.warmCurrentBlocking(base, firstId, timeoutMs = 900L, wait = true)
+            }
+            playable.drop(idx + 1).take(2).forEach { t ->
+                StreamPrefetcher.warmTrackFormatOnly(base, t.id)
+            }
+            val startId = firstId
+            scope.launch {
+                delay(480)
+                if (player()?.currentMediaItem?.mediaId != startId) return@launch
+                warmAround(playable, idx)
+                StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                    base,
+                    playable.map { it.id },
+                    idx,
+                    count = 4,
+                    ignoreQuiet = false,
+                )
+            }
         }
         val c = controller
         if (c != null) {

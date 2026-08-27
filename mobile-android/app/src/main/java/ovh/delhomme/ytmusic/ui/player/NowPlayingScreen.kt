@@ -564,9 +564,15 @@ fun NowPlayingScreen(
     }
 
     LaunchedEffect(sheetVisible) {
-        if (!sheetVisible) {
+        if (sheetVisible) {
+            // Évite dismiss / gestes accidentels pendant l’ouverture (spam next/pause)
+            dismissArmed = false
+            delay(420)
+            dismissArmed = true
+        } else {
             queueProgress.snapTo(0f)
             dragOffset = 0f
+            dismissArmed = true
         }
     }
 
