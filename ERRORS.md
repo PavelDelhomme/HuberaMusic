@@ -11,6 +11,16 @@
 
 ## Session 2026-08-27 (503 multi-titres + pause silencieuse)
 
+### E32 — Relais PC maison fragile → préférer proxies HTTP gratuits (bypass 50x)
+| | |
+|--|--|
+| **Status** | `fixed` (`1.3.81`) |
+| **Surfaces** | API prod stream · yt-dlp |
+| **Cause** | Dépendre du tunnel PC (`stream-upstream.url`) : PC éteint / API :8787 KO → 50x / silence. Mauvais chemin pour la prod. |
+| **Fix** | Relais maison **opt-in uniquement** (`ALLOW_STREAM_UPSTREAM=1`) — le fichier seul ne suffit plus. yt-dlp : rotation **proxies HTTP gratuits** (`YOUTUBE_HTTP_PROXY_FREE`, ON en prod) + liste/statique optionnelle, puis direct VPS. Chaîne = OAuth TV → formats → yt-dlp(+proxy) → suivant. |
+| **Ops** | Ne plus lancer `link-home-stream` pour la prod. Opt-out proxies : `YOUTUBE_HTTP_PROXY_FREE=0`. Proxy fixe : `YOUTUBE_HTTP_PROXY=…` |
+| **Tests** | Health `streamUpstream=null` sans ALLOW · `/api/stream/:id` 206 via VPS · libshuffle Android |
+
 ### E31 — Relais maison KO → 503 hard (pas de fallback VPS) + player PAUSED
 | | |
 |--|--|
@@ -18,7 +28,7 @@
 | **Surfaces** | API prod · Android (Blackview / Samsung / Nothing) — « erreurs sur plein de sons » |
 | **Cause** | `stream-upstream.url` présent + tunnel PC coupé → `STREAM_UPSTREAM KO` renvoyait **503** sans tenter OAuth TV / yt-dlp VPS. Côté app, après retries : **pause** mid-song au lieu de skip → silence long. |
 | **Fix** | Fallback VPS **par défaut** après relais KO (`STREAM_UPSTREAM_FALLBACK=0` pour opt-out) · skip auto au titre suivant après échecs · purge cache Exo `s4` · **FGS** : `startForeground` immédiat dans `PlaybackService` (évite RemoteServiceException Blackview) |
-| **Ops** | Remettre `link-home-stream.sh start` si le PC sert de relais ; ne plus éteindre l’API locale sans fallback |
+| **Ops** | Remplacé par E32 : ne plus dépendre du PC ; proxies gratuits + OAuth VPS |
 | **Tests** | `curl /api/stream/4wOLVrGHiIU` 206 avec tunnel UP ; sans `stream-upstream.url` → 206 via VPS · force-stop + relaunch Blackview sans crash FGS |
 
 ---

@@ -12,6 +12,12 @@ import {
   ytDlpRuntimeArgs,
 } from '../youtube/youtubeCookies.js';
 import {
+  isProxyWorthRetry,
+  markYoutubeProxyFailure,
+  markYoutubeProxySuccess,
+  youtubeProxyAttempts,
+} from '../youtube/youtubeProxy.js';
+import {
   peekStreamHead,
   putStreamHead,
   warmStreamHead,
@@ -82,46 +88,32 @@ export function cachePath(videoId: string) {
 }
 
 /** Base URL de l’API maison (env ou fichier volume).
- *  Prod : désactivé sauf ALLOW_STREAM_UPSTREAM=1 ou fichier stream-upstream.url (tunnel maison).
+ *  Prod : **désactivé** sauf `ALLOW_STREAM_UPSTREAM=1` (opt-in explicite).
+ *  Le fichier `stream-upstream.url` seul ne suffit plus — éviter de dépendre du PC allumé.
+ *  Préférer OAuth TV VPS + proxies HTTP gratuits (`YOUTUBE_HTTP_PROXY_FREE`) contre les 50x.
  */
 export function resolveStreamUpstream(): string | null {
-  const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || '').toLowerCase();
-  let fileUpstream: string | null = null;
+  if (!isStreamUpstreamAllowed()) return null;
+
+  const env = (process.env.STREAM_UPSTREAM || '').trim().replace(/\/$/, '');
+  if (env) return env;
   try {
     if (existsSync(STREAM_UPSTREAM_FILE)) {
       const v = readFileSync(STREAM_UPSTREAM_FILE, 'utf8').trim().replace(/\/$/, '');
-      if (v.startsWith('http://') || v.startsWith('https://')) fileUpstream = v;
+      if (v.startsWith('http://') || v.startsWith('https://')) return v;
     }
   } catch {
     /* ignore */
   }
-  const allow =
-    process.env.ALLOW_STREAM_UPSTREAM === '1' ||
-    process.env.ALLOW_STREAM_UPSTREAM === 'true' ||
-    Boolean(fileUpstream);
-  const isProd = appEnv === 'production' || appEnv === 'prod';
-  if (isProd && !allow) return null;
-
-  const env = (process.env.STREAM_UPSTREAM || '').trim().replace(/\/$/, '');
-  if (env) return env;
-  return fileUpstream;
+  return null;
 }
 
-/** Prod : relais maison autorisé (env ou fichier tunnel sur le volume). */
+/** Relais maison : uniquement si ALLOW_STREAM_UPSTREAM=1 (prod et hors-prod). */
 export function isStreamUpstreamAllowed(): boolean {
-  if (
+  return (
     process.env.ALLOW_STREAM_UPSTREAM === '1' ||
     process.env.ALLOW_STREAM_UPSTREAM === 'true'
-  ) {
-    return true;
-  }
-  try {
-    if (!existsSync(STREAM_UPSTREAM_FILE)) return false;
-    const v = readFileSync(STREAM_UPSTREAM_FILE, 'utf8').trim();
-    return v.startsWith('http://') || v.startsWith('https://');
-  } catch {
-    return false;
-  }
+  );
 }
 
 /** Relais stream vers l’API maison (évite le blocage IP datacenter YouTube). */
@@ -270,8 +262,9 @@ function spawnYtDlpAudioPipe(
   format: string,
   cookieArgs: string[],
   res: Response,
+  proxy: string | null = null,
 ): Promise<void> {
-  return spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'audio/mp4');
+  return spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'audio/mp4', proxy);
 }
 
 function spawnYtDlpMediaPipe(
@@ -280,6 +273,7 @@ function spawnYtDlpMediaPipe(
   cookieArgs: string[],
   res: Response,
   contentType: string,
+  proxy: string | null = null,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (!existsSync(YTDLP)) {
@@ -309,6 +303,7 @@ function spawnYtDlpMediaPipe(
         '--referer',
         'https://www.youtube.com/',
         ...cookieArgs,
+        ...(proxy ? ['--proxy', proxy] : []),
         `https://www.youtube.com/watch?v=${videoId}`,
       ],
       { stdio: ['ignore', 'pipe', 'pipe'] },
@@ -386,18 +381,30 @@ async function streamViaYtDlp(videoId: string, res: Response) {
   const cookieSets = ytDlpCookieArgSets();
   // Peu de formats : chaque spawn peut coûter ~10 s (first-byte timeout)
   const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, 2);
+  // Direct VPS puis proxies gratuits (bypass 50x / LOGIN_REQUIRED) — pas de PC maison
+  const proxies = await youtubeProxyAttempts({ max: 4, includeDirect: true });
 
   let lastErr: Error | null = null;
-  for (const cookieArgs of cookieSets) {
-    for (const format of formats) {
-      if (res.headersSent) throw new Error('headers already sent');
-      try {
-        await spawnYtDlpAudioPipe(videoId, format, cookieArgs, res);
-        return;
-      } catch (err) {
-        lastErr = err instanceof Error ? err : new Error(String(err));
-        if (res.headersSent) throw lastErr;
+  for (const proxy of proxies) {
+    for (const cookieArgs of cookieSets) {
+      for (const format of formats) {
+        if (res.headersSent) throw new Error('headers already sent');
+        try {
+          await spawnYtDlpAudioPipe(videoId, format, cookieArgs, res, proxy);
+          markYoutubeProxySuccess(proxy);
+          return;
+        } catch (err) {
+          lastErr = err instanceof Error ? err : new Error(String(err));
+          if (res.headersSent) throw lastErr;
+          if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
+        }
       }
+    }
+    if (proxy && lastErr) {
+      console.warn(
+        `[stream] yt-dlp via ${proxy.slice(0, 40)} KO → suivant:`,
+        lastErr.message.slice(0, 100),
+      );
     }
   }
   throw lastErr || new Error('yt-dlp audio indisponible');
@@ -412,16 +419,21 @@ async function streamViaYtDlpVideo(videoId: string, res: Response) {
     'best[height<=480][acodec!=none][vcodec!=none]',
     'best[height<=720][acodec!=none][vcodec!=none]/best',
   ];
+  const proxies = await youtubeProxyAttempts({ max: 3, includeDirect: true });
   let lastErr: Error | null = null;
-  for (const cookieArgs of cookieSets) {
-    for (const format of formats) {
-      if (res.headersSent) throw new Error('headers already sent');
-      try {
-        await spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'video/mp4');
-        return;
-      } catch (err) {
-        lastErr = err instanceof Error ? err : new Error(String(err));
-        if (res.headersSent) throw lastErr;
+  for (const proxy of proxies) {
+    for (const cookieArgs of cookieSets) {
+      for (const format of formats) {
+        if (res.headersSent) throw new Error('headers already sent');
+        try {
+          await spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'video/mp4', proxy);
+          markYoutubeProxySuccess(proxy);
+          return;
+        } catch (err) {
+          lastErr = err instanceof Error ? err : new Error(String(err));
+          if (res.headersSent) throw lastErr;
+          if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
+        }
       }
     }
   }
