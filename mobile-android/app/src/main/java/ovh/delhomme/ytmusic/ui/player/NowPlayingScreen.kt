@@ -116,11 +116,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -136,6 +139,7 @@ import ovh.delhomme.ytmusic.data.buildRadioQueue
 import ovh.delhomme.ytmusic.data.fetchAutoplayTracksFast
 import ovh.delhomme.ytmusic.data.fetchAutoplayTracksFull
 import ovh.delhomme.ytmusic.debug.AppLog
+import ovh.delhomme.ytmusic.player.CoverPrefetcher
 import ovh.delhomme.ytmusic.player.PlayerController
 import ovh.delhomme.ytmusic.player.PlayerUiState
 import ovh.delhomme.ytmusic.player.RepeatMode
@@ -263,6 +267,13 @@ fun NowPlayingScreen(
         if (full.isNotEmpty() && player.state.value.track?.id == seed) {
             player.appendAutoTracks(full, forSeedId = seed)
         }
+    }
+
+    // Pochette NP en cache même sheet rétracté (LazyColumn hors écran ne compose pas la cover)
+    LaunchedEffect(ui.track?.id) {
+        val t = ui.track ?: return@LaunchedEffect
+        CoverPrefetcher.warm(t.coverUrl(800))
+        CoverPrefetcher.warm(t.coverUrl(360))
     }
 
     // Pré-chauffe + resolve clip visuel (fallback titre+artiste si ATV sans vidéo)
@@ -927,14 +938,10 @@ fun NowPlayingScreen(
                                         }
                                     }
                                 } else {
-                                    AsyncImage(
-                                        model = track.coverUrl(if (landscape) 600 else 800),
-                                        contentDescription = track.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(coverH)
-                                            .clip(RoundedCornerShape(12.dp)),
+                                    NowPlayingHeroCover(
+                                        track = track,
+                                        coverH = coverH,
+                                        landscape = landscape,
                                     )
                                 }
                                 if (!landscape) {
@@ -1235,8 +1242,10 @@ fun NowPlayingScreen(
                     // Paysage : aperçu file dans le même scroll. Portrait : panneau dédié en bas.
                     if (landscapeLayout) {
                         item {
+                            val qh = queueHeaderLabels(ui)
                             QueueSectionHeader(
-                                title = "File d'attente",
+                                caption = qh.caption,
+                                title = qh.title,
                                 canClear = ui.queue.size > 1,
                                 onExpand = { expandQueue() },
                                 onSave = { showSaveQueue = true },
@@ -1720,8 +1729,10 @@ private fun PortraitQueuePreview(
     }
     // Header Mix sticky hors LazyColumn — reste visible pendant le scroll
     Column(modifier = modifier.nestedScroll(blockParentDismiss)) {
+        val qh = queueHeaderLabels(ui)
         QueueSectionHeader(
-            title = ui.track?.title?.ifBlank { null } ?: "File d'attente",
+            caption = qh.caption,
+            title = qh.title,
             canClear = ui.queue.size > 1,
             onExpand = onExpand,
             onSave = onSave,
@@ -1870,6 +1881,7 @@ private fun PortraitQueuePreview(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QueueSectionHeader(
+    caption: String,
     title: String,
     canClear: Boolean = false,
     onExpand: () -> Unit,
@@ -1911,7 +1923,7 @@ private fun QueueSectionHeader(
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Mix à partir de",
+                    caption,
                     style = MaterialTheme.typography.labelSmall,
                     color = PlayerMuted,
                 )
@@ -2358,7 +2370,8 @@ private fun QueueExpandedBody(
                 )
             },
     ) {
-        // Toujours visible (File + Similaires) : Mix / vider / enregistrer
+        val qh = queueHeaderLabels(ui)
+        // Toujours visible (File + Similaires) : contexte file / mix + actions
         Row(
             Modifier
                 .fillMaxWidth()
@@ -2367,12 +2380,12 @@ private fun QueueExpandedBody(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Mix à partir de",
+                    qh.caption,
                     style = MaterialTheme.typography.labelSmall,
                     color = PlayerMuted,
                 )
                 Text(
-                    ui.track?.title?.ifBlank { null } ?: "File d'attente",
+                    qh.title,
                     fontWeight = FontWeight.SemiBold,
                     color = PlayerFg,
                     maxLines = 1,
@@ -3293,6 +3306,56 @@ private fun SaveQueueSheet(
             }
         }
     }
+}
+
+/** Cover plein écran : vignette 360 px immédiate (mini-player) puis 800 px sans flash. */
+@Composable
+private fun NowPlayingHeroCover(
+    track: TrackDto,
+    coverH: Dp,
+    landscape: Boolean,
+) {
+    val context = LocalContext.current
+    val fullPx = if (landscape) 600 else 800
+    val fullUrl = track.coverUrl(fullPx)
+    val thumbUrl = track.coverUrl(360)
+    fun coverRequest(url: String?, px: Int) = ImageRequest.Builder(context)
+        .data(url)
+        .size(px)
+        .memoryCacheKey(url)
+        .diskCacheKey(url)
+        .build()
+    SubcomposeAsyncImage(
+        model = ImageRequest.Builder(context)
+            .data(fullUrl)
+            .size(fullPx)
+            .memoryCacheKey(fullUrl)
+            .diskCacheKey(fullUrl)
+            .crossfade(100)
+            .build(),
+        contentDescription = track.title,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(coverH)
+            .clip(RoundedCornerShape(12.dp)),
+        loading = {
+            AsyncImage(
+                model = coverRequest(thumbUrl, 360),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        },
+        error = {
+            AsyncImage(
+                model = coverRequest(thumbUrl, 360),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        },
+    )
 }
 
 private fun formatMs(ms: Long): String {
