@@ -48,13 +48,19 @@ class LibraryRepository(
 
     init {
         disk.read()?.let { seed ->
-            publish(seed, fromDisk = true)
+            _library.value = seed
+            sorted = buildSorted(seed)
         }
     }
 
     private fun publish(lib: LibraryResponse, fromDisk: Boolean = false) {
         _library.value = lib
-        sorted = buildSorted(lib)
+        scope.launch {
+            val s = withContext(Dispatchers.Default) { buildSorted(lib) }
+            sorted = s
+            // Réémet pour recomposer la biblio quand le tri A–Z est prêt
+            _library.value = lib.copy()
+        }
         if (!fromDisk) {
             scope.launch(Dispatchers.IO) {
                 runCatching { disk.write(lib) }
