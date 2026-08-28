@@ -74,6 +74,7 @@ import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ListenBody
@@ -185,10 +186,8 @@ fun YtMusicAppContent(
     val activity = context as? ComponentActivity
     val scope = rememberCoroutineScope()
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
-    var showNowPlaying by remember { mutableStateOf(openPlayerFromIntent) }
-    var playerFocusToken by remember {
-        mutableIntStateOf(if (openPlayerFromIntent) 1 else 0)
-    }
+    var showNowPlaying by remember { mutableStateOf(false) }
+    var playerFocusToken by remember { mutableIntStateOf(0) }
     var pendingApprove by remember { mutableStateOf<DeviceLoginDeepLink.Approve?>(null) }
     var deviceLoginBusy by remember { mutableStateOf(false) }
     var pendingAppLink by remember { mutableStateOf<Uri?>(null) }
@@ -278,8 +277,11 @@ fun YtMusicAppContent(
         if (activity == null) return@DisposableEffect onDispose { }
         val listener = androidx.core.util.Consumer<Intent> { intent ->
             if (intent.getBooleanExtra(MainActivity.EXTRA_OPEN_PLAYER, false)) {
-                showNowPlaying = true
-                playerFocusToken++
+                val ui = player.state.value
+                if (ui.track != null || ui.queueSize > 0) {
+                    showNowPlaying = true
+                    playerFocusToken++
+                }
                 intent.removeExtra(MainActivity.EXTRA_OPEN_PLAYER)
             }
             handleDeviceLoginUri(intent.data)
@@ -290,13 +292,6 @@ fun YtMusicAppContent(
 
     LaunchedEffect(Unit) {
         handleDeviceLoginUri(activity?.intent?.data)
-    }
-
-    LaunchedEffect(openPlayerFromIntent) {
-        if (openPlayerFromIntent) {
-            showNowPlaying = true
-            if (playerFocusToken == 0) playerFocusToken = 1
-        }
     }
 
     LaunchedEffect(Unit) {
@@ -323,28 +318,21 @@ fun YtMusicAppContent(
             intent?.removeExtra(MainActivity.EXTRA_USER_EMAIL)
             loggedIn = true
         } else {
-            // Tokens déjà là → UI tout de suite (pas d’écran noir pendant /me)
             container.tokenStore.warmCache()
             val hasTokens =
                 !container.tokenStore.peekAccess().isNullOrBlank() ||
                     !container.tokenStore.getRefresh().isNullOrBlank()
-            if (hasTokens) {
-                loggedIn = true
-                if (!container.validateSession()) {
-                    loggedIn = false
-                }
-            } else {
-                loggedIn = container.validateSession()
+            val validated = withTimeoutOrNull(15_000L) {
+                container.validateSession()
+            }
+            loggedIn = when (validated) {
+                true -> true
+                false -> false
+                null -> hasTokens // API lente / timeout → rester connecté si tokens
             }
         }
     }
 
-    // Si une piste tourne déjà (service survivant) → mini-player / éventuellement notif
-    LaunchedEffect(loggedIn) {
-        if (loggedIn == true && openPlayerFromIntent) {
-            showNowPlaying = true
-        }
-    }
 
     // Mise à jour : vérif au démarrage + reprise après annulation install + toutes les 6 h
     var pendingUpdate by remember {
@@ -511,12 +499,16 @@ fun YtMusicAppContent(
                 container = container,
                 player = player,
                 expanded = showNowPlaying,
+                openPlayerFromIntent = openPlayerFromIntent,
                 playerFocusToken = playerFocusToken,
                 pendingAppLink = pendingAppLink,
                 onAppLinkConsumed = { pendingAppLink = null },
                 onOpenPlayer = {
-                    showNowPlaying = true
-                    playerFocusToken++
+                    val ui = player.state.value
+                    if (ui.track != null || ui.queueSize > 0) {
+                        showNowPlaying = true
+                        playerFocusToken++
+                    }
                 },
                 onClosePlayer = { showNowPlaying = false },
                 onPlayTracks = { tracks, idx ->
@@ -581,6 +573,7 @@ private fun MainTabs(
     container: AppContainer,
     player: PlayerController,
     expanded: Boolean,
+    openPlayerFromIntent: Boolean = false,
     playerFocusToken: Int = 0,
     pendingAppLink: Uri? = null,
     onAppLinkConsumed: () -> Unit = {},
@@ -599,9 +592,18 @@ private fun MainTabs(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    val hasPlayback = playerUi.track != null || playerUi.queueSize > 0
+    val playerExpanded = expanded && hasPlayback
+
     // Garde NowPlaying monté dès qu’une piste joue (prefetch cover hors LazyColumn)
-    var playerSheetMounted by remember { mutableStateOf(expanded || playerUi.track != null) }
-    if (expanded || playerUi.track != null) playerSheetMounted = true
+    var playerSheetMounted by remember { mutableStateOf(playerExpanded || hasPlayback) }
+    if (playerExpanded || hasPlayback) playerSheetMounted = true
+    LaunchedEffect(hasPlayback, playerExpanded) {
+        if (!hasPlayback && !playerExpanded) {
+            delay(180)
+            playerSheetMounted = false
+        }
+    }
 
     LaunchedEffect(playerUi.track?.id) {
         val t = playerUi.track ?: return@LaunchedEffect
@@ -744,12 +746,18 @@ private fun MainTabs(
     var forceOnboarding by remember { mutableStateOf(false) }
     var onboardingChecked by remember { mutableStateOf(false) }
     var showGoogleLink by remember { mutableStateOf(false) }
-    var pendingAutoStreamSetup by remember { mutableStateOf(false) }
 
     var sessionHydrated by remember { mutableStateOf(false) }
     var pendingRemoteLabel by remember { mutableStateOf<String?>(null) }
+    var openPlayerIntentHandled by remember { mutableStateOf(false) }
     /** Empêche d’écraser l’état web juste après la restauration multi-appareils. */
     var suppressSessionPublishUntil by remember { mutableStateOf(0L) }
+
+    LaunchedEffect(sessionHydrated, hasPlayback, openPlayerFromIntent) {
+        if (!openPlayerFromIntent || openPlayerIntentHandled || !sessionHydrated) return@LaunchedEffect
+        openPlayerIntentHandled = true
+        if (hasPlayback) onOpenPlayer()
+    }
 
     // Sync J’aime ↔ notification média (cœur dans le panneau système)
     LaunchedEffect(likedIds) {
@@ -773,7 +781,7 @@ private fun MainTabs(
             onboardingChecked = true
             forceOnboarding = runCatching {
                 val p = container.api.prefs().prefs
-                !p.onboardingDone || (p.genres.isEmpty() && p.moods.isEmpty())
+                !p.onboardingDone
             }.getOrDefault(false)
             val me = runCatching { container.api.me().user }.getOrNull()
             val guest = me?.isGuest == true || me?.email?.contains("@local.ytmusic") == true
@@ -790,14 +798,9 @@ private fun MainTabs(
                     setupPrefs.edit().putBoolean("oauth_done", true).apply()
                 }
             }
-            if (me != null && !guest && !streamReady) {
-                val autoStarted = setupPrefs.getBoolean("auto_oauth_started", false)
-                if (!autoStarted && !forceOnboarding) {
-                    setupPrefs.edit().putBoolean("auto_oauth_started", true).apply()
-                    pendingAutoStreamSetup = true
-                } else if (!cool) {
-                    showGoogleLink = true
-                }
+            // Dialog opt-in seulement — jamais de navigation auto vers OAuth (écran bloquant)
+            if (me != null && !guest && !streamReady && !cool && !forceOnboarding) {
+                showGoogleLink = true
             }
         }
         if (!sessionHydrated) {
@@ -1148,12 +1151,12 @@ private fun MainTabs(
         }
     }
 
-    LaunchedEffect(playerUi.playing, playerUi.track?.id, expanded, playerSheetMounted) {
+    LaunchedEffect(playerUi.playing, playerUi.track?.id, playerExpanded, playerSheetMounted) {
         // Tick mini-bar seulement si NowPlaying n’est pas ouvert (évite double travail)
-        if (playerSheetMounted && expanded) return@LaunchedEffect
+        if (playerSheetMounted && playerExpanded) return@LaunchedEffect
         while (playerUi.playing && playerUi.track != null) {
             player.tick()
-            delay(if (expanded) 500 else 900)
+            delay(if (playerExpanded) 500 else 900)
         }
     }
 
@@ -1171,10 +1174,11 @@ private fun MainTabs(
         ?.substringBefore('/')
         ?.substringBefore('?')
         ?.takeIf { it.isNotBlank() }
+    val mainTabRoutes = setOf("home", "search", "library")
     // Garde le mini-player ~220 ms à l’ouverture : même zone boutons, pas de click-through biblio
     var holdChromeForSheet by remember { mutableStateOf(false) }
-    LaunchedEffect(expanded) {
-        if (expanded) {
+    LaunchedEffect(playerExpanded) {
+        if (playerExpanded) {
             holdChromeForSheet = true
             delay(220)
             holdChromeForSheet = false
@@ -1183,8 +1187,37 @@ private fun MainTabs(
         }
     }
     val showBottomChrome =
-        (!expanded || holdChromeForSheet) &&
-            (routeRoot == null || routeRoot in setOf("home", "search", "library"))
+        (!playerExpanded || holdChromeForSheet) &&
+            (routeRoot == null || routeRoot in mainTabRoutes)
+
+    // Ferme le lecteur vide (« Rien en lecture ») → retour accueil/biblio si besoin
+    LaunchedEffect(playerUi.track?.id, playerUi.queueSize, expanded, routeRoot) {
+        if (playerUi.track == null && playerUi.queueSize == 0 && expanded) {
+            onClosePlayer()
+            val root = routeRoot
+            if (root != null && root !in mainTabRoutes) {
+                nav.navigate(Tab.Home.route) {
+                    popUpTo(nav.graph.startDestinationId) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
+        }
+    }
+
+    // Sous-écrans sans barre du bas → retour arrière ou Accueil
+    BackHandler(
+        enabled = !playerExpanded && routeRoot != null && routeRoot !in mainTabRoutes,
+    ) {
+        if (!nav.popBackStack()) {
+            nav.navigate(Tab.Home.route) {
+                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
     Scaffold(
         contentWindowInsets = if (showBottomChrome) {
             WindowInsets.safeDrawing
@@ -1391,18 +1424,34 @@ private fun MainTabs(
             composable("debug_logs") {
                 DebugLogsScreen(container = container, onBack = { nav.popBackStack() })
             }
-            composable("ytm_import?autoOauth={autoOauth}") { entry ->
-                val auto = entry.arguments?.getString("autoOauth") == "1"
+            composable("ytm_import?autoOauth={autoOauth}") {
                 YtmImportScreen(
                     container = container,
-                    autoStartOauth = auto,
-                    onBack = { nav.popBackStack() },
+                    autoStartOauth = false,
+                    onBack = {
+                        if (!nav.popBackStack()) {
+                            nav.navigate(Tab.Home.route) {
+                                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    },
                 )
             }
             composable("ytm_import") {
                 YtmImportScreen(
                     container = container,
-                    onBack = { nav.popBackStack() },
+                    autoStartOauth = false,
+                    onBack = {
+                        if (!nav.popBackStack()) {
+                            nav.navigate(Tab.Home.route) {
+                                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    },
                 )
             }
             composable("reco_prefs") {
@@ -1534,18 +1583,18 @@ private fun MainTabs(
 
     // Ouverture instantanée (pas de phase alpha transparente → click-through)
     val sheetAlpha by animateFloatAsState(
-        targetValue = if (expanded) 1f else 0f,
-        animationSpec = if (expanded) tween(0) else tween(120),
+        targetValue = if (playerExpanded) 1f else 0f,
+        animationSpec = if (playerExpanded) tween(0) else tween(120),
         label = "np-alpha",
     )
     val sheetSlide by animateFloatAsState(
-        targetValue = if (expanded) 0f else 1f,
-        animationSpec = if (expanded) tween(90) else tween(140),
+        targetValue = if (playerExpanded) 0f else 1f,
+        animationSpec = if (playerExpanded) tween(90) else tween(140),
         label = "np-slide",
     )
     if (playerSheetMounted) {
         // Scrim opaque sous le sheet : absorbe les taps même si la liste se redessine
-        if (expanded) {
+        if (playerExpanded) {
             Box(
                 Modifier
                     .fillMaxSize()
@@ -1561,12 +1610,12 @@ private fun MainTabs(
                     alpha = sheetAlpha
                     translationY = size.height * 0.08f * sheetSlide
                     // Hors écran + non interactif quand rétracté
-                    if (!expanded) {
+                    if (!playerExpanded) {
                         // clip n’empêche pas les hits : on shrink via alpha + ignore
                     }
                 }
                 .then(
-                    if (!expanded) {
+                    if (!playerExpanded) {
                         Modifier.offset { IntOffset(0, 100_000) } // hors hit-test
                     } else {
                         Modifier
@@ -1585,15 +1634,8 @@ private fun MainTabs(
                 onOpenAddToPlaylist = { addToPlaylistTrack = it },
                 onOpenArtist = ::openArtist,
                 focusPlayerToken = playerFocusToken,
-                sheetVisible = expanded,
+                sheetVisible = playerExpanded,
             )
-        }
-    }
-
-    LaunchedEffect(pendingAutoStreamSetup, forceOnboarding) {
-        if (pendingAutoStreamSetup && !forceOnboarding) {
-            pendingAutoStreamSetup = false
-            nav.navigate("ytm_import?autoOauth=1")
         }
     }
 
