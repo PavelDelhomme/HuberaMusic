@@ -2,6 +2,9 @@
  * Plafond global de processus yt-dlp simultanés + cooldown bot / rate-limit.
  * Sans ça, warm/prefetch + multi-proxy × formats → 30–40 proc / ~2 Go / 100%+ CPU
  * et spam ERROR YouTube dans les logs Docker.
+ *
+ * Important : le cooldown ne doit PAS bloquer la rotation de proxies / relais maison.
+ * On ne pose le cooldown qu’après épuisement des tentatives (noteYtDlpFailure explicite).
  */
 const MAX = Math.max(1, Math.min(12, Number(process.env.YTDLP_MAX_CONCURRENT || 4) || 4));
 const BOT_COOLDOWN_MS = Math.max(
@@ -30,7 +33,7 @@ export function ytDlpCooldownRemainingMs(): number {
   return Math.max(0, cooldownUntil - Date.now());
 }
 
-/** Détecte botcheck / rate-limit YouTube et coupe yt-dlp un moment. */
+/** Détecte botcheck / rate-limit YouTube et coupe yt-dlp un moment (IP VPS directe). */
 export function noteYtDlpFailure(err: unknown): void {
   const msg = String((err as Error)?.message || err || '');
   if (
@@ -51,8 +54,20 @@ export function noteYtDlpFailure(err: unknown): void {
   }
 }
 
-export async function withYtDlpSlot<T>(fn: () => Promise<T>): Promise<T> {
-  if (isYtDlpCoolingDown()) {
+export type YtDlpSlotOpts = {
+  /** Continuer même pendant cooldown (ex. autre proxy / IP). */
+  bypassCooldown?: boolean;
+  /** Si false, ne pas armé le cooldown sur erreur (la boucle appelante décide). */
+  noteFailure?: boolean;
+};
+
+export async function withYtDlpSlot<T>(
+  fn: () => Promise<T>,
+  opts: YtDlpSlotOpts = {},
+): Promise<T> {
+  const bypass = opts.bypassCooldown === true;
+  const noteFailure = opts.noteFailure !== false;
+  if (!bypass && isYtDlpCoolingDown()) {
     throw new Error(
       `yt-dlp cooling down ${Math.ceil(ytDlpCooldownRemainingMs() / 1000)}s (bot/rate-limit)`,
     );
@@ -60,7 +75,7 @@ export async function withYtDlpSlot<T>(fn: () => Promise<T>): Promise<T> {
   if (active >= MAX) {
     await new Promise<void>((resolve) => waiters.push(resolve));
   }
-  if (isYtDlpCoolingDown()) {
+  if (!bypass && isYtDlpCoolingDown()) {
     throw new Error(
       `yt-dlp cooling down ${Math.ceil(ytDlpCooldownRemainingMs() / 1000)}s (bot/rate-limit)`,
     );
@@ -69,7 +84,7 @@ export async function withYtDlpSlot<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    noteYtDlpFailure(err);
+    if (noteFailure) noteYtDlpFailure(err);
     throw err;
   } finally {
     active -= 1;

@@ -28,8 +28,12 @@ object CoverPrefetcher {
             for (i in 1..behindN) tracks.getOrNull(idx - i)?.let { add(it) }
         }
         targets.forEachIndexed { i, t ->
-            // Courant un peu plus grand ; suite en 360 pour économiser RAM
-            warm(t.coverUrl(sizeHint = if (i == 0) 520 else 360))
+            // Courant + prochain en haute rés (NP) ; suite en 360
+            val hint = when (i) {
+                0, 1 -> 800
+                else -> 360
+            }
+            warm(t.coverUrl(sizeHint = hint))
         }
     }
 
@@ -38,7 +42,11 @@ object CoverPrefetcher {
         if (url.isNullOrBlank()) return
         val ctx = runCatching { YtMusicApp.instance }.getOrNull() ?: return
         if (!inFlight.add(url)) return
-        val size = if (url.contains("=s520") || url.contains("=w520")) 520 else 360
+        val size = when {
+            url.contains("=s800") || url.contains("=w800") -> 800
+            url.contains("=s520") || url.contains("=w520") -> 520
+            else -> 360
+        }
         val req = ImageRequest.Builder(ctx)
             .data(url)
             .size(ovh.delhomme.ytmusic.data.BatterySaver.coverSizeHint(size))

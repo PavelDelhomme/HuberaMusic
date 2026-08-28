@@ -631,9 +631,14 @@ private fun QuickAccessHomeCard(
                                                     }.getOrDefault(emptyList())
                                                     pool += resolved
                                                 }
-                                                val uniq = pool.distinctBy { it.id }.shuffled()
+                                                val uniq = pool.distinctBy { it.id }
                                                 if (uniq.isNotEmpty()) {
-                                                    onPlayNamed(uniq, 0, "Accès rapide · Aléatoire")
+                                                    ovh.delhomme.ytmusic.ui.library.playLibraryShuffled(
+                                                        container,
+                                                        uniq,
+                                                        { q, i -> onPlayNamed(q, i, "Accès rapide · Aléatoire") },
+                                                        sourceKey = "home:pins",
+                                                    )
                                                 }
                                             } finally {
                                                 shuffleBusy = false
