@@ -56,7 +56,3 @@ Index : [`TESTS.md`](../TESTS.md) · [`TESTING.md`](./TESTING.md).
   - Enregistrement : Compte → Enregistrer une passkey (feuille système → choisir Bitwarden)
   - Sur Android : activer Bitwarden comme fournisseur de passkeys (Réglages → Mots de passe / comptes)
 - Asset links : `GET /.well-known/assetlinks.json` (packages `ovh.delhomme.ytmusic` + `.dev`)
-
-## Legacy Capacitor
-
-`make android-capacitor` → `web/android/` (WebView, déconseillé).

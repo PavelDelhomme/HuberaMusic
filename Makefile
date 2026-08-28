@@ -26,7 +26,7 @@ SAMPLE_SECS ?= 15
 	mobile-qr mobile-hint mobile-adb mobile-install-adb test-register-adb \
 	android-sync android-build android-install android-logs android-publish android-upload-apk android-prod android \
 	android-docker-image android-docker-apk \
-	android-capacitor android-capacitor-prod adb-fix \
+	adb-fix \
 	adb-fix-keys \
 	adb-wifi adb-wifi-connect adb-wifi-status adb-wifi-wait-unplug adb-wifi-disconnect \
 	adb-wifi-doctor adb-wifi-ensure adb-wifi-pair adb-both adb-devices adb-help \
@@ -204,7 +204,6 @@ mobile-hint: ## Affiche comment installer l’app mobile (APK + PWA)
 	@echo "    make android-prod                 # APK PROD → package principal + publish"
 	@echo "    API_BASE_URL=http://IP:8787 make android-install"
 	@echo ""
-	@echo "  Legacy Capacitor (WebView) : make android-capacitor"
 	@echo "  PWA (navigateur)           : make mobile-install-adb"
 	@echo ""
 
@@ -448,17 +447,6 @@ android-prod: ## APK → API prod (PUBLIC_API_URL / DEPLOY_URL / ANDROID_API_BAS
 	 echo "==> android-prod API=$$API_URL"; \
 	 DEVICE="$(DEVICE)" API_BASE_URL="$$API_URL" bash $(ROOT)/scripts/android/kotlin-android-install.sh install; \
 	 API_BASE_URL="$$API_URL" bash $(ROOT)/scripts/android/android-publish-apk.sh
-
-android-capacitor: ## Legacy : APK Capacitor (WebView) + API locale
-	@chmod +x $(ROOT)/scripts/android/android-install.sh $(ROOT)/scripts/dev/ensure-api.sh
-	@bash $(ROOT)/scripts/dev/ensure-api.sh
-	@DEVICE="$(DEVICE)" VITE_API_ORIGIN="$(or $(VITE_API_ORIGIN),http://127.0.0.1:8787)" bash $(ROOT)/scripts/android/android-install.sh install
-
-android-capacitor-prod: ## Legacy Capacitor → API PUBLIC_API_URL / DEPLOY_URL
-	@chmod +x $(ROOT)/scripts/android/android-install.sh
-	@API_URL="$$(grep -E '^(PUBLIC_API_URL|DEPLOY_URL)=' $(ROOT)/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" | tr -d ' ')"; \
-	 if [ -z "$$API_URL" ]; then echo "❌ PUBLIC_API_URL / DEPLOY_URL manquant" >&2; exit 1; fi; \
-	 DEVICE="$(DEVICE)" VITE_API_ORIGIN="$$API_URL" bash $(ROOT)/scripts/android/android-install.sh install
 
 test-register-adb: ## Recrée compte + email validation + ouvre le lien sur Android
 	@cd $(ROOT) && \

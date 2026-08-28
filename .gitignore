@@ -12,12 +12,6 @@ logs/
 desktop/node_modules/
 *.db
 *.db-*
-web/android/.gradle/
-web/android/app/build/
-web/android/build/
-web/android/capacitor-cordova-android-plugins/build/
-web/android/local.properties
-web/capacitor.config.json
 mobile-android/.gradle/
 mobile-android/app/build/
 mobile-android/build/

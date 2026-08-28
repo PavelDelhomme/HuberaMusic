@@ -11,6 +11,25 @@ import { getAlbum, getPlaylist, getArtist } from '../youtube/yt.js';
 import { upsertTrack } from './db.js';
 import type { Track } from '../youtube/types.js';
 
+const BETWEEN_TRACK_MS = Math.max(
+  250,
+  Math.min(5_000, Number(process.env.OFFLINE_JOB_GAP_MS || 800) || 800),
+);
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Attend la fin du cooldown yt-dlp (max ~cooldown restant + marge). */
+async function waitIfYtDlpCoolingDown(): Promise<boolean> {
+  const { isYtDlpCoolingDown, ytDlpCooldownRemainingMs } = await import('../media/ytDlpGate.js');
+  if (!isYtDlpCoolingDown()) return false;
+  const wait = Math.min(ytDlpCooldownRemainingMs() + 1_000, 310_000);
+  console.warn(`[offline] job en pause ${Math.round(wait / 1000)}s (yt-dlp cooldown)`);
+  await sleep(wait);
+  return true;
+}
+
 async function downloadMany(userId: string, jobId: string, tracks: Track[]) {
   let done = 0;
   for (const track of tracks) {
@@ -20,14 +39,19 @@ async function downloadMany(userId: string, jobId: string, tracks: Track[]) {
       continue;
     }
     try {
+      await waitIfYtDlpCoolingDown();
       upsertTrack(track);
       const path = await downloadTrack(track.id);
       markDownloaded(userId, track.id, path);
     } catch (err) {
       console.error('offline download fail', track.id, err);
+      // Bot / rate-limit : laisse le gate poser le cooldown, pause avant le titre suivant
+      void import('../media/ytDlpGate.js').then((m) => m.noteYtDlpFailure(err)).catch(() => {});
+      await waitIfYtDlpCoolingDown();
     }
     done++;
     updateOfflineJob(jobId, done);
+    if (done < tracks.length) await sleep(BETWEEN_TRACK_MS);
   }
   updateOfflineJob(jobId, done, 'done');
 }
