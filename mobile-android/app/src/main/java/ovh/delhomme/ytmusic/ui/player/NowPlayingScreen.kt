@@ -570,15 +570,15 @@ fun NowPlayingScreen(
 
     BackHandler(enabled = videoFullscreen) { videoFullscreen = false }
 
-    LaunchedEffect(ui.queueIndex, ui.queue.size) {
-        if (ui.queue.isEmpty()) return@LaunchedEffect
-        player.prefetchQueueFocus(ui.queueIndex.coerceIn(0, ui.queue.lastIndex), radius = 3)
+    LaunchedEffect(ui.queueIndex, ui.queue.size, sheetVisible) {
+        if (!sheetVisible || ui.queue.isEmpty()) return@LaunchedEffect
+        player.prefetchQueueFocus(ui.queueIndex.coerceIn(0, ui.queue.lastIndex), radius = 2)
         val base = container.remoteStreamUrl("_").substringBefore("/api/stream/")
         StreamPrefetcher.maintainRollingPrefetch(
             base,
             ui.queue.map { it.id },
             ui.queueIndex.coerceIn(0, ui.queue.lastIndex),
-            window = 4,
+            window = 3,
         )
     }
 

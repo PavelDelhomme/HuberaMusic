@@ -600,12 +600,12 @@ private fun MainTabs(
     val hasPlayback = playerUi.track != null || playerUi.queueSize > 0
     val playerExpanded = expanded && hasPlayback
 
-    // Garde NowPlaying monté dès qu’une piste joue (prefetch cover hors LazyColumn)
-    var playerSheetMounted by remember { mutableStateOf(playerExpanded || hasPlayback) }
-    if (playerExpanded || hasPlayback) playerSheetMounted = true
-    LaunchedEffect(hasPlayback, playerExpanded) {
-        if (!hasPlayback && !playerExpanded) {
-            delay(180)
+    // NowPlaying monté seulement quand le sheet est ouvert (évite LaunchedEffects hors écran)
+    var playerSheetMounted by remember { mutableStateOf(playerExpanded) }
+    if (playerExpanded) playerSheetMounted = true
+    LaunchedEffect(playerExpanded) {
+        if (!playerExpanded) {
+            delay(160)
             playerSheetMounted = false
         }
     }
@@ -768,6 +768,12 @@ private fun MainTabs(
     LaunchedEffect(likedIds) {
         PlaybackService.Holder.syncLikedIds(likedIds)
     }
+    LaunchedEffect(Unit) {
+        container.libraryRepo.library.collect { lib ->
+            val ids = lib?.liked?.map { it.id }?.toSet().orEmpty()
+            if (ids.isNotEmpty()) likedIds = ids
+        }
+    }
     DisposableEffect(Unit) {
         PlaybackService.Holder.onLikedIdsChanged = { ids -> likedIds = ids }
         onDispose { PlaybackService.Holder.onLikedIdsChanged = null }
@@ -779,9 +785,11 @@ private fun MainTabs(
         runCatching {
             player.hydrateAutoplaySuggestions(container.api.prefs().prefs.autoplaySuggestions)
         }
-        likedIds = runCatching {
-            container.api.library().liked.map { it.id }.toSet()
-        }.getOrDefault(emptySet())
+        likedIds = container.libraryRepo.library.value?.liked?.map { it.id }?.toSet()
+            ?.takeIf { it.isNotEmpty() }
+            ?: runCatching {
+                container.api.library(light = 1, limit = 40).liked.map { it.id }.toSet()
+            }.getOrDefault(emptySet())
         if (!onboardingChecked) {
             onboardingChecked = true
             forceOnboarding = runCatching {
@@ -1161,7 +1169,7 @@ private fun MainTabs(
         if (playerSheetMounted && playerExpanded) return@LaunchedEffect
         while (playerUi.playing && playerUi.track != null) {
             player.tick()
-            delay(if (playerExpanded) 500 else 900)
+            delay(if (playerExpanded) 500 else 400)
         }
     }
 

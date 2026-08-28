@@ -20,7 +20,13 @@ class HomeCacheStore(context: Context) {
             ?.takeIf { it.shelves.isNotEmpty() }
     }
 
-    fun write(home: HomeResponse) {
+    fun write(home: HomeResponse, radioPreviews: Map<String, List<TrackDto>> = emptyMap()) {
+        val trimmedPreviews = radioPreviews
+            .mapValues { (_, tracks) -> tracks.take(4) }
+            .filterValues { it.isNotEmpty() }
+            .entries
+            .take(12)
+            .associate { it.key to it.value }
         val trimmed = CachedHome(
             shelves = home.shelves
                 .filter { it.items.isNotEmpty() }
@@ -29,6 +35,7 @@ class HomeCacheStore(context: Context) {
                     shelf.copy(items = shelf.items.take(16))
                 },
             radios = home.radios.take(12),
+            radioPreviews = trimmedPreviews,
             seeds = home.seeds.orEmpty().take(32),
             hasMore = home.hasMore == true,
             at = System.currentTimeMillis(),
@@ -39,7 +46,7 @@ class HomeCacheStore(context: Context) {
     }
 
     companion object {
-        private const val KEY = "home_v1"
+        private const val KEY = "home_v2"
     }
 }
 
@@ -47,6 +54,7 @@ class HomeCacheStore(context: Context) {
 data class CachedHome(
     val shelves: List<ShelfDto> = emptyList(),
     val radios: List<RadioCategoryDto> = emptyList(),
+    val radioPreviews: Map<String, List<TrackDto>> = emptyMap(),
     val seeds: List<String> = emptyList(),
     val hasMore: Boolean = false,
     val at: Long = 0L,

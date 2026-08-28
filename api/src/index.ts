@@ -47,6 +47,8 @@ import {
 import { identifyAudio } from './media/identify.js';
 import {
   getFullLibrary,
+  getLibraryLight,
+  listLikedPlaylists,
   toggleLikeTrack,
   toggleLibraryTrack,
   removeLibraryTrack,
@@ -1465,8 +1467,8 @@ app.get('/api/home', accountRequired, async (req, res) => {
     const userId = req.userId!;
     const history = getHistory(userId, 40);
     const top = getTopListened(userId, 25);
-    const likedPl = getFullLibrary(userId).likedPlaylists || [];
-    const localPl = listPlaylists(userId);
+    const likedPl = listLikedPlaylists(userId);
+    const localPl = listPlaylists(userId, { includeTracks: false });
 
     // reco perso + home YT + similar en parallèle (gros gain cold start)
     const similarPromise =
@@ -2188,21 +2190,8 @@ app.get('/api/library', accountRequired, async (req, res) => {
     // light=1 : payload réduit (10–40 titres) pour 1ʳᵉ peinture mobile
     const light = String(req.query.light || '') === '1';
     if (light) {
-      const full = getFullLibrary(req.userId!);
       const lim = Math.max(10, Math.min(40, Number(req.query.limit) || 12));
-      res.json({
-        ...full,
-        songs: (full.songs || []).slice(0, lim),
-        liked: (full.liked || []).slice(0, lim),
-        history: (full.history || []).slice(0, Math.min(20, lim)),
-        albums: (full.albums || []).slice(0, lim),
-        artists: (full.artists || []).slice(0, lim),
-        mixes: (full.mixes || []).slice(0, lim),
-        playlists: (full.playlists || []).slice(0, lim),
-        partial: true,
-        totalSongs: (full.songs || []).length,
-        totalLiked: (full.liked || []).length,
-      });
+      res.json(getLibraryLight(req.userId!, lim));
       scheduleLibraryRepair(req.userId!);
       return;
     }
