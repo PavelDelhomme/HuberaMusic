@@ -1,6 +1,7 @@
 package ovh.delhomme.ytmusic.data
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
@@ -331,6 +332,14 @@ class LocalOfflineStore(
             part.delete()
             error("Téléchargement tronqué ($readTotal / $total octets)")
         }
+        if (!hasFtypHeader(part)) {
+            part.delete()
+            error("Fichier audio invalide (pas de ftyp) — stream KO")
+        }
+        if (!probeDecodable(part)) {
+            part.delete()
+            error("Fichier audio illisible (durée 0) — stream KO")
+        }
         mutex.withLock {
             if (dest.exists()) dest.delete()
             if (!part.renameTo(dest)) {
@@ -361,16 +370,106 @@ class LocalOfflineStore(
         if (len < minBytes) return false
         val hinted = readSizeHint(file.nameWithoutExtension)
         if (hinted != null && hinted > minBytes && len < hinted * 98 / 100) return false
+        // En-tête ISO/MP4 (ftyp) obligatoire — refuse HTML/JSON/tronqués déguisés en .m4a
+        if (!hasFtypHeader(file)) return false
         return true
     }
 
-    /** ~96 kb/s floor × durée, ou 96 Ko minimum absolu. */
+    /** Conteneur DASH/fragmenté — Exo plante parfois mid-song (atom length > Int.MAX). */
+    fun isDashContainer(trackId: String): Boolean {
+        val f = audioFile(trackId)
+        if (!f.isFile) return false
+        return runCatching {
+            RandomAccessFile(f, "r").use { raf ->
+                val buf = ByteArray(32)
+                val n = raf.read(buf)
+                if (n < 12) return false
+                for (i in 0..n - 8) {
+                    if (buf[i] == 'f'.code.toByte() &&
+                        buf[i + 1] == 't'.code.toByte() &&
+                        buf[i + 2] == 'y'.code.toByte() &&
+                        buf[i + 3] == 'p'.code.toByte()
+                    ) {
+                        val brand = String(buf, i + 4, 4, Charsets.US_ASCII)
+                        return brand.equals("dash", ignoreCase = true) ||
+                            brand.equals("iso5", ignoreCase = true) ||
+                            brand.equals("iso6", ignoreCase = true)
+                    }
+                }
+                false
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Purge les .m4a illisibles (ftyp KO / durée 0) qui provoquent
+     * « Fichier local KO » mid-song + ANR au moment de la reprise stream.
+     * À appeler hors Main (IO).
+     */
+    suspend fun purgeCorrupt(limit: Int = 80): Int = withContext(Dispatchers.IO) {
+        var removed = 0
+        val files = dir.listFiles()?.filter { it.name.endsWith(".m4a") }.orEmpty()
+        for (f in files) {
+            if (removed >= limit) break
+            val id = f.nameWithoutExtension
+            val meta = synchronized(this@LocalOfflineStore) { readMetaUnlocked()[id] }
+            if (isFileComplete(f, meta) && probeDecodable(f)) continue
+            AppLog.w("offline", "purge corrupt $id size=${f.length()}")
+            runCatching { remove(id) }
+            removed++
+        }
+        if (removed > 0) AppLog.i("offline", "purgeCorrupt removed=$removed")
+        removed
+    }
+
+    /** ftyp atom dans les 32 premiers octets (isom / mp42 / dash / M4A …). */
+    private fun hasFtypHeader(file: File): Boolean {
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                if (raf.length() < 12) return false
+                val buf = ByteArray(32)
+                val n = raf.read(buf)
+                if (n < 8) return false
+                // Cherche 'ftyp' (souvent offset 4)
+                for (i in 0..n - 4) {
+                    if (buf[i] == 'f'.code.toByte() &&
+                        buf[i + 1] == 't'.code.toByte() &&
+                        buf[i + 2] == 'y'.code.toByte() &&
+                        buf[i + 3] == 'p'.code.toByte()
+                    ) {
+                        return true
+                    }
+                }
+                false
+            }
+        }.getOrDefault(false)
+    }
+
+    /** Durée décodable > 3 s — attrape les DASH tronqués qui passent le ftyp. */
+    private fun probeDecodable(file: File): Boolean {
+        return runCatching {
+            val mmr = MediaMetadataRetriever()
+            try {
+                mmr.setDataSource(file.absolutePath)
+                val dur = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull() ?: 0L
+                dur >= 3_000L
+            } finally {
+                runCatching { mmr.release() }
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Floor plus strict : sans durée connue, 350 Ko (évite les DL 96 Ko acceptés puis KO mid-song).
+     * Avec durée : ~96 kb/s × secondes (inchangé).
+     */
     private fun minBytesFor(track: TrackDto?): Long {
         val sec = track?.durationMsOrNull()?.div(1000)?.toInt()
             ?: track?.durationSeconds
             ?: 0
         if (sec > 0) return maxOf(96_000L, sec * 12_000L)
-        return 96_000L
+        return 350_000L
     }
 
     private fun readMetaUnlocked(): Map<String, TrackDto> {

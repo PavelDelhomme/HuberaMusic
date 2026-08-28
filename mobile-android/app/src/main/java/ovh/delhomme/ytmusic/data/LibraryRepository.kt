@@ -20,7 +20,9 @@ class LibraryRepository(
     private val container: AppContainer,
     private val disk: LibraryCacheStore,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // IO : listTracks / refresh ne doivent JAMAIS tourner sur Main
+    // (1550+ fichiers offline → ANR « PLM ne répond pas » au démarrage).
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
     private var lastFetchAt = 0L
     private var refreshJob: kotlinx.coroutines.Job? = null
@@ -149,7 +151,8 @@ class LibraryRepository(
             val now = System.currentTimeMillis()
             if (!force && now - lastFetchAt < 45_000L && _library.value != null) return
             _refreshing.value = _library.value != null
-            val localTracks = container.offlineStore.listTracks()
+            // Scan offline hors Main (déjà sur scope IO) — ne pas bloquer l’UI.
+            val localTracks = withContext(Dispatchers.IO) { container.offlineStore.listTracks() }
             try {
                 container.ensureFreshToken()
                 if (lightFirst) {
