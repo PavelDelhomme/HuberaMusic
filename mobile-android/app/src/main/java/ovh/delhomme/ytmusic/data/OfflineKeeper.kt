@@ -58,7 +58,12 @@ class OfflineKeeper(
 
     private suspend fun tick(reason: String) = tickMutex.withLock {
         if (!NetworkMonitor.isOnline()) return
-        if (StreamPrefetcher.isStreamDown()) return
+        if (StreamPrefetcher.isStreamDown()) {
+            // Ne pas empiler des DL pendant 502/timeout — annule les jobs fantômes.
+            val n = downloadManager.cancelAll()
+            if (n > 0) AppLog.w("OfflineKeeper", "stream down — cancelAll=$n")
+            return
+        }
         if (!BatterySaver.allowBackgroundDownloads()) {
             AppLog.d("OfflineKeeper", "skip tick — économiseur batterie")
             return
@@ -69,7 +74,7 @@ class OfflineKeeper(
         }
         if (!NetworkMonitor.isUnmeteredPreferred(context)) {
             // Données mobiles : seulement aimés manquants (cap bas)
-            syncLiked(limit = 8)
+            syncLiked(limit = 4)
             return
         }
         val last = prefs.getLong(KEY_LAST_TICK, 0L)
@@ -82,7 +87,7 @@ class OfflineKeeper(
             return
         }
         ensureToken()
-        syncLiked(limit = 8)
+        syncLiked(limit = 4)
         delay(2_500)
         if (!NetworkMonitor.isOnline() || StreamPrefetcher.isStreamDown()) return
         syncMonMix()

@@ -2386,41 +2386,45 @@ async function ytDlpGetUrl(
   proxy: string | null = null,
 ): Promise<string> {
   const { spawn } = await import('node:child_process');
+  const { withYtDlpSlot } = await import('../media/ytDlpGate.js');
   const ytdlp = join(ROOT, 'bin', 'yt-dlp');
-  return new Promise<string>((resolve, reject) => {
-    const args = [
-      '-f',
-      format,
-      '-g',
-      '--no-playlist',
-      '--no-warnings',
-      ...ytDlpRuntimeArgs(),
-      // Clients anonymes connus pour éviter LOGIN_REQUIRED / botcheck VPS
-      '--extractor-args',
-      'youtube:player_client=android_vr,tv,ios,web_embedded,web',
-      ...cookieArgs,
-      ...(proxy ? ['--proxy', proxy] : []),
-      `https://www.youtube.com/watch?v=${videoId}`,
-    ];
-    const proc = spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let err = '';
-    proc.stdout.on('data', (c) => {
-      out += String(c);
-    });
-    proc.stderr.on('data', (c) => {
-      err += String(c);
-    });
-    proc.on('error', reject);
-    proc.on('close', (code) => {
-      const line = out
-        .split('\n')
-        .map((l) => l.trim())
-        .find((l) => /^https?:\/\//.test(l));
-      if (code === 0 && line) resolve(line);
-      else reject(new Error(err.trim() || `yt-dlp -g exit ${code}`));
-    });
-  });
+  return withYtDlpSlot(
+    () =>
+      new Promise<string>((resolve, reject) => {
+        const args = [
+          '-f',
+          format,
+          '-g',
+          '--no-playlist',
+          '--no-warnings',
+          ...ytDlpRuntimeArgs(),
+          // Clients anonymes connus pour éviter LOGIN_REQUIRED / botcheck VPS
+          '--extractor-args',
+          'youtube:player_client=android_vr,tv,ios,web_embedded,web',
+          ...cookieArgs,
+          ...(proxy ? ['--proxy', proxy] : []),
+          `https://www.youtube.com/watch?v=${videoId}`,
+        ];
+        const proc = spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        let err = '';
+        proc.stdout.on('data', (c) => {
+          out += String(c);
+        });
+        proc.stderr.on('data', (c) => {
+          err += String(c);
+        });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+          const line = out
+            .split('\n')
+            .map((l) => l.trim())
+            .find((l) => /^https?:\/\//.test(l));
+          if (code === 0 && line) resolve(line);
+          else reject(new Error(err.trim() || `yt-dlp -g exit ${code}`));
+        });
+      }),
+  );
 }
 
 async function audioFormatViaYtDlp(videoId: string): Promise<AudioFormat> {

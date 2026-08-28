@@ -145,14 +145,26 @@ class LocalOfflineStore(
             lastError = result.exceptionOrNull()
             val msg = lastError?.message.orEmpty()
             AppLog.w("offline", "DL retry ${attempt + 1} ${track.id}: $msg")
-            if (msg.contains("HTTP 502") || msg.contains("HTTP 503") || msg.contains("HTTP 504")) {
-                ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(120_000L)
-                return@withContext Result.failure(lastError ?: Exception("HTTP 5xx"))
+            val infra =
+                msg.contains("HTTP 502") ||
+                    msg.contains("HTTP 503") ||
+                    msg.contains("HTTP 504") ||
+                    msg.contains("timeout", ignoreCase = true) ||
+                    msg.contains("Unable to resolve host", ignoreCase = true) ||
+                    lastError is java.net.SocketTimeoutException ||
+                    lastError is java.net.UnknownHostException
+            if (infra) {
+                // 3 min : laisse l’API / YouTube respirer ; OfflineKeeper/DownloadManager stoppent.
+                ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(180_000L)
+                partFile(track.id).delete()
+                return@withContext Result.failure(lastError ?: Exception("stream infra"))
             }
             kotlinx.coroutines.delay(1_500L * (attempt + 1) * (attempt + 1))
         }
         Result.failure(lastError ?: Exception("Échec téléchargement"))
     }
+
+    private fun partFile(trackId: String) = File(dir, "$trackId.part")
 
     private suspend fun downloadOnce(
         track: TrackDto,
