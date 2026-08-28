@@ -134,7 +134,8 @@ export async function downloadAndCache(
   const minBytes = sec > 0 ? Math.max(96_000, sec * 12_000) : 96_000;
   if (blob.size < minBytes) throw new Error('Fichier trop petit — stream incomplet');
   await cacheAudioBlob(track.id, blob, track);
-  await fetch(apiUrl(`/api/download/${track.id}`), {
+  // ack=1 : le fichier est déjà sur l’appareil (IndexedDB) — ne pas relancer yt-dlp serveur
+  await fetch(apiUrl(`/api/download/${track.id}?ack=1`), {
     method: 'POST',
     credentials: 'include',
     headers,

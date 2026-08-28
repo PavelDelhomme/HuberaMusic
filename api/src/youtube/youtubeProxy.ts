@@ -105,6 +105,7 @@ async function refreshFreeProxies(): Promise<string[]> {
   ];
 
   const urls: string[] = [];
+  let listKoLogged = false;
   await Promise.all(
     sources.map(async (src) => {
       try {
@@ -114,11 +115,15 @@ async function refreshFreeProxies(): Promise<string[]> {
           if (n) urls.push(n);
         }
       } catch (err) {
-        console.warn(
-          '[youtubeProxy] list KO',
-          src.slice(0, 48),
-          String((err as Error).message || err).slice(0, 80),
-        );
+        // proxy-list.download 502 fréquent — 1 warn max par refresh
+        if (!listKoLogged) {
+          listKoLogged = true;
+          console.warn(
+            '[youtubeProxy] list KO',
+            src.slice(0, 48),
+            String((err as Error).message || err).slice(0, 80),
+          );
+        }
       }
     }),
   );
@@ -132,7 +137,9 @@ async function refreshFreeProxies(): Promise<string[]> {
   // Cap pour éviter un pool monstrueux
   const capped = uniq.slice(0, 80);
   cachedFree = { at: Date.now(), urls: capped };
-  console.info(`[youtubeProxy] free pool refreshed n=${capped.length}`);
+  if (capped.length > 0) {
+    console.info(`[youtubeProxy] free pool refreshed n=${capped.length}`);
+  }
   return capped;
 }
 
