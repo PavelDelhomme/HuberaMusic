@@ -405,19 +405,10 @@ class PlayerController(
 
     fun toggle() {
         connect()
-        val p = player() ?: run {
-            val exo = PlaybackService.Holder.player ?: return
-            if (exo.isPlaying) {
-                userWantsPlaying = false
-                pendingAutoplay = false
-                exo.pause()
-                StreamPrefetcher.cancelIdle()
-            } else {
-                userWantsPlaying = true
-                pendingAutoplay = true
-                resumeOrPlay(exo)
-            }
-            syncFrom(exo)
+        val p = player() ?: PlaybackService.Holder.player
+        if (p == null) {
+            // Cold start : file UI restaurée sans PlaybackService → play utilisateur doit démarrer Exo
+            startPlaybackFromUiState()
             return
         }
         if (p.isPlaying) {
@@ -431,6 +422,40 @@ class PlayerController(
             resumeOrPlay(p)
         }
         syncFrom(p)
+    }
+
+    /**
+     * Après restore silencieuse (autoplay=false), l’UI a la file mais pas de MediaSession/Exo.
+     * Un simple [connect] refuse de démarrer le service → play/pause no-op.
+     * On hydrate pending + Holder puis [ensureServiceAndConnect] ; le bind flushe avec autoplay.
+     */
+    private fun startPlaybackFromUiState(): Boolean {
+        val fromPending = pending
+        val tracks = fromPending?.first?.takeIf { it.isNotEmpty() } ?: _state.value.queue
+        if (tracks.isEmpty()) return false
+        val idx = (fromPending?.second ?: _state.value.queueIndex).coerceIn(0, tracks.lastIndex)
+        val seek =
+            if (fromPending != null) pendingSeekMs
+            else _state.value.positionMs
+        userWantsPlaying = true
+        pendingAutoplay = true
+        pending = tracks to idx
+        pendingSeekMs = seek.coerceAtLeast(0L)
+        PlaybackService.Holder.queue = tracks
+        PlaybackService.Holder.index = idx
+        PlaybackService.Holder.queueTitle = queueTitle
+        ensureServiceAndConnect()
+        // Service déjà chaud (race rare) : flush immédiat sans attendre le MediaController
+        val exo = player() ?: PlaybackService.Holder.player
+        if (exo != null && pending != null) {
+            val (t, i) = pending!!
+            val seekMs = pendingSeekMs
+            pending = null
+            pendingSeekMs = 0L
+            playNow(exo, t, i, autoplay = true, startPositionMs = seekMs)
+            syncFrom(exo)
+        }
+        return true
     }
 
     /**
@@ -541,12 +566,31 @@ class PlayerController(
         userWantsPlaying = true
         pendingAutoplay = true
         connect()
-        player()?.play() ?: PlaybackService.Holder.player?.play()
+        val p = player() ?: PlaybackService.Holder.player
+        if (p == null) {
+            startPlaybackFromUiState()
+            return
+        }
+        resumeOrPlay(p)
+        syncFrom(p)
     }
 
     fun skipNext() {
         connect()
-        val p = player() ?: PlaybackService.Holder.player ?: return
+        val p = player() ?: PlaybackService.Holder.player
+        if (p == null) {
+            if (!startPlaybackFromUiState()) return
+            // Bind async : on avance d’un cran dans pending pour le flush
+            val q = pending?.first ?: _state.value.queue
+            if (q.size > 1) {
+                val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
+                val next = (cur + 1) % q.size
+                pending = q to next
+                pendingSeekMs = 0L
+                PlaybackService.Holder.index = next
+            }
+            return
+        }
         val saved = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
         val idleOrEmpty =
             p.mediaItemCount == 0 ||
@@ -708,7 +752,22 @@ class PlayerController(
      */
     fun skipPrev() {
         connect()
-        val p = player() ?: PlaybackService.Holder.player ?: return
+        val p = player() ?: PlaybackService.Holder.player
+        if (p == null) {
+            if (!startPlaybackFromUiState()) return
+            val q = pending?.first ?: _state.value.queue
+            if (q.size > 1) {
+                val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
+                val posMs = pendingSeekMs.coerceAtLeast(_state.value.positionMs)
+                if (posMs <= 3000L) {
+                    val prev = if (cur > 0) cur - 1 else q.lastIndex
+                    pending = q to prev
+                    pendingSeekMs = 0L
+                    PlaybackService.Holder.index = prev
+                }
+            }
+            return
+        }
         val saved = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
         val idleOrEmpty =
             p.mediaItemCount == 0 ||
@@ -763,7 +822,23 @@ class PlayerController(
 
     fun skipPrevOrRestart(forcePrevious: Boolean) {
         connect()
-        val p = player() ?: PlaybackService.Holder.player ?: return
+        val p = player() ?: PlaybackService.Holder.player
+        if (p == null) {
+            if (forcePrevious) {
+                if (!startPlaybackFromUiState()) return
+                val q = pending?.first ?: _state.value.queue
+                if (q.size > 1) {
+                    val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
+                    val prev = if (cur > 0) cur - 1 else q.lastIndex
+                    pending = q to prev
+                    pendingSeekMs = 0L
+                    PlaybackService.Holder.index = prev
+                }
+            } else {
+                skipPrev()
+            }
+            return
+        }
         if (forcePrevious) {
             val wasOne = repeatMode == RepeatMode.One
             if (wasOne) p.repeatMode = Player.REPEAT_MODE_OFF
@@ -857,14 +932,19 @@ class PlayerController(
         val wantPlay = autoplay || userWantsPlaying == true
         if (!wantPlay) {
             // Restauration silencieuse (sync multi-appareils) : pas de MediaSession.
-            pending = tracks to startIndex
+            // On garde quand même Holder.queue pour qu’un play utilisateur puisse démarrer Exo.
+            val idx = startIndex.coerceIn(0, tracks.lastIndex)
+            pending = tracks to idx
             pendingSeekMs = positionMs
             pendingAutoplay = false
+            PlaybackService.Holder.queue = tracks
+            PlaybackService.Holder.index = idx
+            PlaybackService.Holder.queueTitle = queueTitle
             _state.value = _state.value.copy(
                 queue = tracks,
-                queueIndex = startIndex.coerceIn(0, tracks.lastIndex),
+                queueIndex = idx,
                 positionMs = positionMs.coerceAtLeast(0L),
-                track = tracks.getOrNull(startIndex),
+                track = tracks.getOrNull(idx),
                 playing = false,
                 queueTitle = queueTitle,
                 userQueueEnd = this.userQueueEnd,

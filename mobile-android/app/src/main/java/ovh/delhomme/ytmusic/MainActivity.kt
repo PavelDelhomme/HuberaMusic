@@ -1202,15 +1202,18 @@ private fun MainTabs(
                             onToggle = {
                                 suppressSessionPublishUntil = 0L
                                 scope.launch {
-                                    if (container.receiveRemoteSync()) {
-                                        runCatching {
-                                            container.api.setSessionActive(
-                                                mapOf("targetId" to container.deviceId),
-                                            )
-                                        }
-                                    }
+                                    // Play d’abord — ne pas attendre setSessionActive (timeout API jusqu’à 45s)
                                     val wasPlaying = player.state.value.playing
                                     player.toggle()
+                                    if (container.receiveRemoteSync()) {
+                                        launch {
+                                            runCatching {
+                                                container.api.setSessionActive(
+                                                    mapOf("targetId" to container.deviceId),
+                                                )
+                                            }
+                                        }
+                                    }
                                     if (!wasPlaying) {
                                         delay(350)
                                         publishPlayback()
@@ -1220,27 +1223,31 @@ private fun MainTabs(
                             onNext = {
                                 suppressSessionPublishUntil = 0L
                                 scope.launch {
+                                    player.skipNext()
                                     if (container.receiveRemoteSync()) {
-                                        runCatching {
-                                            container.api.setSessionActive(
-                                                mapOf("targetId" to container.deviceId),
-                                            )
+                                        launch {
+                                            runCatching {
+                                                container.api.setSessionActive(
+                                                    mapOf("targetId" to container.deviceId),
+                                                )
+                                            }
                                         }
                                     }
-                                    player.skipNext()
                                 }
                             },
                             onPrev = {
                                 suppressSessionPublishUntil = 0L
                                 scope.launch {
+                                    player.skipPrevOrRestart(forcePrevious = false)
                                     if (container.receiveRemoteSync()) {
-                                        runCatching {
-                                            container.api.setSessionActive(
-                                                mapOf("targetId" to container.deviceId),
-                                            )
+                                        launch {
+                                            runCatching {
+                                                container.api.setSessionActive(
+                                                    mapOf("targetId" to container.deviceId),
+                                                )
+                                            }
                                         }
                                     }
-                                    player.skipPrevOrRestart(forcePrevious = false)
                                 }
                             },
                             onSeekBy = { delta -> player.seekBy(delta) },

@@ -322,6 +322,34 @@ fun NowPlayingScreen(
         }
     }
 
+    // Précharge similaires dès le titre courant (avant d’ouvrir le panneau file)
+    LaunchedEffect(ui.track?.id) {
+        val seedId = ui.track?.id ?: return@LaunchedEffect
+        if (seedId.length != 11) return@LaunchedEffect
+        if (similarPanelCache[seedId]?.tracks?.isNotEmpty() == true) return@LaunchedEffect
+        val fast = runCatching {
+            val rel = container.api.related(seedId, fast = 1)
+            dedupeSimilar(
+                seedId,
+                rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty(),
+            ).take(12)
+        }.getOrDefault(emptyList())
+        if (ui.track?.id != seedId || fast.isEmpty()) return@LaunchedEffect
+        similarPanelCache[seedId] = SimilarTabCache(tracks = fast)
+        // Enrichissement en fond (n’bloque pas l’UI file)
+        val mid = runCatching {
+            val rel = container.api.related(seedId, full = 0)
+            dedupeSimilar(
+                seedId,
+                rel.tracks.orEmpty() + rel.related.orEmpty() + rel.radio.orEmpty(),
+            )
+        }.getOrDefault(emptyList())
+        if (ui.track?.id != seedId || mid.isEmpty()) return@LaunchedEffect
+        val seen = fast.map { it.id }.toHashSet()
+        val merged = (fast + mid.filter { it.id !in seen }).distinctBy { it.id }.take(48)
+        similarPanelCache[seedId] = SimilarTabCache(tracks = merged)
+    }
+
     fun armDismissAfterSettle() {
         dismissArmed = false
         dragOffset = 0f
@@ -2247,6 +2275,8 @@ private fun QueueExpandedBody(
 
     LaunchedEffect(panelTab, listState, ui.queueIndex) {
         if (panelTab != 0 || ui.queue.isEmpty()) return@LaunchedEffect
+        // Mode vidéo / API saturée : ne pas bombarder /api/stream (ralentit file + similaires)
+        if (SessionMediaMode.video || StreamPrefetcher.isStreamDown()) return@LaunchedEffect
         snapshotFlow {
             listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
                 ui.queue.getOrNull(info.index)?.id
@@ -2259,6 +2289,7 @@ private fun QueueExpandedBody(
 
     LaunchedEffect(panelTab, similarTracks.size) {
         if (panelTab != 1 || similarTracks.isEmpty()) return@LaunchedEffect
+        if (SessionMediaMode.video || StreamPrefetcher.isStreamDown()) return@LaunchedEffect
         StreamPrefetcher.prefetchTrackIds(
             container.resolvedApiBase(),
             similarTracks.map { it.id },
@@ -2291,6 +2322,7 @@ private fun QueueExpandedBody(
         similarTracks = fast
         similarLoading = false
         similarPanelCache[seedId] = SimilarTabCache(tracks = fast)
+        // Enrichissement async — ne pas bloquer l’affichage
         val mid = runCatching {
             val rel = container.api.related(seedId, full = 0)
             dedupeSimilar(
