@@ -29,6 +29,7 @@ import ovh.delhomme.ytmusic.debug.CrashReporter
 import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.ui.player.SessionMediaMode
 import android.widget.Toast
+import ovh.delhomme.ytmusic.ui.util.toastMain
 
 enum class RepeatMode { Off, All, One }
 
@@ -257,11 +258,7 @@ class PlayerController(
         val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val mode = am?.mode ?: AudioManager.MODE_NORMAL
         if (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION) {
-            Toast.makeText(
-                context,
-                "Lecture impossible pendant un appel — termine l'appel puis réessaie",
-                Toast.LENGTH_LONG,
-            ).show()
+            context.toastMain("Lecture impossible pendant un appel — termine l'appel puis réessaie", Toast.LENGTH_LONG)
             AppLog.w("player", "play bloqué MODE_IN_CALL/COMM mode=$mode")
             return
         }
@@ -719,16 +716,16 @@ class PlayerController(
         if (pauseAtEndOfQueue || pauseAtEndOfTrack) {
             player()?.pause()
             clearSleepTimer()
-            Toast.makeText(context, "Mise en veille", Toast.LENGTH_SHORT).show()
+            context.toastMain("Mise en veille")
             return
         }
         // Fin naturelle + auto OFF → stop (suggestions restent visibles)
         if (!fromUserSkip && !autoplaySuggestions) {
-            Toast.makeText(context, "Fin de la file", Toast.LENGTH_SHORT).show()
+            context.toastMain("Fin de la file")
             return
         }
         if (fillJob?.isActive == true) {
-            Toast.makeText(context, "Suggestions en cours…", Toast.LENGTH_SHORT).show()
+            context.toastMain("Suggestions en cours…")
             return
         }
         val savedQ = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
@@ -769,11 +766,11 @@ class PlayerController(
         }
         val fetcher = autoFillFetcher
         if (fetcher == null) {
-            Toast.makeText(context, "Suggestions indisponibles", Toast.LENGTH_SHORT).show()
+            context.toastMain("Suggestions indisponibles")
             return
         }
         _state.value = _state.value.copy(autoFillBusy = true)
-        Toast.makeText(context, "Chargement des suggestions…", Toast.LENGTH_SHORT).show()
+        context.toastMain("Chargement des suggestions…")
         fillJob = scope.launch {
             try {
                 val tracks = runCatching { fetcher(seed) }.getOrDefault(emptyList())
@@ -784,11 +781,7 @@ class PlayerController(
                     p.play()
                     syncFrom(p)
                 } else {
-                    Toast.makeText(
-                        context,
-                        if (tracks.isEmpty()) "Aucune suggestion" else "File mise à jour",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    context.toastMain(if (tracks.isEmpty()) "Aucune suggestion" else "File mise à jour", Toast.LENGTH_SHORT)
                 }
             } finally {
                 _state.value = _state.value.copy(autoFillBusy = false)

@@ -1,5 +1,8 @@
 package ovh.delhomme.ytmusic.player
 
+import android.widget.Toast
+import ovh.delhomme.ytmusic.ui.util.toastMain
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -321,11 +324,7 @@ class PlaybackService : MediaSessionService() {
                     if (dur > 0) exo.seekTo(back, dur) else exo.seekTo(back, 0L)
                     exo.pause()
                     android.os.Handler(mainLooper).post {
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "Fin de la file — active « À suivre » pour continuer",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
+                        this@PlaybackService.toastMain("Fin de la file — active « À suivre » pour continuer", Toast.LENGTH_SHORT)
                     }
                 }
             }
@@ -371,11 +370,7 @@ class PlaybackService : MediaSessionService() {
                     exo.playWhenReady = false
                     runCatching { exo.pause() }
                     android.os.Handler(mainLooper).post {
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "Fin de la file — active « À suivre » pour continuer",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
+                        this@PlaybackService.toastMain("Fin de la file — active « À suivre » pour continuer", Toast.LENGTH_SHORT)
                     }
                     return
                 }
@@ -445,11 +440,7 @@ class PlaybackService : MediaSessionService() {
                         }
                     }
                     android.os.Handler(mainLooper).post {
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "Fichier local KO — reprise en streaming…",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
+                        this@PlaybackService.toastMain("Fichier local KO — reprise en streaming…", Toast.LENGTH_SHORT)
                     }
                     return
                 }
@@ -465,20 +456,12 @@ class PlaybackService : MediaSessionService() {
                 if (nextOfflineIdx != null) {
                     rematerializeOfflineFrom(exo, nextOfflineIdx, container)
                     android.os.Handler(mainLooper).post {
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "Fichier local KO — suite hors ligne",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
+                        this@PlaybackService.toastMain("Fichier local KO — suite hors ligne", Toast.LENGTH_SHORT)
                     }
                     return
                 }
                 android.os.Handler(mainLooper).post {
-                    android.widget.Toast.makeText(
-                        this@PlaybackService,
-                        "Lecture locale impossible",
-                        android.widget.Toast.LENGTH_SHORT,
-                    ).show()
+                    this@PlaybackService.toastMain("Lecture locale impossible", Toast.LENGTH_SHORT)
                 }
                 return
             }
@@ -524,11 +507,7 @@ class PlaybackService : MediaSessionService() {
                         streamFailStreak.set(0)
                         rematerializeOfflineFrom(exo, nextOfflineIdx, container)
                         android.os.Handler(mainLooper).post {
-                            android.widget.Toast.makeText(
-                                this@PlaybackService,
-                                "Hors ligne — suite sur titres téléchargés",
-                                android.widget.Toast.LENGTH_SHORT,
-                            ).show()
+                            this@PlaybackService.toastMain("Hors ligne — suite sur titres téléchargés", Toast.LENGTH_SHORT)
                         }
                         return
                     }
@@ -540,11 +519,7 @@ class PlaybackService : MediaSessionService() {
                     streamFailStreak.set(0)
                     ovh.delhomme.ytmusic.data.NetworkMonitor.markPausedForNetwork()
                     android.os.Handler(mainLooper).post {
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "Hors ligne — télécharge des titres (⋮) pour continuer",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
+                        this@PlaybackService.toastMain("Hors ligne — télécharge des titres (⋮) pour continuer", Toast.LENGTH_SHORT)
                     }
                     return
                 }
@@ -625,22 +600,10 @@ class PlaybackService : MediaSessionService() {
                         android.os.Handler(mainLooper).post {
                             when {
                                 rebuilt && resolveOk && streak == 1 -> {
-                                    android.widget.Toast.makeText(
-                                        this@PlaybackService,
-                                        "Reprise du flux…",
-                                        android.widget.Toast.LENGTH_SHORT,
-                                    ).show()
+                                    this@PlaybackService.toastMain("Reprise du flux…", Toast.LENGTH_SHORT)
                                 }
                                 !rebuilt || !resolveOk -> {
-                                    android.widget.Toast.makeText(
-                                        this@PlaybackService,
-                                        if (streak >= 3) {
-                                            "Flux audio KO — réessaie dans un instant"
-                                        } else {
-                                            "Flux audio indisponible"
-                                        },
-                                        android.widget.Toast.LENGTH_SHORT,
-                                    ).show()
+                                    this@PlaybackService.toastMain(if (streak >= 3) { "Flux audio KO — réessaie dans un instant" } else { "Flux audio indisponible" }, Toast.LENGTH_SHORT)
                                 }
                             }
                         }
@@ -672,11 +635,7 @@ class PlaybackService : MediaSessionService() {
                                 else -> "Flux KO"
                             }
                         val suffix = nextTitle?.let { " → $it" } ?: " — titre suivant"
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "$reason$suffix",
-                            android.widget.Toast.LENGTH_LONG,
-                        ).show()
+                        this@PlaybackService.toastMain("$reason$suffix", Toast.LENGTH_LONG)
                     }
                     return
                 }
@@ -684,11 +643,7 @@ class PlaybackService : MediaSessionService() {
                 exo.playWhenReady = false
                 runCatching { exo.pause() }
                 android.os.Handler(mainLooper).post {
-                    android.widget.Toast.makeText(
-                        this@PlaybackService,
-                        "Flux audio interrompu — plus de titre suivant",
-                        android.widget.Toast.LENGTH_SHORT,
-                    ).show()
+                    this@PlaybackService.toastMain("Flux audio interrompu — plus de titre suivant", Toast.LENGTH_SHORT)
                 }
                 return
             }
@@ -714,11 +669,7 @@ class PlaybackService : MediaSessionService() {
                                 else -> "Lecture KO"
                             }
                         val suffix = nextTitle?.let { " → $it" } ?: " — titre suivant"
-                        android.widget.Toast.makeText(
-                            this@PlaybackService,
-                            "$reason$suffix",
-                            android.widget.Toast.LENGTH_LONG,
-                        ).show()
+                        this@PlaybackService.toastMain("$reason$suffix", Toast.LENGTH_LONG)
                     }
                     return
                 }
@@ -730,15 +681,7 @@ class PlaybackService : MediaSessionService() {
                         BuildConfig.API_BASE_URL.contains("192.168.") ||
                         BuildConfig.API_BASE_URL.contains("10.") ||
                         BuildConfig.API_BASE_URL.startsWith("http://")
-                    android.widget.Toast.makeText(
-                        this@PlaybackService,
-                        if (localApi) {
-                            "Lecture impossible — API locale (8787) ou flux YouTube"
-                        } else {
-                            "Lecture impossible — réessaie ou vérifie le réseau"
-                        },
-                        android.widget.Toast.LENGTH_LONG,
-                    ).show()
+                    this@PlaybackService.toastMain(if (localApi) { "Lecture impossible — API locale (8787) ou flux YouTube" } else { "Lecture impossible — réessaie ou vérifie le réseau" }, Toast.LENGTH_LONG)
                 }
                 return
             }
@@ -1251,11 +1194,7 @@ class PlaybackService : MediaSessionService() {
             exo.playWhenReady = false
             runCatching { exo.pause() }
             android.os.Handler(mainLooper).post {
-                android.widget.Toast.makeText(
-                    this,
-                    "Fin de la file — active « À suivre » pour continuer",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
+                this.toastMain("Fin de la file — active « À suivre » pour continuer", Toast.LENGTH_SHORT)
             }
             return
         }
@@ -1870,11 +1809,7 @@ private class YtmForwardingPlayer(
                 // Pas d’autre titre local — rester
                 val ctx = ovh.delhomme.ytmusic.YtMusicApp.instance
                 android.os.Handler(ctx.mainLooper).post {
-                    android.widget.Toast.makeText(
-                        ctx,
-                        "Hors ligne — pas d’autre titre téléchargé",
-                        android.widget.Toast.LENGTH_SHORT,
-                    ).show()
+                    ctx.toastMain("Hors ligne — pas d’autre titre téléchargé", Toast.LENGTH_SHORT)
                 }
             }
             else -> {

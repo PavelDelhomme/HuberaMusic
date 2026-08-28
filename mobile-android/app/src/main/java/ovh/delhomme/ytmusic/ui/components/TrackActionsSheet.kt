@@ -2,6 +2,7 @@ package ovh.delhomme.ytmusic.ui.components
 
 import android.content.Intent
 import android.widget.Toast
+import ovh.delhomme.ytmusic.ui.util.toastMain
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -161,7 +162,7 @@ fun TrackActionsSheet(
         if (has && wasDownloading && downloadProgress == null) {
             downloaded = true
             wasDownloading = false
-            Toast.makeText(context, "Téléchargé — lisible hors-ligne", Toast.LENGTH_SHORT).show()
+            context.toastMain("Téléchargé — lisible hors-ligne")
         } else if (downloadProgress == null) {
             downloaded = has
         }
@@ -169,7 +170,7 @@ fun TrackActionsSheet(
 
     LaunchedEffect(enriched.id, dlErrors[enriched.id]) {
         val err = container.downloadManager.consumeError(enriched.id) ?: return@LaunchedEffect
-        Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
+        context.toastMain(err)
     }
 
     LaunchedEffect(track.id) {
@@ -228,7 +229,7 @@ fun TrackActionsSheet(
         scope.launch {
             val id = resolveArtistId(container.api, artist.id, artist.name)
             if (id.isNullOrBlank()) {
-                Toast.makeText(context, "Artiste introuvable", Toast.LENGTH_SHORT).show()
+                context.toastMain("Artiste introuvable")
             } else {
                 onOpenArtist?.invoke(id)
                 onDismiss()
@@ -249,7 +250,7 @@ fun TrackActionsSheet(
             }
             if (albumId.isNullOrBlank() && enriched.isAlbum()) albumId = enriched.id
             if (albumId.isNullOrBlank()) {
-                Toast.makeText(context, "Album introuvable", Toast.LENGTH_SHORT).show()
+                context.toastMain("Album introuvable")
             } else {
                 onOpenAlbum?.invoke(albumId)
                 onDismiss()
@@ -380,7 +381,7 @@ fun TrackActionsSheet(
                         if (songInLibrary) {
                             container.api.removeMix(enriched.id)
                             songInLibrary = false
-                            Toast.makeText(context, "Mix retiré", Toast.LENGTH_SHORT).show()
+                            context.toastMain("Mix retiré")
                         } else {
                             container.api.saveMix(
                                 mapOf(
@@ -389,7 +390,7 @@ fun TrackActionsSheet(
                                 ),
                             )
                             songInLibrary = true
-                            Toast.makeText(context, "Mix enregistré", Toast.LENGTH_SHORT).show()
+                            context.toastMain("Mix enregistré")
                         }
                     }
                     onDismiss()
@@ -407,7 +408,7 @@ fun TrackActionsSheet(
             ) {
                 QuickAction(Icons.Default.SkipNext, "Lire ensuite") {
                     player.playNext(enriched)
-                    Toast.makeText(context, "Sera lu ensuite", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Sera lu ensuite")
                     onDismiss()
                 }
                 QuickAction(Icons.Default.PlaylistAdd, "Enregistrer dans une playlist") {
@@ -467,19 +468,11 @@ fun TrackActionsSheet(
                         val r = container.api.toggleLibrarySong(enriched)
                         songInLibrary = r.saved
                         container.bumpLibraryEpoch()
-                        Toast.makeText(
-                            context,
-                            if (r.saved) "Dans la bibliothèque" else "Retiré de la bibliothèque",
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        context.toastMain(if (r.saved) "Dans la bibliothèque" else "Retiré de la bibliothèque")
                     }.onFailure { e ->
                         if (e is kotlinx.coroutines.CancellationException) throw e
                         songInLibrary = !next
-                        Toast.makeText(
-                            context,
-                            e.apiMessage().ifBlank { "Impossible de modifier la bibliothèque" },
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        context.toastMain(e.apiMessage().ifBlank { "Impossible de modifier la bibliothèque" })
                     }
                 }
             }
@@ -507,22 +500,22 @@ fun TrackActionsSheet(
                         }
                         downloaded = false
                         container.bumpLibraryEpoch()
-                        Toast.makeText(context, "Supprimé de l'appareil", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Supprimé de l'appareil")
                         onDismiss()
                     }
                     return@SheetAction
                 }
                 if (downloadProgress != null) {
                     container.downloadManager.cancel(enriched.id)
-                    Toast.makeText(context, "Téléchargement annulé — partiel supprimé", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Téléchargement annulé — partiel supprimé")
                     return@SheetAction
                 }
                 val started = container.downloadManager.enqueue(enriched)
                 if (!started && container.offlineStore.has(enriched.id)) {
                     downloaded = true
-                    Toast.makeText(context, "Déjà sur l'appareil (lisible hors-ligne)", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Déjà sur l'appareil (lisible hors-ligne)")
                 } else if (started) {
-                    Toast.makeText(context, "Téléchargement… tu peux fermer ce menu", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Téléchargement… tu peux fermer ce menu")
                 }
             }
 
@@ -541,19 +534,11 @@ fun TrackActionsSheet(
                                 seed = enriched,
                             )
                             if (offlineMix.isEmpty()) {
-                                Toast.makeText(
-                                    context,
-                                    "Mix hors-ligne : télécharge d’abord des titres (⋮)",
-                                    Toast.LENGTH_LONG,
-                                ).show()
+                                context.toastMain("Mix hors-ligne : télécharge d’abord des titres (⋮)", Toast.LENGTH_LONG)
                                 return@runCatching
                             }
                             player.playRadioOrEnqueue(offlineMix, "Mix hors-ligne", sourceKind = "radio")
-                            Toast.makeText(
-                                context,
-                                "Mix hors-ligne · ${offlineMix.size} titres",
-                                Toast.LENGTH_SHORT,
-                            ).show()
+                            context.toastMain("Mix hors-ligne · ${offlineMix.size} titres")
                             return@runCatching
                         }
                         val mix = buildRadioQueue(
@@ -561,15 +546,11 @@ fun TrackActionsSheet(
                             mixCache = container.mixCache, progressive = true,
                         )
                         if (mix.isEmpty()) {
-                            Toast.makeText(context, "Mix indisponible", Toast.LENGTH_SHORT).show()
+                            context.toastMain("Mix indisponible")
                             return@runCatching
                         }
                         player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                        Toast.makeText(
-                            context,
-                            "Mix démarré · ${mix.size} titres",
-                            Toast.LENGTH_SHORT,
-                        ).show()
+                        context.toastMain("Mix démarré · ${mix.size} titres")
                         // Top-up en arrière-plan
                         val more = buildRadioQueueContinuation(
                             container.api, enriched.id, mix.map { it.id }.toSet(),
@@ -578,7 +559,7 @@ fun TrackActionsSheet(
                         if (more.isNotEmpty()) player.appendRadioContinuation(more, forSeedId = enriched.id)
                     }.isSuccess
                     if (!ok) {
-                        Toast.makeText(context, "Échec mix", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Échec mix")
                     }
                     onDismiss()
                 }
@@ -598,11 +579,7 @@ fun TrackActionsSheet(
                             )
                             if (mix.isNotEmpty()) {
                                 player.playRadioOrEnqueue(mix, "Radio")
-                                Toast.makeText(
-                                    context,
-                                    "Radio démarrée · ${mix.size} titres",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
+                                context.toastMain("Radio démarrée · ${mix.size} titres")
                                 val more = buildRadioQueueContinuation(
                                     container.api, enriched.id, mix.map { it.id }.toSet(),
                                     mixCache = container.mixCache,
@@ -611,10 +588,10 @@ fun TrackActionsSheet(
                                     player.appendRadioContinuation(more, forSeedId = enriched.id)
                                 }
                             } else {
-                                Toast.makeText(context, "Radio indisponible", Toast.LENGTH_SHORT).show()
+                                context.toastMain("Radio indisponible")
                             }
                         }.onFailure {
-                            Toast.makeText(context, "Radio indisponible", Toast.LENGTH_SHORT).show()
+                            context.toastMain("Radio indisponible")
                         }
                         onDismiss()
                     }
@@ -628,14 +605,9 @@ fun TrackActionsSheet(
                             if (mix.isNotEmpty()) {
                                 player.playRadioOrEnqueue(mix, "Radio album")
                                 val added = (mix.size - 1).coerceAtLeast(0)
-                                Toast.makeText(
-                                    context,
-                                    if (added > 0) "$added titre${if (added > 1) "s" else ""} similaires ajoutés"
-                                    else "Radio album démarrée",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
+                                context.toastMain(if (added > 0) "$added titre${if (added > 1) "s" else ""} similaires ajoutés" else "Radio album démarrée")
                             } else {
-                                Toast.makeText(context, "Radio album indisponible", Toast.LENGTH_SHORT).show()
+                                context.toastMain("Radio album indisponible")
                             }
                         }
                         onDismiss()
@@ -657,15 +629,7 @@ fun TrackActionsSheet(
                             if (mix.isNotEmpty()) {
                                 player.playRadioOrEnqueue(mix, "Radio · ${artist.name}")
                                 val added = (mix.size - 1).coerceAtLeast(0)
-                                Toast.makeText(
-                                    context,
-                                    if (added > 0) {
-                                        "$added titre${if (added > 1) "s" else ""} en lien avec ${artist.name}"
-                                    } else {
-                                        "Radio artiste démarrée"
-                                    },
-                                    Toast.LENGTH_LONG,
-                                ).show()
+                                context.toastMain(if (added > 0) { "$added titre${if (added > 1) "s" else ""} en lien avec ${artist.name}" } else { "Radio artiste démarrée" }, Toast.LENGTH_LONG)
                             }
                         }
                         onDismiss()
@@ -677,13 +641,13 @@ fun TrackActionsSheet(
             if (inQueue && !isCurrent) {
                 SheetAction(Icons.Default.RemoveFromQueue, "Supprimer de la file d'attente") {
                     player.removeFromQueue(queueIndex)
-                    Toast.makeText(context, "Retiré de la file", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Retiré de la file")
                     onDismiss()
                 }
             } else {
                 SheetAction(Icons.Default.QueueMusic, "Ajouter à la file d'attente") {
                     player.addToQueue(enriched)
-                    Toast.makeText(context, "Ajouté à la file", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Ajouté à la file")
                     onDismiss()
                 }
             }
@@ -699,7 +663,7 @@ fun TrackActionsSheet(
                             if (albumInLibrary) {
                                 container.api.removeAlbum(albumId)
                                 albumInLibrary = false
-                                Toast.makeText(context, "Album retiré", Toast.LENGTH_SHORT).show()
+                                context.toastMain("Album retiré")
                             } else {
                                 container.api.saveAlbum(
                                     TrackDto(
@@ -711,10 +675,10 @@ fun TrackActionsSheet(
                                     ),
                                 )
                                 albumInLibrary = true
-                                Toast.makeText(context, "Album enregistré", Toast.LENGTH_SHORT).show()
+                                context.toastMain("Album enregistré")
                             }
                         }.onFailure {
-                            Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                            context.toastMain(it.message ?: "Échec")
                         }
                         onDismiss()
                     }
@@ -731,7 +695,7 @@ fun TrackActionsSheet(
                         player.state.value.track?.id?.let { cur ->
                             container.mixCache.clear(container.mixCache.keyRadio("track", cur))
                         }
-                        Toast.makeText(context, "Retour enregistré", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Retour enregistré")
                         if (player.state.value.track?.id == enriched.id) {
                             player.skipNext()
                         }
@@ -767,9 +731,9 @@ fun TrackActionsSheet(
                             ),
                             force = true,
                         )
-                        Toast.makeText(context, "Rapport envoyé", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Rapport envoyé")
                     }.onFailure {
-                        Toast.makeText(context, it.message ?: "Échec envoi", Toast.LENGTH_SHORT).show()
+                        context.toastMain(it.message ?: "Échec envoi")
                     }
                     onDismiss()
                 }
@@ -793,11 +757,7 @@ fun TrackActionsSheet(
                 val next = !receiveRemoteSync
                 container.setReceiveRemoteSync(next)
                 receiveRemoteSync = next
-                Toast.makeText(
-                    context,
-                    if (next) "Sync lecture activée" else "Sync lecture désactivée — file locale",
-                    Toast.LENGTH_SHORT,
-                ).show()
+                context.toastMain(if (next) "Sync lecture activée" else "Sync lecture désactivée — file locale")
                 onDismiss()
             }
         } else if (enriched.isAlbum()) {
@@ -808,7 +768,7 @@ fun TrackActionsSheet(
                             .filter { it.isPlayable() }
                     }
                     if (tracks.isEmpty()) {
-                        Toast.makeText(context, "Aucun titre jouable", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Aucun titre jouable")
                     } else {
                         player.play(tracks, 0, title = enriched.title, sourceId = enriched.id, sourceKind = "album")
                     }
@@ -829,9 +789,9 @@ fun TrackActionsSheet(
                             albumInLibrary = true
                         }
                         container.bumpLibraryEpoch()
-                        Toast.makeText(context, "Bibliothèque mise à jour", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Bibliothèque mise à jour")
                     }.onFailure {
-                        Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                        context.toastMain(it.message ?: "Échec")
                     }
                     onDismiss()
                 }
@@ -856,11 +816,7 @@ fun TrackActionsSheet(
                     }
                     onLikedChanged(ids)
                     albumAllLiked = true
-                    Toast.makeText(
-                        context,
-                        if (n > 0) "$n titres ajoutés aux J’aime" else "Déjà en J’aime",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    context.toastMain(if (n > 0) "$n titres ajoutés aux J’aime" else "Déjà en J’aime")
                     onDismiss()
                 }
             }
@@ -871,12 +827,12 @@ fun TrackActionsSheet(
                         val fetched = runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
                             .filter { it.isPlayable() }
                         container.downloadManager.enqueueMany(fetched)
-                        Toast.makeText(context, "Téléchargement de ${fetched.size} titres…", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Téléchargement de ${fetched.size} titres…")
                         onDismiss()
                     }
                 } else {
                     container.downloadManager.enqueueMany(tracks)
-                    Toast.makeText(context, "Téléchargement de ${tracks.size} titres…", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Téléchargement de ${tracks.size} titres…")
                     onDismiss()
                 }
             }
@@ -891,9 +847,9 @@ fun TrackActionsSheet(
                             enriched.isArtist() -> container.api.saveArtist(enriched.copy(type = "artist"))
                             else -> container.api.likePlaylist(enriched.copy(type = "playlist"))
                         }
-                        Toast.makeText(context, "Bibliothèque mise à jour", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Bibliothèque mise à jour")
                     }.onFailure {
-                        Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                        context.toastMain(it.message ?: "Échec")
                     }
                     onDismiss()
                 }
@@ -905,10 +861,10 @@ fun TrackActionsSheet(
                 scope.launch {
                     runCatching {
                         container.api.removeFromPlaylist(playlistId, enriched.id)
-                        Toast.makeText(context, "Retiré de la playlist", Toast.LENGTH_SHORT).show()
+                        context.toastMain("Retiré de la playlist")
                         onRemovedFromPlaylist?.invoke()
                     }.onFailure {
-                        Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                        context.toastMain(it.message ?: "Échec")
                     }
                     onDismiss()
                 }
@@ -921,11 +877,7 @@ fun TrackActionsSheet(
         ) {
             scope.launch {
                 pinned = container.quickAccess.toggle(enriched, container.api)
-                Toast.makeText(
-                    context,
-                    if (pinned) "Épinglé" else "Retiré de l'accès rapide",
-                    Toast.LENGTH_SHORT,
-                ).show()
+                context.toastMain(if (pinned) "Épinglé" else "Retiré de l'accès rapide")
                 onDismiss()
             }
         }
@@ -949,10 +901,10 @@ fun TrackActionsSheet(
             onPick = { delayMs, label ->
                 if (delayMs == -1L) {
                     player.clearSleepTimer()
-                    Toast.makeText(context, "Mise en veille annulée", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Mise en veille annulée")
                 } else {
                     player.setSleepTimer(delayMs, label)
-                    Toast.makeText(context, "Veille : $label", Toast.LENGTH_SHORT).show()
+                    context.toastMain("Veille : $label")
                 }
                 showSleep = false
                 onDismiss()
@@ -1193,30 +1145,17 @@ fun AddToPlaylistSheet(
                                     .clickable(enabled = membershipReady) {
                                         if (!membershipReady) return@clickable
                                         if (already) {
-                                            Toast.makeText(
-                                                context,
-                                                "Déjà dans ${pl.displayName()}",
-                                                Toast.LENGTH_SHORT,
-                                            ).show()
+                                            context.toastMain("Déjà dans ${pl.displayName()}")
                                             return@clickable
                                         }
                                         scope.launch {
                                             runCatching { container.api.addToPlaylist(pl.id, track) }
                                                 .onSuccess {
                                                     containedIds = containedIds + pl.id
-                                                    Toast.makeText(
-                                                        context,
-                                                        "Ajouté à ${pl.displayName()}",
-                                                        Toast.LENGTH_SHORT,
-                                                    ).show()
+                                                    context.toastMain("Ajouté à ${pl.displayName()}")
                                                 }
                                                 .onFailure {
-                                                    Toast.makeText(
-                                                        context,
-                                                        it.message?.takeIf { m -> m.isNotBlank() }
-                                                            ?: "Impossible d'ajouter à la playlist",
-                                                        Toast.LENGTH_SHORT,
-                                                    ).show()
+                                                    context.toastMain(it.message?.takeIf { m -> m.isNotBlank() } ?: "Impossible d'ajouter à la playlist")
                                                 }
                                         }
                                     },
@@ -1301,30 +1240,17 @@ fun AddToPlaylistSheet(
                                 .fillMaxWidth()
                                 .clickable {
                                     if (already) {
-                                        Toast.makeText(
-                                            context,
-                                            "Déjà dans ${pl.displayName()}",
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
+                                        context.toastMain("Déjà dans ${pl.displayName()}")
                                         return@clickable
                                     }
                                     scope.launch {
                                         runCatching { container.api.addToPlaylist(pl.id, track) }
                                             .onSuccess {
                                                 containedIds = containedIds + pl.id
-                                                Toast.makeText(
-                                                    context,
-                                                    "Ajouté à ${pl.displayName()}",
-                                                    Toast.LENGTH_SHORT,
-                                                ).show()
+                                                context.toastMain("Ajouté à ${pl.displayName()}")
                                             }
                                             .onFailure {
-                                                Toast.makeText(
-                                                    context,
-                                                    it.message?.takeIf { m -> m.isNotBlank() }
-                                                        ?: "Impossible d'ajouter à la playlist",
-                                                    Toast.LENGTH_SHORT,
-                                                ).show()
+                                                context.toastMain(it.message?.takeIf { m -> m.isNotBlank() } ?: "Impossible d'ajouter à la playlist")
                                             }
                                     }
                                 }
@@ -1408,10 +1334,10 @@ fun AddToPlaylistSheet(
                             runCatching {
                                 val pl = container.api.createPlaylist(CreatePlaylistBody(name))
                                 container.api.addToPlaylist(pl.id, track)
-                                Toast.makeText(context, "Créée et titre ajouté", Toast.LENGTH_SHORT).show()
+                                context.toastMain("Créée et titre ajouté")
                                 onDismiss()
                             }.onFailure {
-                                Toast.makeText(context, it.message ?: "Erreur", Toast.LENGTH_SHORT).show()
+                                context.toastMain(it.message ?: "Erreur")
                             }
                         }
                     },
