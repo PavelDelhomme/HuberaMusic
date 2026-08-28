@@ -36,6 +36,7 @@ class YtMusicApp : Application(), ImageLoaderFactory {
         // Précharge les JWT en mémoire dès le boot (évite runBlocking DataStore)
         appScope.launch {
             runCatching { container.tokenStore.warmCache() }
+            runCatching { container.libraryRepo.ensureLoaded(force = false) }
         }
         // Garde hors-ligne (aimés + Mon Mix) — léger, Wi‑Fi préféré
         runCatching { container.offlineKeeper.start() }

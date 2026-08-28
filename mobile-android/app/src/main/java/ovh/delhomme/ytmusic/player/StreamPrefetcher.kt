@@ -259,10 +259,57 @@ object StreamPrefetcher {
         ids.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
     }
 
+    /** Après un prefetchHeadBlocking réussi (Aléatoire biblio). */
+    fun markHeadReady(trackId: String) {
+        synchronized(recent) {
+            recent["head:$trackId"] = System.currentTimeMillis()
+        }
+    }
+
+    fun wasHeadReadyRecently(trackId: String, withinMs: Long = 20_000L): Boolean {
+        synchronized(recent) {
+            val t = recent["head:$trackId"] ?: return false
+            return System.currentTimeMillis() - t < withinMs
+        }
+    }
+
     /**
-     * Avant le 1er play (Aléatoire) : format + tête Exo (~8–12 s) en ignorant le quiet.
-     * À appeler hors Main (Dispatchers.IO).
+     * Prépare Aléatoire : format wait + tête Exo bloquante pour #0, puis #1–2 en parallèle.
      */
+    suspend fun prepareShuffleLead(baseApi: String, trackIds: List<String>) {
+        if (trackIds.isEmpty() || isStreamDown()) return
+        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        val base = baseApi.trimEnd('/')
+        val lead = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(3)
+        if (lead.isEmpty()) return
+        quietPrefetch(520L)
+        val app = YtMusicApp.instance
+        // #0 — priorité absolue (son immédiat)
+        val first = lead[0]
+        warmCurrentBlocking(base, first, timeoutMs = 1_500L, wait = true)
+        prefetchStartHeadBlocking(app, base, first, HEAD_NEXT_WIFI)
+        markHeadReady(first)
+        // #1–2 — formats + têtes courtes (skip rapide)
+        lead.drop(1).forEach { id ->
+            warmTrackFormatOnly(base, id)
+            prefetchStartHeadBlocking(app, base, id, HEAD_3S)
+            markHeadReady(id)
+        }
+        warmFormatsLight(base, trackIds.drop(3).take(6), limit = 6)
+    }
+
+    private fun prefetchStartHeadBlocking(
+        context: android.content.Context,
+        baseApi: String,
+        trackId: String,
+        bytes: Long,
+    ) {
+        if (trackId.length != 11 || isLocalOffline(trackId)) return
+        val url = "${baseApi.trimEnd('/')}/api/stream/$trackId"
+        PlayerCache.prefetchHeadBlocking(context, url, trackId, bytes, timeoutMs = 2_200L)
+    }
+
+    /** Fire-and-forget (scroll biblio). */
     fun prefetchStartHead(baseApi: String, trackId: String, bytes: Long = HEAD_NEXT_WIFI) {
         if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return

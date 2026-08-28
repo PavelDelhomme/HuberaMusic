@@ -1,5 +1,5 @@
 # Template Portainer CE — Custom Templates
-# Title: PLM (perso / un compte)
+# Title: YTMusic (perso / un compte)
 # Description: YouTube Music self-hosted derrière Nginx Proxy Manager
 # Platform: Linux / Compose
 #
@@ -17,6 +17,9 @@
 #   2) Watchtower (deploy/watchtower-compose.yml) OU
 #      Access Token API / SSH depuis Admin local OU
 #      Portainer UI → Pull and redeploy (NE PAS cocher Remove volumes)
+#
+# === Limites ressources (anti storm yt-dlp) ===
+#   mem_limit 3g · cpus 2.0 · YTDLP_MAX_CONCURRENT=4
 
 version: "3.8"
 
@@ -25,6 +28,8 @@ services:
     image: ${YTMUSIC_IMAGE:-ghcr.io/paveldelhomme/ytmusic:latest}
     container_name: ytmusic
     restart: unless-stopped
+    mem_limit: 3g
+    cpus: 2.0
     environment:
       NODE_ENV: production
       PORT: "8787"
@@ -57,12 +62,15 @@ services:
       SMTP_PORT: ${SMTP_PORT:-465}
       SMTP_SECURE: ${SMTP_SECURE:-1}
       SMTP_USE_SSL: ${SMTP_USE_SSL:-1}
-      SMTP_USER: ${SMTP_USER:-}
+      SMTP_USER: ${SMTP_USER:-noreply@maily.ovh}
       SMTP_PASS: ${SMTP_PASS:?set SMTP_PASS}
-      SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
-      # Stream (persistant Portainer) — docs/YTM-GOOGLE-CLIENTS.md
-      # Prod idéal : ALLOW vide (VPS + OAuth). FALLBACK=1 si tu actives le relais maison.
+      SMTP_FROM: ${SMTP_FROM:-YTMusic <noreply@maily.ovh>}
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-noreply@maily.ovh}
+      # Anti-storm yt-dlp / warm (CPU+RAM VPS)
+      YTDLP_MAX_CONCURRENT: ${YTDLP_MAX_CONCURRENT:-4}
+      STREAM_WARM_CONCURRENCY: ${STREAM_WARM_CONCURRENCY:-1}
+      STREAM_WARM_BATCH_CAP: ${STREAM_WARM_BATCH_CAP:-6}
+      # Stream : laisser vides en prod VPS-only (OAuth TV + OAuth user sur volume).
       ALLOW_STREAM_UPSTREAM: ${ALLOW_STREAM_UPSTREAM:-}
       STREAM_UPSTREAM_FALLBACK: ${STREAM_UPSTREAM_FALLBACK:-1}
     volumes:

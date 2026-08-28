@@ -172,13 +172,58 @@ object PlayerCache {
                     .setLength(bytes)
                     .setKey(key)
                     .build()
-                CacheWriter(dataSource, dataSpec, /* temporaryBuffer= */ null, /* listener= */ null).cache()
+                CacheWriter(dataSource, dataSpec, null, null).cache()
                 unsetBogusContentLength(cache, key, bytes)
             } catch (_: Exception) {
                 /* réseau / annulation — ignore */
             } finally {
                 prefetchInFlight.remove(key)
             }
+        }
+    }
+
+    /** Bloquant — Aléatoire #0 (son dès le 1er play). */
+    fun prefetchHeadBlocking(
+        context: Context,
+        streamUrl: String,
+        cacheKey: String,
+        bytes: Long,
+        timeoutMs: Long = 2_500L,
+    ) {
+        if (streamUrl.isBlank() || cacheKey.isBlank() || bytes <= 0L) return
+        val key = keyFor(cacheKey)
+        val myGen = gen.get()
+        val appCtx = context.applicationContext
+        if (!prefetchInFlight.add(key)) {
+            val deadline = System.currentTimeMillis() + timeoutMs.coerceAtMost(1_500L)
+            while (System.currentTimeMillis() < deadline) {
+                if (myGen != gen.get()) return
+                val cached = runCatching { get(appCtx).getCachedBytes(key, 0, bytes) }.getOrDefault(0L)
+                if (cached >= bytes / 4) return
+                Thread.sleep(40)
+            }
+            return
+        }
+        try {
+            if (myGen != gen.get()) return
+            val cache = get(appCtx)
+            val cached = cache.getCachedBytes(key, 0, bytes)
+            if (cached >= (bytes * 3 / 4)) {
+                unsetBogusContentLength(cache, key, bytes)
+                return
+            }
+            val dataSource = dataSourceFactory(appCtx).createDataSource()
+            val dataSpec = DataSpec.Builder()
+                .setUri(Uri.parse(streamUrl))
+                .setLength(bytes)
+                .setKey(key)
+                .build()
+            CacheWriter(dataSource, dataSpec, null, null).cache()
+            unsetBogusContentLength(cache, key, bytes)
+        } catch (_: Exception) {
+            /* timeout — Exo tentera quand même */
+        } finally {
+            prefetchInFlight.remove(key)
         }
     }
 
