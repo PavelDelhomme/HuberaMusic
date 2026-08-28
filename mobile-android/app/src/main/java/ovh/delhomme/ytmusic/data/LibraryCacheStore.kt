@@ -4,10 +4,14 @@ import android.content.Context
 import com.squareup.moshi.JsonClass
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import java.io.File
+import java.io.FileOutputStream
 
-/** Cache disque bibliothèque — affichage instantané au retour (Accueil → Biblio, cold start). */
+/** Cache disque bibliothèque (fichier) — 14k titres ne rentrent pas dans SharedPreferences. */
 class LibraryCacheStore(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val file = File(appContext.filesDir, "library_cache_v2.json")
     private val moshi = Moshi.Builder()
         .add(FlexibleStringAdapter())
         .add(KotlinJsonAdapterFactory())
@@ -15,15 +19,41 @@ class LibraryCacheStore(context: Context) {
     private val adapter = moshi.adapter(CachedLibrary::class.java)
 
     fun read(): LibraryResponse? {
+        val fromFile = runCatching {
+            if (!file.exists() || file.length() < 32L) return@runCatching null
+            adapter.fromJson(file.readText())?.toResponse()
+        }.getOrNull()
+        if (fromFile != null) return fromFile
+        // Migration ancienne clé prefs (souvent tronquée / trop petite)
         val raw = prefs.getString(KEY, null)?.takeIf { it.isNotBlank() } ?: return null
-        return runCatching { adapter.fromJson(raw) }.getOrNull()?.toResponse()
+        val legacy = runCatching { adapter.fromJson(raw) }.getOrNull()?.toResponse() ?: return null
+        write(legacy)
+        prefs.edit().remove(KEY).apply()
+        return legacy
     }
 
     fun write(lib: LibraryResponse) {
         if (lib.songs.isEmpty() && lib.liked.isEmpty() && lib.albums.isEmpty()) return
+        // Ne jamais écraser un snapshot plein avec un light=1
+        if (lib.partial == true) {
+            val existing = read()
+            val existingN = (existing?.songs?.size ?: 0).coerceAtLeast(existing?.liked?.size ?: 0)
+            val newN = lib.songs.size.coerceAtLeast(lib.liked.size)
+            if (existingN > newN + 8) return
+        }
         val snap = CachedLibrary.from(lib)
         runCatching {
-            prefs.edit().putString(KEY, adapter.toJson(snap)).apply()
+            val json = adapter.toJson(snap)
+            val tmp = File(appContext.filesDir, "library_cache_v2.json.tmp")
+            FileOutputStream(tmp).use { fos ->
+                fos.write(json.toByteArray())
+                fos.flush()
+                fos.fd.sync()
+            }
+            if (!tmp.renameTo(file)) {
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+            }
         }
     }
 

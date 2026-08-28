@@ -118,7 +118,7 @@ export function getFullLibrary(userId: string) {
     return listPlaylists(userId, { includeTracks: false });
   })();
 
-  const history = getHistory(userId, 500);
+  const history = getHistory(userId, 40);
   const recentEntities = getEntityHistory(userId, 40);
 
   const downloaded = (
@@ -142,6 +142,100 @@ export function getFullLibrary(userId: string) {
     recentEntities,
     downloaded,
   };
+}
+
+/** Payload réduit pour 1ʳᵉ peinture mobile — SQL LIMIT, pas 14k titres. */
+export function getLibraryLight(userId: string, limit = 24) {
+  const lim = Math.max(10, Math.min(40, Number(limit) || 24));
+  const likedRows = db
+    .prepare(
+      `SELECT l.track_id AS track_id, t.payload AS payload
+       FROM liked_tracks l
+       LEFT JOIN tracks_cache t ON t.id = l.track_id
+       WHERE l.user_id = ?
+       ORDER BY l.created_at DESC
+       LIMIT ?`,
+    )
+    .all(userId, lim) as { track_id: string; payload: string | null }[];
+
+  const songRows = db
+    .prepare(
+      `SELECT l.track_id AS track_id, t.payload AS payload
+       FROM library_tracks l
+       LEFT JOIN tracks_cache t ON t.id = l.track_id
+       WHERE l.user_id = ?
+       ORDER BY l.created_at DESC
+       LIMIT ?`,
+    )
+    .all(userId, lim) as { track_id: string; payload: string | null }[];
+
+  const likedPlaylists = listLikedPlaylists(userId).slice(0, lim);
+  const albums = (
+    db
+      .prepare(
+        `SELECT payload FROM library_albums WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(userId, lim) as { payload: string }[]
+  ).map((r) => sanitizeLibraryItem(JSON.parse(r.payload)));
+  const artists = (
+    db
+      .prepare(
+        `SELECT payload FROM library_artists WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(userId, lim) as { payload: string }[]
+  ).map((r) => sanitizeLibraryItem(JSON.parse(r.payload)));
+  const mixes = (
+    db
+      .prepare(
+        `SELECT payload FROM library_mixes WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(userId, lim) as { payload: string }[]
+  )
+    .map((r) => {
+      try {
+        const raw = JSON.parse(r.payload) as Record<string, unknown>;
+        return { ...raw, id: String(raw.id || ''), title: String(raw.title || 'Mix'), type: 'mix' };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  const playlists = listPlaylists(userId, { includeTracks: false }).slice(0, lim);
+  const history = getHistory(userId, Math.min(20, lim));
+  const downloaded = (
+    db
+      .prepare(`SELECT track_id FROM downloads WHERE user_id = ? AND status = 'ready'`)
+      .all(userId) as { track_id: string }[]
+  ).map((r) => r.track_id);
+  const counts = libraryCounts(userId);
+
+  return {
+    songs: songRows.map(trackFromRow),
+    liked: likedRows.map(trackFromRow),
+    likedPlaylists,
+    albums,
+    artists,
+    mixes,
+    playlists,
+    history,
+    recentEntities: [],
+    downloaded,
+    partial: true,
+    totalSongs: counts.songs,
+    totalLiked: counts.liked,
+  };
+}
+
+/** Playlists aimées (payload JSON) — sans charger songs/liked. */
+export function listLikedPlaylists(userId: string) {
+  return (
+    db
+      .prepare(
+        `SELECT playlist_id, payload FROM liked_playlists WHERE user_id = ? ORDER BY created_at DESC`,
+      )
+      .all(userId) as { playlist_id: string; payload: string }[]
+  ).map((r) => JSON.parse(r.payload));
 }
 
 /** Compteurs légers (pas tout le payload) — statut Google / sync. */
