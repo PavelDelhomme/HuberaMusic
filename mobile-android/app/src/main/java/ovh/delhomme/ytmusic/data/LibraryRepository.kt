@@ -36,6 +36,9 @@ class LibraryRepository(
     var sorted: SortedLibrary? = null
         private set
 
+    private val _sortedEpoch = MutableStateFlow(0)
+    val sortedEpoch: StateFlow<Int> = _sortedEpoch.asStateFlow()
+
     data class SortedLibrary(
         val tracks: List<TrackDto>,
         val liked: List<TrackDto>,
@@ -50,6 +53,7 @@ class LibraryRepository(
         disk.read()?.let { seed ->
             _library.value = seed
             sorted = buildSorted(seed)
+            _sortedEpoch.value = 1
         }
     }
 
@@ -58,8 +62,7 @@ class LibraryRepository(
         scope.launch {
             val s = withContext(Dispatchers.Default) { buildSorted(lib) }
             sorted = s
-            // Réémet pour recomposer la biblio quand le tri A–Z est prêt
-            _library.value = lib.copy()
+            _sortedEpoch.value += 1
         }
         if (!fromDisk) {
             scope.launch(Dispatchers.IO) {

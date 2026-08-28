@@ -989,6 +989,7 @@ class PlaybackService : MediaSessionService() {
         Holder.player = null
         Holder.service = null
         Holder.playbackActive = false
+        Holder.onServiceStopped?.invoke()
         super.onDestroy()
     }
 
@@ -1755,6 +1756,8 @@ class PlaybackService : MediaSessionService() {
         @Volatile var userQueueEnd: Int = 0
         /** Auto-avance dans « À suivre » (sinon stop en fin de file user). */
         @Volatile var autoplaySuggestions: Boolean = true
+        /** Service détruit (idle guard / OS) → invalider MediaController UI. */
+        @Volatile var onServiceStopped: (() -> Unit)? = null
         /** Mis à jour sur le thread principal — lecture depuis IO sans toucher ExoPlayer. */
         @Volatile var playbackActive: Boolean = false
 

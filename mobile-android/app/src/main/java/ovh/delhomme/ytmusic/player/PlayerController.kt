@@ -103,6 +103,7 @@ class PlayerController(
     private var autoplaySuggestions: Boolean = loadAutoplaySuggestionsPref()
 
     init {
+        PlaybackService.Holder.onServiceStopped = { healAfterBackground() }
         PlaybackService.Holder.autoplaySuggestions = autoplaySuggestions
         _state.value = _state.value.copy(autoplaySuggestions = autoplaySuggestions)
     }
@@ -134,11 +135,15 @@ class PlayerController(
         PlaybackService.Holder.onSkipAtEnd = { fillThenSkipFromEnd(fromUserSkip = true) }
         PlaybackService.Holder.onToggleShuffle = { toggleShuffle() }
         PlaybackService.Holder.onCycleRepeat = { cycleRepeat() }
-        if (controller != null || controllerFuture != null) return
-        // Ne démarre PAS le service à l’ouverture UI (évite session média PLM à côté de Netflix).
         val alreadyRunning =
-            PlaybackService.Holder.service != null || PlaybackService.Holder.player != null
-        if (!alreadyRunning) return
+            PlaybackService.Holder.service != null && PlaybackService.Holder.player != null
+        if (!alreadyRunning) {
+            if (controller != null || controllerFuture != null) {
+                release()
+            }
+            return
+        }
+        if (controller != null || controllerFuture != null) return
         bindMediaController()
     }
 
@@ -206,6 +211,40 @@ class PlayerController(
         controllerFuture = null
     }
 
+    /**
+     * Après veille longue / arrêt service idle : MediaController peut pointer vers une session morte.
+     * Réaligne pending + Holder pour que play / nouvelle piste refonctionne.
+     */
+    fun healAfterBackground() {
+        val exo = PlaybackService.Holder.player
+        val serviceUp = PlaybackService.Holder.service != null && exo != null
+        if (!serviceUp) {
+            if (controller != null || controllerFuture != null) {
+                release()
+            }
+            val q = _state.value.queue
+            if (q.isNotEmpty()) {
+                val idx = _state.value.queueIndex.coerceIn(0, q.lastIndex)
+                if (pending == null) {
+                    pending = q to idx
+                    pendingSeekMs = _state.value.positionMs.coerceAtLeast(0L)
+                    pendingAutoplay = false
+                }
+                if (PlaybackService.Holder.queue.isEmpty()) {
+                    PlaybackService.Holder.queue = q
+                    PlaybackService.Holder.index = idx
+                    PlaybackService.Holder.queueTitle = queueTitle
+                }
+            }
+            return
+        }
+        if (controller == null && controllerFuture == null) {
+            bindMediaController()
+        } else {
+            syncFrom(exo)
+        }
+    }
+
     fun play(
         tracks: List<TrackDto>,
         startIndex: Int = 0,
@@ -234,6 +273,10 @@ class PlayerController(
         PlaybackService.Holder.queueTitle = queueTitle
         this.sourceId = sourceId
         this.sourceKind = sourceKind
+        healAfterBackground()
+        if (controller != null && PlaybackService.Holder.service == null) {
+            release()
+        }
         ensureServiceAndConnect()
         val playable = tracks.filter { it.isPlayable() }
         this.userQueueEnd = (userQueueEnd ?: playable.size).coerceIn(0, playable.size)
@@ -410,11 +453,13 @@ class PlayerController(
     }
 
     fun toggle() {
+        healAfterBackground()
         connect()
         val p = player() ?: PlaybackService.Holder.player
         if (p == null) {
-            _state.value = _state.value.copy(playing = true)
-            startPlaybackFromUiState()
+            if (!startPlaybackFromUiState()) {
+                _state.value = _state.value.copy(playing = false)
+            }
             return
         }
         if (p.isPlaying) {
