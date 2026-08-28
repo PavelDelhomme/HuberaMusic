@@ -252,6 +252,7 @@ fun YtMusicAppContent(
         player.connect()
         onDispose {
             player.flushPersist()
+            PlaybackService.Holder.onServiceStopped = null
             player.release()
         }
     }
@@ -260,6 +261,10 @@ fun YtMusicAppContent(
     DisposableEffect(lifecycleOwner, player) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
+                Lifecycle.Event.ON_START -> {
+                    player.healAfterBackground()
+                    player.connect()
+                }
                 Lifecycle.Event.ON_STOP -> {
                     player.flushPersist()
                     // Ne PAS cancelIdle ici : en arrière-plan la lecture continue

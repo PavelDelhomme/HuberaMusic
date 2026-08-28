@@ -125,22 +125,15 @@ fun LibraryScreen(
         }
     }
 
-    // Préchargement formats — uniquement hors lecture (Accueil↔Biblio doit rester instantané)
+    // Préchargement formats — jamais pendant une session média (lecture ou pause)
     LaunchedEffect(lib?.songs?.size) {
         val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
         if (songs.size < 8) return@LaunchedEffect
-        val playing = runCatching {
-            ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.isPlaying == true
-        }.getOrDefault(false)
-        if (playing) return@LaunchedEffect
+        if (libraryPrefetchBlocked()) return@LaunchedEffect
         val base = container.resolvedApiBase()
         if (base.isBlank()) return@LaunchedEffect
         delay(2_500)
-        if (StreamPrefetcher.isStreamDown()) return@LaunchedEffect
-        if (runCatching {
-                ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.isPlaying == true
-            }.getOrDefault(false)
-        ) return@LaunchedEffect
+        if (StreamPrefetcher.isStreamDown() || libraryPrefetchBlocked()) return@LaunchedEffect
         withContext(Dispatchers.IO) {
             val sample = songs.shuffled().take(24).map { it.id }
             StreamPrefetcher.warmFormatsLight(base, sample, limit = 24)
@@ -361,12 +354,13 @@ fun LibraryScreen(
                 }
 
                 val monMixIds = remember(offlineRev) { container.offlineKeeper.monMixIds() }
+                val sortedEpoch by repo.sortedEpoch.collectAsState()
                 val sorted = repo.sorted
                 val content by produceState(
                     initialValue = buildLibraryContent(
                         data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds, sorted,
                     ),
-                    sorted, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching, monMixIds, data,
+                    sortedEpoch, sorted, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching, monMixIds, data,
                 ) {
                     value = withContext(Dispatchers.Default) {
                         buildLibraryContent(
@@ -381,10 +375,7 @@ fun LibraryScreen(
                     }
                         .distinctUntilChanged()
                         .collect { (first, visible) ->
-                        if (runCatching {
-                                ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.isPlaying == true
-                            }.getOrDefault(false)
-                        ) return@collect
+                        if (libraryPrefetchBlocked()) return@collect
                         val start = (first - 2).coerceAtLeast(0)
                         val end = (first + visible + 12).coerceAtMost(content.playableQueue.size)
                         if (start >= end) return@collect
@@ -936,4 +927,10 @@ private fun buildLibraryContent(
             comingSoon = "Fichiers locaux — bientôt disponible.",
         )
     }
+}
+
+/** Ne pas prefetch stream si Exo a une file (lecture ou pause) — évite coupures audio. */
+private fun libraryPrefetchBlocked(): Boolean {
+    val p = ovh.delhomme.ytmusic.player.PlaybackService.Holder.player ?: return false
+    return p.mediaItemCount > 0
 }
