@@ -74,12 +74,13 @@ import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.ui.player.libraryQueueTitle
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     container: AppContainer,
-    onPlay: (List<TrackDto>, Int) -> Unit,
+    onPlayNamed: (List<TrackDto>, Int, String) -> Unit,
     onMore: (TrackDto) -> Unit,
     onOpenDetail: (TrackDto) -> Unit,
     onOpenArtist: ((String?, String) -> Unit)? = null,
@@ -219,7 +220,7 @@ fun LibraryScreen(
         val byId = (data.songs + data.liked + data.history).associateBy { it.id }
         val missing = data.downloaded.filter { id ->
             id.length == 11 && byId[id] == null && downloadMeta[id] == null
-        }.take(16)
+        }.take(8)
         if (missing.isEmpty()) {
             downloadsEnriching = false
             return@LaunchedEffect
@@ -435,6 +436,7 @@ fun LibraryScreen(
                             }
                             if (content.playableQueue.isNotEmpty() && content.showPlayAll) {
                                 item {
+                                    val queueTitle = libraryQueueTitle(content.headline)
                                     LibraryPlayBar(
                                         playLabel = content.playLabel,
                                         shuffleLabel = content.shuffleLabel,
@@ -444,8 +446,7 @@ fun LibraryScreen(
                                                     container,
                                                     content.playableQueue,
                                                     0,
-                                                    onPlay,
-                                                )
+                                                ) { q, i -> onPlayNamed(q, i, queueTitle) }
                                             }
                                         },
                                         onShuffle = {
@@ -453,7 +454,7 @@ fun LibraryScreen(
                                                 playLibraryShuffled(
                                                     container,
                                                     content.playableQueue,
-                                                    onPlay,
+                                                    { q, i -> onPlayNamed(q, i, "$queueTitle · Aléatoire") },
                                                     sourceKey = "lib:${selected.name}",
                                                 )
                                             }
@@ -480,7 +481,14 @@ fun LibraryScreen(
                                             row.isPlayable() -> {
                                                 val list = content.playableQueue.ifEmpty { listOf(row) }
                                                 val idx = list.indexOfFirst { it.id == row.id }.coerceAtLeast(0)
-                                                onPlay(list, idx)
+                                                val queueTitle = libraryQueueTitle(content.headline)
+                                                scope.launch {
+                                                    playQueueWithLead(
+                                                        container,
+                                                        list,
+                                                        idx,
+                                                    ) { q, i -> onPlayNamed(q, i, queueTitle) }
+                                                }
                                             }
                                             else -> onOpenDetail(row)
                                         }
@@ -517,7 +525,7 @@ fun LibraryScreen(
         HistorySheet(
             container = container,
             onDismiss = { showHistory = false },
-            onPlay = onPlay,
+            onPlay = { tracks, idx -> onPlayNamed(tracks, idx, "Historique") },
             onMore = onMore,
             onOpenEntity = onOpenDetail,
         )

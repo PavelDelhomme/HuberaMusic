@@ -538,7 +538,10 @@ fun YtMusicAppContent(
                     val radioish =
                         title.contains("radio", ignoreCase = true) ||
                             title.equals("Mix", ignoreCase = true) ||
-                            title.contains("rapport", ignoreCase = true)
+                            title.contains("rapport", ignoreCase = true) ||
+                            title.startsWith("Mix ·", ignoreCase = true) ||
+                            title.startsWith("Mix album", ignoreCase = true) ||
+                            title.startsWith("Mix hors-ligne", ignoreCase = true)
                     if (container.receiveRemoteSync()) {
                         scope.launch {
                             runCatching {
@@ -552,9 +555,8 @@ fun YtMusicAppContent(
                         player.play(
                             tracks,
                             idx,
-                            title,
-                            sourceId = t?.album?.id,
-                            sourceKind = if (t?.album?.id != null) "album" else null,
+                            title = title,
+                            sourceKind = "library",
                         )
                     }
                     showNowPlaying = false
@@ -597,9 +599,14 @@ private fun MainTabs(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // Garde NowPlaying monté après 1ʳᵉ ouverture (pas de remount → pas de rebuffer)
-    var playerSheetMounted by remember { mutableStateOf(expanded) }
-    if (expanded) playerSheetMounted = true
+    // Garde NowPlaying monté dès qu’une piste joue (prefetch cover hors LazyColumn)
+    var playerSheetMounted by remember { mutableStateOf(expanded || playerUi.track != null) }
+    if (expanded || playerUi.track != null) playerSheetMounted = true
+
+    LaunchedEffect(playerUi.track?.id) {
+        val t = playerUi.track ?: return@LaunchedEffect
+        ovh.delhomme.ytmusic.player.CoverPrefetcher.warm(t.coverUrl(800))
+    }
 
     LaunchedEffect(current) {
         if (!current.isNullOrBlank()) AppLog.breadcrumb("nav", current)
@@ -755,6 +762,10 @@ private fun MainTabs(
 
     LaunchedEffect(Unit) {
         runCatching { container.tokenStore.warmCache() }
+        // Sync « À suivre » à chaque ouverture (défaut ON côté serveur + local)
+        runCatching {
+            player.hydrateAutoplaySuggestions(container.api.prefs().prefs.autoplaySuggestions)
+        }
         likedIds = runCatching {
             container.api.library().liked.map { it.id }.toSet()
         }.getOrDefault(emptySet())
@@ -762,7 +773,6 @@ private fun MainTabs(
             onboardingChecked = true
             forceOnboarding = runCatching {
                 val p = container.api.prefs().prefs
-                player.hydrateAutoplaySuggestions(p.autoplaySuggestions)
                 !p.onboardingDone || (p.genres.isEmpty() && p.moods.isEmpty())
             }.getOrDefault(false)
             val me = runCatching { container.api.me().user }.getOrNull()
@@ -1344,7 +1354,7 @@ private fun MainTabs(
             composable(Tab.Library.route) {
                 LibraryScreen(
                     container = container,
-                    onPlay = onPlayTracks,
+                    onPlayNamed = onPlayNamed,
                     onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenDetail = ::openDetail,
                     onOpenArtist = ::openArtist,

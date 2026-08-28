@@ -49,7 +49,7 @@ suspend fun playLibraryShuffled(
 }
 
 /**
- * Tout lire / play à l’index : warm les 3–4 premiers titres visibles avant play.
+ * Tout lire / play à l’index : démarre tout de suite, warm en arrière-plan.
  */
 suspend fun playQueueWithLead(
     container: AppContainer,
@@ -60,6 +60,7 @@ suspend fun playQueueWithLead(
     val playable = queue.filter { it.isPlayable() && it.id.length == 11 }
     if (playable.isEmpty()) return
     val idx = startIndex.coerceIn(0, playable.lastIndex)
+    onPlay(playable, idx)
     val base = container.resolvedApiBase()
     if (base.isNotBlank()) {
         withContext(Dispatchers.IO) {
@@ -67,5 +68,4 @@ suspend fun playQueueWithLead(
             StreamPrefetcher.prepareShuffleLead(base, lead)
         }
     }
-    onPlay(playable, idx)
 }
