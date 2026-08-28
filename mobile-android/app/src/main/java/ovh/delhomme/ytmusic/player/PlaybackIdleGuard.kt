@@ -84,8 +84,7 @@ object PlaybackIdleGuard {
             p.stop()
             p.clearMediaItems()
         }
-        PlaybackService.Holder.queue = emptyList()
-        PlaybackService.Holder.index = 0
+        // Conserver Holder.queue — l’UI / LocalPlaybackStore garde la file pour reprise
         runCatching {
             app.stopService(Intent(app, PlaybackService::class.java))
         }
