@@ -205,13 +205,16 @@ class PlaybackService : MediaSessionService() {
                 }
             }
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
-                warmUpcoming(player.currentMediaItemIndex)
-                enqueueOfflineAhead(player.currentMediaItemIndex)
+                val idx = player.currentMediaItemIndex
+                // Pochettes NP tout de suite (évite flash placeholder après son fluide)
+                CoverPrefetcher.warmCovers(Holder.queue, idx, ahead = 2, behind = 0)
+                warmUpcoming(idx)
+                enqueueOfflineAhead(idx)
                 scope.launch {
-                    delay(120)
+                    delay(40)
                     refreshMediaButtons()
                     ensureCurrentItemMetadata()
-                    delay(400)
+                    delay(280)
                     refreshMediaButtons()
                 }
             }

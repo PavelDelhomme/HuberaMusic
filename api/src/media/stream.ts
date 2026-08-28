@@ -275,7 +275,8 @@ async function spawnYtDlpMediaPipe(
   contentType: string,
   proxy: string | null = null,
 ): Promise<void> {
-  const { withYtDlpSlot, noteYtDlpFailure } = await import('./ytDlpGate.js');
+  const { withYtDlpSlot } = await import('./ytDlpGate.js');
+  // Proxy / IP alternate : on tente même si le direct VPS est en cooldown bot
   return withYtDlpSlot(
     () =>
       new Promise<void>((resolve, reject) => {
@@ -318,7 +319,6 @@ async function spawnYtDlpMediaPipe(
           if (settled) return;
           settled = true;
           clearTimeout(firstByteTimer);
-          noteYtDlpFailure(err);
           try {
             proc.kill('SIGTERM');
           } catch {
@@ -378,35 +378,36 @@ async function spawnYtDlpMediaPipe(
           }
         });
       }),
+    { bypassCooldown: true, noteFailure: false },
   );
 }
 
 async function streamViaYtDlp(videoId: string, res: Response) {
-  const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
-  if (isYtDlpCoolingDown()) {
-    throw new Error('yt-dlp cooling down (bot/rate-limit)');
-  }
+  const { noteYtDlpFailure, isYtDlpCoolingDown } = await import('./ytDlpGate.js');
   // Anonyme d’abord — cookies optionnels (jamais Premium requis)
   const cookieSets = ytDlpCookieArgSets();
   // Peu de formats : chaque spawn peut coûter ~10 s (first-byte timeout)
   const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, 2);
-  // Direct VPS puis proxies gratuits (bypass 50x / LOGIN_REQUIRED) — pas de PC maison
-  const proxies = await youtubeProxyAttempts({ max: 4, includeDirect: true });
+  // Direct VPS puis proxies (bypass bot IP datacenter) — PC maison = STREAM_UPSTREAM
+  const proxies = await youtubeProxyAttempts({ max: 5, includeDirect: true });
 
   let lastErr: Error | null = null;
+  let sawBot = false;
   for (const proxy of proxies) {
+    // Pendant cooldown : saute l’IP VPS directe, tente les proxies / autres IP
+    if (!proxy && isYtDlpCoolingDown()) continue;
     for (const cookieArgs of cookieSets) {
       for (const format of formats) {
         if (res.headersSent) throw new Error('headers already sent');
-        if (isYtDlpCoolingDown()) {
-          throw lastErr || new Error('yt-dlp cooling down (bot/rate-limit)');
-        }
         try {
           await spawnYtDlpAudioPipe(videoId, format, cookieArgs, res, proxy);
           markYoutubeProxySuccess(proxy);
           return;
         } catch (err) {
           lastErr = err instanceof Error ? err : new Error(String(err));
+          if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
+            sawBot = true;
+          }
           if (res.headersSent) throw lastErr;
           if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
         }
@@ -419,15 +420,13 @@ async function streamViaYtDlp(videoId: string, res: Response) {
       );
     }
   }
+  if (sawBot && lastErr) noteYtDlpFailure(lastErr);
   throw lastErr || new Error('yt-dlp audio indisponible');
 }
 
 /** Pipe progressif vidéo (fallback quand googlevideo 403 depuis le VPS). */
 async function streamViaYtDlpVideo(videoId: string, res: Response) {
-  const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
-  if (isYtDlpCoolingDown()) {
-    throw new Error('yt-dlp cooling down (bot/rate-limit)');
-  }
+  const { noteYtDlpFailure, isYtDlpCoolingDown } = await import('./ytDlpGate.js');
   const cookieSets = ytDlpCookieArgSets();
   const formats = [
     '18',
@@ -435,27 +434,30 @@ async function streamViaYtDlpVideo(videoId: string, res: Response) {
     'best[height<=480][acodec!=none][vcodec!=none]',
     'best[height<=720][acodec!=none][vcodec!=none]/best',
   ];
-  const proxies = await youtubeProxyAttempts({ max: 3, includeDirect: true });
+  const proxies = await youtubeProxyAttempts({ max: 4, includeDirect: true });
   let lastErr: Error | null = null;
+  let sawBot = false;
   for (const proxy of proxies) {
+    if (!proxy && isYtDlpCoolingDown()) continue;
     for (const cookieArgs of cookieSets) {
       for (const format of formats) {
         if (res.headersSent) throw new Error('headers already sent');
-        if (isYtDlpCoolingDown()) {
-          throw lastErr || new Error('yt-dlp cooling down (bot/rate-limit)');
-        }
         try {
           await spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'video/mp4', proxy);
           markYoutubeProxySuccess(proxy);
           return;
         } catch (err) {
           lastErr = err instanceof Error ? err : new Error(String(err));
+          if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
+            sawBot = true;
+          }
           if (res.headersSent) throw lastErr;
           if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
         }
       }
     }
   }
+  if (sawBot && lastErr) noteYtDlpFailure(lastErr);
   throw lastErr || new Error('yt-dlp video indisponible');
 }
 
@@ -1178,84 +1180,85 @@ export async function downloadTrack(videoId: string): Promise<string> {
 
     const { withYtDlpSlot, isYtDlpCoolingDown, noteYtDlpFailure, ytDlpCooldownRemainingMs } =
       await import('./ytDlpGate.js');
-    if (isYtDlpCoolingDown()) {
-      const msg = 'yt-dlp cooling down (bot/rate-limit)';
-      downloadFailUntil.set(videoId, {
-        until: Date.now() + Math.max(5_000, ytDlpCooldownRemainingMs()),
-        msg,
-      });
-      throw new Error(msg);
-    }
 
-    // 2) yt-dlp : télécharger le format audio direct (140/m4a) SANS -x / ffmpeg
+    // 2) yt-dlp via proxies (même pendant cooldown VPS) — disque mid-range Android
     let lastErr: Error | null = null;
+    let sawBot = false;
     const cookieSets = ytDlpCookieArgSets({ forDownload: true });
-    for (const cookieArgs of cookieSets) {
-      for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
-        try {
-          await withYtDlpSlot(
-            () =>
-              new Promise<void>((resolve, reject) => {
-                const proc = spawn(
-                  YTDLP,
-                  [
-                    '-f',
-                    format,
-                    '-o',
-                    out,
-                    '--no-playlist',
-                    '--no-warnings',
-                    '--newline',
-                    ...ytDlpRuntimeArgs(),
-                    '--extractor-args',
-                    'youtube:player_client=android_vr,tv,ios,web_embedded,web',
-                    ...cookieArgs,
-                    `https://www.youtube.com/watch?v=${videoId}`,
-                  ],
-                  { stdio: ['ignore', 'ignore', 'pipe'] },
-                );
-                let err = '';
-                proc.stderr?.on('data', (c) => {
-                  err += String(c);
-                  if (err.length > 4_000) err = err.slice(-4_000);
-                });
-                proc.on('error', reject);
-                proc.on('close', (code) => {
-                  if (code === 0 && existsSync(out) && statSync(out).size > 0) {
-                    resolve();
-                    return;
-                  }
-                  const tip = err
-                    .split('\n')
-                    .map((l) => l.trim())
-                    .filter((l) => /^ERROR:/i.test(l))
-                    .pop();
-                  reject(new Error(tip || `yt-dlp ${code}`));
-                });
-              }),
-          );
-          if (existsSync(out) && statSync(out).size > 0) {
-            downloadFailUntil.delete(videoId);
-            return out;
+    const proxies = await youtubeProxyAttempts({ max: 5, includeDirect: true });
+    for (const proxy of proxies) {
+      if (!proxy && isYtDlpCoolingDown()) continue;
+      for (const cookieArgs of cookieSets) {
+        for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
+          try {
+            await withYtDlpSlot(
+              () =>
+                new Promise<void>((resolve, reject) => {
+                  const proc = spawn(
+                    YTDLP,
+                    [
+                      '-f',
+                      format,
+                      '-o',
+                      out,
+                      '--no-playlist',
+                      '--no-warnings',
+                      '--newline',
+                      ...ytDlpRuntimeArgs(),
+                      '--extractor-args',
+                      'youtube:player_client=android_vr,tv,ios,web_embedded,web',
+                      ...cookieArgs,
+                      ...(proxy ? ['--proxy', proxy] : []),
+                      `https://www.youtube.com/watch?v=${videoId}`,
+                    ],
+                    { stdio: ['ignore', 'ignore', 'pipe'] },
+                  );
+                  let err = '';
+                  proc.stderr?.on('data', (c) => {
+                    err += String(c);
+                    if (err.length > 4_000) err = err.slice(-4_000);
+                  });
+                  proc.on('error', reject);
+                  proc.on('close', (code) => {
+                    if (code === 0 && existsSync(out) && statSync(out).size > 0) {
+                      resolve();
+                      return;
+                    }
+                    const tip = err
+                      .split('\n')
+                      .map((l) => l.trim())
+                      .filter((l) => /^ERROR:/i.test(l))
+                      .pop();
+                    reject(new Error(tip || `yt-dlp ${code}`));
+                  });
+                }),
+              { bypassCooldown: true, noteFailure: false },
+            );
+            if (existsSync(out) && statSync(out).size > 0) {
+              downloadFailUntil.delete(videoId);
+              markYoutubeProxySuccess(proxy);
+              return out;
+            }
+          } catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
+            if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
+              sawBot = true;
+            }
+            if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
           }
-        } catch (err) {
-          lastErr = err instanceof Error ? err : new Error(String(err));
-          noteYtDlpFailure(lastErr);
-          if (isYtDlpCoolingDown()) break;
         }
       }
-      if (isYtDlpCoolingDown()) break;
     }
 
     if (existsSync(out) && statSync(out).size > 0) {
       downloadFailUntil.delete(videoId);
       return out;
     }
+    if (sawBot && lastErr) noteYtDlpFailure(lastErr);
     const failMsg = lastErr?.message || 'Audio download KO';
     if (/cooling down|Sign in to confirm|rate-limited|not a bot|LOGIN_REQUIRED/i.test(failMsg)) {
-      const { ytDlpCooldownRemainingMs: rem } = await import('./ytDlpGate.js');
       downloadFailUntil.set(videoId, {
-        until: Date.now() + Math.max(15_000, rem()),
+        until: Date.now() + Math.max(15_000, ytDlpCooldownRemainingMs()),
         msg: failMsg.slice(0, 160),
       });
     } else {

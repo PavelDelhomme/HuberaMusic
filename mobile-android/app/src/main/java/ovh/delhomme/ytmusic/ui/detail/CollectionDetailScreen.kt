@@ -474,14 +474,22 @@ fun CollectionDetailScreen(
                             onShuffle = {
                                 if (tracks.isEmpty()) return@AlbumHeroHeader
                                 recordCollectionPlay()
-                                val shuffled = tracks.shuffled()
-                                player?.play(
-                                    shuffled,
-                                    0,
-                                    title = title,
-                                    sourceId = id,
-                                    sourceKind = "album",
-                                ) ?: onPlay(shuffled, 0)
+                                scope.launch {
+                                    ovh.delhomme.ytmusic.ui.library.playLibraryShuffled(
+                                        container,
+                                        tracks,
+                                        { q, i ->
+                                            player?.play(
+                                                q,
+                                                i,
+                                                title = title,
+                                                sourceId = id,
+                                                sourceKind = "album",
+                                            ) ?: onPlay(q, i)
+                                        },
+                                        sourceKey = "album:$id",
+                                    )
+                                }
                             },
                             onToggleLibrary = {
                                 scope.launch {
@@ -685,13 +693,21 @@ fun CollectionDetailScreen(
                                             onClick = {
                                                 recordCollectionPlay()
                                                 val kindStr = if (kind == DetailKind.Mix) "mix" else "playlist"
-                                                player?.play(
-                                                    tracks,
-                                                    0,
-                                                    title = title,
-                                                    sourceId = id,
-                                                    sourceKind = kindStr,
-                                                ) ?: onPlayNamed(tracks, 0, title)
+                                                scope.launch {
+                                                    ovh.delhomme.ytmusic.ui.library.playQueueWithLead(
+                                                        container,
+                                                        tracks,
+                                                        0,
+                                                    ) { q, i ->
+                                                        player?.play(
+                                                            q,
+                                                            i,
+                                                            title = title,
+                                                            sourceId = id,
+                                                            sourceKind = kindStr,
+                                                        ) ?: onPlayNamed(q, i, title)
+                                                    }
+                                                }
                                             },
                                             modifier = Modifier.fillMaxWidth(),
                                         ) {
@@ -703,14 +719,22 @@ fun CollectionDetailScreen(
                                             onClick = {
                                                 recordCollectionPlay()
                                                 val kindStr = if (kind == DetailKind.Mix) "mix" else "playlist"
-                                                val shuffled = tracks.shuffled()
-                                                player?.play(
-                                                    shuffled,
-                                                    0,
-                                                    title = title,
-                                                    sourceId = id,
-                                                    sourceKind = kindStr,
-                                                ) ?: onPlayNamed(shuffled, 0, title)
+                                                scope.launch {
+                                                    ovh.delhomme.ytmusic.ui.library.playLibraryShuffled(
+                                                        container,
+                                                        tracks,
+                                                        { q, i ->
+                                                            player?.play(
+                                                                q,
+                                                                i,
+                                                                title = title,
+                                                                sourceId = id,
+                                                                sourceKind = kindStr,
+                                                            ) ?: onPlayNamed(q, i, title)
+                                                        },
+                                                        sourceKey = "$kindStr:$id",
+                                                    )
+                                                }
                                             },
                                             modifier = Modifier.fillMaxWidth(),
                                         ) {

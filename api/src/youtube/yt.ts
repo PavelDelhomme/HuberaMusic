@@ -2427,23 +2427,25 @@ async function ytDlpGetUrl(
               .map((l) => l.trim())
               .filter((l) => /^ERROR:/i.test(l))
               .pop();
-            const e = new Error(tip || err.trim() || `yt-dlp -g exit ${code}`);
-            void import('../media/ytDlpGate.js').then((m) => m.noteYtDlpFailure(e)).catch(() => {});
-            reject(e);
+            reject(new Error(tip || err.trim() || `yt-dlp -g exit ${code}`));
           }
         });
       }),
+    { bypassCooldown: true, noteFailure: false },
   );
 }
 
 async function audioFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
+  const { isYtDlpCoolingDown, noteYtDlpFailure } = await import('../media/ytDlpGate.js');
   // Anonyme d’abord — cookies optionnels (jamais Premium requis)
   const cookieSets = ytDlpCookieArgSets();
-  // Direct puis proxies gratuits (bypass 50x / LOGIN_REQUIRED DC) — pas de PC maison
-  const proxies = await youtubeProxyAttempts({ max: 4, includeDirect: true });
+  // Direct puis proxies (bypass bot IP) — cooldown VPS ≠ stop proxies
+  const proxies = await youtubeProxyAttempts({ max: 5, includeDirect: true });
 
   let lastErr: Error | null = null;
+  let sawBot = false;
   for (const proxy of proxies) {
+    if (!proxy && isYtDlpCoolingDown()) continue;
     for (const cookieArgs of cookieSets) {
       for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
         try {
@@ -2473,11 +2475,15 @@ async function audioFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
           };
         } catch (err) {
           lastErr = err instanceof Error ? err : new Error(String(err));
+          if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
+            sawBot = true;
+          }
           if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
         }
       }
     }
   }
+  if (sawBot && lastErr) noteYtDlpFailure(lastErr);
   throw lastErr || new Error('yt-dlp audio URL indisponible');
 }
 

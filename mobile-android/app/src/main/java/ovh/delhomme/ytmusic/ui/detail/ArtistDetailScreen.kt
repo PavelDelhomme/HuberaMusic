@@ -45,6 +45,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -104,6 +106,23 @@ fun ArtistDetailScreen(
     var showFullBio by remember { mutableStateOf(false) }
     val listState = rememberSaveable(artistId, saver = LazyListState.Saver) {
         LazyListState()
+    }
+
+    // Prefetch stream des titres visibles (comme biblio)
+    LaunchedEffect(songs.size, listState) {
+        if (songs.isEmpty()) return@LaunchedEffect
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return@LaunchedEffect
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.mapNotNull { info ->
+                // items après le header : approx index dans songs
+                songs.getOrNull(info.index.coerceAtLeast(0) - 8)?.id
+            }.filter { it.length == 11 }
+        }.distinctUntilChanged().collect { ids ->
+            if (ids.isEmpty()) return@collect
+            if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return@collect
+            ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(base, ids, limit = 8)
+        }
     }
 
     LaunchedEffect(artistId, reloadToken) {
@@ -235,7 +254,16 @@ fun ArtistDetailScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     Button(
-                                        onClick = { onPlay(songs, 0) },
+                                        onClick = {
+                                            scope.launch {
+                                                ovh.delhomme.ytmusic.ui.library.playQueueWithLead(
+                                                    container,
+                                                    songs,
+                                                    0,
+                                                    onPlay,
+                                                )
+                                            }
+                                        },
                                         modifier = Modifier.weight(1f),
                                     ) {
                                         Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
@@ -243,7 +271,16 @@ fun ArtistDetailScreen(
                                         Text("Lecture")
                                     }
                                     OutlinedButton(
-                                        onClick = { onPlay(songs.shuffled(), 0) },
+                                        onClick = {
+                                            scope.launch {
+                                                ovh.delhomme.ytmusic.ui.library.playLibraryShuffled(
+                                                    container,
+                                                    songs,
+                                                    onPlay,
+                                                    sourceKey = "artist:$artistId",
+                                                )
+                                            }
+                                        },
                                         modifier = Modifier.weight(1f),
                                     ) {
                                         Icon(Icons.Default.Shuffle, null, Modifier.size(18.dp))

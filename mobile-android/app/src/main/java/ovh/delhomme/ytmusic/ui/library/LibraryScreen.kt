@@ -129,18 +129,32 @@ fun LibraryScreen(
         }
     }
 
-    // Préchargement léger formats
+    // Préchargement léger formats — skip si lecture active (évite lag Accueil↔Biblio)
     LaunchedEffect(lib?.songs?.size) {
         val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
         if (songs.size < 8) return@LaunchedEffect
         val base = container.resolvedApiBase()
         if (base.isBlank()) return@LaunchedEffect
         delay(900)
+        if (StreamPrefetcher.isStreamDown()) return@LaunchedEffect
+        // Musique en cours : warm très léger seulement (tête Aléatoire en cache)
+        val playing = runCatching {
+            ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.isPlaying == true
+        }.getOrDefault(false)
         withContext(Dispatchers.IO) {
-            val sample = songs.shuffled().take(36).map { it.id }
-            StreamPrefetcher.warmFormatsLight(base, sample, limit = 36)
-            // Quelques têtes légères (~3 s) pour accélérer un prochain Aléatoire / play
-            StreamPrefetcher.warmHeads3s(base, sample.take(8), limit = 8)
+            val sample = songs.shuffled().take(if (playing) 8 else 36).map { it.id }
+            StreamPrefetcher.warmFormatsLight(base, sample, limit = if (playing) 8 else 36)
+            StreamPrefetcher.warmHeads3s(base, sample.take(if (playing) 3 else 8), limit = if (playing) 3 else 8)
+            // Tête Aléatoire biblio pré-calculée pour le prochain tap
+            val head = sample.take(12)
+            ovh.delhomme.ytmusic.data.ShuffleHeadStore.saveHead(
+                ovh.delhomme.ytmusic.YtMusicApp.instance,
+                ovh.delhomme.ytmusic.data.ShuffleHeadStore.keyFor(
+                    "lib:songs",
+                    ovh.delhomme.ytmusic.data.ShuffleHeadStore.fingerprint(songs),
+                ),
+                head,
+            )
         }
     }
 
@@ -424,10 +438,24 @@ fun LibraryScreen(
                                     LibraryPlayBar(
                                         playLabel = content.playLabel,
                                         shuffleLabel = content.shuffleLabel,
-                                        onPlay = { onPlay(content.playableQueue, 0) },
+                                        onPlay = {
+                                            scope.launch {
+                                                playQueueWithLead(
+                                                    container,
+                                                    content.playableQueue,
+                                                    0,
+                                                    onPlay,
+                                                )
+                                            }
+                                        },
                                         onShuffle = {
                                             scope.launch {
-                                                playLibraryShuffled(container, content.playableQueue, onPlay)
+                                                playLibraryShuffled(
+                                                    container,
+                                                    content.playableQueue,
+                                                    onPlay,
+                                                    sourceKey = "lib:${selected.name}",
+                                                )
                                             }
                                         },
                                     )
