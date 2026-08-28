@@ -31,7 +31,7 @@ ENV NODE_ENV=production \
     APP_VERSION=$APP_VERSION
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      python3 make g++ ca-certificates curl \
+      python3 make g++ ca-certificates curl ffmpeg \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd -r ytmusic && useradd -r -g ytmusic -m ytmusic
 
