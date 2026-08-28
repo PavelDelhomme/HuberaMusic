@@ -1228,17 +1228,21 @@ private fun MainTabs(
             if (showBottomChrome) {
                 Column(Modifier.navigationBarsPadding()) {
                     playerUi.track?.let { track ->
+                        val effectiveDuration = playerUi.durationMs.takeIf { it > 0L }
+                            ?: track.durationMsOrNull()
+                            ?: 0L
+                        val progressRatio = if (effectiveDuration > 0) {
+                            (playerUi.positionMs.toFloat() / effectiveDuration).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        }
                         MiniPlayerBar(
                             track = track,
                             playing = playerUi.playing,
-                            progress = if (playerUi.durationMs > 0) {
-                                (playerUi.positionMs.toFloat() / playerUi.durationMs).coerceIn(0f, 1f)
-                            } else {
-                                0f
-                            },
-                            durationMs = playerUi.durationMs,
-                            bufferedProgress = if (playerUi.durationMs > 0) {
-                                (playerUi.bufferedMs.toFloat() / playerUi.durationMs).coerceIn(0f, 1f)
+                            progress = progressRatio,
+                            durationMs = effectiveDuration,
+                            bufferedProgress = if (effectiveDuration > 0) {
+                                (playerUi.bufferedMs.toFloat() / effectiveDuration).coerceIn(0f, 1f)
                             } else {
                                 0f
                             },

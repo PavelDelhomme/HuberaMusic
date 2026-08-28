@@ -413,7 +413,7 @@ class PlayerController(
         connect()
         val p = player() ?: PlaybackService.Holder.player
         if (p == null) {
-            // Cold start : file UI restaurée sans PlaybackService → play utilisateur doit démarrer Exo
+            _state.value = _state.value.copy(playing = true)
             startPlaybackFromUiState()
             return
         }
@@ -940,6 +940,8 @@ class PlayerController(
             // Restauration silencieuse (sync multi-appareils) : pas de MediaSession.
             // On garde quand même Holder.queue pour qu’un play utilisateur puisse démarrer Exo.
             val idx = startIndex.coerceIn(0, tracks.lastIndex)
+            val curTrack = tracks.getOrNull(idx)
+            val metaDur = curTrack?.durationMsOrNull()?.coerceAtLeast(0L) ?: 0L
             pending = tracks to idx
             pendingSeekMs = positionMs
             pendingAutoplay = false
@@ -950,12 +952,19 @@ class PlayerController(
                 queue = tracks,
                 queueIndex = idx,
                 positionMs = positionMs.coerceAtLeast(0L),
-                track = tracks.getOrNull(idx),
+                track = curTrack,
                 playing = false,
+                durationMs = metaDur,
                 queueTitle = queueTitle,
                 userQueueEnd = this.userQueueEnd,
                 queueSize = tracks.size,
             )
+            curTrack?.id?.takeIf { it.length == 11 }?.let { id ->
+                val base = streamUrl("_").substringBefore("/api/stream/")
+                scope.launch(Dispatchers.IO) {
+                    StreamPrefetcher.warmTrackFormatOnly(base, id)
+                }
+            }
             return
         }
         ensureServiceAndConnect()

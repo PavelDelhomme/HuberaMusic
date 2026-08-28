@@ -55,9 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.runtime.produceState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -107,16 +105,13 @@ fun LibraryScreen(
     var downloadsEnriching by remember { mutableStateOf(false) }
     var homeMixes by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
 
-    val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(lifecycleOwner) {
-        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            LibraryFilter.pendingSelect?.let { pending ->
-                selected = pending
-                LibraryFilter.pendingSelect = null
-            }
-            repo.ensureLoaded(force = false)
-            error = null
+    LaunchedEffect(Unit) {
+        LibraryFilter.pendingSelect?.let { pending ->
+            selected = pending
+            LibraryFilter.pendingSelect = null
         }
+        repo.ensureLoaded(force = false)
+        error = null
     }
 
     val libraryEpoch by container.libraryEpoch.collectAsState()
@@ -130,31 +125,33 @@ fun LibraryScreen(
         }
     }
 
-    // Préchargement léger formats — skip si lecture active (évite lag Accueil↔Biblio)
+    // Préchargement formats — uniquement hors lecture (Accueil↔Biblio doit rester instantané)
     LaunchedEffect(lib?.songs?.size) {
         val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
         if (songs.size < 8) return@LaunchedEffect
-        val base = container.resolvedApiBase()
-        if (base.isBlank()) return@LaunchedEffect
-        delay(900)
-        if (StreamPrefetcher.isStreamDown()) return@LaunchedEffect
-        // Musique en cours : warm très léger seulement (tête Aléatoire en cache)
         val playing = runCatching {
             ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.isPlaying == true
         }.getOrDefault(false)
+        if (playing) return@LaunchedEffect
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return@LaunchedEffect
+        delay(2_500)
+        if (StreamPrefetcher.isStreamDown()) return@LaunchedEffect
+        if (runCatching {
+                ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.isPlaying == true
+            }.getOrDefault(false)
+        ) return@LaunchedEffect
         withContext(Dispatchers.IO) {
-            val sample = songs.shuffled().take(if (playing) 8 else 36).map { it.id }
-            StreamPrefetcher.warmFormatsLight(base, sample, limit = if (playing) 8 else 36)
-            StreamPrefetcher.warmHeads3s(base, sample.take(if (playing) 3 else 8), limit = if (playing) 3 else 8)
-            // Tête Aléatoire biblio pré-calculée pour le prochain tap
-            val head = sample.take(12)
+            val sample = songs.shuffled().take(24).map { it.id }
+            StreamPrefetcher.warmFormatsLight(base, sample, limit = 24)
+            StreamPrefetcher.warmHeads3s(base, sample.take(6), limit = 6)
             ovh.delhomme.ytmusic.data.ShuffleHeadStore.saveHead(
                 ovh.delhomme.ytmusic.YtMusicApp.instance,
                 ovh.delhomme.ytmusic.data.ShuffleHeadStore.keyFor(
                     "lib:songs",
                     ovh.delhomme.ytmusic.data.ShuffleHeadStore.fingerprint(songs),
                 ),
-                head,
+                sample.take(12),
             )
         }
     }
@@ -162,20 +159,24 @@ fun LibraryScreen(
     // Sync live des DL locaux → liste / filtre Téléchargés sans pull-to-refresh
     LaunchedEffect(offlineRev) {
         val local = container.offlineStore.listTracks()
-        downloadMeta = downloadMeta + local.associateBy { it.id }
-        val ids = local.map { it.id }
+        val localMap = local.associateBy { it.id }
+        val localIds = localMap.keys
+        downloadMeta = downloadMeta.filterKeys { it in localIds } + localMap
         val cur = lib
-        if (cur != null) {
-            repo.patchFromServer(cur.copy(downloaded = (cur.downloaded + ids).distinct()))
-        } else if (ids.isNotEmpty()) {
-            repo.patchFromServer(
-                LibraryResponse(
-                    downloaded = ids,
-                    songs = local,
-                    liked = local,
-                ),
+        when {
+            cur != null -> repo.patchFromServer(
+                cur.copy(downloaded = (cur.downloaded.filter { it in localIds } + localIds).distinct()),
             )
-            error = null
+            localIds.isNotEmpty() -> {
+                repo.patchFromServer(
+                    LibraryResponse(
+                        downloaded = localIds.toList(),
+                        songs = local,
+                        liked = local,
+                    ),
+                )
+                error = null
+            }
         }
     }
 
@@ -192,21 +193,6 @@ fun LibraryScreen(
                 )
             }
         }.onSuccess { homeMixes = it }
-    }
-
-    // OfflineStore revision → refresh immédiat du filtre Téléchargés (sans attendre l’API)
-    LaunchedEffect(offlineRev) {
-        if (offlineRev <= 0L) return@LaunchedEffect
-        val localTracks = container.offlineStore.listTracks()
-        val localMap = localTracks.associateBy { t -> t.id }
-        val localIds = localMap.keys
-        downloadMeta = downloadMeta.filterKeys { it in localIds } + localMap
-        val cur = lib
-        if (cur != null) {
-            repo.patchFromServer(
-                cur.copy(downloaded = (cur.downloaded.filter { it in localIds } + localIds).distinct()),
-            )
-        }
     }
 
     // Enrichit les téléchargements dont on n’a que l’id (sans vider la liste) — online only
@@ -376,8 +362,17 @@ fun LibraryScreen(
 
                 val monMixIds = remember(offlineRev) { container.offlineKeeper.monMixIds() }
                 val sorted = repo.sorted
-                val content = remember(sorted, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching, monMixIds) {
-                    buildLibraryContent(data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds, sorted)
+                val content by produceState(
+                    initialValue = buildLibraryContent(
+                        data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds, sorted,
+                    ),
+                    sorted, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching, monMixIds, data,
+                ) {
+                    value = withContext(Dispatchers.Default) {
+                        buildLibraryContent(
+                            data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds, sorted,
+                        )
+                    }
                 }
                 val listState = rememberLazyListState()
                 LaunchedEffect(selected, content.playableQueue) {
@@ -386,6 +381,10 @@ fun LibraryScreen(
                     }
                         .distinctUntilChanged()
                         .collect { (first, visible) ->
+                        if (runCatching {
+                                ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.isPlaying == true
+                            }.getOrDefault(false)
+                        ) return@collect
                         val start = (first - 2).coerceAtLeast(0)
                         val end = (first + visible + 12).coerceAtMost(content.playableQueue.size)
                         if (start >= end) return@collect
