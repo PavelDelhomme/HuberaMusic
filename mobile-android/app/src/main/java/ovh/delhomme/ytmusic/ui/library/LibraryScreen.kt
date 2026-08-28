@@ -64,6 +64,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ArtistRef
+import ovh.delhomme.ytmusic.data.LibraryRepository
 import ovh.delhomme.ytmusic.data.LibraryResponse
 import ovh.delhomme.ytmusic.data.OfflineKeeper
 import ovh.delhomme.ytmusic.data.PlaylistDto
@@ -93,123 +94,17 @@ fun LibraryScreen(
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
     val pinIds = remember(pins) { pins.map { it.id }.toHashSet() }
 
-    var lib by remember { mutableStateOf<LibraryResponse?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var refreshing by remember { mutableStateOf(false) }
+    val repo = container.libraryRepo
+    val lib by repo.library.collectAsState()
+    val refreshing by repo.refreshing.collectAsState()
+    val loading = lib == null
     var error by remember { mutableStateOf<String?>(null) }
     var showHistory by remember { mutableStateOf(false) }
     var userPicture by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf(LibraryFilter.defaultSelected) }
-    var lastFetchAt by remember { mutableStateOf(0L) }
     var downloadMeta by remember { mutableStateOf<Map<String, TrackDto>>(emptyMap()) }
     var downloadsEnriching by remember { mutableStateOf(false) }
     var homeMixes by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
-
-    suspend fun reloadLibrary(force: Boolean = false, showSpinner: Boolean = false) {
-        val now = System.currentTimeMillis()
-        if (!force && now - lastFetchAt < 45_000L && lib != null) return
-        val localTracks = container.offlineStore.listTracks()
-        // Seed disque immédiat — pas de spinner si on a déjà des titres locaux
-        if (lib == null && localTracks.isNotEmpty()) {
-            downloadMeta = downloadMeta + localTracks.associateBy { t -> t.id }
-            lib = LibraryResponse(
-                downloaded = localTracks.map { t -> t.id },
-                songs = localTracks,
-                liked = localTracks,
-                history = localTracks.take(40),
-            )
-            loading = false
-        }
-        if (showSpinner && lib == null) loading = true
-        if (force && lib != null) refreshing = true
-        // Phase 1 : 12 premiers titres (réponse légère) → UI immédiate
-        if (lib == null || force) {
-            runCatching {
-                container.ensureFreshToken()
-                container.api.library(light = 1, limit = 12)
-            }.onSuccess {
-                val mergedIds = (it.downloaded + localTracks.map { t -> t.id }).distinct()
-                lib = it.copy(downloaded = mergedIds)
-                loading = false
-                error = null
-                if (localTracks.isNotEmpty()) {
-                    downloadMeta = downloadMeta + localTracks.associateBy { t -> t.id }
-                }
-            }
-        }
-        runCatching {
-            container.ensureFreshToken()
-            container.api.library()
-        }.onSuccess {
-            // Fusionne les IDs DL locaux dans downloaded serveur
-            val mergedIds = (it.downloaded + localTracks.map { t -> t.id }).distinct()
-            lib = it.copy(downloaded = mergedIds)
-            lastFetchAt = System.currentTimeMillis()
-            error = null
-            loading = false
-            refreshing = false
-            if (localTracks.isNotEmpty()) {
-                downloadMeta = downloadMeta + localTracks.associateBy { t -> t.id }
-            }
-        }.onFailure {
-            if (localTracks.isNotEmpty()) {
-                // Mode hors-ligne : biblio = fichiers locaux (titres / albums / artistes dérivés)
-                val albums = localTracks
-                    .mapNotNull { t ->
-                        val a = t.album ?: return@mapNotNull null
-                        val name = a.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                        TrackDto(
-                            id = a.id?.takeIf { it.isNotBlank() } ?: "album:${name.lowercase()}",
-                            title = name,
-                            artists = t.artists,
-                            thumbnails = t.thumbnails,
-                            type = "album",
-                        )
-                    }
-                    .distinctBy { it.id }
-                val artists = localTracks
-                    .flatMap { t -> t.artists.orEmpty().map { ar -> ar to t } }
-                    .map { (ar, t) ->
-                        TrackDto(
-                            id = ar.id?.takeIf { it.isNotBlank() } ?: "artist:${ar.name.lowercase()}",
-                            title = ar.name,
-                            artists = listOf(ar),
-                            thumbnails = t.thumbnails,
-                            type = "artist",
-                        )
-                    }
-                    .distinctBy { it.id }
-                lib = LibraryResponse(
-                    downloaded = localTracks.map { t -> t.id },
-                    songs = localTracks,
-                    liked = localTracks,
-                    history = localTracks.take(40),
-                    albums = albums,
-                    artists = artists,
-                )
-                downloadMeta = localTracks.associateBy { t -> t.id }
-                if (selected !in setOf(
-                        LibraryFilter.Downloads,
-                        LibraryFilter.Tracks,
-                        LibraryFilter.Liked,
-                        LibraryFilter.Albums,
-                        LibraryFilter.Artists,
-                        LibraryFilter.Mixes,
-                    )
-                ) {
-                    selected = LibraryFilter.Downloads
-                }
-                error = null
-            } else if (lib == null) {
-                error = it.message
-            }
-            loading = false
-            refreshing = false
-        }
-        if (userPicture == null) {
-            userPicture = runCatching { container.api.me().user?.picture }.getOrNull()
-        }
-    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner) {
@@ -218,16 +113,23 @@ fun LibraryScreen(
                 selected = pending
                 LibraryFilter.pendingSelect = null
             }
-            reloadLibrary(force = false, showSpinner = true)
+            repo.ensureLoaded(force = false)
+            error = null
         }
     }
 
     val libraryEpoch by container.libraryEpoch.collectAsState()
     LaunchedEffect(libraryEpoch) {
-        if (libraryEpoch > 0L) reloadLibrary(force = true)
+        if (libraryEpoch > 0L) repo.ensureLoaded(force = true)
     }
 
-    // Préchargement léger formats (pas de têtes audio) — accélère Aléatoire / 1er play biblio
+    LaunchedEffect(Unit) {
+        if (userPicture == null) {
+            userPicture = runCatching { container.api.me().user?.picture }.getOrNull()
+        }
+    }
+
+    // Préchargement léger formats
     LaunchedEffect(lib?.songs?.size) {
         val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
         if (songs.size < 8) return@LaunchedEffect
@@ -249,11 +151,16 @@ fun LibraryScreen(
         val ids = local.map { it.id }
         val cur = lib
         if (cur != null) {
-            lib = cur.copy(downloaded = (cur.downloaded + ids).distinct())
+            repo.patchFromServer(cur.copy(downloaded = (cur.downloaded + ids).distinct()))
         } else if (ids.isNotEmpty()) {
-            lib = LibraryResponse(downloaded = ids)
+            repo.patchFromServer(
+                LibraryResponse(
+                    downloaded = ids,
+                    songs = local,
+                    liked = local,
+                ),
+            )
             error = null
-            loading = false
         }
     }
 
@@ -281,7 +188,9 @@ fun LibraryScreen(
         downloadMeta = downloadMeta.filterKeys { it in localIds } + localMap
         val cur = lib
         if (cur != null) {
-            lib = cur.copy(downloaded = (cur.downloaded.filter { it in localIds } + localIds).distinct())
+            repo.patchFromServer(
+                cur.copy(downloaded = (cur.downloaded.filter { it in localIds } + localIds).distinct()),
+            )
         }
     }
 
@@ -368,7 +277,7 @@ fun LibraryScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(16.dp))
-                    Button(onClick = { scope.launch { reloadLibrary(force = true, showSpinner = true) } }) {
+                    Button(onClick = { scope.launch { repo.refresh(force = true) } }) {
                         Text("Réessayer")
                     }
                     TextButton(onClick = onOpenAccount) {
@@ -379,7 +288,7 @@ fun LibraryScreen(
             else -> {
                 PullToRefreshBox(
                     isRefreshing = refreshing,
-                    onRefresh = { scope.launch { reloadLibrary(force = true) } },
+                    onRefresh = { scope.launch { repo.refresh(force = true) } },
                     modifier = Modifier.fillMaxSize(),
                 ) {
                 val data = lib ?: LibraryResponse()
@@ -451,8 +360,9 @@ fun LibraryScreen(
                 }
 
                 val monMixIds = remember(offlineRev) { container.offlineKeeper.monMixIds() }
-                val content = remember(data, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching, monMixIds) {
-                    buildLibraryContent(data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds)
+                val sorted = repo.sorted
+                val content = remember(sorted, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching, monMixIds) {
+                    buildLibraryContent(data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds, sorted)
                 }
                 val listState = rememberLazyListState()
                 LaunchedEffect(selected, content.playableQueue) {
@@ -516,35 +426,8 @@ fun LibraryScreen(
                                         shuffleLabel = content.shuffleLabel,
                                         onPlay = { onPlay(content.playableQueue, 0) },
                                         onShuffle = {
-                                            val queue = content.playableQueue
                                             scope.launch {
-                                                val shuffled = withContext(Dispatchers.Default) {
-                                                    queue.shuffled()
-                                                }
-                                                val base = container.resolvedApiBase()
-                                                val firstId = shuffled.firstOrNull()?.id
-                                                if (!firstId.isNullOrBlank() && base.isNotBlank()) {
-                                                    withContext(Dispatchers.IO) {
-                                                        StreamPrefetcher.warmCurrentBlocking(
-                                                            base,
-                                                            firstId,
-                                                            timeoutMs = 1_100L,
-                                                            wait = true,
-                                                        )
-                                                        // Tête audio en cache avant Exo → démarrage quasi immédiat
-                                                        StreamPrefetcher.prefetchStartHead(base, firstId)
-                                                    }
-                                                }
-                                                onPlay(shuffled, 0)
-                                                if (base.isNotBlank()) {
-                                                    launch(Dispatchers.IO) {
-                                                        StreamPrefetcher.warmFormatsLight(
-                                                            base,
-                                                            shuffled.drop(1).take(8).map { it.id },
-                                                            limit = 8,
-                                                        )
-                                                    }
-                                                }
+                                                playLibraryShuffled(container, content.playableQueue, onPlay)
                                             }
                                         },
                                     )
@@ -682,6 +565,7 @@ private fun buildLibraryContent(
     downloadsEnriching: Boolean = false,
     homeMixes: List<TrackDto> = emptyList(),
     monMixIds: List<String> = emptyList(),
+    sorted: LibraryRepository.SortedLibrary? = null,
 ): LibraryContent {
     fun az(tracks: List<TrackDto>) = tracks.sortedBy { it.title.lowercase() }
 
@@ -712,15 +596,17 @@ private fun buildLibraryContent(
 
     return when (filter) {
         LibraryFilter.Additions -> {
-            val libSongs = data.songs.ifEmpty { data.liked }
-            val recent = buildList {
-                addAll(libSongs.take(40))
-                addAll(data.albums.take(20).map { it.copy(type = it.type ?: "album") })
-                addAll(data.mixes.take(10).map { it.copy(type = "mix") })
-                addAll(data.playlists.take(20).map { playlistAsTrack(it) })
-                addAll(data.likedPlaylists.take(10).map { likedPlaylistAsTrack(it) })
-            }.distinctBy { it.id }
-            val playable = recent.filter { it.isPlayable() }
+            val recent = sorted?.additions ?: run {
+                val libSongs = data.songs.ifEmpty { data.liked }
+                buildList {
+                    addAll(libSongs.take(40))
+                    addAll(data.albums.take(20).map { it.copy(type = it.type ?: "album") })
+                    addAll(data.mixes.take(10).map { it.copy(type = "mix") })
+                    addAll(data.playlists.take(20).map { playlistAsTrack(it) })
+                    addAll(data.likedPlaylists.take(10).map { likedPlaylistAsTrack(it) })
+                }.distinctBy { it.id }
+            }
+            val playable = sorted?.additionsPlayable ?: recent.filter { it.isPlayable() }
             LibraryContent(
                 headline = "Enregistré récemment",
                 rows = recent,
@@ -733,13 +619,13 @@ private fun buildLibraryContent(
         }
         LibraryFilter.Tracks -> {
             val offlineOnly = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
-            val base = if (offlineOnly) {
-                downloadMeta.values.filter { it.isPlayable() }
+            val tracks = if (offlineOnly) {
+                az(downloadMeta.values.filter { it.isPlayable() }.distinctBy { it.id })
             } else {
-                (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }
+                sorted?.tracks ?: az(
+                    (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }.distinctBy { it.id },
+                )
             }
-            // Aimés / biblio toujours visibles s’ils sont DL
-            val tracks = az(base.distinctBy { it.id })
             val totalSec = tracks.sumOf { (it.durationSeconds ?: 0).coerceAtLeast(0).toLong() }
             val hoursLabel = when {
                 totalSec <= 0L -> null
@@ -774,14 +660,15 @@ private fun buildLibraryContent(
         LibraryFilter.Liked -> {
             val offlineOnly = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
             val likedIds = data.liked.map { it.id }.toHashSet()
-            val tracks = az(
-                if (offlineOnly) {
+            val tracks = if (offlineOnly) {
+                az(
                     downloadMeta.values.filter { it.isPlayable() && (it.id in likedIds || likedIds.isEmpty()) }
                         .ifEmpty { downloadMeta.values.filter { it.isPlayable() } }
-                } else {
-                    data.liked.filter { it.isPlayable() }
-                },
-            )
+                        .distinctBy { it.id },
+                )
+            } else {
+                sorted?.liked ?: az(data.liked.filter { it.isPlayable() }.distinctBy { it.id })
+            }
             LibraryContent(
                 headline = if (offlineOnly) "J'aime · hors ligne" else "J'aime · A–Z",
                 rows = tracks,
@@ -793,7 +680,7 @@ private fun buildLibraryContent(
             )
         }
         LibraryFilter.Playlists -> {
-            val rows = buildList {
+            val rows = sorted?.playlists ?: buildList {
                 addAll(data.playlists.map { playlistAsTrack(it) })
                 addAll(data.likedPlaylists.map { likedPlaylistAsTrack(it) })
             }.distinctBy { playlistKey(it.id) }.sortedBy { it.title.lowercase() }
@@ -876,10 +763,10 @@ private fun buildLibraryContent(
                     )
                 }
                 .distinctBy { it.id }
-            val rows = az(
-                if (offlineOnly || data.albums.isEmpty()) fromDl
-                else data.albums.map { it.copy(type = it.type ?: "album") },
-            )
+            val rows = if (offlineOnly || data.albums.isEmpty()) az(fromDl) else {
+                sorted?.albums?.map { it.copy(type = it.type ?: "album") }
+                    ?: az(data.albums.map { it.copy(type = it.type ?: "album") })
+            }
             LibraryContent(
                 headline = if (offlineOnly) "Albums hors ligne · A–Z" else "Albums · A–Z",
                 rows = rows,
@@ -910,10 +797,10 @@ private fun buildLibraryContent(
                     )
                 }
                 .distinctBy { it.id }
-            val rows = az(
-                if (offlineOnly || data.artists.isEmpty()) fromDl
-                else data.artists.map { it.copy(type = it.type ?: "artist") },
-            )
+            val rows = if (offlineOnly || data.artists.isEmpty()) az(fromDl) else {
+                sorted?.artists?.map { it.copy(type = it.type ?: "artist") }
+                    ?: az(data.artists.map { it.copy(type = it.type ?: "artist") })
+            }
             LibraryContent(
                 headline = if (offlineOnly) "Artistes hors ligne · A–Z" else "Artistes · A–Z",
                 rows = rows,

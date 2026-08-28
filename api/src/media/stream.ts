@@ -1133,33 +1133,37 @@ export async function downloadTrack(videoId: string): Promise<string> {
       for (const cookieArgs of cookieSets) {
         for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
           try {
-            await new Promise<void>((resolve, reject) => {
-              const proc = spawn(
-                YTDLP,
-                [
-                  '-f',
-                  format,
-                  '-x',
-                  '--audio-format',
-                  'm4a',
-                  '--audio-quality',
-                  '0',
-                  '-o',
-                  out,
-                  '--no-playlist',
-                  '--quiet',
-                  '--no-warnings',
-                  ...ytDlpRuntimeArgs(),
-                  ...cookieArgs,
-                  `https://www.youtube.com/watch?v=${videoId}`,
-                ],
-                { stdio: 'inherit' },
-              );
-              proc.on('close', (code) =>
-                code === 0 ? resolve() : reject(new Error(`yt-dlp ${code}`)),
-              );
-              proc.on('error', reject);
-            });
+            const { withYtDlpSlot } = await import('./ytDlpGate.js');
+            await withYtDlpSlot(
+              () =>
+                new Promise<void>((resolve, reject) => {
+                  const proc = spawn(
+                    YTDLP,
+                    [
+                      '-f',
+                      format,
+                      '-x',
+                      '--audio-format',
+                      'm4a',
+                      '--audio-quality',
+                      '0',
+                      '-o',
+                      out,
+                      '--no-playlist',
+                      '--quiet',
+                      '--no-warnings',
+                      ...ytDlpRuntimeArgs(),
+                      ...cookieArgs,
+                      `https://www.youtube.com/watch?v=${videoId}`,
+                    ],
+                    { stdio: 'inherit' },
+                  );
+                  proc.on('close', (code) =>
+                    code === 0 ? resolve() : reject(new Error(`yt-dlp ${code}`)),
+                  );
+                  proc.on('error', reject);
+                }),
+            );
             if (existsSync(out) && statSync(out).size > 0) return out;
           } catch (err) {
             lastErr = err instanceof Error ? err : new Error(String(err));

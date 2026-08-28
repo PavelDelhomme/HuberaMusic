@@ -33,6 +33,8 @@ class AppContainer(context: Context) {
     val quickAccess = QuickAccessStore(appContext)
     val homeCache = HomeCacheStore(appContext)
     val mixCache = MixCacheStore(appContext)
+    val libraryCache = LibraryCacheStore(appContext)
+    val libraryRepo by lazy { LibraryRepository(this, libraryCache) }
     /** Invalide le cache LibraryScreen (45s) après add/remove biblio. */
     val libraryEpoch = MutableStateFlow(0L)
     fun bumpLibraryEpoch() {
@@ -43,8 +45,16 @@ class AppContainer(context: Context) {
     }
     val offlineStore by lazy { LocalOfflineStore(appContext, moshi) }
     val localPlayback by lazy { LocalPlaybackStore(appContext, moshi) }
-    /** Scope application — downloads / mutations biblio survivent aux sheets Compose. */
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /**
+     * Scope application — downloads / mutations biblio.
+     * IO + handler : jamais Main (évite fatal SocketTimeout dans authInterceptor),
+     * et exceptions offline → log non-fatal au lieu de tuer le process.
+     */
+    private val appScope = CoroutineScope(
+        SupervisorJob() +
+            Dispatchers.IO +
+            ovh.delhomme.ytmusic.debug.CrashReporter.coroutineHandler("AppContainer"),
+    )
     fun appScope(): CoroutineScope = appScope
     val downloadManager by lazy {
         OfflineDownloadManager(

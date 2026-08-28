@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Retest complet Nothing PROD : erreurs déjà vues (null, skip milieu, réseau).
 
-ADB Wi‑Fi : les coupures Wi‑Fi sont auto-restaurées côté téléphone, puis reconnect.
 Volume forcé à 0. Pause en fin. Ne lance pas le Samsung.
 
+IMPORTANT — hors-ligne / blip Wi‑Fi :
+  Interdit en ADB Wi‑Fi (ça tue le débogage sans fil).
+  Uniquement si câble USB + ALLOW_WIFI_BLIP=1.
+
 Usage:
-  DEVICE=192.168.1.44:40967 python3 -u scripts/android/nothing-full-retest.py
+  DEVICE=192.168.1.44:42759 python3 -u scripts/android/nothing-full-retest.py
+  DEVICE=00145153K001434 ALLOW_WIFI_BLIP=1 python3 -u scripts/android/nothing-full-retest.py
 """
 from __future__ import annotations
 
@@ -272,9 +276,27 @@ def start_play() -> dict:
     return m
 
 
+def is_usb_transport() -> bool:
+    """True si SERIAL est un transport USB (pas ip:port)."""
+    return ":" not in SERIAL
+
+
 def wifi_blip(off_s: int = 16) -> bool:
-    """Coupe le Wi‑Fi côté device (4G), le rallume, reconnecte ADB."""
-    log(f"  wifi blip {off_s}s (4G puis restore)")
+    """Coupe le Wi‑Fi côté device (4G), le rallume, reconnecte ADB.
+
+    DANGER ADB Wi‑Fi : désactiver le Wi‑Fi tue le débogage sans fil et
+    souvent le service « Débogage USB / sans fil ». Interdit hors USB.
+    Activer seulement avec ALLOW_WIFI_BLIP=1 **et** câble USB.
+    """
+    allow = os.environ.get("ALLOW_WIFI_BLIP", "0") == "1"
+    if not allow or not is_usb_transport():
+        log(
+            "  wifi blip SKIPPED "
+            f"(ALLOW_WIFI_BLIP={os.environ.get('ALLOW_WIFI_BLIP', '0')} "
+            f"usb={is_usb_transport()} serial={SERIAL}) — ne jamais couper Wi‑Fi en ADB sans fil"
+        )
+        return False
+    log(f"  wifi blip {off_s}s (4G puis restore) — USB only")
     sh(
         "shell",
         f"nohup sh -c 'svc data enable; svc wifi disable; sleep {off_s}; svc wifi enable; svc data enable' >/dev/null 2>&1 &",
@@ -375,32 +397,44 @@ def main() -> int:
         bad = [t for t in texts_of(xml) if re.search(r"(?i)^null$|erreur\s*null", t)]
         check(f"tab:{tab}:no-null", len(bad) == 0, f"bad={bad} sample={texts_of(xml)[:8]}")
 
-    # réseau : 1 blip Wi‑Fi→4G→Wi‑Fi pendant lecture (restore auto)
+    # réseau hors-ligne : UNIQUEMENT si USB + ALLOW_WIFI_BLIP=1
+    # (sinon on skip — ne jamais casser le débogage sans fil Nothing)
     dispatch("play")
     time.sleep(2)
     held = media()
-    blip_ok = wifi_blip(16)
-    check("adb:reconnect-after-4g", blip_ok, f"serial={SERIAL}")
-    mute()
-    if blip_ok:
-        back = media()
-        if back["state"] in ("PAUSED", "STOPPED"):
-            dispatch("play")
-            time.sleep(2)
-            back = media()
-        same = back["title"] in (held["title"], "?") or held["title"] == "?"
-        check(
-            "net:same-track-after-4g",
-            same and back["raw_title"].lower() != "null",
-            f"held={held['title'][:28]} back={back['title'][:28]} {back['state']}",
-        )
-        dispatch("next")
-        time.sleep(2.5)
+    if os.environ.get("ALLOW_WIFI_BLIP", "0") == "1" and is_usb_transport():
+        blip_ok = wifi_blip(16)
+        check("adb:reconnect-after-4g", blip_ok, f"serial={SERIAL}")
         mute()
-        nxt = media()
-        check("net:skip-after-restore", nxt["title"] != "?" and nxt["raw_title"].lower() != "null", nxt["title"][:40])
+        if blip_ok:
+            back = media()
+            if back["state"] in ("PAUSED", "STOPPED"):
+                dispatch("play")
+                time.sleep(2)
+                back = media()
+            same = back["title"] in (held["title"], "?") or held["title"] == "?"
+            check(
+                "net:same-track-after-4g",
+                same and back["raw_title"].lower() != "null",
+                f"held={held['title'][:28]} back={back['title'][:28]} {back['state']}",
+            )
+            dispatch("next")
+            time.sleep(2.5)
+            mute()
+            nxt = media()
+            check(
+                "net:skip-after-restore",
+                nxt["title"] != "?" and nxt["raw_title"].lower() != "null",
+                nxt["title"][:40],
+            )
+        else:
+            check("net:same-track-after-4g", False, "ADB perdu après blip Wi‑Fi")
     else:
-        check("net:same-track-after-4g", False, "ADB perdu après blip Wi‑Fi")
+        check(
+            "net:wifi-blip-skipped",
+            True,
+            "hors-ligne reporté — nécessite USB + ALLOW_WIFI_BLIP=1 (évite kill débogage)",
+        )
 
     # logs
     raw = app_log_today()

@@ -1,7 +1,18 @@
 # =============================================================================
 # PLM — Production (Portainer / VPS)
 # Conteneur unique : API + frontend web (PWA) + WebSocket
+# Template Portainer aligné : deploy/portainer-template.yml
 # =============================================================================
+#
+# === Nginx Proxy Manager ===
+#   Domain           : ytmusic.delhomme.ovh
+#   Forward Hostname : ytmusic · Port 8787 · Websockets ON
+#
+# === Mise à jour ===
+#   git push origin prod → GHCR :latest → redeploy (SSH / Portainer / Watchtower)
+#   NE PAS cocher Remove volumes
+
+version: "3.8"
 
 services:
   ytmusic:
@@ -11,20 +22,27 @@ services:
       dockerfile: Dockerfile
     container_name: ytmusic
     restart: unless-stopped
+    # Garde-fous VPS (storm yt-dlp / warm parallèle)
+    mem_limit: 3g
+    cpus: 2.0
     environment:
       NODE_ENV: production
       PORT: "8787"
       APP_ENV: ${APP_ENV:-production}
       APP_URL: ${APP_URL:-https://ytmusic.delhomme.ovh}
-      JWT_SECRET: ${JWT_SECRET:?Définis JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-14d}
       AUTH_COOKIE_MS: ${AUTH_COOKIE_MS:-34560000000}
-      COOKIE_SECURE: ${COOKIE_SECURE:-1}
+      COOKIE_SECURE: "1"
       AUTH_PRIVATE: ${AUTH_PRIVATE:-1}
       AUTH_ALLOW_REGISTER: ${AUTH_ALLOW_REGISTER:-0}
       AUTH_ALLOW_GUEST: ${AUTH_ALLOW_GUEST:-0}
       AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS:-}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:?set ADMIN_EMAILS}
+      SEED_EMAIL: ${SEED_EMAIL:-}
+      SEED_PASSWORD: ${SEED_PASSWORD:-}
+      AUTH_SEED_SYNC: ${AUTH_SEED_SYNC:-1}
+      YOUTUBE_COOKIES: ${YOUTUBE_COOKIES:-}
       APK_DOWNLOAD_TOKEN: ${APK_DOWNLOAD_TOKEN:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-ytmusic.delhomme.ovh}
@@ -32,17 +50,17 @@ services:
       WEBAUTHN_ANDROID_ORIGINS: ${WEBAUTHN_ANDROID_ORIGINS:-android:apk-key-hash:PPbFMh2hUX55lAyeJVFKY5ssRJ4-_333R2h2y_b0wR8}
       ANDROID_SHA256_FINGERPRINTS: ${ANDROID_SHA256_FINGERPRINTS:-3C:F6:C5:32:1D:A1:51:7E:79:94:0C:9E:25:51:4A:63:9B:2C:44:9E:3E:FF:7D:F7:47:68:76:CB:F6:F4:C1:1F}
       ANDROID_PACKAGE_NAMES: ${ANDROID_PACKAGE_NAMES:-ovh.delhomme.ytmusic,ovh.delhomme.ytmusic.dev}
-      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_HOST: ${SMTP_HOST:-ssl0.ovh.net}
       SMTP_PORT: ${SMTP_PORT:-465}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
       SMTP_SECURE: ${SMTP_SECURE:-1}
       SMTP_USE_SSL: ${SMTP_USE_SSL:-1}
-      # Stream : laisser vides en prod VPS-only (OAuth TV + OAuth user sur volume).
-      # Opt-in relais maison : ALLOW_STREAM_UPSTREAM=1 + link-home-stream.sh
-      # FALLBACK=1 → si le PC coupe, le VPS reprend (évite lecture morte après update).
+      SMTP_USER: ${SMTP_USER:-noreply@maily.ovh}
+      SMTP_PASS: ${SMTP_PASS:?set SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM:-YTMusic <noreply@maily.ovh>}
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-noreply@maily.ovh}
+      YTDLP_MAX_CONCURRENT: ${YTDLP_MAX_CONCURRENT:-4}
+      STREAM_WARM_CONCURRENCY: ${STREAM_WARM_CONCURRENCY:-1}
+      STREAM_WARM_BATCH_CAP: ${STREAM_WARM_BATCH_CAP:-6}
       ALLOW_STREAM_UPSTREAM: ${ALLOW_STREAM_UPSTREAM:-}
       STREAM_UPSTREAM_FALLBACK: ${STREAM_UPSTREAM_FALLBACK:-1}
     volumes:
@@ -64,11 +82,9 @@ volumes:
   ytmusic_data:
 
 networks:
-  # Réseau Nginx Proxy Manager (hostname résolu : ytmusic)
   npm-network:
     external: true
     name: nginx-proxy-manager_npm-network
-  # Réseau partagé optionnel (comme nextcloud / n8n)
   shared:
     external: true
     name: shared-network-copy

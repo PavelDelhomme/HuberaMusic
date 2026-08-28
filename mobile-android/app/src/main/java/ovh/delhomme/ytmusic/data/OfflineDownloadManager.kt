@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
+import ovh.delhomme.ytmusic.debug.AppLog
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -193,6 +194,9 @@ class OfflineDownloadManager(
             } catch (e: Exception) {
                 val msg = e.message ?: "Échec téléchargement"
                 _errors.update { it + (track.id to msg) }
+                if (isStreamInfraFailure(e)) {
+                    onStreamInfraFailure(msg)
+                }
             } finally {
                 _progress.update { cur ->
                     val next = cur.toMutableMap()
@@ -204,6 +208,31 @@ class OfflineDownloadManager(
         }
         jobs[track.id] = job
         return true
+    }
+
+    /** 502 / timeout / DNS : coupe les DL offline pour ne pas saturer l’API. */
+    private fun isStreamInfraFailure(e: Throwable): Boolean {
+        var cur: Throwable? = e
+        while (cur != null) {
+            if (cur is java.net.SocketTimeoutException) return true
+            if (cur is java.net.UnknownHostException) return true
+            val m = cur.message.orEmpty()
+            if (m.contains("HTTP 502") || m.contains("HTTP 503") || m.contains("HTTP 504")) return true
+            if (m.contains("timeout", ignoreCase = true)) return true
+            if (m.contains("Unable to resolve host", ignoreCase = true)) return true
+            if (m.contains("stream down", ignoreCase = true)) return true
+            cur = cur.cause
+        }
+        return false
+    }
+
+    private fun onStreamInfraFailure(detail: String) {
+        ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(180_000L)
+        val n = cancelAll()
+        AppLog.w(
+            "offline",
+            "circuit-breaker stream down — cancelAll=$n detail=${detail.take(120)}",
+        )
     }
 
     /** Enfile une collection (album / playlist) — concurrence gérée par le sémaphore. */
