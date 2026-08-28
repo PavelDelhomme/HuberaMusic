@@ -100,8 +100,12 @@ class PlayerController(
     private var sourceId: String? = null
     private var sourceKind: String? = null
     private val playerPrefs = context.getSharedPreferences("ytm_player", Context.MODE_PRIVATE)
-    private var autoplaySuggestions: Boolean =
-        playerPrefs.getBoolean("autoplay_suggestions", true)
+    private var autoplaySuggestions: Boolean = loadAutoplaySuggestionsPref()
+
+    init {
+        PlaybackService.Holder.autoplaySuggestions = autoplaySuggestions
+        _state.value = _state.value.copy(autoplaySuggestions = autoplaySuggestions)
+    }
 
     private val scope = CoroutineScope(
         SupervisorJob() + Dispatchers.Main.immediate + CrashReporter.coroutineHandler("PlayerController"),
@@ -222,13 +226,14 @@ class PlayerController(
             AppLog.w("player", "play bloqué MODE_IN_CALL/COMM mode=$mode")
             return
         }
-        if (title != null) queueTitle = title
+        if (title != null) {
+            queueTitle = title.ifBlank { "File d'attente" }
+        } else {
+            queueTitle = "File d'attente"
+        }
         PlaybackService.Holder.queueTitle = queueTitle
         this.sourceId = sourceId
-            ?: tracks.getOrNull(startIndex)?.album?.id
-            ?: tracks.firstOrNull()?.album?.id
         this.sourceKind = sourceKind
-            ?: if (this.sourceId != null) "album" else null
         ensureServiceAndConnect()
         val playable = tracks.filter { it.isPlayable() }
         this.userQueueEnd = (userQueueEnd ?: playable.size).coerceIn(0, playable.size)
@@ -299,7 +304,9 @@ class PlayerController(
 
     private fun applyAutoplaySuggestions(on: Boolean, syncRemote: Boolean) {
         autoplaySuggestions = on
-        playerPrefs.edit().putBoolean("autoplay_suggestions", on).apply()
+        val editor = playerPrefs.edit().putBoolean("autoplay_suggestions", on)
+        if (syncRemote) editor.putBoolean("autoplay_suggestions_explicit", true)
+        editor.apply()
         PlaybackService.Holder.autoplaySuggestions = on
         // Ne pas trimmer la zone « À suivre » — elle reste visible ; on coupe seulement l’auto-avance
         _state.value = _state.value.copy(autoplaySuggestions = on)
@@ -346,11 +353,10 @@ class PlayerController(
     }
 
     /**
-     * Précharge « À suivre » dès qu’il reste peu de titres — même sans ouvrir le plein écran.
-     * Sans ça, un seul titre (ex. Welcome to the Internet) s’arrête net à la fin.
+     * Précharge « À suivre » dans Exo (toujours) — le toggle ne contrôle que l’auto-avance
+     * après la fin de la file utilisateur.
      */
     fun ensureAutoplayAhead() {
-        if (!autoplaySuggestions) return
         if (fillJob?.isActive == true) return
         val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
@@ -1039,8 +1045,6 @@ class PlayerController(
      * Utile depuis le bandeau file rétracté sur mobile.
      */
     fun clearUpcomingFromQueue() {
-        // Coupe l’autoplay d’abord pour éviter un re-remplissage immédiat
-        if (autoplaySuggestions) setAutoplaySuggestions(false)
         val p = player() ?: return
         val cur = p.currentMediaItemIndex.coerceAtLeast(0)
         val queue = PlaybackService.Holder.queue
@@ -1538,6 +1542,7 @@ class PlayerController(
         }
         AppLog.i("player", "playNow id=$currentId idx=$idx n=${window.size} pos=$pos auto=$autoplay")
         syncFrom(player)
+        ensureAutoplayAhead()
     }
 
     fun prefetchQueueFocus(centerIndex: Int, radius: Int = 3) {
@@ -1580,6 +1585,17 @@ class PlayerController(
 
     private fun player(): Player? = controller ?: PlaybackService.Holder.player
 
+    /** ON par défaut ; réactive si OFF sans choix explicite (ex. ancien clearUpcoming). */
+    private fun loadAutoplaySuggestionsPref(): Boolean {
+        val explicit = playerPrefs.getBoolean("autoplay_suggestions_explicit", false)
+        val stored = playerPrefs.getBoolean("autoplay_suggestions", true)
+        if (!explicit && !stored) {
+            playerPrefs.edit().putBoolean("autoplay_suggestions", true).apply()
+            return true
+        }
+        return stored
+    }
+
     /**
      * Démarre le service en arrière-plan (pas FGS).
      *
@@ -1618,6 +1634,8 @@ class PlayerController(
             ),
         )
     }
+
+    private var lastCoverPrefetchId: String? = null
 
     /** Branché depuis MainActivity → SharedPreferences (survit force-stop). */
     var onPersistLocal: ((LocalPlaybackSnapshot) -> Unit)? = null
@@ -1672,6 +1690,10 @@ class PlayerController(
         if (idx in queue.indices) PlaybackService.Holder.index = idx
         PlaybackService.Holder.userQueueEnd = userQueueEnd.coerceIn(0, queue.size)
         PlaybackService.Holder.autoplaySuggestions = autoplaySuggestions
+        track?.id?.takeIf { it != lastCoverPrefetchId }?.let { id ->
+            lastCoverPrefetchId = id
+            CoverPrefetcher.warmCovers(queue, idx.coerceIn(0, (queue.size - 1).coerceAtLeast(0)), ahead = 2, behind = 0)
+        }
         persistLocalSnapshot()
     }
 }

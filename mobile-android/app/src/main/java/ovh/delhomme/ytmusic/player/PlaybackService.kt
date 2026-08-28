@@ -1271,9 +1271,8 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /** Précharge « À suivre » depuis le FGS — indépendant de Now Playing / Activity. */
+    /** Précharge « À suivre » dans Exo — indépendant du toggle auto-avance. */
     private fun ensureServiceAutoplayAhead(exo: Player) {
-        if (!Holder.autoplaySuggestions) return
         if (serviceFillInFlight) return
         val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
         val remaining = (exo.mediaItemCount - idx - 1).coerceAtLeast(0)
@@ -1289,7 +1288,6 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun fillAutoplayFromService(advanceAfterFill: Boolean) {
-        if (!Holder.autoplaySuggestions) return
         if (serviceFillInFlight) return
         val exo = player ?: return
         val seed = exo.currentMediaItem?.mediaId
