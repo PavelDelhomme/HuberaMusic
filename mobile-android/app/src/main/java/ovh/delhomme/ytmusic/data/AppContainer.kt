@@ -301,7 +301,17 @@ class AppContainer(context: Context) {
         .create(YtMusicApi::class.java)
 
     fun streamUrl(trackId: String): String {
-        offlineStore.playUri(trackId)?.let { return it.toString() }
+        // Local seulement si hors-ligne, OU fichier progressif sain.
+        // Les .m4a « dash » (fragmentés) plantent mid-song chez Exo → stream online.
+        offlineStore.playUri(trackId)?.let { uri ->
+            val online = runCatching {
+                ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+            }.getOrDefault(true)
+            if (!online || !offlineStore.isDashContainer(trackId)) {
+                return uri.toString()
+            }
+            AppLog.d("stream", "skip local dash id=$trackId → proxy stream")
+        }
         // Toujours via proxy API : les URLs googlevideo sont liées à l’IP du serveur
         // (?redirect=1 → 403 depuis le téléphone / autre réseau).
         val base = resolvedApiBase() + "/api/stream/$trackId"
