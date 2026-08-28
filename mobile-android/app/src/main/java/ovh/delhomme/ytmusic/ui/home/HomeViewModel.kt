@@ -43,10 +43,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     init {
         // Cache-first : contenu immédiat au cold start, refresh réseau derrière
         container.homeCache.read()?.let { cached ->
+            val seededPreviews = cached.radioPreviews.ifEmpty {
+                cached.radios.associate { radio ->
+                    radio.id to (container.mixCache.get(container.mixCache.keyCategory(radio.id))?.take(4).orEmpty())
+                }.filterValues { it.isNotEmpty() }
+            }
             _state.value = HomeUiState(
                 loading = false,
                 shelves = cached.shelves,
                 radios = cached.radios,
+                radioPreviews = seededPreviews,
                 seeds = cached.seeds,
                 hasMore = cached.hasMore,
             )
@@ -114,18 +120,23 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 val homeJob = async { container.api.home() }
                 val savedJob = async {
-                    runCatching {
-                        container.api.library(light = 1, limit = 1).mixes.map { it.id }.toSet()
-                    }.getOrElse {
-                        runCatching {
-                            container.api.library().mixes.map { it.id }.toSet()
-                        }.getOrDefault(emptySet())
-                    }
+                    val fromRepo = container.libraryRepo.library.value?.mixes?.map { it.id }?.toSet()
+                    if (!fromRepo.isNullOrEmpty()) fromRepo
+                    else runCatching {
+                        container.api.library(light = 1, limit = 12).mixes.map { it.id }.toSet()
+                    }.getOrDefault(emptySet())
                 }
                 pinsJob.await()
                 val home = homeJob.await()
                 val savedMixes = savedJob.await()
-                container.homeCache.write(home)
+                // Seed mosaïques depuis MixCache pendant que /home vient d’arriver
+                val cachePreviews = home.radios.associate { radio ->
+                    radio.id to (container.mixCache.get(container.mixCache.keyCategory(radio.id))?.take(4).orEmpty())
+                }.filterValues { it.isNotEmpty() }
+                val mergedPreviews = keepPreviews.filterKeys { id ->
+                    home.radios.any { it.id == id }
+                } + cachePreviews
+                container.homeCache.write(home, mergedPreviews)
 
                 // 1ʳᵉ peinture immédiate : shelves + radios (spinner peut tomber)
                 _state.value = _state.value.copy(
@@ -140,10 +151,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     seeds = home.seeds.orEmpty(),
                     hasMore = home.hasMore == true,
                     page = 0,
-                    // Conserve previews des radios encore présentes ; purge le reste
-                    radioPreviews = keepPreviews.filterKeys { id ->
-                        home.radios.any { it.id == id }
-                    },
+                    radioPreviews = mergedPreviews,
                 )
 
                 // Spoken + MAJ en parallèle des previews
@@ -193,9 +201,19 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         }.awaitAll().filterNotNull().toMap()
                     }
                     if (more.isNotEmpty()) {
-                        _state.value = _state.value.copy(
-                            radioPreviews = _state.value.radioPreviews + more,
-                        )
+                        val next = _state.value.radioPreviews + more
+                        _state.value = _state.value.copy(radioPreviews = next)
+                        runCatching {
+                            container.homeCache.write(
+                                ovh.delhomme.ytmusic.data.HomeResponse(
+                                    shelves = _state.value.shelves,
+                                    radios = _state.value.radios,
+                                    seeds = _state.value.seeds,
+                                    hasMore = _state.value.hasMore,
+                                ),
+                                next,
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {

@@ -58,13 +58,23 @@ class LibraryRepository(
     }
 
     private fun publish(lib: LibraryResponse, fromDisk: Boolean = false) {
+        val cur = _library.value
+        // Ne pas remplacer une biblio complète par un échantillon light
+        if (lib.partial == true && cur != null && cur.partial != true) {
+            val curN = cur.songs.size.coerceAtLeast(cur.liked.size)
+            val newN = lib.songs.size.coerceAtLeast(lib.liked.size)
+            if (curN > newN + 8) {
+                AppLog.d("library", "skip light publish (have $curN, got $newN)")
+                return
+            }
+        }
         _library.value = lib
         scope.launch {
             val s = withContext(Dispatchers.Default) { buildSorted(lib) }
             sorted = s
             _sortedEpoch.value += 1
         }
-        if (!fromDisk) {
+        if (!fromDisk && lib.partial != true) {
             scope.launch(Dispatchers.IO) {
                 runCatching { disk.write(lib) }
             }
@@ -124,12 +134,14 @@ class LibraryRepository(
         if (!force && now - lastFetchAt < 45_000L && _library.value != null) return
         refreshJob?.cancel()
         refreshJob = scope.launch {
-            refreshInternal(force, lightFirst = _library.value == null)
+            val haveFull = (_library.value?.songs?.size ?: 0) >= 50 && _library.value?.partial != true
+            refreshInternal(force, lightFirst = !haveFull)
         }
     }
 
     suspend fun refresh(force: Boolean = false) {
-        refreshInternal(force, lightFirst = _library.value == null)
+        val haveFull = (_library.value?.songs?.size ?: 0) >= 50 && _library.value?.partial != true
+        refreshInternal(force, lightFirst = !haveFull)
     }
 
     private suspend fun refreshInternal(force: Boolean, lightFirst: Boolean) {
@@ -140,7 +152,7 @@ class LibraryRepository(
             val localTracks = container.offlineStore.listTracks()
             try {
                 container.ensureFreshToken()
-                if (lightFirst || force) {
+                if (lightFirst) {
                     runCatching {
                         container.api.library(light = 1, limit = 24)
                     }.onSuccess { partial ->
@@ -152,7 +164,7 @@ class LibraryRepository(
                 runCatching {
                     container.api.library()
                 }.onSuccess { full ->
-                    publish(mergeLocal(full, localTracks))
+                    publish(mergeLocal(full.copy(partial = false), localTracks))
                     lastFetchAt = System.currentTimeMillis()
                     AppLog.d("library", "refresh ok songs=${full.songs.size}")
                 }.onFailure { e ->
@@ -171,7 +183,7 @@ class LibraryRepository(
 
     /** Patch local après add/remove sans refetch complet immédiat. */
     fun patchFromServer(lib: LibraryResponse) {
-        publish(lib)
+        publish(lib.copy(partial = false))
         lastFetchAt = System.currentTimeMillis()
     }
 }

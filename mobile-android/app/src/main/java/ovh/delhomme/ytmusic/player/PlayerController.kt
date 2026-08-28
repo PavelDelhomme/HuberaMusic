@@ -1721,11 +1721,18 @@ class PlayerController(
             else -> RepeatMode.Off
         }
         val busy = _state.value.autoFillBusy
+        val rawDur = player.duration
+        val durationMs = when {
+            rawDur > 0L && rawDur != androidx.media3.common.C.TIME_UNSET -> rawDur
+            else -> track?.durationMsOrNull()
+                ?: _state.value.durationMs.takeIf { it > 0L }
+                ?: 0L
+        }
         _state.value = PlayerUiState(
             track = track,
             playing = player.isPlaying,
             positionMs = player.currentPosition.coerceAtLeast(0),
-            durationMs = player.duration.coerceAtLeast(0),
+            durationMs = durationMs,
             bufferedMs = player.bufferedPosition.coerceAtLeast(0),
             queueSize = queue.size,
             queueIndex = idx.coerceIn(0, (queue.size - 1).coerceAtLeast(0)),

@@ -929,8 +929,9 @@ private fun buildLibraryContent(
     }
 }
 
-/** Ne pas prefetch stream si Exo a une file (lecture ou pause) — évite coupures audio. */
+/** Ne pas prefetch stream si une file est active (Exo ou UI) — évite coupures audio. */
 private fun libraryPrefetchBlocked(): Boolean {
+    if (ovh.delhomme.ytmusic.player.PlaybackService.Holder.queue.isNotEmpty()) return true
     val p = ovh.delhomme.ytmusic.player.PlaybackService.Holder.player ?: return false
     return p.mediaItemCount > 0
 }
