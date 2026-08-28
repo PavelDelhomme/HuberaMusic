@@ -241,6 +241,13 @@ fun NowPlayingScreen(
     val queueOpen = queueProgress.value > 0.55f
     val queueInteractive = queueProgress.value > 0.02f
 
+    // Jamais d’écran mort « Rien en lecture » — retour immédiat à l’accueil / biblio
+    LaunchedEffect(ui.track?.id, ui.queue.size, sheetVisible) {
+        if (sheetVisible && ui.track == null && ui.queue.isEmpty()) {
+            onClose()
+        }
+    }
+
     // Remplit « À suivre » — ne PAS clear/rebuild à chaque ouverture du plein écran
     // (sinon setMediaItems+prepare → coupe l’audio). Clear seulement si le seed change.
     var lastAutoplaySeed by remember { mutableStateOf<String?>(null) }
@@ -629,8 +636,11 @@ fun NowPlayingScreen(
             .nestedScroll(dismissScroll),
     ) {
         val track = ui.track
+        if (track == null) {
+            return@Box
+        }
         // Ambient blur YTM — uniquement sheet visible (coûteux en GPU)
-        if (track != null && sheetVisible) {
+        if (sheetVisible) {
             AsyncImage(
                 model = track.coverUrl(160),
                 contentDescription = null,
@@ -646,11 +656,6 @@ fun NowPlayingScreen(
                     .background(Color.Black.copy(alpha = 0.72f)),
             )
         }
-        if (track == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Rien en lecture", color = PlayerMuted)
-            }
-        } else {
         val duration = ui.durationMs.coerceAtLeast(1L).toFloat()
         val progress = if (scrub >= 0f) scrub else (ui.positionMs / duration).coerceIn(0f, 1f)
         val liked = track.id in likedIds
@@ -1444,7 +1449,6 @@ fun NowPlayingScreen(
                 } // Column lecteur plein
                 } // if (!showQueuePanel)
             } // Box
-        }
         }
         if (videoFullscreen && visualVideoUrl != null && SessionMediaMode.video && track != null) {
             Box(
