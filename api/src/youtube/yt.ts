@@ -2421,7 +2421,16 @@ async function ytDlpGetUrl(
             .map((l) => l.trim())
             .find((l) => /^https?:\/\//.test(l));
           if (code === 0 && line) resolve(line);
-          else reject(new Error(err.trim() || `yt-dlp -g exit ${code}`));
+          else {
+            const tip = err
+              .split('\n')
+              .map((l) => l.trim())
+              .filter((l) => /^ERROR:/i.test(l))
+              .pop();
+            const e = new Error(tip || err.trim() || `yt-dlp -g exit ${code}`);
+            void import('../media/ytDlpGate.js').then((m) => m.noteYtDlpFailure(e)).catch(() => {});
+            reject(e);
+          }
         });
       }),
   );

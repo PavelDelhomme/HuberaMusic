@@ -68,6 +68,7 @@ services:
       SMTP_REPLY_TO: ${SMTP_REPLY_TO:-noreply@maily.ovh}
       # Anti-storm yt-dlp / warm (CPU+RAM VPS)
       YTDLP_MAX_CONCURRENT: ${YTDLP_MAX_CONCURRENT:-4}
+      YTDLP_BOT_COOLDOWN_MS: ${YTDLP_BOT_COOLDOWN_MS:-300000}
       STREAM_WARM_CONCURRENCY: ${STREAM_WARM_CONCURRENCY:-1}
       STREAM_WARM_BATCH_CAP: ${STREAM_WARM_BATCH_CAP:-6}
       # Stream : laisser vides en prod VPS-only (OAuth TV + OAuth user sur volume).
