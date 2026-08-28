@@ -538,12 +538,15 @@ export async function handleStream(req: Request, res: Response) {
   // Googlevideo (MWEB/IOS…) refuse souvent les Ranges mid au-delà ~1 MiB → 403.
   // Dès le début : télécharge le .m4a en fond pour les Ranges suivantes.
   if (!wantVideo && audioRangeStart === 0) {
-    void downloadTrack(videoId).catch((err) => {
-      console.warn(
-        '[stream] prefetch downloadTrack KO:',
-        String((err as Error).message || err).slice(0, 120),
-      );
-    });
+    const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
+    if (!isYtDlpCoolingDown()) {
+      void downloadTrack(videoId).catch((err) => {
+        console.warn(
+          '[stream] prefetch downloadTrack KO:',
+          String((err as Error).message || err).slice(0, 120),
+        );
+      });
+    }
   }
   // Mid-range : deadline plus longue (yt-dlp peut prendre 30–90 s la 1ʳᵉ fois).
   const midNeedsDisk = !wantVideo && audioRangeStart > 0;
@@ -1127,64 +1130,82 @@ export async function downloadTrack(videoId: string): Promise<string> {
   const job = (async (): Promise<string> => {
     if (existsSync(out) && statSync(out).size > 0) return out;
 
-    if (existsSync(YTDLP)) {
-      let lastErr: Error | null = null;
-      const cookieSets = ytDlpCookieArgSets({ forDownload: true });
-      for (const cookieArgs of cookieSets) {
-        for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
-          try {
-            const { withYtDlpSlot } = await import('./ytDlpGate.js');
-            await withYtDlpSlot(
-              () =>
-                new Promise<void>((resolve, reject) => {
-                  const proc = spawn(
-                    YTDLP,
-                    [
-                      '-f',
-                      format,
-                      '-x',
-                      '--audio-format',
-                      'm4a',
-                      '--audio-quality',
-                      '0',
-                      '-o',
-                      out,
-                      '--no-playlist',
-                      '--quiet',
-                      '--no-warnings',
-                      ...ytDlpRuntimeArgs(),
-                      ...cookieArgs,
-                      `https://www.youtube.com/watch?v=${videoId}`,
-                    ],
-                    { stdio: 'inherit' },
-                  );
-                  proc.on('close', (code) =>
-                    code === 0 ? resolve() : reject(new Error(`yt-dlp ${code}`)),
-                  );
-                  proc.on('error', reject);
-                }),
-            );
-            if (existsSync(out) && statSync(out).size > 0) return out;
-          } catch (err) {
-            lastErr = err instanceof Error ? err : new Error(String(err));
-          }
-        }
-      }
-      if (!existsSync(out) || !statSync(out).size) {
-        try {
-          await downloadTrackViaInnertube(videoId, out);
-          if (existsSync(out) && statSync(out).size > 0) return out;
-        } catch (innErr) {
-          if (lastErr) throw lastErr;
-          throw innErr instanceof Error ? innErr : new Error(String(innErr));
-        }
-        if (lastErr) throw lastErr;
-      }
-    } else {
+    // 1) Innertube d’abord — pas de ffmpeg, pas de spam stderr yt-dlp
+    try {
       await downloadTrackViaInnertube(videoId, out);
+      if (existsSync(out) && statSync(out).size > 0) return out;
+    } catch {
+      /* fallback yt-dlp */
     }
 
-    return out;
+    if (!existsSync(YTDLP)) {
+      throw new Error('Audio download indisponible (innertube + yt-dlp)');
+    }
+
+    const { withYtDlpSlot, isYtDlpCoolingDown, noteYtDlpFailure } = await import('./ytDlpGate.js');
+    if (isYtDlpCoolingDown()) {
+      throw new Error('yt-dlp cooling down (bot/rate-limit)');
+    }
+
+    // 2) yt-dlp : télécharger le format audio direct (140/m4a) SANS -x / ffmpeg
+    let lastErr: Error | null = null;
+    const cookieSets = ytDlpCookieArgSets({ forDownload: true });
+    for (const cookieArgs of cookieSets) {
+      for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
+        try {
+          await withYtDlpSlot(
+            () =>
+              new Promise<void>((resolve, reject) => {
+                const proc = spawn(
+                  YTDLP,
+                  [
+                    '-f',
+                    format,
+                    '-o',
+                    out,
+                    '--no-playlist',
+                    '--no-warnings',
+                    '--newline',
+                    ...ytDlpRuntimeArgs(),
+                    '--extractor-args',
+                    'youtube:player_client=android_vr,tv,ios,web_embedded,web',
+                    ...cookieArgs,
+                    `https://www.youtube.com/watch?v=${videoId}`,
+                  ],
+                  { stdio: ['ignore', 'ignore', 'pipe'] },
+                );
+                let err = '';
+                proc.stderr?.on('data', (c) => {
+                  err += String(c);
+                  if (err.length > 4_000) err = err.slice(-4_000);
+                });
+                proc.on('error', reject);
+                proc.on('close', (code) => {
+                  if (code === 0 && existsSync(out) && statSync(out).size > 0) {
+                    resolve();
+                    return;
+                  }
+                  const tip = err
+                    .split('\n')
+                    .map((l) => l.trim())
+                    .filter((l) => /^ERROR:/i.test(l))
+                    .pop();
+                  reject(new Error(tip || `yt-dlp ${code}`));
+                });
+              }),
+          );
+          if (existsSync(out) && statSync(out).size > 0) return out;
+        } catch (err) {
+          lastErr = err instanceof Error ? err : new Error(String(err));
+          noteYtDlpFailure(lastErr);
+          if (isYtDlpCoolingDown()) break;
+        }
+      }
+      if (isYtDlpCoolingDown()) break;
+    }
+
+    if (existsSync(out) && statSync(out).size > 0) return out;
+    throw lastErr || new Error('Audio download KO');
   })().finally(() => {
     downloadInflight.delete(videoId);
   });
