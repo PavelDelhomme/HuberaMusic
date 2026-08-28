@@ -3,6 +3,8 @@ package ovh.delhomme.ytmusic.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -39,6 +41,7 @@ data class HomeUiState(
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
+    private var refreshJob: Job? = null
 
     init {
         // Cache-first : contenu immédiat au cold start, refresh réseau derrière
@@ -78,7 +81,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun refresh(fromUser: Boolean = false) {
-        viewModelScope.launch {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
             if (!NetworkMonitor.isOnline()) {
                 _state.value = _state.value.copy(
                     loading = false,
@@ -216,6 +220,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 val offline = !NetworkMonitor.isOnline()
                 _state.value = _state.value.copy(
@@ -250,6 +256,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     page = nextPage,
                     hasMore = more.hasMore != false && extra.isNotEmpty(),
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 _state.value = _state.value.copy(loadingMore = false, hasMore = false)
             }
