@@ -384,6 +384,7 @@ fun LibraryScreen(
                             .map { it.id }
                             .filter { it.length == 11 }
                         if (ids.isEmpty()) return@collect
+                        container.libraryHeadPrefetcher.boostVisible(ids)
                         ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(
                             container.resolvedApiBase(),
                             ids,
