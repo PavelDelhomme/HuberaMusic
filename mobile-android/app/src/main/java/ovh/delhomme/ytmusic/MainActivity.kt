@@ -143,6 +143,10 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OPEN_PLAYER = "ovh.delhomme.ytmusic.OPEN_PLAYER"
+        /** Depuis notif média : ouvrir paroles du titre en cours. */
+        const val EXTRA_OPEN_LYRICS = "ovh.delhomme.ytmusic.OPEN_LYRICS"
+        /** Depuis notif média : feuille « ajouter à une playlist ». */
+        const val EXTRA_OPEN_ADD_PLAYLIST = "ovh.delhomme.ytmusic.OPEN_ADD_PLAYLIST"
         /** Injection session (tests ADB) — build debug uniquement. */
         const val EXTRA_ACCESS_TOKEN = "ytm_access_token"
         const val EXTRA_REFRESH_TOKEN = "ytm_refresh_token"
@@ -188,6 +192,8 @@ fun YtMusicAppContent(
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
     var showNowPlaying by remember { mutableStateOf(false) }
     var playerFocusToken by remember { mutableIntStateOf(0) }
+    var openLyricsToken by remember { mutableIntStateOf(0) }
+    var pendingOpenAddPlaylist by remember { mutableStateOf(false) }
     var pendingApprove by remember { mutableStateOf<DeviceLoginDeepLink.Approve?>(null) }
     var deviceLoginBusy by remember { mutableStateOf(false) }
     var pendingAppLink by remember { mutableStateOf<Uri?>(null) }
@@ -281,13 +287,20 @@ fun YtMusicAppContent(
     DisposableEffect(activity) {
         if (activity == null) return@DisposableEffect onDispose { }
         val listener = androidx.core.util.Consumer<Intent> { intent ->
-            if (intent.getBooleanExtra(MainActivity.EXTRA_OPEN_PLAYER, false)) {
+            val openPlayer = intent.getBooleanExtra(MainActivity.EXTRA_OPEN_PLAYER, false)
+            val openLyrics = intent.getBooleanExtra(MainActivity.EXTRA_OPEN_LYRICS, false)
+            val openAddPl = intent.getBooleanExtra(MainActivity.EXTRA_OPEN_ADD_PLAYLIST, false)
+            if (openPlayer || openLyrics || openAddPl) {
                 val ui = player.state.value
                 if (ui.track != null || ui.queueSize > 0) {
                     showNowPlaying = true
                     playerFocusToken++
+                    if (openLyrics) openLyricsToken++
+                    if (openAddPl) pendingOpenAddPlaylist = true
                 }
                 intent.removeExtra(MainActivity.EXTRA_OPEN_PLAYER)
+                intent.removeExtra(MainActivity.EXTRA_OPEN_LYRICS)
+                intent.removeExtra(MainActivity.EXTRA_OPEN_ADD_PLAYLIST)
             }
             handleDeviceLoginUri(intent.data)
         }
@@ -488,6 +501,9 @@ fun YtMusicAppContent(
                 expanded = showNowPlaying,
                 openPlayerFromIntent = openPlayerFromIntent,
                 playerFocusToken = playerFocusToken,
+                openLyricsToken = openLyricsToken,
+                pendingOpenAddPlaylist = pendingOpenAddPlaylist,
+                onPendingOpenAddPlaylistConsumed = { pendingOpenAddPlaylist = false },
                 pendingAppLink = pendingAppLink,
                 onAppLinkConsumed = { pendingAppLink = null },
                 onOpenPlayer = {
@@ -562,6 +578,9 @@ private fun MainTabs(
     expanded: Boolean,
     openPlayerFromIntent: Boolean = false,
     playerFocusToken: Int = 0,
+    openLyricsToken: Int = 0,
+    pendingOpenAddPlaylist: Boolean = false,
+    onPendingOpenAddPlaylistConsumed: () -> Unit = {},
     pendingAppLink: Uri? = null,
     onAppLinkConsumed: () -> Unit = {},
     onOpenPlayer: () -> Unit,
@@ -728,6 +747,15 @@ private fun MainTabs(
     var detailReloadToken by remember { mutableStateOf(0) }
     var addToPlaylistTrack by remember { mutableStateOf<TrackDto?>(null) }
     var addToPlaylistContainedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    LaunchedEffect(pendingOpenAddPlaylist, playerUi.track?.id) {
+        if (!pendingOpenAddPlaylist) return@LaunchedEffect
+        val t = playerUi.track
+        if (t != null) {
+            addToPlaylistTrack = t
+            onPendingOpenAddPlaylistConsumed()
+        }
+    }
     var showCast by remember { mutableStateOf(false) }
     var likedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var forceOnboarding by remember { mutableStateOf(false) }
@@ -1633,6 +1661,7 @@ private fun MainTabs(
                 onOpenAddToPlaylist = { addToPlaylistTrack = it },
                 onOpenArtist = ::openArtist,
                 focusPlayerToken = playerFocusToken,
+                openLyricsToken = openLyricsToken,
                 sheetVisible = playerExpanded,
             )
         }
