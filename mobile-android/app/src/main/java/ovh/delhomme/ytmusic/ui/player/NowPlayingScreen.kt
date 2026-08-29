@@ -212,6 +212,8 @@ fun NowPlayingScreen(
     onOpenArtist: ((id: String?, name: String) -> Unit)? = null,
     /** Incrémenté au clic notif → recentre sur la cover / contrôles. */
     focusPlayerToken: Int = 0,
+    /** Incrémenté depuis notif « Paroles » → ouvre le panneau paroles. */
+    openLyricsToken: Int = 0,
     /** Sheet Now Playing visible (sinon pause Exo vidéo). */
     sheetVisible: Boolean = true,
 ) {
@@ -606,6 +608,13 @@ fun NowPlayingScreen(
         if (focusPlayerToken <= 0) return@LaunchedEffect
         queueProgress.snapTo(0f)
         dragOffset = 0f
+        runCatching { listState.scrollToItem(0) }
+    }
+
+    LaunchedEffect(openLyricsToken) {
+        if (openLyricsToken <= 0) return@LaunchedEffect
+        showLyrics = true
+        queueProgress.snapTo(0f)
         runCatching { listState.scrollToItem(0) }
     }
 
