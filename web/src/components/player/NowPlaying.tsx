@@ -225,6 +225,18 @@ export function SyncedLyrics({
             </button>
             <button
               type="button"
+              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+              title="Retarder de 0,75 s"
+              onClick={() => {
+                if (!currentId) return;
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 750));
+                lastActiveRef.current = -1;
+              }}
+            >
+              −0,75
+            </button>
+            <button
+              type="button"
               className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
               title="Paroles trop en avance"
               onClick={() => {
@@ -235,10 +247,10 @@ export function SyncedLyrics({
             >
               Trop tôt
             </button>
-            <span className="min-w-[3rem] text-center text-[11px] font-semibold tabular-nums text-yt-muted">
+            <span className="min-w-[3.5rem] text-center text-[11px] font-semibold tabular-nums text-yt-muted">
               {userOffsetMs === 0
                 ? 'sync'
-                : `${userOffsetMs > 0 ? '+' : ''}${(userOffsetMs / 1000).toFixed(1)} s`}
+                : `${userOffsetMs > 0 ? '+' : ''}${(userOffsetMs / 1000).toFixed(2)} s`}
             </span>
             <button
               type="button"
@@ -251,6 +263,18 @@ export function SyncedLyrics({
               }}
             >
               Trop tard
+            </button>
+            <button
+              type="button"
+              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+              title="Avancer de 0,75 s"
+              onClick={() => {
+                if (!currentId) return;
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -750));
+                lastActiveRef.current = -1;
+              }}
+            >
+              +0,75
             </button>
             <button
               type="button"
