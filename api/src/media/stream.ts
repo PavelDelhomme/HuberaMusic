@@ -571,7 +571,7 @@ export async function handleStream(req: Request, res: Response) {
   // Mid-range : deadline plus longue (yt-dlp peut prendre 30–90 s la 1ʳᵉ fois).
   const midNeedsDisk = !wantVideo && audioRangeStart > 0;
   // Vidéo : resolve + fetch GV souvent plus lent (yt-dlp -g / pipe)
-  const deadlineAt = Date.now() + (wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 22_000);
+  const deadlineAt = Date.now() + (wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 16_000);
   const ensureTime = (label: string) => {
     if (Date.now() >= deadlineAt) throw new Error(`stream deadline (${label})`);
   };
@@ -1005,7 +1005,10 @@ export async function handleStreamUrl(req: Request, res: Response) {
   }
 
   try {
-    const format = wantVideo ? await getVideoFormat(videoId) : await getAudioFormat(videoId);
+    const uid = (req as any).userId as string | undefined;
+    const format = wantVideo
+      ? await getVideoFormat(videoId)
+      : await getAudioFormat(videoId, { userId: uid });
     res.json({
       url: format.url,
       expiresAt: format.expiresAt,
@@ -1026,7 +1029,8 @@ export async function handleStreamUrl(req: Request, res: Response) {
 }
 
 /** Warm batch : file limitée, réponse immédiate (E5 — ne pas bloquer l’UI 16 s). */
-const warmQueue: string[] = [];
+type WarmJob = { id: string; userId?: string };
+const warmQueue: WarmJob[] = [];
 const warmQueued = new Set<string>();
 let warmWorkers = 0;
 const WARM_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.STREAM_WARM_CONCURRENCY || 2) || 2));
@@ -1037,13 +1041,13 @@ async function runWarmWorker() {
   warmWorkers += 1;
   try {
     while (warmQueue.length) {
-      const id = warmQueue.shift();
-      if (!id) break;
-      warmQueued.delete(id);
+      const job = warmQueue.shift();
+      if (!job) break;
+      warmQueued.delete(job.id);
       try {
-        const format = await getAudioFormat(id);
+        const format = await getAudioFormat(job.id, { userId: job.userId });
         if (format?.url) {
-          await warmStreamHead(id, (range) => fetchGooglevideo(format.url, range));
+          await warmStreamHead(job.id, (range) => fetchGooglevideo(format.url, range));
         }
       } catch {
         /* best-effort */
@@ -1057,14 +1061,14 @@ async function runWarmWorker() {
 
 function bumpWarmPriority(id: string) {
   if (!id || !/^[a-zA-Z0-9_-]{11}$/.test(id)) return;
-  const i = warmQueue.indexOf(id);
+  const i = warmQueue.findIndex((j) => j.id === id);
   if (i > 0) {
-    warmQueue.splice(i, 1);
-    warmQueue.unshift(id);
+    const [job] = warmQueue.splice(i, 1);
+    if (job) warmQueue.unshift(job);
   }
 }
 
-function enqueueStreamWarm(ids: string[]) {
+function enqueueStreamWarm(ids: string[], userId?: string) {
   if (!ids.length) return;
   const [first, ...rest] = ids;
   const pushFront = (id: string) => {
@@ -1073,13 +1077,13 @@ function enqueueStreamWarm(ids: string[]) {
       return;
     }
     warmQueued.add(id);
-    warmQueue.unshift(id);
+    warmQueue.unshift({ id, userId });
   };
   if (first) pushFront(first);
   for (const id of rest) {
     if (warmQueued.has(id)) continue;
     warmQueued.add(id);
-    warmQueue.push(id);
+    warmQueue.push({ id, userId });
   }
   const start = Math.min(WARM_CONCURRENCY, warmQueue.length);
   for (let i = 0; i < start; i++) void runWarmWorker();
@@ -1098,25 +1102,28 @@ export async function handleStreamWarm(req: Request, res: Response) {
     res.status(400).json({ error: 'ids requis' });
     return;
   }
+  const uid = (req as any).userId as string | undefined;
   // Mode legacy (tests) : attendre les formats si wait=1
   const wait =
     String(req.query.wait || req.body?.wait || '') === '1' ||
     String(req.query.wait || req.body?.wait || '') === 'true';
   if (wait) {
-    const results = await Promise.allSettled(ids.map((id: string) => getAudioFormat(id)));
+    const results = await Promise.allSettled(
+      ids.map((id: string) => getAudioFormat(id, { userId: uid })),
+    );
     const ok = results.filter((r) => r.status === 'fulfilled').length;
     res.json({ ok: true, requested: ids.length, warmed: ok, waited: true });
     warmStreamHeadsLazy(
       ids,
       async (id) => {
-        const format = await getAudioFormat(id);
+        const format = await getAudioFormat(id, { userId: uid });
         return (range) => fetchGooglevideo(format.url, range);
       },
       Math.min(6, ids.length),
     );
     return;
   }
-  enqueueStreamWarm(ids);
+  enqueueStreamWarm(ids, uid);
   res.json({
     ok: true,
     requested: ids.length,
