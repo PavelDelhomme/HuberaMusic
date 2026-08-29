@@ -3011,8 +3011,8 @@ private fun InlineSyncedLyrics(
     }
 
     Column(modifier = modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
-        // Sync compact : pas d’indication « appui long » ni Trop tôt/tard (place pour les paroles).
-        if (timed.isNotEmpty() && userOffsetMs != 0L) {
+        // Sync compact : ±1 s et ±0,75 s (place pour les paroles).
+        if (timed.isNotEmpty()) {
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -3022,13 +3022,19 @@ private fun InlineSyncedLyrics(
             ) {
                 TextButton(
                     onClick = { nudgeOffset(1000L) },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                 ) {
                     Text("−1 s", style = MaterialTheme.typography.labelSmall)
                 }
+                TextButton(
+                    onClick = { nudgeOffset(750L) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) {
+                    Text("−0,75", style = MaterialTheme.typography.labelSmall)
+                }
                 Text(
-                    String.format("%+.1f s", userOffsetMs / 1000.0),
-                    color = SeekRed,
+                    if (userOffsetMs == 0L) "sync" else String.format("%+.2f s", userOffsetMs / 1000.0),
+                    color = if (userOffsetMs == 0L) PlayerMuted else SeekRed,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
@@ -3036,8 +3042,14 @@ private fun InlineSyncedLyrics(
                         .clickable { persistOffset(0L) },
                 )
                 TextButton(
+                    onClick = { nudgeOffset(-750L) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) {
+                    Text("+0,75", style = MaterialTheme.typography.labelSmall)
+                }
+                TextButton(
                     onClick = { nudgeOffset(-1000L) },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
                 ) {
                     Text("+1 s", style = MaterialTheme.typography.labelSmall)
                 }
