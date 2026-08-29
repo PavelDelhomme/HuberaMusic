@@ -281,14 +281,15 @@ class PlayerController(
         pendingAutoplay = true
         if (playable.isNotEmpty()) {
             val idx = startIndex.coerceIn(0, playable.lastIndex)
+            publishOptimistic(playable, idx)
             val base = streamUrl("_").substringBefore("/api/stream/")
             val firstId = playable[idx].id
-            StreamPrefetcher.quietPrefetch(420L)
+            StreamPrefetcher.quietPrefetch(140L)
             val headReady = !firstId.isNullOrBlank() && StreamPrefetcher.wasHeadReadyRecently(firstId)
             if (!headReady) {
                 StreamPrefetcher.warmTrackFormatOnly(base, firstId)
                 scope.launch(Dispatchers.IO) {
-                    StreamPrefetcher.warmCurrentBlocking(base, firstId, timeoutMs = 900L, wait = true)
+                    StreamPrefetcher.warmCurrentBlocking(base, firstId, timeoutMs = 700L, wait = true)
                 }
                 playable.drop(idx + 1).take(2).forEach { t ->
                     StreamPrefetcher.warmTrackFormatOnly(base, t.id)
@@ -296,7 +297,7 @@ class PlayerController(
             }
             val startId = firstId
             scope.launch {
-                delay(if (headReady) 120L else 480L)
+                delay(if (headReady) 40L else 120L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(playable, idx)
                 StreamPrefetcher.prefetchUpcomingHeadsTiered(
@@ -308,8 +309,12 @@ class PlayerController(
                 )
             }
         }
-        val c = controller
+        val c = controller ?: PlaybackService.Holder.player
         if (c != null) {
+            if (trySeekSameQueue(c, playable, startIndex)) {
+                ensureAutoplayAhead()
+                return
+            }
             playNow(c, tracks, startIndex)
             ensureAutoplayAhead()
         } else {
@@ -323,7 +328,7 @@ class PlayerController(
                 syncFrom(exo)
             }
             scope.launch {
-                delay(700)
+                delay(200)
                 ensureAutoplayAhead()
             }
         }
@@ -659,6 +664,10 @@ class PlayerController(
         }
         warmAround(PlaybackService.Holder.queue, nextIdx)
         val nid = PlaybackService.Holder.queue.getOrNull(nextIdx)?.id
+        val skipQueue = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
+        if (nextIdx in skipQueue.indices) {
+            publishOptimistic(skipQueue, nextIdx)
+        }
         if (!nid.isNullOrBlank()) {
             val base = streamUrl("_").substringBefore("/api/stream/")
             StreamPrefetcher.warmTrackFormatOnly(base, nid)
@@ -1040,11 +1049,12 @@ class PlayerController(
         userWantsPlaying = true
         pendingAutoplay = true
         val track = queue[index]
+        publishOptimistic(queue, index)
         val base = streamUrl("_").substringBefore("/api/stream/")
         // Prefetch en arrière-plan — ne bloque pas le saut
         if (track.id.length == 11) {
             scope.launch {
-                StreamPrefetcher.quietPrefetch(200L)
+                StreamPrefetcher.quietPrefetch(80L)
                 StreamPrefetcher.warmTrackFormatOnly(base, track.id)
                 StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, index, radius = 2)
             }
@@ -1511,6 +1521,54 @@ class PlayerController(
     private fun mediaItem(t: TrackDto): MediaItem =
         mediaItemFor(t, streamUrl, queueTitle)
 
+    /** UI immédiate (titre / artiste / playing) avant que Exo soit READY. */
+    private fun publishOptimistic(queue: List<TrackDto>, index: Int, positionMs: Long = 0L) {
+        if (queue.isEmpty()) return
+        val idx = index.coerceIn(0, queue.lastIndex)
+        val track = queue[idx]
+        PlaybackService.Holder.queue = queue
+        PlaybackService.Holder.index = idx
+        PlaybackService.Holder.queueTitle = queueTitle
+        _state.value = _state.value.copy(
+            track = track,
+            playing = true,
+            positionMs = positionMs.coerceAtLeast(0L),
+            durationMs = track.durationMsOrNull() ?: _state.value.durationMs,
+            bufferedMs = 0L,
+            queueSize = queue.size,
+            queueIndex = idx,
+            queue = queue,
+            queueTitle = queueTitle,
+            userQueueEnd = userQueueEnd.coerceIn(0, queue.size),
+            autoplaySuggestions = autoplaySuggestions,
+            sourceId = sourceId,
+            sourceKind = sourceKind,
+        )
+    }
+
+    /**
+     * Même file déjà chargée dans Exo → seek sans rebuild (next / re-tap instantané).
+     */
+    private fun trySeekSameQueue(player: Player, playable: List<TrackDto>, startIndex: Int): Boolean {
+        if (playable.isEmpty() || player.mediaItemCount == 0) return false
+        val held = PlaybackService.Holder.queue
+        if (held.size != playable.size) return false
+        if (held.indices.any { held[it].id != playable[it].id }) return false
+        if (player.mediaItemCount != playable.size) return false
+        val idx = startIndex.coerceIn(0, playable.lastIndex)
+        if (player.getMediaItemAt(idx).mediaId != playable[idx].id) return false
+        userWantsPlaying = true
+        pendingAutoplay = true
+        publishOptimistic(playable, idx)
+        player.seekTo(idx, 0L)
+        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        player.playWhenReady = true
+        player.play()
+        warmAround(playable, idx)
+        syncFrom(player)
+        return true
+    }
+
     private fun playNow(
         player: Player,
         tracks: List<TrackDto>,
@@ -1535,24 +1593,20 @@ class PlayerController(
         }
         val window = centered.first
         val idx = centered.second
-        PlaybackService.Holder.queue = window
-        PlaybackService.Holder.index = idx
-        PlaybackService.Holder.queueTitle = queueTitle
         if (userQueueEnd <= 0 || userQueueEnd > window.size) {
             userQueueEnd = window.size
         }
+        publishOptimistic(window, idx, startPositionMs)
         val base = streamUrl("_").substringBefore("/api/stream/")
         val currentId = window.getOrNull(idx)?.id
-        // Exo démarre tout de suite. Quiet court puis têtes des suivants.
-        StreamPrefetcher.quietPrefetch(320L)
+        StreamPrefetcher.quietPrefetch(120L)
         if (!currentId.isNullOrBlank()) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
         }
         if (autoplay) {
-            val ahead = window.drop(idx + 1).take(4)
             val startId = currentId
             scope.launch {
-                delay(350)
+                delay(80)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
                 StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 4)
@@ -1573,19 +1627,33 @@ class PlayerController(
                 player.isPlaying &&
                 player.currentMediaItem?.mediaId == currentId &&
                 !currentId.isNullOrBlank()
-        val pos = if (playingSame) player.currentPosition.coerceAtLeast(0L) else startPositionMs.coerceAtLeast(0L)
-        player.setMediaItems(
-            window.map { mediaItem(it) },
-            idx,
-            pos,
-        )
+        if (playingSame) {
+            syncFrom(player)
+            ensureAutoplayAhead()
+            return
+        }
+        // Seek sans rebuild si la file Exo est déjà celle-ci
+        if (trySeekSameQueue(player, window, idx) && startPositionMs <= 0L) {
+            ensureAutoplayAhead()
+            return
+        }
+        val pos = startPositionMs.coerceAtLeast(0L)
+        // Courant + proches d’abord → 1er son plus tôt ; reste de la fenêtre ensuite.
+        val leadTo = (idx + 4).coerceAtMost(window.size)
+        val lead = window.subList(idx, leadTo)
+        player.setMediaItems(lead.map { mediaItem(it) }, 0, pos)
         applyRepeatShuffle(player)
-        // Toujours prepare : le bouton play après restore/sync doit répondre sans rebuild complet.
         player.prepare()
         if (autoplay) {
             player.play()
         } else {
             player.pause()
+        }
+        if (idx > 0) {
+            player.addMediaItems(0, window.subList(0, idx).map { mediaItem(it) })
+        }
+        if (leadTo < window.size) {
+            player.addMediaItems(window.subList(leadTo, window.size).map { mediaItem(it) })
         }
         AppLog.i("player", "playNow id=$currentId idx=$idx n=${window.size} pos=$pos auto=$autoplay")
         syncFrom(player)

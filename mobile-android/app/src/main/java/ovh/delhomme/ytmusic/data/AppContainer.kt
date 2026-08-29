@@ -44,6 +44,8 @@ class AppContainer(context: Context) {
         CoverUrlProxy.baseProvider = { resolvedApiBase() }
     }
     val offlineStore by lazy { LocalOfflineStore(appContext, moshi) }
+    private val streamUrlCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    private val STREAM_URL_TTL_MS = 90_000L
     val localPlayback by lazy { LocalPlaybackStore(appContext, moshi) }
     /**
      * Scope application — downloads / mutations biblio.
@@ -304,26 +306,40 @@ class AppContainer(context: Context) {
         .create(YtMusicApi::class.java)
 
     fun streamUrl(trackId: String): String {
+        val now = System.currentTimeMillis()
+        streamUrlCache[trackId]?.let { (url, ts) ->
+            if (now - ts < STREAM_URL_TTL_MS) return url
+        }
         // Local seulement si hors-ligne, OU fichier progressif sain.
         // Les .m4a « dash » (fragmentés) plantent mid-song chez Exo → stream online.
-        offlineStore.playUri(trackId)?.let { uri ->
+        val resolved = offlineStore.playUri(trackId)?.let { uri ->
             val online = runCatching {
                 ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
             }.getOrDefault(true)
             if (!online || !offlineStore.isDashContainer(trackId)) {
-                return uri.toString()
+                uri.toString()
+            } else {
+                AppLog.d("stream", "skip local dash id=$trackId → proxy stream")
+                null
             }
-            AppLog.d("stream", "skip local dash id=$trackId → proxy stream")
+        } ?: run {
+            // Toujours via proxy API : les URLs googlevideo sont liées à l’IP du serveur
+            // (?redirect=1 → 403 depuis le téléphone / autre réseau).
+            val base = resolvedApiBase() + "/api/stream/$trackId"
+            val token = tokenStore.peekAccess()
+            if (!token.isNullOrBlank()) {
+                "$base?access_token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
+            } else {
+                base
+            }
         }
-        // Toujours via proxy API : les URLs googlevideo sont liées à l’IP du serveur
-        // (?redirect=1 → 403 depuis le téléphone / autre réseau).
-        val base = resolvedApiBase() + "/api/stream/$trackId"
-        val token = tokenStore.peekAccess()
-        return if (!token.isNullOrBlank()) {
-            "$base?access_token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
-        } else {
-            base
-        }
+        streamUrlCache[trackId] = resolved to now
+        return resolved
+    }
+
+    fun invalidateStreamUrlCache(trackId: String? = null) {
+        if (trackId == null) streamUrlCache.clear() else streamUrlCache.remove(trackId)
+        offlineStore.invalidateDashCache(trackId)
     }
 
     /** Stream vidéo progressif (onglet Vidéo) — muet, syncé sur l’audio. */

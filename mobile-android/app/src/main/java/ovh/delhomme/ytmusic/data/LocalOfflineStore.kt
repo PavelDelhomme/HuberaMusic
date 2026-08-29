@@ -112,6 +112,7 @@ class LocalOfflineStore(
             writeMetaUnlocked(meta)
             bump()
         }
+        invalidateDashCache(trackId)
     }
 
     /**
@@ -376,14 +377,20 @@ class LocalOfflineStore(
     }
 
     /** Conteneur DASH/fragmenté — Exo plante parfois mid-song (atom length > Int.MAX). */
+    private val dashCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
     fun isDashContainer(trackId: String): Boolean {
+        dashCache[trackId]?.let { return it }
         val f = audioFile(trackId)
-        if (!f.isFile) return false
-        return runCatching {
+        if (!f.isFile) {
+            dashCache[trackId] = false
+            return false
+        }
+        val dash = runCatching {
             RandomAccessFile(f, "r").use { raf ->
                 val buf = ByteArray(32)
                 val n = raf.read(buf)
-                if (n < 12) return false
+                if (n < 12) return@use false
                 for (i in 0..n - 8) {
                     if (buf[i] == 'f'.code.toByte() &&
                         buf[i + 1] == 't'.code.toByte() &&
@@ -391,7 +398,7 @@ class LocalOfflineStore(
                         buf[i + 3] == 'p'.code.toByte()
                     ) {
                         val brand = String(buf, i + 4, 4, Charsets.US_ASCII)
-                        return brand.equals("dash", ignoreCase = true) ||
+                        return@use brand.equals("dash", ignoreCase = true) ||
                             brand.equals("iso5", ignoreCase = true) ||
                             brand.equals("iso6", ignoreCase = true)
                     }
@@ -399,6 +406,12 @@ class LocalOfflineStore(
                 false
             }
         }.getOrDefault(false)
+        dashCache[trackId] = dash
+        return dash
+    }
+
+    fun invalidateDashCache(trackId: String? = null) {
+        if (trackId == null) dashCache.clear() else dashCache.remove(trackId)
     }
 
     /**

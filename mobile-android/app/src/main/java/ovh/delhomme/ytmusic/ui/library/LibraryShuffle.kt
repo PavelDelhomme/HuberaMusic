@@ -29,15 +29,14 @@ suspend fun playLibraryShuffled(
         else playable.shuffled()
     }
     val base = container.resolvedApiBase()
-    if (base.isNotBlank()) {
-        withContext(Dispatchers.IO) {
-            StreamPrefetcher.prepareShuffleLead(base, shuffled.map { it.id })
-        }
-    }
+    // Son d’abord — warm ne bloque plus le 1er play (latence Aléatoire).
     onPlay(shuffled, 0)
-    // Refresh tête en fond pour le prochain tap (pas bloquant)
     withContext(Dispatchers.IO) {
         runCatching {
+            if (base.isNotBlank()) {
+                StreamPrefetcher.warmTrackFormatOnly(base, shuffled.first().id)
+                StreamPrefetcher.warmFormatsLight(base, shuffled.drop(1).take(4).map { it.id }, limit = 4)
+            }
             val next = playable.shuffled().take(12).map { it.id }
             ShuffleHeadStore.saveHead(ctx, cacheKey, next)
             if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
@@ -65,7 +64,10 @@ suspend fun playQueueWithLead(
     if (base.isNotBlank()) {
         withContext(Dispatchers.IO) {
             val lead = playable.drop(idx).take(4).map { it.id }
-            StreamPrefetcher.prepareShuffleLead(base, lead)
+            lead.firstOrNull()?.takeIf { it.length == 11 }?.let {
+                StreamPrefetcher.warmTrackFormatOnly(base, it)
+            }
+            StreamPrefetcher.warmFormatsLight(base, lead.drop(1), limit = 3)
         }
     }
 }
