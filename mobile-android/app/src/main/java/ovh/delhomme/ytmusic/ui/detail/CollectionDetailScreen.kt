@@ -84,6 +84,7 @@ import ovh.delhomme.ytmusic.ui.components.TrackRow
 import ovh.delhomme.ytmusic.ui.components.DownloadStatusIcon
 import ovh.delhomme.ytmusic.ui.components.pollOfflineJob
 import ovh.delhomme.ytmusic.ui.icons.MixIcon
+import ovh.delhomme.ytmusic.ui.util.isLandscape
 
 enum class DetailKind { Album, Artist, Playlist, Mix }
 
@@ -1468,13 +1469,13 @@ private fun RoundIconAction(
             IconButton(
                 onClick = onClick,
                 enabled = enabled,
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(56.dp),
             ) {
                 Icon(
                     icon,
                     contentDescription = hint,
                     tint = if (enabled) tint else tint.copy(alpha = 0.4f),
-                    modifier = Modifier.size(if (label.isEmpty()) 28.dp else 26.dp),
+                    modifier = Modifier.size(if (label.isEmpty()) 32.dp else 28.dp),
                 )
             }
             if (label.isNotEmpty()) {
