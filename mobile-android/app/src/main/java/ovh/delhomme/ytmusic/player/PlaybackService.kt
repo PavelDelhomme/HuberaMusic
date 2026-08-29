@@ -774,10 +774,10 @@ class PlaybackService : MediaSessionService() {
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs */ 15_000,
+                /* minBufferMs */ 12_000,
                 /* maxBufferMs */ 90_000,
-                /* bufferForPlaybackMs */ 700,
-                /* bufferForPlaybackAfterRebufferMs */ 1_600,
+                /* bufferForPlaybackMs */ 280,
+                /* bufferForPlaybackAfterRebufferMs */ 750,
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -1880,22 +1880,45 @@ private class YtmForwardingPlayer(
 fun ExoPlayer.playTracks(baseStreamUrl: (String) -> String, tracks: List<TrackDto>, startIndex: Int) {
     val playable = tracks.filter { it.isPlayable() }
     if (playable.isEmpty()) return
-    val idx = startIndex.coerceIn(0, playable.lastIndex)
-    PlaybackService.Holder.queue = playable
+    val maxItems = 80
+    val (window, idx) = if (playable.size > maxItems) {
+        val half = maxItems / 2
+        val raw = startIndex.coerceIn(0, playable.lastIndex)
+        val from = (raw - half).coerceAtLeast(0)
+        val to = (from + maxItems).coerceAtMost(playable.size)
+        val slice = playable.subList(from, to)
+        slice to (raw - from).coerceIn(0, slice.lastIndex)
+    } else {
+        playable to startIndex.coerceIn(0, playable.lastIndex)
+    }
+    PlaybackService.Holder.queue = window
     PlaybackService.Holder.index = idx
-    StreamPrefetcher.quietPrefetch(320L)
-    val current = playable.getOrNull(idx)
+    StreamPrefetcher.quietPrefetch(120L)
+    val current = window.getOrNull(idx)
     if (current != null && current.id.length == 11) {
         StreamPrefetcher.warmTrackFormatOnly(PlaybackService.Holder.resolvedApiBase(), current.id)
     }
-    CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)
-    val items = playable.map { t ->
-        mediaItemFor(t, baseStreamUrl, PlaybackService.Holder.queueTitle)
-    }
-    setMediaItems(items, idx, 0L)
+    CoverPrefetcher.warmCovers(window, idx, ahead = 3, behind = 1)
+    // Courant + 3 suivants d’abord → prepare/play immédiat, reste de la fenêtre ensuite.
+    val leadTo = (idx + 4).coerceAtMost(window.size)
+    val lead = window.subList(idx, leadTo)
+    setMediaItems(lead.map { mediaItemFor(it, baseStreamUrl, PlaybackService.Holder.queueTitle) }, 0, 0L)
     volume = PLAYBACK_VOLUME
     prepare()
     playWhenReady = true
+    if (idx > 0) {
+        addMediaItems(
+            0,
+            window.subList(0, idx).map { mediaItemFor(it, baseStreamUrl, PlaybackService.Holder.queueTitle) },
+        )
+    }
+    if (leadTo < window.size) {
+        addMediaItems(
+            window.subList(leadTo, window.size).map {
+                mediaItemFor(it, baseStreamUrl, PlaybackService.Holder.queueTitle)
+            },
+        )
+    }
 }
 
 fun mediaItemFor(
