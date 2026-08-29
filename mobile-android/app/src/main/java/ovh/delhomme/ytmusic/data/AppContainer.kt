@@ -82,6 +82,9 @@ class AppContainer(context: Context) {
             ensureToken = { ensureFreshToken() },
         )
     }
+    val apkUpdateManager by lazy {
+        ovh.delhomme.ytmusic.update.ApkUpdateManager(appContext, this)
+    }
     private val apiPrefs = appContext.getSharedPreferences("ytm_api", Context.MODE_PRIVATE)
 
     val deviceId: String by lazy {

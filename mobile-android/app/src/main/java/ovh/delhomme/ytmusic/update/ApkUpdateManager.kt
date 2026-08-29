@@ -11,7 +11,15 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import ovh.delhomme.ytmusic.BuildConfig
@@ -22,21 +30,75 @@ import ovh.delhomme.ytmusic.player.PlaybackService
 import java.io.File
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Vérifie / télécharge / installe l’APK publiée sur le serveur (`/api/deploy/apk`)
  * — toujours la **dernière** version seule (pas de chaîne d’intermédiaires).
  *
- * « Plus tard » = snooze **temporel** choisi par l’utilisateur (pas un report
- * jusqu’à la prochaine version). Fermer l’app / le dialogue sans choisir
- * ne snooze pas → re-proposition au prochain lancement.
- * Annulation de l’install système → re-proposition immédiate.
+ * Le téléchargement vit dans un scope **application** : quitter Compte
+ * n’annule plus la MAJ, et l’écran retrouve l’état (phase + %) au retour.
  */
 class ApkUpdateManager(
     private val context: Context,
     private val container: AppContainer,
 ) {
     private val prefs = context.getSharedPreferences("ytm_updates", Context.MODE_PRIVATE)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var updateJob: Job? = null
+    private val busy = AtomicBoolean(false)
+
+    enum class Phase {
+        Idle,
+        Checking,
+        UpToDate,
+        Available,
+        Downloading,
+        Installing,
+        AwaitingConfirm,
+        Done,
+        Error,
+    }
+
+    data class UiState(
+        val phase: Phase = Phase.Idle,
+        /** 0f…1f pendant Downloading */
+        val progress: Float = 0f,
+        val message: String = "",
+        val remoteName: String? = null,
+        val remoteCode: Int = 0,
+        val available: Boolean = false,
+    )
+
+    private val _ui = MutableStateFlow(restoreUi())
+    val ui: StateFlow<UiState> = _ui.asStateFlow()
+
+    private fun restoreUi(): UiState {
+        val phaseName = prefs.getString(KEY_UI_PHASE, null)
+        val phase = runCatching { Phase.valueOf(phaseName ?: "") }.getOrDefault(Phase.Idle)
+        // Ne pas restaurer Downloading/Checking (job mort) → Idle avec message
+        val safe = when (phase) {
+            Phase.Downloading, Phase.Checking, Phase.Installing -> Phase.Idle
+            else -> phase
+        }
+        return UiState(
+            phase = safe,
+            progress = 0f,
+            message = prefs.getString(KEY_UI_MESSAGE, "") ?: "",
+            remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
+            remoteCode = prefs.getInt(KEY_LAST_REMOTE_CODE, 0),
+            available = safe == Phase.Available || safe == Phase.AwaitingConfirm ||
+                (safe == Phase.Error && prefs.getInt(KEY_LAST_REMOTE_CODE, 0) > BuildConfig.VERSION_CODE),
+        )
+    }
+
+    private fun publish(state: UiState) {
+        _ui.value = state
+        prefs.edit()
+            .putString(KEY_UI_PHASE, state.phase.name)
+            .putString(KEY_UI_MESSAGE, state.message)
+            .apply()
+    }
 
     data class CheckResult(
         val available: Boolean,
@@ -179,6 +241,237 @@ class ApkUpdateManager(
     }
 
     /**
+     * Rafraîchit le libellé Compte (sans lancer de DL).
+     * À appeler à l’entrée / retour sur l’écran Compte.
+     */
+    suspend fun refreshAccountStatus() {
+        val current = _ui.value
+        if (current.phase == Phase.Downloading || current.phase == Phase.Installing ||
+            current.phase == Phase.Checking
+        ) {
+            // Job en cours : ne pas écraser le progrès
+            return
+        }
+        publish(
+            current.copy(
+                phase = Phase.Checking,
+                message = "Vérification de la version…",
+                progress = 0f,
+            ),
+        )
+        val result = check(force = true, respectSnooze = false)
+        val remote = result.info?.versionCode ?: 0
+        val remoteName = result.info?.versionName
+        when {
+            remote > BuildConfig.VERSION_CODE && !isSnoozed(remote) -> {
+                val pending = apkFileFor(remote).takeIf { it.isFile && it.length() > 1_000_000L }
+                if (pending != null) {
+                    publish(
+                        UiState(
+                            phase = Phase.AwaitingConfirm,
+                            message = "APK ${remoteName ?: remote} téléchargée — appuie pour lancer l’installateur",
+                            remoteName = remoteName,
+                            remoteCode = remote,
+                            available = true,
+                        ),
+                    )
+                } else {
+                    publish(
+                        UiState(
+                            phase = Phase.Available,
+                            message = "Nouvelle version ${remoteName ?: "p+$remote"} — appuie pour télécharger et installer",
+                            remoteName = remoteName,
+                            remoteCode = remote,
+                            available = true,
+                        ),
+                    )
+                }
+            }
+            remote > BuildConfig.VERSION_CODE -> {
+                publish(
+                    UiState(
+                        phase = Phase.Idle,
+                        message = "Installée ${BuildConfig.VERSION_NAME} · serveur $remoteName (ignorée pour plus tard)",
+                        remoteName = remoteName,
+                        remoteCode = remote,
+                        available = false,
+                    ),
+                )
+            }
+            remote > 0 -> {
+                publish(
+                    UiState(
+                        phase = Phase.UpToDate,
+                        message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
+                            (remoteName?.let { " · serveur $it" } ?: ""),
+                        remoteName = remoteName,
+                        remoteCode = remote,
+                        available = false,
+                    ),
+                )
+            }
+            else -> {
+                publish(
+                    UiState(
+                        phase = Phase.Idle,
+                        message = result.message ?: "Installée ${BuildConfig.VERSION_NAME}",
+                        available = false,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Clic Compte « Mettre à jour » : tourne hors composition (survit navigation).
+     */
+    fun startManualUpdate() {
+        if (!busy.compareAndSet(false, true)) {
+            AppLog.i("apk-update", "déjà en cours phase=${_ui.value.phase}")
+            return
+        }
+        updateJob?.cancel()
+        updateJob = scope.launch {
+            try {
+                publish(
+                    _ui.value.copy(
+                        phase = Phase.Checking,
+                        message = "Vérification de la version…",
+                        progress = 0f,
+                    ),
+                )
+                val check = check(force = true, respectSnooze = false)
+                val remote = check.info?.versionCode ?: 0
+                val remoteName = check.info?.versionName
+                if (remote <= BuildConfig.VERSION_CODE) {
+                    publish(
+                        UiState(
+                            phase = Phase.UpToDate,
+                            message = check.message ?: "À jour — ${BuildConfig.VERSION_NAME}",
+                            remoteName = remoteName,
+                            remoteCode = remote,
+                            available = false,
+                        ),
+                    )
+                    return@launch
+                }
+                val pending = apkFileFor(remote)
+                if (pending.isFile && pending.length() > 1_000_000L) {
+                    publish(
+                        UiState(
+                            phase = Phase.Installing,
+                            message = "Lancement de l’installateur (${remoteName ?: remote})…",
+                            remoteName = remoteName,
+                            remoteCode = remote,
+                            available = true,
+                            progress = 1f,
+                        ),
+                    )
+                    val msg = launchInstall(pending, remote)
+                    publish(
+                        UiState(
+                            phase = if (msg.startsWith("Installation")) Phase.AwaitingConfirm else Phase.Error,
+                            message = msg,
+                            remoteName = remoteName,
+                            remoteCode = remote,
+                            available = true,
+                            progress = 1f,
+                        ),
+                    )
+                    return@launch
+                }
+                publish(
+                    UiState(
+                        phase = Phase.Downloading,
+                        message = "Téléchargement ${remoteName ?: remote}… 0 %",
+                        remoteName = remoteName,
+                        remoteCode = remote,
+                        available = true,
+                        progress = 0f,
+                    ),
+                )
+                val msg = downloadAndInstall(check.info) { p ->
+                    val pct = (p * 100).toInt().coerceIn(0, 99)
+                    _ui.update {
+                        it.copy(
+                            phase = Phase.Downloading,
+                            progress = p,
+                            message = "Téléchargement ${remoteName ?: remote}… $pct %",
+                            remoteName = remoteName,
+                            remoteCode = remote,
+                            available = true,
+                        )
+                    }
+                }
+                val ok = msg.startsWith("Installation")
+                publish(
+                    UiState(
+                        phase = when {
+                            ok -> Phase.AwaitingConfirm
+                            msg.contains("Autorise", ignoreCase = true) -> Phase.Error
+                            msg.contains("Déjà à jour") -> Phase.UpToDate
+                            else -> Phase.Error
+                        },
+                        message = when {
+                            ok -> "$msg — confirme sur l’écran système, puis rouvre PLM"
+                            else -> msg
+                        },
+                        remoteName = remoteName,
+                        remoteCode = remote,
+                        available = ok || remote > BuildConfig.VERSION_CODE,
+                        progress = if (ok) 1f else _ui.value.progress,
+                    ),
+                )
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLog.w("apk-update", "manual update fail", e)
+                publish(
+                    _ui.value.copy(
+                        phase = Phase.Error,
+                        message = e.message ?: "Échec mise à jour",
+                        available = (_ui.value.remoteCode > BuildConfig.VERSION_CODE),
+                    ),
+                )
+            } finally {
+                busy.set(false)
+            }
+        }
+    }
+
+    private fun apkFileFor(remoteCode: Int): File {
+        val dir = File(context.cacheDir, "apk-updates").apply { mkdirs() }
+        return File(dir, "plm-update-$remoteCode.apk")
+    }
+
+    private suspend fun launchInstall(file: File, remote: Int): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
+            withContext(Dispatchers.Main) {
+                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                    .setData(Uri.parse("package:${context.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            }
+            return "Autorise l’installation pour PLM, puis réessaie"
+        }
+        withContext(Dispatchers.Main) {
+            runCatching {
+                PlaybackService.Holder.player?.pause()
+                PlaybackService.Holder.player?.stop()
+                context.stopService(Intent(context, PlaybackService::class.java))
+            }
+        }
+        clearSnooze()
+        val ok = runCatching { installViaPackageInstaller(file) }.getOrElse { err ->
+            AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
+            withContext(Dispatchers.Main) { installApkViaView(file) }
+            true
+        }
+        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur"
+    }
+
+    /**
      * Au démarrage / reprise : propose si MAJ dispo et pas en snooze timer.
      * Fermer l’app sans répondre → re-demande ici.
      * Après annulation d’install → aussi ici.
@@ -277,7 +570,10 @@ class ApkUpdateManager(
      * Télécharge l’APK **courante** puis lance l’installateur (PackageInstaller).
      * Coupe la lecture avant pour éviter ANR / session média zombie (Nothing).
      */
-    suspend fun downloadAndInstall(info: ApkInfoResponse? = null): String = withContext(Dispatchers.IO) {
+    suspend fun downloadAndInstall(
+        info: ApkInfoResponse? = null,
+        onProgress: ((Float) -> Unit)? = null,
+    ): String = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
@@ -300,7 +596,7 @@ class ApkUpdateManager(
         }
 
         container.ensureFreshToken()
-        val meta = container.api.apkInfo()
+        val meta = info ?: container.api.apkInfo()
         if (meta.ready != true) return@withContext "APK pas encore publiée"
         val remote = meta.versionCode ?: 0
         if (remote <= BuildConfig.VERSION_CODE) {
@@ -319,7 +615,7 @@ class ApkUpdateManager(
                 f.delete()
             }
         }
-        val out = File(dir, "plm-update-$remote.apk")
+        val out = apkFileFor(remote)
         if (out.exists()) out.delete()
 
         val req = Request.Builder().url(url).get().build()
@@ -328,22 +624,47 @@ class ApkUpdateManager(
                 return@withContext "Téléchargement HTTP ${resp.code}"
             }
             val body = resp.body ?: return@withContext "Réponse vide"
+            val total = body.contentLength().takeIf { it > 0 }
+                ?: meta.sizeBytes?.toLong()?.takeIf { it > 0 }
+                ?: -1L
             out.outputStream().use { os ->
-                body.byteStream().use { it.copyTo(os) }
+                body.byteStream().use { input ->
+                    val buf = ByteArray(64 * 1024)
+                    var read = 0L
+                    var lastPct = -1
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        os.write(buf, 0, n)
+                        read += n
+                        if (total > 0) {
+                            val p = (read.toFloat() / total.toFloat()).coerceIn(0f, 0.99f)
+                            val pct = (p * 100).toInt()
+                            if (pct != lastPct) {
+                                lastPct = pct
+                                onProgress?.invoke(p)
+                            }
+                        } else if (read % (512 * 1024L) < buf.size) {
+                            onProgress?.invoke((read / (8f * 1024f * 1024f)).coerceIn(0f, 0.9f))
+                        }
+                    }
+                }
             }
+            onProgress?.invoke(1f)
         }
         if (out.length() < 1_000_000L) {
             out.delete()
             return@withContext "APK trop petite (${out.length()} o)"
         }
         AppLog.i("apk-update", "downloaded ${out.length()} bytes → install v$remote")
-        clearSnooze()
-        val ok = runCatching { installViaPackageInstaller(out) }.getOrElse { err ->
-            AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
-            withContext(Dispatchers.Main) { installApkViaView(out) }
-            true
-        }
-        if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur"
+        publish(
+            _ui.value.copy(
+                phase = Phase.Installing,
+                progress = 1f,
+                message = "Lancement de l’installateur (v$remote)…",
+            ),
+        )
+        launchInstall(out, remote)
     }
 
     /** Session PackageInstaller (plus fiable que ACTION_VIEW sur Nothing / Android 14+). */
@@ -391,11 +712,27 @@ class ApkUpdateManager(
                                 }
                                 confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 confirm?.let { ctx?.startActivity(it) }
+                                publish(
+                                    _ui.value.copy(
+                                        phase = Phase.AwaitingConfirm,
+                                        message = "Installation lancée — confirme sur l’écran système, puis rouvre PLM",
+                                        available = true,
+                                        progress = 1f,
+                                    ),
+                                )
                                 // Garder le receiver pour le statut final (OK / annulé)
                                 return
                             }
                             PackageInstaller.STATUS_SUCCESS -> {
                                 prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
+                                publish(
+                                    UiState(
+                                        phase = Phase.Done,
+                                        message = "Mise à jour installée — redémarre PLM si besoin",
+                                        available = false,
+                                        progress = 1f,
+                                    ),
+                                )
                             }
                             PackageInstaller.STATUS_FAILURE_ABORTED,
                             PackageInstaller.STATUS_FAILURE,
@@ -406,6 +743,13 @@ class ApkUpdateManager(
                             PackageInstaller.STATUS_FAILURE_STORAGE,
                             -> {
                                 markInstallCancelled()
+                                publish(
+                                    _ui.value.copy(
+                                        phase = Phase.Error,
+                                        message = "Installation annulée ou échouée — appuie pour réessayer",
+                                        available = true,
+                                    ),
+                                )
                             }
                         }
                         runCatching { ctx?.unregisterReceiver(this) }
@@ -442,6 +786,8 @@ class ApkUpdateManager(
         private const val KEY_PROMPTED_SLOT = "prompted_slot"
         private const val KEY_LAST_REMOTE_CODE = "last_remote_code"
         private const val KEY_LAST_REMOTE_NAME = "last_remote_name"
+        private const val KEY_UI_PHASE = "ui_phase"
+        private const val KEY_UI_MESSAGE = "ui_message"
         private val WINDOW_HALF_MS = TimeUnit.MINUTES.toMillis(45)
         private val PERIODIC_INTERVAL_MS = TimeUnit.HOURS.toMillis(6)
     }
