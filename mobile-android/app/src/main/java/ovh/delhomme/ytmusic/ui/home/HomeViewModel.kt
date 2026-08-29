@@ -71,7 +71,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     fun snoozeUpdatePrompt(option: ApkUpdateManager.SnoozeOption) {
         val code = _state.value.updatePrompt?.info?.versionCode ?: 0
         if (code > 0) {
-            ApkUpdateManager(container.appContext, container).snooze(option, code)
+            container.apkUpdateManager.snooze(option, code)
         }
         _state.value = _state.value.copy(updatePrompt = null)
     }
@@ -109,8 +109,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             val updateJob = if (fromUser) {
                 async {
                     runCatching {
-                        ApkUpdateManager(container.appContext, container)
-                            .checkOnPullRefresh()
+                        container.apkUpdateManager.checkOnPullRefresh()
                     }.getOrNull()
                 }
             } else {
