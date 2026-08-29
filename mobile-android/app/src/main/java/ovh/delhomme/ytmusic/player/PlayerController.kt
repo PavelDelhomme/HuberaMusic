@@ -39,6 +39,8 @@ internal const val PLAYBACK_VOLUME = 0.82f
 data class PlayerUiState(
     val track: TrackDto? = null,
     val playing: Boolean = false,
+    /** True si Exo bufferise alors qu’on veut jouer (affiche « Chargement… »). */
+    val buffering: Boolean = false,
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
     val bufferedMs: Long = 0L,
@@ -1532,6 +1534,7 @@ class PlayerController(
         _state.value = _state.value.copy(
             track = track,
             playing = true,
+            buffering = true,
             positionMs = positionMs.coerceAtLeast(0L),
             durationMs = track.durationMsOrNull() ?: _state.value.durationMs,
             bufferedMs = 0L,
@@ -1544,6 +1547,7 @@ class PlayerController(
             sourceId = sourceId,
             sourceKind = sourceKind,
         )
+        noteBuffering(true, track.id)
     }
 
     /**
@@ -1751,6 +1755,37 @@ class PlayerController(
     }
 
     private var lastCoverPrefetchId: String? = null
+    private var bufferWatchJob: Job? = null
+    private var bufferHintTrackId: String? = null
+
+    /**
+     * Feedback utilisateur pendant un long BUFFERING (file / titre froid).
+     * Toasts à ~5 s puis ~12 s — sinon silence total perçu comme un bug.
+     */
+    private fun noteBuffering(buffering: Boolean, trackId: String?) {
+        if (!buffering || trackId.isNullOrBlank()) {
+            bufferWatchJob?.cancel()
+            bufferWatchJob = null
+            bufferHintTrackId = null
+            return
+        }
+        if (trackId == bufferHintTrackId && bufferWatchJob?.isActive == true) return
+        bufferWatchJob?.cancel()
+        bufferHintTrackId = trackId
+        bufferWatchJob = scope.launch {
+            delay(5_000L)
+            if (_state.value.buffering && _state.value.track?.id == trackId) {
+                context.toastMain("Chargement du flux…", Toast.LENGTH_SHORT)
+            }
+            delay(7_000L)
+            if (_state.value.buffering && _state.value.track?.id == trackId) {
+                context.toastMain(
+                    "Toujours en chargement — passe au suivant si besoin (Compte → Aide & limites)",
+                    Toast.LENGTH_LONG,
+                )
+            }
+        }
+    }
 
     /** Branché depuis MainActivity → SharedPreferences (survit force-stop). */
     var onPersistLocal: ((LocalPlaybackSnapshot) -> Unit)? = null
@@ -1789,9 +1824,14 @@ class PlayerController(
                 ?: _state.value.durationMs.takeIf { it > 0L }
                 ?: 0L
         }
+        val buffering =
+            player.playWhenReady &&
+                player.playbackState == Player.STATE_BUFFERING
+        noteBuffering(buffering, track?.id)
         _state.value = PlayerUiState(
             track = track,
             playing = player.isPlaying,
+            buffering = buffering,
             positionMs = player.currentPosition.coerceAtLeast(0),
             durationMs = durationMs,
             bufferedMs = player.bufferedPosition.coerceAtLeast(0),

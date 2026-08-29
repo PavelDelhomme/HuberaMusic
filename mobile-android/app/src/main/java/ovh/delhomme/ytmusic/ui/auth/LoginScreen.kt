@@ -132,6 +132,15 @@ fun LoginScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                "Important : après connexion, ouvre Compte → Aide & limites. " +
+                    "Ça explique le chargement des titres, le hors-ligne et les limites de PLM.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp),
+            )
         }
         OutlinedTextField(
             value = state.email,

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -215,6 +216,8 @@ fun MiniPlayerBar(
     durationMs: Long = 0L,
     /** Fraction 0–1 déjà bufferisée (gris clair sous le rouge). */
     bufferedProgress: Float = 0f,
+    /** Exo bufferise — sous-titre « Chargement… ». */
+    buffering: Boolean = false,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     /** Swipe bas → fermer lecteur + vider la file. */
@@ -381,13 +384,24 @@ fun MiniPlayerBar(
                     color = Color(0xFFF5F5F5),
                     modifier = Modifier.basicMarquee(iterations = 2, initialDelayMillis = 2_000),
                 )
-                Text(
-                    track.artistLine(),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFCFCFCF),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (buffering) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .padding(end = 6.dp)
+                                .size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = Color(0xFFFF8A80),
+                        )
+                    }
+                    Text(
+                        if (buffering) "Chargement…" else track.artistLine(),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (buffering) Color(0xFFFF8A80) else Color(0xFFCFCFCF),
+                    )
+                }
             }
             if (onCast != null) {
                 IconButton(onClick = onCast) {

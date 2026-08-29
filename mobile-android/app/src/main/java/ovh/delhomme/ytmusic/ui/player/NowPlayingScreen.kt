@@ -981,6 +981,16 @@ fun NowPlayingScreen(
                                                 },
                                             ),
                                     )
+                                    if (ui.buffering) {
+                                        Text(
+                                            "Chargement du flux…",
+                                            color = Color(0xFFFF8A80),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 2.dp),
+                                        )
+                                    }
                                     if (onOpenArtist != null) {
                                         ArtistLinksText(
                                             track = track,
