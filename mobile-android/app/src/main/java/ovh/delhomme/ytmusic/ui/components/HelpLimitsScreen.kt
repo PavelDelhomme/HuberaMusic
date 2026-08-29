@@ -65,9 +65,9 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item { SectionTitle("Comment marche la lecture") }
             item {
                 Bullet(
-                    "Le son passe par notre serveur (proxy), pas directement depuis YouTube sur le téléphone. " +
-                        "Le premier démarrage d’un titre rarement écouté peut prendre plusieurs secondes " +
-                        "(résolution du flux côté serveur).",
+                    "Le son passe par notre serveur (proxy). Un titre jamais (ou rarement) joué doit d’abord " +
+                        "être « résolu » côté YouTube — avant c’était parfois 20–30 s ; on a priorisé une " +
+                        "résolution rapide (quelques secondes). Les titres déjà préchargés démarrent encore plus vite.",
                 )
             }
             item {
