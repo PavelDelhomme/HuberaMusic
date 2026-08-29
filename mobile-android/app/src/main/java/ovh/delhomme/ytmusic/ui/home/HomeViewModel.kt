@@ -53,7 +53,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             }
             _state.value = HomeUiState(
                 loading = false,
-                shelves = cached.shelves,
+                shelves = sanitizeHomeShelves(cached.shelves),
                 radios = cached.radios,
                 radioPreviews = seededPreviews,
                 seeds = cached.seeds,
@@ -145,9 +145,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 _state.value = _state.value.copy(
                     loading = false,
                     refreshing = fromUser,
-                    shelves = home.shelves.filter {
-                        it.items.isNotEmpty() && !it.title.equals("Épinglé", ignoreCase = true)
-                    },
+                    shelves = sanitizeHomeShelves(home.shelves),
                     radios = home.radios,
                     savedMixIds = savedMixes,
                     needsOnboarding = home.needsOnboarding == true,
@@ -247,7 +245,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 container.ensureFreshToken()
                 val nextPage = cur.page + 1
                 val more = container.api.homeMore(nextPage, cur.seeds.joinToString(","))
-                val extra = more.shelves.filter { it.items.isNotEmpty() }
+                val extra = sanitizeHomeShelves(more.shelves)
                 val merged = (cur.shelves + extra).distinctBy { it.title }
                 _state.value = _state.value.copy(
                     loadingMore = false,
@@ -338,6 +336,18 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     companion object {
+        /** Retire Épinglé + vidéos dans « Favoris » (cache ou API). */
+        fun sanitizeHomeShelves(shelves: List<ShelfDto>): List<ShelfDto> =
+            shelves.mapNotNull { shelf ->
+                if (shelf.title.equals("Épinglé", ignoreCase = true)) return@mapNotNull null
+                val items = if (shelf.title.contains("Favoris", ignoreCase = true)) {
+                    shelf.items.filter { it.isMusicTrack() || it.isAlbum() }
+                } else {
+                    shelf.items
+                }
+                if (items.isEmpty()) null else shelf.copy(items = items)
+            }
+
         fun factory(c: AppContainer) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = HomeViewModel(c) as T
