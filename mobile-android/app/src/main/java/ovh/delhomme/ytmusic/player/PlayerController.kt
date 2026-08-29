@@ -286,27 +286,22 @@ class PlayerController(
             publishOptimistic(playable, idx)
             val base = streamUrl("_").substringBefore("/api/stream/")
             val firstId = playable[idx].id
-            StreamPrefetcher.quietPrefetch(140L)
-            val headReady = !firstId.isNullOrBlank() && StreamPrefetcher.wasHeadReadyRecently(firstId)
-            if (!headReady) {
-                StreamPrefetcher.warmTrackFormatOnly(base, firstId)
-                scope.launch(Dispatchers.IO) {
-                    StreamPrefetcher.warmCurrentBlocking(base, firstId, timeoutMs = 700L, wait = true)
-                }
+            // Laisse Exo prendre /api/stream en priorité — un warm wait=true du
+            // même id concurrence getAudioFormat et allonge le 1er buffer (Favoris froids).
+            StreamPrefetcher.quietPrefetch(900L)
+            val startId = firstId
+            scope.launch {
+                delay(500L)
+                if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 playable.drop(idx + 1).take(2).forEach { t ->
                     StreamPrefetcher.warmTrackFormatOnly(base, t.id)
                 }
-            }
-            val startId = firstId
-            scope.launch {
-                delay(if (headReady) 40L else 120L)
-                if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(playable, idx)
                 StreamPrefetcher.prefetchUpcomingHeadsTiered(
                     base,
                     playable.map { it.id },
                     idx,
-                    count = 4,
+                    count = 3,
                     ignoreQuiet = false,
                 )
             }

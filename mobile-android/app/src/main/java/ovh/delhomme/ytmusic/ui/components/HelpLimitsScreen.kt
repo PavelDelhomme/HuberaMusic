@@ -73,8 +73,8 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item {
                 Bullet(
                     "En Wi‑Fi, PLM précharge ~5 secondes de beaucoup de titres de ta bibliothèque. " +
-                        "Un titre déjà préchargé démarre plus vite ; un titre « froid » (peu ou jamais joué) " +
-                        "peut patienter.",
+                        "Un titre déjà préchargé démarre plus vite. « Favoris à redécouvrir » ne propose " +
+                        "que de la musique (plus de vidéos YouTube mélangées).",
                 )
             }
             item {
