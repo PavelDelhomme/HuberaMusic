@@ -29,6 +29,8 @@ import java.util.concurrent.TimeUnit
  * (têtes généreuses proches, têtes ~3–6 s plus loin) pour enchaîner sans coupure.
  */
 object StreamPrefetcher {
+    /** ~5 s biblio (conteneur m4a) — crawl fond + viewport. */
+    const val HEAD_LIBRARY = 750L * 1024L
     /** ~6–8 s audio typique YT (~160–256 kb/s) + marge conteneur. */
     const val HEAD_3S = 900L * 1024L
     /** ~12–15 s — titre suivant pendant lecture. */
@@ -552,6 +554,23 @@ object StreamPrefetcher {
         ids.forEach { id ->
             val url = "${baseApi.trimEnd('/')}/api/stream/$id"
             PlayerCache.prefetchHead(YtMusicApp.instance, url, id, HEAD_3S)
+        }
+    }
+
+    /**
+     * Têtes ~5 s pour crawl biblio (fond). Respecte quiet / streamDown.
+     * Au clic, Exo lit d’abord le SimpleCache puis continue le flux.
+     */
+    fun prefetchLibraryHeads(baseApi: String, trackIds: List<String>, limit: Int = 8) {
+        if (isQuiet()) return
+        if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        val capped = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(limit.coerceIn(1, 12))
+        val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(capped)
+        if (ids.isEmpty()) return
+        warmBatch(baseApi, ids.take(MAX_WARM))
+        ids.forEach { id ->
+            val url = "${baseApi.trimEnd('/')}/api/stream/$id"
+            PlayerCache.prefetchHead(YtMusicApp.instance, url, id, HEAD_LIBRARY)
         }
     }
 

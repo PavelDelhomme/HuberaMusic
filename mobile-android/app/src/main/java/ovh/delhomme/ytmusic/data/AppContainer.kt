@@ -84,6 +84,13 @@ class AppContainer(context: Context) {
             ensureToken = { ensureFreshToken() },
         )
     }
+    val libraryHeadPrefetcher by lazy {
+        LibraryHeadPrefetcher(
+            context = appContext,
+            scope = appScope,
+            container = this,
+        )
+    }
     val apkUpdateManager by lazy {
         ovh.delhomme.ytmusic.update.ApkUpdateManager(appContext, this)
     }
@@ -310,21 +317,17 @@ class AppContainer(context: Context) {
         streamUrlCache[trackId]?.let { (url, ts) ->
             if (now - ts < STREAM_URL_TTL_MS) return url
         }
-        // Local seulement si hors-ligne, OU fichier progressif sain.
-        // Les .m4a « dash » (fragmentés) plantent mid-song chez Exo → stream online.
-        val resolved = offlineStore.playUri(trackId)?.let { uri ->
-            val online = runCatching {
-                ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
-            }.getOrDefault(true)
-            if (!online || !offlineStore.isDashContainer(trackId)) {
-                uri.toString()
-            } else {
-                AppLog.d("stream", "skip local dash id=$trackId → proxy stream")
-                null
-            }
+        val online = runCatching {
+            ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+        }.getOrDefault(true)
+        // En ligne : toujours le proxy (têtes SimpleCache = démarrage rapide).
+        // Les .m4a locaux ne servent qu’hors-ligne — en online ils bloquent parfois
+        // Exo en BUFFERING plusieurs minutes sans erreur.
+        val resolved = if (!online) {
+            offlineStore.playUri(trackId)?.toString()
+        } else {
+            null
         } ?: run {
-            // Toujours via proxy API : les URLs googlevideo sont liées à l’IP du serveur
-            // (?redirect=1 → 403 depuis le téléphone / autre réseau).
             val base = resolvedApiBase() + "/api/stream/$trackId"
             val token = tokenStore.peekAccess()
             if (!token.isNullOrBlank()) {

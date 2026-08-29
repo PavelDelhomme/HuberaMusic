@@ -1029,8 +1029,8 @@ export async function handleStreamUrl(req: Request, res: Response) {
 const warmQueue: string[] = [];
 const warmQueued = new Set<string>();
 let warmWorkers = 0;
-const WARM_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.STREAM_WARM_CONCURRENCY || 1) || 1));
-const WARM_BATCH_CAP = Math.max(4, Math.min(24, Number(process.env.STREAM_WARM_BATCH_CAP || 6) || 6));
+const WARM_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.STREAM_WARM_CONCURRENCY || 2) || 2));
+const WARM_BATCH_CAP = Math.max(4, Math.min(24, Number(process.env.STREAM_WARM_BATCH_CAP || 8) || 8));
 
 async function runWarmWorker() {
   if (warmWorkers >= WARM_CONCURRENCY) return;
