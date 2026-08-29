@@ -105,16 +105,15 @@ fun HomeScreen(
             versionName = upd.info?.versionName,
             installing = updateInstalling,
             onInstall = {
-                scope.launch {
-                    updateInstalling = true
-                    val msg = runCatching {
-                        ApkUpdateManager(context.applicationContext, container)
-                            .downloadAndInstall(null)
-                    }.getOrElse { it.message ?: "Échec" }
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                    updateInstalling = false
-                    vm.consumeUpdatePrompt()
-                }
+                updateInstalling = true
+                container.apkUpdateManager.startManualUpdate()
+                updateInstalling = false
+                vm.consumeUpdatePrompt()
+                Toast.makeText(
+                    context,
+                    "Téléchargement… suis la progression dans Compte",
+                    Toast.LENGTH_LONG,
+                ).show()
             },
             onSnooze = { opt -> vm.snoozeUpdatePrompt(opt) },
             onSoftDismiss = { vm.dismissUpdatePrompt() },

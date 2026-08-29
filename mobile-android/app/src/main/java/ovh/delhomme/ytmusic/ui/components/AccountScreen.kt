@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.BuildConfig
@@ -59,6 +63,8 @@ import ovh.delhomme.ytmusic.auth.PasskeyAuth
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.RefreshBody
 import ovh.delhomme.ytmusic.data.UserDto
+import ovh.delhomme.ytmusic.update.ApkUpdateManager
+import ovh.delhomme.ytmusic.ui.util.toastMain
 
 /**
  * Page Compte pleine écran (navigable) — pas un bottom sheet qui se referme
@@ -80,12 +86,13 @@ fun AccountScreen(
     val scope = rememberCoroutineScope()
     var user by remember { mutableStateOf<UserDto?>(null) }
     var passkeyInfo by remember { mutableStateOf<String?>(null) }
-    var updateHint by remember { mutableStateOf<String?>(null) }
-    var updateAvailable by remember { mutableStateOf(false) }
     var showEqualizer by remember { mutableStateOf(false) }
     var ytmLinked by remember {
         mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
     }
+    val updater = remember { container.apkUpdateManager }
+    val updateUi by updater.ui.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     BackHandler(onBack = onBack)
 
@@ -100,35 +107,12 @@ fun AccountScreen(
             ytmLinked = linked
             container.sharedPrefs("ytm_google").edit().putBoolean("linked", linked).apply()
         }
-        // Statut MAJ pour la ligne Compte (toujours, hors fenêtre horaire)
-        runCatching {
-            val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
-                context.applicationContext,
-                container,
-            )
-            val check = updater.check(force = true, respectSnooze = false)
-            val remoteCode = check.info?.versionCode ?: 0
-            val remoteName = check.info?.versionName
-            val local = BuildConfig.VERSION_NAME
-            when {
-                remoteCode > BuildConfig.VERSION_CODE && !updater.isSnoozed(remoteCode) -> {
-                    updateAvailable = true
-                    updateHint = "Mettre à jour l'application" +
-                        (remoteName?.let { " ($it)" } ?: "")
-                }
-                remoteCode > BuildConfig.VERSION_CODE -> {
-                    updateAvailable = false
-                    updateHint = "Installée $local · serveur $remoteName (ignorée)"
-                }
-                remoteCode > 0 -> {
-                    updateAvailable = false
-                    updateHint = "Installée $local · serveur ${remoteName ?: local}"
-                }
-                else -> {
-                    updateAvailable = false
-                    updateHint = "Installée $local"
-                }
-            }
+    }
+
+    // À chaque entrée / retour sur Compte : resync statut (sans tuer un DL en cours)
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            runCatching { updater.refreshAccountStatus() }
         }
     }
 
@@ -208,60 +192,55 @@ fun AccountScreen(
             // MAJ en haut : visible sur petits écrans sans scroller toute la liste
             item {
                 val accentRed = Color(0xFFE53935)
+                val phase = updateUi.phase
+                val busy = phase == ApkUpdateManager.Phase.Checking ||
+                    phase == ApkUpdateManager.Phase.Downloading ||
+                    phase == ApkUpdateManager.Phase.Installing
+                val title = when (phase) {
+                    ApkUpdateManager.Phase.Downloading ->
+                        "Téléchargement… ${(updateUi.progress * 100).toInt()} %"
+                    ApkUpdateManager.Phase.Installing -> "Installation…"
+                    ApkUpdateManager.Phase.AwaitingConfirm -> "Confirmer l’installation"
+                    ApkUpdateManager.Phase.Available -> "Mettre à jour l’application"
+                    ApkUpdateManager.Phase.UpToDate -> "Application à jour"
+                    ApkUpdateManager.Phase.Error -> "Réessayer la mise à jour"
+                    ApkUpdateManager.Phase.Done -> "Mise à jour installée"
+                    ApkUpdateManager.Phase.Checking -> "Vérification…"
+                    ApkUpdateManager.Phase.Idle ->
+                        if (updateUi.available) "Mettre à jour l’application"
+                        else "Mise à jour de l’app"
+                }
+                val subtitle = updateUi.message.ifBlank {
+                    "Installée ${BuildConfig.VERSION_NAME}"
+                }
+                val highlight = updateUi.available ||
+                    phase == ApkUpdateManager.Phase.Downloading ||
+                    phase == ApkUpdateManager.Phase.AwaitingConfirm ||
+                    phase == ApkUpdateManager.Phase.Error
                 AccountRow(
                     icon = {
                         Icon(
                             Icons.Default.SystemUpdate,
                             contentDescription = null,
-                            tint = if (updateAvailable) accentRed else Color.Unspecified,
+                            tint = if (highlight) accentRed else Color.Unspecified,
                         )
                     },
-                    title = if (updateAvailable) {
-                        "Mettre à jour l'application"
-                    } else {
-                        "Mettre à jour l'app"
-                    },
-                    subtitle = updateHint
-                        ?: "Installée ${BuildConfig.VERSION_NAME}",
-                    titleColor = if (updateAvailable) accentRed else Color.Unspecified,
+                    title = title,
+                    subtitle = subtitle,
+                    titleColor = if (highlight) accentRed else Color.Unspecified,
                     onClick = {
-                        scope.launch {
-                            runCatching {
-                                val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
-                                    context.applicationContext,
-                                    container,
-                                )
-                                updateHint = "Vérification…"
-                                // Clic manuel : toujours proposer si remote > local (ignore snooze fenêtre)
-                                val check = updater.check(force = true, respectSnooze = false)
-                                val remote = check.info?.versionCode ?: 0
-                                if (remote <= BuildConfig.VERSION_CODE) {
-                                    updateAvailable = false
-                                    updateHint = check.message
-                                        ?: "Installée ${BuildConfig.VERSION_NAME} · à jour"
-                                    Toast.makeText(
-                                        context,
-                                        check.message ?: "Déjà à jour",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                    return@launch
-                                }
-                                updateAvailable = true
-                                updateHint = "Mettre à jour l'application"
-                                Toast.makeText(
-                                    context,
-                                    "Téléchargement de la mise à jour…",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                                val msg = updater.downloadAndInstall(null)
-                                updateHint = msg
-                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                            }.onFailure {
-                                updateHint = it.message
-                                Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT)
-                                    .show()
-                            }
+                        if (busy) {
+                            context.toastMain(subtitle.ifBlank { "Mise à jour en cours…" })
+                            return@AccountRow
                         }
+                        if (phase == ApkUpdateManager.Phase.UpToDate ||
+                            (phase == ApkUpdateManager.Phase.Idle && !updateUi.available)
+                        ) {
+                            // Force re-check puis éventuellement DL
+                            updater.startManualUpdate()
+                            return@AccountRow
+                        }
+                        updater.startManualUpdate()
                     },
                 )
             }

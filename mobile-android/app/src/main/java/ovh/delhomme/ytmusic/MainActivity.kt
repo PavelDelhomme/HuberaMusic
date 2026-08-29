@@ -344,14 +344,11 @@ fun YtMusicAppContent(
         mutableStateOf<ovh.delhomme.ytmusic.update.ApkUpdateManager.CheckResult?>(null)
     }
     var updateInstalling by remember { mutableStateOf(false) }
+    val apkUpdater = remember { container.apkUpdateManager }
 
     LaunchedEffect(loggedIn) {
         if (loggedIn != true) return@LaunchedEffect
-        val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
-            context.applicationContext,
-            container,
-        )
-        val check = runCatching { updater.checkOnStartup() }.getOrNull() ?: return@LaunchedEffect
+        val check = runCatching { apkUpdater.checkOnStartup() }.getOrNull() ?: return@LaunchedEffect
         if (check.available) pendingUpdate = check
     }
 
@@ -362,13 +359,9 @@ fun YtMusicAppContent(
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
             if (pendingUpdate?.available == true || updateInstalling) return@LifecycleEventObserver
-            val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
-                context.applicationContext,
-                container,
-            )
-            if (!updater.shouldRepromptAfterInstall()) return@LifecycleEventObserver
+            if (!apkUpdater.shouldRepromptAfterInstall()) return@LifecycleEventObserver
             scope.launch {
-                val check = runCatching { updater.checkOnStartup() }.getOrNull() ?: return@launch
+                val check = runCatching { apkUpdater.checkOnStartup() }.getOrNull() ?: return@launch
                 if (check.available) pendingUpdate = check
             }
         }
@@ -378,14 +371,10 @@ fun YtMusicAppContent(
 
     LaunchedEffect(loggedIn) {
         if (loggedIn != true) return@LaunchedEffect
-        val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
-            context.applicationContext,
-            container,
-        )
         while (isActive) {
             delay(6L * 60L * 60L * 1000L)
-            if (!updater.shouldAutoCheck()) continue
-            val check = runCatching { updater.checkOnPullRefresh() }.getOrNull() ?: continue
+            if (!apkUpdater.shouldAutoCheck()) continue
+            val check = runCatching { apkUpdater.checkOnPullRefresh() }.getOrNull() ?: continue
             if (check.available) pendingUpdate = check
         }
     }
@@ -395,26 +384,19 @@ fun YtMusicAppContent(
             versionName = upd.info?.versionName,
             installing = updateInstalling,
             onInstall = {
-                scope.launch {
-                    updateInstalling = true
-                    val updater = ovh.delhomme.ytmusic.update.ApkUpdateManager(
-                        context.applicationContext,
-                        container,
-                    )
-                    val msg = runCatching {
-                        updater.downloadAndInstall(null)
-                    }.getOrElse { it.message ?: "Échec" }
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                    updateInstalling = false
-                    pendingUpdate = null
-                }
+                updateInstalling = true
+                apkUpdater.startManualUpdate()
+                pendingUpdate = null
+                updateInstalling = false
+                Toast.makeText(
+                    context,
+                    "Téléchargement… suis la progression dans Compte",
+                    Toast.LENGTH_LONG,
+                ).show()
             },
             onSnooze = { opt ->
                 upd.info?.versionCode?.let { code ->
-                    ovh.delhomme.ytmusic.update.ApkUpdateManager(
-                        context.applicationContext,
-                        container,
-                    ).snooze(opt, code)
+                    apkUpdater.snooze(opt, code)
                 }
                 pendingUpdate = null
             },
