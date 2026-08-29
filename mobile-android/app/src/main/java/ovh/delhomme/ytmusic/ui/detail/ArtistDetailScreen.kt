@@ -381,10 +381,10 @@ fun ArtistDetailScreen(
                                     Icon(
                                         if (inLib) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                                         null,
-                                        Modifier.size(18.dp),
+                                        Modifier.size(22.dp),
                                         tint = if (inLib) Color(0xFFFF0033) else MaterialTheme.colorScheme.onSurface,
                                     )
-                                    Spacer(Modifier.width(4.dp))
+                                    Spacer(Modifier.width(6.dp))
                                     Text(
                                         if (inLib) "Retirer" else "Biblio",
                                         maxLines = 1,
@@ -415,10 +415,10 @@ fun ArtistDetailScreen(
                                     Icon(
                                         if (following) Icons.Default.Person else Icons.Outlined.PersonAdd,
                                         null,
-                                        Modifier.size(18.dp),
+                                        Modifier.size(22.dp),
                                         tint = if (following) Color(0xFFFF0033) else MaterialTheme.colorScheme.onSurface,
                                     )
-                                    Spacer(Modifier.width(4.dp))
+                                    Spacer(Modifier.width(6.dp))
                                     Text(
                                         if (following) "Abonné" else "Suivre",
                                         maxLines = 1,
