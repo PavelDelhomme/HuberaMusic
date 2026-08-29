@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Download
@@ -78,6 +79,7 @@ fun AccountScreen(
     onOpenRecoPrefs: () -> Unit,
     onOpenDownloads: () -> Unit = {},
     onOpenHistory: () -> Unit = {},
+    onOpenHelp: (() -> Unit)? = null,
     onOpenDebugLogs: (() -> Unit)? = null,
     onOpenYtmImport: (() -> Unit)? = null,
     onLoggedOut: () -> Unit,
@@ -241,6 +243,18 @@ fun AccountScreen(
                             return@AccountRow
                         }
                         updater.startManualUpdate()
+                    },
+                )
+            }
+
+            item {
+                AccountRow(
+                    icon = { Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null) },
+                    title = "Aide & limites",
+                    subtitle = "Pourquoi un titre charge lentement, hors-ligne, versions…",
+                    onClick = {
+                        onOpenHelp?.invoke()
+                            ?: context.toastMain("Ouvre Compte depuis Accueil")
                     },
                 )
             }
