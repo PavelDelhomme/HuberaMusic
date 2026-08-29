@@ -149,7 +149,13 @@ fun HomeScreen(
         }
         scope.launch {
             if (item.isPlayable()) {
-                val list = shelfItems.filter { it.isPlayable() }.ifEmpty { listOf(item) }
+                // File musique d’abord (Favoris mélange parfois des vidéos → lenteur / KO)
+                val music = shelfItems.filter { it.isMusicTrack() }
+                val list = when {
+                    music.any { it.id == item.id } -> music
+                    item.isMusicTrack() -> (listOf(item) + music).distinctBy { it.id }
+                    else -> shelfItems.filter { it.isPlayable() }.ifEmpty { listOf(item) }
+                }
                 val idx = list.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
                 onPlay(list, idx)
             } else {

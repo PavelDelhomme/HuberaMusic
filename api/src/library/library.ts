@@ -1032,7 +1032,14 @@ export function getForgottenFavorites(userId: string, limit = 8): Track[] {
   // Re-trier légèrement par score après shuffle partiel pour garder la pertinence
   pool.sort((a, b) => b.score - a.score + (((seed + a.key.charCodeAt(0)) % 7) - 3));
 
-  return pool.slice(0, limit).map((c) => c.track);
+  // Musique seulement — pas de Shorts / vidéos (lents ou hors sujet dans « Favoris »)
+  return pool
+    .map((c) => c.track)
+    .filter((t) => {
+      const typ = String(t.type || 'song').toLowerCase();
+      return typ === 'song' || typ === '' || typ === 'upload' || typ === 'album';
+    })
+    .slice(0, limit);
 }
 
 export function listPlaylists(
