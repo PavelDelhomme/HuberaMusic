@@ -70,6 +70,8 @@ class PlaybackService : MediaSessionService() {
     private val cmdLike = SessionCommand(ACTION_TOGGLE_LIKE, Bundle.EMPTY)
     private val cmdCycleRepeat = SessionCommand(ACTION_CYCLE_REPEAT, Bundle.EMPTY)
     private val cmdToggleShuffle = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
+    private val cmdAddPlaylist = SessionCommand(ACTION_ADD_PLAYLIST, Bundle.EMPTY)
+    private val cmdOpenLyrics = SessionCommand(ACTION_OPEN_LYRICS, Bundle.EMPTY)
 
     private val recoverGen = AtomicInteger(0)
     private val streamFailStreak = AtomicInteger(0)
@@ -1028,17 +1030,28 @@ class PlaybackService : MediaSessionService() {
             else -> "Boucle désactivée"
         }
 
-        // Compact notif = prev / play / next (player). Like + boucle en secondaires / overflow.
+        // Compact notif = prev / play / next. Secondaires = J’aime + Playlist + Paroles
+        // (Samsung Media panel affiche surtout BACK/FORWARD_SECONDARY ; overflow = le reste).
         return listOf(
             CommandButton.Builder(if (liked) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
                 .setDisplayName(if (liked) "Retirer des J'aime" else "J'aime")
                 .setSessionCommand(cmdLike)
                 .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW)
                 .build(),
+            CommandButton.Builder(CommandButton.ICON_PLAYLIST_ADD)
+                .setDisplayName("Ajouter à une playlist")
+                .setSessionCommand(cmdAddPlaylist)
+                .setSlots(CommandButton.SLOT_FORWARD_SECONDARY, CommandButton.SLOT_OVERFLOW)
+                .build(),
+            CommandButton.Builder(CommandButton.ICON_SUBTITLES)
+                .setDisplayName("Paroles")
+                .setSessionCommand(cmdOpenLyrics)
+                .setSlots(CommandButton.SLOT_OVERFLOW)
+                .build(),
             CommandButton.Builder(repeatIcon)
                 .setDisplayName(repeatName)
                 .setSessionCommand(cmdCycleRepeat)
-                .setSlots(CommandButton.SLOT_FORWARD_SECONDARY, CommandButton.SLOT_OVERFLOW)
+                .setSlots(CommandButton.SLOT_OVERFLOW)
                 .build(),
             CommandButton.Builder(if (shuffleOn) CommandButton.ICON_SHUFFLE_ON else CommandButton.ICON_SHUFFLE_OFF)
                 .setDisplayName(if (shuffleOn) "Aléatoire activé" else "Aléatoire")
@@ -1057,6 +1070,8 @@ class PlaybackService : MediaSessionService() {
                 .add(cmdLike)
                 .add(cmdCycleRepeat)
                 .add(cmdToggleShuffle)
+                .add(cmdAddPlaylist)
+                .add(cmdOpenLyrics)
                 .build()
             // Force next/prev toujours dispo (sinon Samsung grise « suivant » sans item suivant)
             val playerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
@@ -1099,9 +1114,28 @@ class PlaybackService : MediaSessionService() {
                 ACTION_TOGGLE_LIKE -> {
                     toggleLikeFromNotification(p)
                 }
+                ACTION_ADD_PLAYLIST -> {
+                    openAppFromMediaAction(MainActivity.EXTRA_OPEN_ADD_PLAYLIST)
+                }
+                ACTION_OPEN_LYRICS -> {
+                    openAppFromMediaAction(MainActivity.EXTRA_OPEN_LYRICS)
+                }
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
         }
+    }
+
+    /** Ouvre PLM sur l’écran demandé (playlist / paroles) depuis la notif Samsung / Media3. */
+    private fun openAppFromMediaAction(extra: String) {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_NEW_TASK
+            putExtra(MainActivity.EXTRA_OPEN_PLAYER, true)
+            putExtra(extra, true)
+            action = Intent.ACTION_VIEW
+        }
+        runCatching { startActivity(intent) }
+            .onFailure { AppLog.w("PlaybackService", "openAppFromMediaAction $extra", it) }
     }
 
     private fun toggleLikeFromNotification(p: Player) {
@@ -1725,6 +1759,8 @@ class PlaybackService : MediaSessionService() {
         const val ACTION_TOGGLE_LIKE = "ytm.action.TOGGLE_LIKE"
         const val ACTION_CYCLE_REPEAT = "ytm.action.CYCLE_REPEAT"
         const val ACTION_TOGGLE_SHUFFLE = "ytm.action.TOGGLE_SHUFFLE"
+        const val ACTION_ADD_PLAYLIST = "ytm.action.ADD_PLAYLIST"
+        const val ACTION_OPEN_LYRICS = "ytm.action.OPEN_LYRICS"
     }
 }
 
