@@ -1198,6 +1198,7 @@ private fun MainTabs(
         ?.substringBefore('?')
         ?.takeIf { it.isNotBlank() }
     val mainTabRoutes = setOf("home", "search", "library")
+    val isDetailRoute = routeRoot == "detail" || routeRoot == "artist_songs"
     // Garde le mini-player ~220 ms à l’ouverture : même zone boutons, pas de click-through biblio
     var holdChromeForSheet by remember { mutableStateOf(false) }
     LaunchedEffect(playerExpanded) {
@@ -1209,9 +1210,11 @@ private fun MainTabs(
             holdChromeForSheet = false
         }
     }
-    val showBottomChrome =
-        (!playerExpanded || holdChromeForSheet) &&
-            (routeRoot == null || routeRoot in mainTabRoutes)
+    val chromeOk = !playerExpanded || holdChromeForSheet
+    val showNavBar = chromeOk && (routeRoot == null || routeRoot in mainTabRoutes)
+    // Mini-lecteur aussi sur artiste / album / playlist (pas seulement Accueil)
+    val showMiniPlayer = chromeOk && (playerUi.track != null || pendingRemoteLabel != null)
+    val showBottomChrome = showNavBar || showMiniPlayer
 
     // Ferme le lecteur vide (« Rien en lecture ») → retour accueil/biblio si besoin
     LaunchedEffect(playerUi.track?.id, playerUi.queueSize, expanded, routeRoot) {
@@ -1242,7 +1245,7 @@ private fun MainTabs(
     }
 
     Scaffold(
-        contentWindowInsets = if (showBottomChrome) {
+        contentWindowInsets = if (showBottomChrome || isDetailRoute) {
             WindowInsets.safeDrawing
         } else {
             WindowInsets(0, 0, 0, 0)
@@ -1250,6 +1253,7 @@ private fun MainTabs(
         bottomBar = {
             if (showBottomChrome) {
                 Column(Modifier.navigationBarsPadding()) {
+                    if (showMiniPlayer) {
                     playerUi.track?.let { track ->
                         val effectiveDuration = playerUi.durationMs.takeIf { it > 0L }
                             ?: track.durationMsOrNull()
@@ -1345,6 +1349,8 @@ private fun MainTabs(
                                 .padding(16.dp),
                         )
                     }
+                    }
+                    if (showNavBar) {
                     val landscapeChrome = isLandscape()
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface,
@@ -1365,6 +1371,7 @@ private fun MainTabs(
                                 alwaysShowLabel = !landscapeChrome,
                             )
                         }
+                    }
                     }
                 }
             }
