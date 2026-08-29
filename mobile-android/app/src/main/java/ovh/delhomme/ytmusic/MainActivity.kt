@@ -1262,6 +1262,7 @@ private fun MainTabs(
                         MiniPlayerBar(
                             track = track,
                             playing = playerUi.playing,
+                            buffering = playerUi.buffering,
                             progress = progressRatio,
                             durationMs = effectiveDuration,
                             bufferedProgress = if (effectiveDuration > 0) {
@@ -1426,6 +1427,7 @@ private fun MainTabs(
                     container = container,
                     onBack = { nav.popBackStack() },
                     onOpenRecoPrefs = { nav.navigate("reco_prefs") },
+                    onOpenHelp = { nav.navigate("help_limits") },
                     onOpenDebugLogs = { nav.navigate("debug_logs") },
                     onOpenYtmImport = { nav.navigate("ytm_import") },
                     onOpenHistory = { nav.navigate("history") },
@@ -1437,6 +1439,11 @@ private fun MainTabs(
                         }
                     },
                     onLoggedOut = onLoggedOut,
+                )
+            }
+            composable("help_limits") {
+                ovh.delhomme.ytmusic.ui.components.HelpLimitsScreen(
+                    onBack = { nav.popBackStack() },
                 )
             }
             composable("history") {
