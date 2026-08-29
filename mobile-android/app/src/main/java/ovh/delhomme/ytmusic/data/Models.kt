@@ -174,9 +174,15 @@ data class TrackDto(
 
     fun isAlbum(): Boolean = kind() == "album"
 
+    fun isVideo(): Boolean = kind() in setOf("video", "episode", "movie")
+
+    /** Titre audio (pas playlist / artiste / album). Les vidéos YT restent jouables. */
     fun isPlayable(): Boolean =
         !isPlaylist() && !isArtist() && !isAlbum() &&
             id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))
+
+    /** Préféré pour les rayons musique Accueil (évite Shorts / vidéos hors musique). */
+    fun isMusicTrack(): Boolean = isPlayable() && !isVideo()
 }
 
 /** mm:ss pour UI (file, listes, mini-lecteur). */
