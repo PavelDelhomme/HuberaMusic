@@ -2435,6 +2435,21 @@ async function ytDlpGetUrl(
   );
 }
 
+async function audioFormatViaYtDlpFast(videoId: string): Promise<AudioFormat> {
+  const { isYtDlpCoolingDown } = await import('../media/ytDlpGate.js');
+  if (isYtDlpCoolingDown()) throw new Error('yt-dlp cooling');
+  const format = YTDLP_AUDIO_FORMAT_CANDIDATES[0] || 'bestaudio[ext=m4a]/bestaudio/best';
+  const url = await ytDlpGetUrl(videoId, format, [], null);
+  markYoutubeProxySuccess(null);
+  return {
+    url,
+    mimeType: 'audio/mp4',
+    bitrate: 128_000,
+    contentLength: undefined,
+    expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+  };
+}
+
 async function audioFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
   const { isYtDlpCoolingDown, noteYtDlpFailure } = await import('../media/ytDlpGate.js');
   // Anonyme d’abord — cookies optionnels (jamais Premium requis)
@@ -2491,32 +2506,28 @@ export async function getAudioFormat(
   videoId: string,
   opts?: { userId?: string },
 ): Promise<AudioFormat> {
-  const key = audioCacheKey(videoId) + (opts?.userId ? `:u:${opts.userId.slice(0, 8)}` : '');
-  const cached = audioFormatCache.get(key);
+  const baseKey = audioCacheKey(videoId);
+  const key = opts?.userId ? `${baseKey}:u:${opts.userId.slice(0, 8)}` : baseKey;
+  const cached = audioFormatCache.get(key) || audioFormatCache.get(baseKey);
   // Marge 90 s avant expire pour éviter une URL déjà morte
   if (cached && cached.expiresAt > Date.now() + 90_000) {
     return cached;
   }
 
-  const pending = audioFormatInflight.get(key);
+  const pending = audioFormatInflight.get(key) || audioFormatInflight.get(baseKey);
   if (pending) return pending;
 
   const job = (async (): Promise<AudioFormat> => {
-    // Priorité stream sans cookies navigateur :
-    // 1) yt-dlp (android_vr/tv/ios) → m4a
-    // 2) Innertube clients anonymes (ANDROID_VR / TV / WEB_EMBEDDED / IOS)
-    // Les cookies WEB/ANDROID datacenter provoquent souvent LOGIN_REQUIRED — on les évite.
-    // Sauf session OAuth TV signée (streamAuth) qui débloque la musique sur VPS.
-    const tryInnertube = async (): Promise<AudioFormat | null> => {
-      // Session OAuth/cookies signée (VPS) en priorité — débloque LOGIN_REQUIRED musique
+    // Course rapide : Innertube (clients en parallèle) + yt-dlp direct.
+    // Avant : yt-dlp × proxies × formats en série → jusqu’à 28 s (Hollywood / titres froids).
+    const tryInnertubeFast = async (): Promise<AudioFormat> => {
       const signed = await getSignedStreamYT(opts?.userId).catch(() => null);
       const innertube = signed || (await getYT());
-      // Ordre : clients qui marchent sans session navigateur / sans po_token
       const clients = signed
-        ? (['MWEB', 'WEB', 'TV', 'ANDROID'] as const)
-        : (['ANDROID_VR', 'TV', 'TV_EMBEDDED', 'WEB_EMBEDDED', 'IOS', 'ANDROID'] as const);
+        ? (['MWEB', 'TV', 'ANDROID'] as const)
+        : (['ANDROID_VR', 'TV', 'IOS'] as const);
+      const ms = signed ? 9_000 : 5_500;
       const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
-        const ms = signed ? 20_000 : 8_000;
         const format = await Promise.race([
           innertube.getStreamingData(videoId, {
             type: 'audio',
@@ -2527,7 +2538,6 @@ export async function getAudioFormat(
             setTimeout(() => rej(new Error(`innertube ${client} timeout`)), ms),
           ),
         ]);
-        // getStreamingData a déjà decipher une fois — ne pas re-décrypter (cipher consommé)
         const url = format.url || (await format.decipher(innertube.session.player));
         if (!url) throw new Error('empty stream url');
         return {
@@ -2538,53 +2548,40 @@ export async function getAudioFormat(
           expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
         };
       };
-      // Essai parallèle sur le sous-ensemble le plus fiable, puis suite
+      return await Promise.any(clients.map((c) => tryClient(c)));
+    };
+
+    const resolveFast = async (): Promise<AudioFormat | null> => {
       try {
-        const parallel = signed
-          ? (['MWEB'] as const)
-          : (['ANDROID_VR', 'TV', 'IOS'] as const);
-        return await Promise.any(parallel.map((c) => tryClient(c)));
+        return await Promise.any([
+          tryInnertubeFast(),
+          audioFormatViaYtDlpFast(videoId),
+        ]);
       } catch {
-        for (const c of clients) {
-          try {
-            return await tryClient(c);
-          } catch {
-            /* next */
-          }
-        }
         return null;
       }
     };
 
-    const resolveWithCap = async (): Promise<AudioFormat | null> => {
-      // Session signée : Innertube d’abord (yt-dlp DC = souvent 0 formats audio)
-      const signedFirst = await getSignedStreamYT(opts?.userId).catch(() => null);
-      if (signedFirst) {
-        const viaSigned = await tryInnertube();
-        if (viaSigned) return viaSigned;
-      }
-      try {
-        return await audioFormatViaYtDlp(videoId);
-      } catch {
-        return await tryInnertube();
-      }
-    };
-
     let entry = await Promise.race([
-      resolveWithCap(),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 22_000)),
+      resolveFast(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 9_000)),
     ]);
 
     if (!entry) {
+      // Chemin lent : yt-dlp complet (proxies) puis Innertube élargi
       try {
         entry = await Promise.race([
           audioFormatViaYtDlp(videoId),
           new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error('yt-dlp format timeout')), 10_000),
+            setTimeout(() => rej(new Error('yt-dlp format timeout')), 12_000),
           ),
         ]);
       } catch {
-        entry = null;
+        try {
+          entry = await tryInnertubeFast();
+        } catch {
+          entry = null;
+        }
       }
     }
 
@@ -2593,6 +2590,7 @@ export async function getAudioFormat(
     }
 
     audioFormatCache.set(key, entry);
+    audioFormatCache.set(baseKey, entry);
     if (audioFormatCache.size > 250) {
       const stale = [...audioFormatCache.entries()]
         .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
@@ -2607,13 +2605,15 @@ export async function getAudioFormat(
   const capped = Promise.race([
     job,
     new Promise<AudioFormat>((_, rej) =>
-      setTimeout(() => rej(new Error('getAudioFormat deadline')), 28_000),
+      setTimeout(() => rej(new Error('getAudioFormat deadline')), 16_000),
     ),
   ]).finally(() => {
     audioFormatInflight.delete(key);
+    audioFormatInflight.delete(baseKey);
   });
 
   audioFormatInflight.set(key, capped);
+  audioFormatInflight.set(baseKey, capped);
   return capped;
 }
 
