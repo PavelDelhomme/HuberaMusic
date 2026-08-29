@@ -96,6 +96,85 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var lastPersistAt: Long = 0L
     /** Avance programmée (EOS / skip) — ne pas déclencher early_end recovery sur le SEEK. */
     @Volatile private var programmaticAdvance: Boolean = false
+    private val stallHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var stallRunnable: Runnable? = null
+    @Volatile private var bufferingSinceElapsed: Long = 0L
+    @Volatile private var bufferingTrackId: String = ""
+
+    private fun cancelStallWatch() {
+        stallRunnable?.let { stallHandler.removeCallbacks(it) }
+        stallRunnable = null
+        bufferingSinceElapsed = 0L
+        bufferingTrackId = ""
+    }
+
+    /** Si BUFFERING sans progrès > ~8 s → purge local / rebind stream (évite minutes de silence). */
+    private fun armStallWatch(player: Player) {
+        if (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING) {
+            cancelStallWatch()
+            return
+        }
+        val id = player.currentMediaItem?.mediaId.orEmpty()
+        if (id.isBlank()) return
+        if (id != bufferingTrackId) {
+            bufferingTrackId = id
+            bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
+        }
+        stallRunnable?.let { stallHandler.removeCallbacks(it) }
+        val r = Runnable {
+            val exo = this.player ?: return@Runnable
+            if (!exo.playWhenReady || exo.playbackState != Player.STATE_BUFFERING) {
+                cancelStallWatch()
+                return@Runnable
+            }
+            val curId = exo.currentMediaItem?.mediaId.orEmpty()
+            if (curId != bufferingTrackId) {
+                armStallWatch(exo)
+                return@Runnable
+            }
+            val waited = android.os.SystemClock.elapsedRealtime() - bufferingSinceElapsed
+            val progress = exo.bufferedPosition - exo.currentPosition
+            if (progress > 1_200L) {
+                bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
+                armStallWatch(exo)
+                return@Runnable
+            }
+            if (waited < 8_000L) {
+                armStallWatch(exo)
+                return@Runnable
+            }
+            val local = exo.currentMediaItem?.localConfiguration?.uri?.scheme == "file"
+            AppLog.w("PlaybackService", "stall-buffer ${waited}ms progress=$progress local=$local id=$curId")
+            cancelStallWatch()
+            if (local) {
+                val container = runCatching { YtMusicApp.instance.container }.getOrNull()
+                scope.launch {
+                    runCatching { container?.offlineStore?.remove(curId) }
+                    runCatching { container?.invalidateStreamUrlCache(curId) }
+                    runCatching { PlayerCache.invalidate(this@PlaybackService, curId) }
+                    if (exo.currentMediaItem?.mediaId != curId) return@launch
+                    val track = Holder.queue.firstOrNull { it.id == curId } ?: return@launch
+                    val remote = container?.remoteStreamUrl(curId) ?: return@launch
+                    val rebuilt = mediaItemFor(track, { _ -> remote }, Holder.queueTitle)
+                    runCatching {
+                        val pos = exo.currentPosition.coerceAtLeast(0L)
+                        exo.replaceMediaItem(exo.currentMediaItemIndex, rebuilt)
+                        exo.seekTo(exo.currentMediaItemIndex, pos)
+                        exo.prepare()
+                        exo.playWhenReady = true
+                        exo.play()
+                    }
+                }
+                android.os.Handler(mainLooper).post {
+                    toastMain("Lecture bloquée — reprise en streaming…", Toast.LENGTH_SHORT)
+                }
+            } else {
+                rebindCurrentStream("stall-buffer", forcePlay = true)
+            }
+        }
+        stallRunnable = r
+        stallHandler.postDelayed(r, 2_500L)
+    }
 
     private fun refreshPlaybackActiveFlag(player: Player) {
         Holder.playbackActive = player.isPlaying ||
@@ -224,12 +303,19 @@ class PlaybackService : MediaSessionService() {
                 }
             }
             if (
+                events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
+                events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
+            ) {
+                armStallWatch(player)
+            }
+            if (
                 events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
                 player.playbackState == Player.STATE_READY &&
                 player.playWhenReady
             ) {
                 streamFailStreak.set(0)
                 StreamPrefetcher.markStreamOk()
+                cancelStallWatch()
             }
             // 8–22 s avant la fin : re-préchauffe le +1 / +2 (pas seulement au changement de piste)
             if (player.isPlaying && player.playbackState == Player.STATE_READY) {

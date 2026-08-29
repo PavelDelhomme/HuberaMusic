@@ -42,6 +42,8 @@ class YtMusicApp : Application(), ImageLoaderFactory {
         }
         // Garde hors-ligne (aimés + Mon Mix) — léger, Wi‑Fi préféré
         runCatching { container.offlineKeeper.start() }
+        // Têtes ~5 s biblio (SimpleCache) — démarrage instantané au clic
+        runCatching { container.libraryHeadPrefetcher.start() }
     }
 
     override fun onTrimMemory(level: Int) {

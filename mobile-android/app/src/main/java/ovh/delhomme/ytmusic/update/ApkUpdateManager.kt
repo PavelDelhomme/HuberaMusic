@@ -298,6 +298,18 @@ class ApkUpdateManager(
                     ),
                 )
             }
+            remote > 0 && remote < BuildConfig.VERSION_CODE -> {
+                publish(
+                    UiState(
+                        phase = Phase.UpToDate,
+                        message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
+                            (remoteName?.let { " (catalogue serveur $it — republier l’APK)" } ?: ""),
+                        remoteName = remoteName,
+                        remoteCode = remote,
+                        available = false,
+                    ),
+                )
+            }
             remote > 0 -> {
                 publish(
                     UiState(
