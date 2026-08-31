@@ -1755,7 +1755,7 @@ class PlayerController(
 
     /**
      * Feedback utilisateur pendant un long BUFFERING (file / titre froid).
-     * Toasts à ~5 s puis ~12 s — sinon silence total perçu comme un bug.
+     * Toasts à ~2,5 s puis ~5 s — aligné sur le stall ~2,5 s.
      */
     private fun noteBuffering(buffering: Boolean, trackId: String?) {
         if (!buffering || trackId.isNullOrBlank()) {
@@ -1768,15 +1768,15 @@ class PlayerController(
         bufferWatchJob?.cancel()
         bufferHintTrackId = trackId
         bufferWatchJob = scope.launch {
-            delay(5_000L)
+            delay(2_500L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
                 context.toastMain("Chargement du flux…", Toast.LENGTH_SHORT)
             }
-            delay(7_000L)
+            delay(2_500L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
                 context.toastMain(
-                    "Toujours en chargement — passe au suivant si besoin (Compte → Aide & limites)",
-                    Toast.LENGTH_LONG,
+                    "Toujours en chargement — passe au suivant si besoin",
+                    Toast.LENGTH_SHORT,
                 )
             }
         }
