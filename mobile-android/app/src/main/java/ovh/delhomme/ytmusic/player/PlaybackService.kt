@@ -100,15 +100,20 @@ class PlaybackService : MediaSessionService() {
     private var stallRunnable: Runnable? = null
     @Volatile private var bufferingSinceElapsed: Long = 0L
     @Volatile private var bufferingTrackId: String = ""
+    /** Rebinds stall sans sortir de BUFFERING — au-delà → skip (évite silence 30–45 s). */
+    @Volatile private var stallRebindCount: Int = 0
 
-    private fun cancelStallWatch() {
+    private fun cancelStallWatch(resetTrack: Boolean = true) {
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
         stallRunnable = null
         bufferingSinceElapsed = 0L
-        bufferingTrackId = ""
+        if (resetTrack) {
+            bufferingTrackId = ""
+            stallRebindCount = 0
+        }
     }
 
-    /** Si BUFFERING sans progrès > ~2,5 s → purge local / rebind (plus d’attente ~8 s). */
+    /** Si BUFFERING sans progrès > ~2,5 s → purge local / rebind ; 2ᵉ échec → titre suivant. */
     private fun armStallWatch(player: Player) {
         if (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING) {
             cancelStallWatch()
@@ -119,6 +124,7 @@ class PlaybackService : MediaSessionService() {
         if (id != bufferingTrackId) {
             bufferingTrackId = id
             bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
+            stallRebindCount = 0
         }
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
         val r = Runnable {
@@ -145,8 +151,35 @@ class PlaybackService : MediaSessionService() {
                 return@Runnable
             }
             val local = exo.currentMediaItem?.localConfiguration?.uri?.scheme == "file"
-            AppLog.w("PlaybackService", "stall-buffer ${waited}ms progress=$progress local=$local id=$curId")
-            cancelStallWatch()
+            // 2 rebinds déjà tentés sur ce titre sans sortir du trou → skip (pas de silence 45 s).
+            if (stallRebindCount >= 2) {
+                AppLog.w(
+                    "PlaybackService",
+                    "stall-buffer escalate-skip ${waited}ms rebinds=$stallRebindCount id=$curId pos=${exo.currentPosition}",
+                )
+                cancelStallWatch()
+                streamFailStreak.set(0)
+                val nextIdx = exo.currentMediaItemIndex + 1
+                if (nextIdx < exo.mediaItemCount && nextIdx < Holder.queue.size) {
+                    runCatching { advanceToQueueIndex(exo, nextIdx) }
+                    android.os.Handler(mainLooper).post {
+                        toastMain("Flux bloqué — titre suivant", Toast.LENGTH_SHORT)
+                    }
+                } else {
+                    val uiFill = Holder.onSkipAtEnd
+                    if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
+                }
+                return@Runnable
+            }
+            stallRebindCount += 1
+            AppLog.w(
+                "PlaybackService",
+                "stall-buffer ${waited}ms progress=$progress local=$local rebind=$stallRebindCount id=$curId",
+            )
+            // Garde le compteur de rebind ; reset seulement le timer.
+            cancelStallWatch(resetTrack = false)
+            bufferingTrackId = curId
+            bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
             if (local) {
                 val container = runCatching { YtMusicApp.instance.container }.getOrNull()
                 scope.launch {
@@ -626,8 +659,9 @@ class PlaybackService : MediaSessionService() {
                     return
                 }
                 // Encore « online » : glitch / URL stream expirée — retenter LE MÊME titre (pas de skip)
-                // 5xx / réseau : 1 retry rapide puis titre suivant (évite streak=5 + silence)
+                // 5xx mid-song : 2 retries courts (502 souvent transitoire) ; début de piste : 1 puis skip
                 val maxSameTrack = when {
+                    httpStatus != null && httpStatus >= 500 && pos > 5_000L -> 2
                     httpStatus != null && httpStatus >= 500 -> 1
                     networkish -> 2
                     else -> 3
