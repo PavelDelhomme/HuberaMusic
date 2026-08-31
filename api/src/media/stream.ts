@@ -73,10 +73,23 @@ function googlevideoHeaders(url: string, range?: string): Record<string, string>
 }
 
 async function fetchGooglevideo(url: string, range?: string): Promise<globalThis.Response> {
-  return fetch(url, {
-    headers: googlevideoHeaders(url, range),
-    redirect: 'follow',
-  });
+  const doFetch = () =>
+    fetch(url, {
+      headers: googlevideoHeaders(url, range),
+      redirect: 'follow',
+    });
+  try {
+    const first = await doFetch();
+    // 502/503/504 googlevideo souvent transitoires — 1 retry court avant de remonter au client.
+    if (first.status === 502 || first.status === 503 || first.status === 504) {
+      await new Promise((r) => setTimeout(r, 280));
+      return await doFetch();
+    }
+    return first;
+  } catch (err) {
+    await new Promise((r) => setTimeout(r, 220));
+    return await doFetch();
+  }
 }
 function ensureCache() {
   if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
@@ -826,7 +839,24 @@ export async function handleStream(req: Request, res: Response) {
           /* fallback pipe plus bas */
         }
       }
-      // Toujours 403 → laisser les fallbacks yt-dlp / Innertube (log soft, pas d’alarme)
+      // 5xx amont : invalide + 1 re-resolve format (URL neuve) avant d’abandonner.
+      if (!wantVideo && (upstream.status === 502 || upstream.status === 503 || upstream.status === 504)) {
+        invalidateAudioFormat(videoId);
+        invalidateStreamHead(videoId);
+        try {
+          format = await withDeadline(
+            'getAudioFormat5xx',
+            getAudioFormat(videoId, { userId: (req as any).userId }),
+          );
+          if (format.url) {
+            await new Promise((r) => setTimeout(r, 200));
+            upstream = await withDeadline('fetchGV5xx', fetchGooglevideo(format.url, rangeHdr));
+          }
+        } catch {
+          /* throw plus bas si toujours KO */
+        }
+      }
+      // Toujours 403 / 5xx → laisser les fallbacks yt-dlp / Innertube (log soft, pas d’alarme)
       if (upstream.status >= 400) {
         invalidateAudioFormat(videoId);
         invalidateVideoFormat(videoId);
