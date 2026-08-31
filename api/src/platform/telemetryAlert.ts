@@ -156,17 +156,19 @@ export async function maybeAlertTelemetryError(ev: {
   }
   // Cross-origin / SW noise web — inutile en mail
   if (
-    (kind0 === 'window.error' && /^Script error\.?$/i.test(String(ev.message || '').trim())) ||
-    (kind0 === 'unhandledrejection' && /ServiceWorker script at /i.test(blob0))
+    kind0 === 'window.error' &&
+    /script\s*error/i.test(String(ev.message || ''))
   ) {
     return { sent: false, reason: 'web-noise' };
   }
-  // Fichier local KO déjà récupéré en streaming : warn côté client ; si error, throttle fort
+  if (kind0 === 'unhandledrejection' && /ServiceWorker script at /i.test(blob0)) {
+    return { sent: false, reason: 'web-noise' };
+  }
+  // Fichier local KO : jamais de mail tant que streak bas (même si serious=true vieux APK)
   if (
     kind0.includes('android.player') &&
-    meta0.local === true &&
-    meta0.serious !== true &&
-    Number(meta0.streak || 0) < 3
+    (meta0.local === true || /local=true/i.test(String(ev.message || ''))) &&
+    Number(meta0.streak || 0) < 5
   ) {
     return { sent: false, reason: 'local-soft' };
   }
