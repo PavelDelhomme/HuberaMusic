@@ -153,11 +153,14 @@ object TelemetryReporter {
             blob.contains("EOFException", ignoreCase = true) &&
                 !local &&
                 (http == null || http < 400)
-        // EOF récupérable (troncature 1 MiB / cache) : pas de mail à chaque reprise.
+        // Local KO / EOF récupérable : warn tant que streak bas (évite avalanche mails).
         val level = when {
-            serious || streak >= 3 -> "error"
+            serious && !local && streak >= 2 -> "error"
+            serious && local && streak >= 3 -> "error"
+            local && streak < 3 -> "warn"
             eofMid && streak < 3 -> "warn"
-            else -> "error"
+            serious || streak >= 3 -> "error"
+            else -> "warn"
         }
         val diag = diagnosePlayerError(code, trackId, networkish, local, streak, http, blob)
         val trackMeta = runCatching {
@@ -205,7 +208,8 @@ object TelemetryReporter {
     }
 
     private fun isSeriousStreamFailure(code: Int, http: Int?, blob: String, local: Boolean): Boolean {
-        if (local) return true
+        // Local corrompu : on retry en stream — pas « serious » dès le 1er coup
+        if (local) return false
         if (http != null && http >= 500) return true
         if (code == 2004 || code == 2002) return true
         return blob.contains("502") ||

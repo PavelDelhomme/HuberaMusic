@@ -44,6 +44,9 @@ export async function reportTelemetry(payload: {
 
 export function installGlobalTelemetry() {
   window.addEventListener('error', (ev) => {
+    const msg = String(ev.message || '');
+    // Cross-origin « Script error. » : zéro détail utile → pas d’alerte mail
+    if (/^Script error\.?$/i.test(msg.trim())) return;
     void reportTelemetry({
       level: 'error',
       kind: 'window.error',
@@ -54,10 +57,12 @@ export function installGlobalTelemetry() {
   });
   window.addEventListener('unhandledrejection', (ev) => {
     const reason = ev.reason;
+    const message = reason?.message || String(reason);
+    if (/ServiceWorker script at /i.test(message)) return;
     void reportTelemetry({
       level: 'error',
       kind: 'unhandledrejection',
-      message: reason?.message || String(reason),
+      message,
       stack: reason?.stack,
     });
   });

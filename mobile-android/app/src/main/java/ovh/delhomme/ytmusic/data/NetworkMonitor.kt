@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import ovh.delhomme.ytmusic.player.PlaybackService
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
+import ovh.delhomme.ytmusic.ui.util.toastMain
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -288,11 +289,10 @@ object NetworkMonitor {
             exo.playWhenReady = false
             runCatching { exo.pause() }
             if (wasPlaying) markPausedForNetwork()
-            android.widget.Toast.makeText(
-                ovh.delhomme.ytmusic.YtMusicApp.instance,
+            ovh.delhomme.ytmusic.YtMusicApp.instance.toastMain(
                 "Hors ligne — reprise dès que le réseau revient",
                 android.widget.Toast.LENGTH_LONG,
-            ).show()
+            )
             // Relance sync quand le réseau reviendra
             runCatching { container.offlineKeeper.requestSoon("back-soon") }
         }

@@ -284,9 +284,14 @@ class PlaybackService : MediaSessionService() {
                     if (audioFocus?.requestIfNeeded() != true) {
                         runCatching { player.pause() }
                     }
-                } else if (!player.playWhenReady || player.playbackState == Player.STATE_IDLE) {
+                } else if (player.playbackState == Player.STATE_IDLE) {
+                    audioFocus?.abandon(force = true)
+                } else if (!player.playWhenReady) {
+                    // Pause user : abandon OK. Pause après appel : abandon() no-op (attente GAIN).
                     audioFocus?.abandon()
                 }
+                // Notif FGS même en pause si file non vide
+                invalidateMediaNotification()
             }
             if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
                 val idx = player.currentMediaItemIndex
@@ -1010,7 +1015,7 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         persistPlaybackSnapshot(durable = true)
         scope.cancel()
-        audioFocus?.abandon()
+        audioFocus?.abandon(force = true)
         audioFocus = null
         player?.removeListener(playerListener)
         session?.release()
@@ -1035,7 +1040,9 @@ class PlaybackService : MediaSessionService() {
      */
     private fun invalidateMediaNotification() {
         val s = session ?: return
-        val startFg = player?.playWhenReady == true || player?.isPlaying == true
+        // Garder FGS / notif ongoing tant qu’il reste une file (même en pause),
+        // sinon OEM retire la notif dès que playWhenReady=false (app « fermée »).
+        val startFg = (player?.mediaItemCount ?: 0) > 0
         runCatching { onUpdateNotification(s, startFg) }
     }
 
@@ -1359,7 +1366,7 @@ class PlaybackService : MediaSessionService() {
             try {
                 val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return@launch
                 runCatching { container.ensureFreshToken() }
-                val tracks = ovh.delhomme.ytmusic.data.fetchAutoplayTracksFast(container.api, seed)
+                val tracks = ovh.delhomme.ytmusic.data.fetchAutoplayTracks(container.api, seed)
                 if (tracks.isEmpty()) {
                     AppLog.w("PlaybackService", "autoplay fill vide seed=$seed")
                     return@launch

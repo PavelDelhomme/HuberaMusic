@@ -477,11 +477,15 @@ export async function hybridRank(opts: {
     if (e.event === 'skip') skips.add(e.track_id);
     if (e.event === 'complete') completes.add(e.track_id);
   }
-  // Likes réels + tops écoutés (proxy)
-  const likes = new Set<string>([
-    ...getLikedTrackIds(opts.userId, 300),
-    ...getTopListened(opts.userId, 100).map((t) => t.id),
-  ]);
+  // Likes réels seulement — pas getTopListened (sinon « À suivre » recycle toujours les mêmes)
+  const likes = new Set<string>([...getLikedTrackIds(opts.userId, 300)]);
+  // Gros écoutés : à éviter dans la suite (même s’ils sont aimés / dans le pool)
+  const overplayed = new Set<string>(
+    getTopListened(opts.userId, 40).map((t) => t.id).filter(Boolean),
+  );
+  for (const [id, n] of listenCounts) {
+    if (n >= 8) overplayed.add(id);
+  }
   const tasteArtists = new Set(
     getLibraryTasteTracks(opts.userId, 100)
       .map((t) => artistKey(t))
@@ -533,6 +537,8 @@ export async function hybridRank(opts: {
     .filter((t) => !seed || t.id !== seed.id)
     .filter((t) => !seed || !isRemixSpamOfSeed(t, seed))
     .filter((t) => !(excludePlayed && recentlyPlayedHard.has(t.id)))
+    // Suite / radio : exclure aussi les titres trop souvent écoutés (sinon toujours la même file)
+    .filter((t) => !(excludePlayed && overplayed.has(t.id)))
     // Style / radio : uniquement musique jouable (pas podcasts, albums, fiches)
     .filter((t) => {
       if (mode === 'style' || mode === 'radio' || mode === 'album-style' || mode === 'artist-radio') {
@@ -553,6 +559,7 @@ export async function hybridRank(opts: {
         w.w_bandit * s4 +
         w.w_satisf * s5;
       if (opts.softExcludePlayed && recentlyPlayedHard.has(track.id)) s *= 0.25;
+      if (opts.softExcludePlayed && overplayed.has(track.id)) s *= 0.12;
       const a = artistKey(track);
       const candTags = styleTags(track);
       const tagOverlap = seedTags.filter((tag) => candTags.includes(tag)).length;
@@ -838,12 +845,19 @@ export async function similarForUserFast(userId: string, trackId: string, seedTr
   }
   // Hydrate léger (10) pour répondre vite — le full related enrichit ensuite
   const up = await getUpNext(trackId, { hydrateLimit: 10 });
-  // Fast path : upNext seedé — exclure l’historique récent (pas de « déjà joués »)
+  // Fast path : upNext seedé — exclure historique + tops déjà trop écoutés
   let histIds = new Set<string>();
   try {
-    histIds = new Set(getHistory(userId, 50).map((t) => t.id).filter(Boolean));
+    histIds = new Set(getHistory(userId, 80).map((t) => t.id).filter(Boolean));
   } catch {
     histIds = new Set();
+  }
+  try {
+    for (const t of getTopListened(userId, 35)) {
+      if (t?.id) histIds.add(t.id);
+    }
+  } catch {
+    /* ignore */
   }
   const tracks = preferCatalogAudio(
     dedupeTracks(
