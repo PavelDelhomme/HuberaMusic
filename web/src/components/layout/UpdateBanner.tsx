@@ -11,8 +11,13 @@ export function UpdateBanner() {
       if (!registration) return;
       // Vérif périodique (~30 min) sans bloquer l'utilisateur
       setInterval(() => {
-        void registration.update();
+        void registration.update().catch(() => {
+          /* SW mort / réseau — ignorer */
+        });
       }, 30 * 60 * 1000);
+    },
+    onRegisterError() {
+      // Évite unhandledrejection « ServiceWorker script at …/sw.js » en mail
     },
   });
 
