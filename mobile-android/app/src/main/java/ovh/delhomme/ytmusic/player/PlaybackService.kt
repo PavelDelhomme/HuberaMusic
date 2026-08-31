@@ -102,6 +102,8 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var bufferingTrackId: String = ""
     /** Rebinds stall sans sortir de BUFFERING — au-delà → skip (évite silence 30–45 s). */
     @Volatile private var stallRebindCount: Int = 0
+    @Volatile private var stallLastPos: Long = -1L
+    @Volatile private var stallPosFrozenSince: Long = 0L
 
     private fun cancelStallWatch(resetTrack: Boolean = true) {
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
@@ -110,6 +112,8 @@ class PlaybackService : MediaSessionService() {
         if (resetTrack) {
             bufferingTrackId = ""
             stallRebindCount = 0
+            stallLastPos = -1L
+            stallPosFrozenSince = 0L
         }
     }
 
@@ -125,6 +129,8 @@ class PlaybackService : MediaSessionService() {
             bufferingTrackId = id
             bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
             stallRebindCount = 0
+            stallLastPos = player.currentPosition
+            stallPosFrozenSince = android.os.SystemClock.elapsedRealtime()
         }
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
         val r = Runnable {
@@ -138,15 +144,23 @@ class PlaybackService : MediaSessionService() {
                 armStallWatch(exo)
                 return@Runnable
             }
-            val waited = android.os.SystemClock.elapsedRealtime() - bufferingSinceElapsed
-            val progress = exo.bufferedPosition - exo.currentPosition
-            // Un peu de buffer qui avance = on laisse encore un peu
-            if (progress > 800L) {
-                bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
+            val nowElapsed = android.os.SystemClock.elapsedRealtime()
+            val waited = nowElapsed - bufferingSinceElapsed
+            val pos = exo.currentPosition
+            if (pos != stallLastPos) {
+                stallLastPos = pos
+                stallPosFrozenSince = nowElapsed
+            }
+            val posFrozenFor = nowElapsed - stallPosFrozenSince
+            val progress = exo.bufferedPosition - pos
+            // Buffer « en avance » ne compte QUE si la tête de lecture avance aussi.
+            // Sinon Exo reste BUFFERING avec un bufferedPosition fantôme → silence 40 s (DOVE).
+            if (progress > 800L && posFrozenFor < 2_500L) {
+                bufferingSinceElapsed = nowElapsed
                 armStallWatch(exo)
                 return@Runnable
             }
-            if (waited < 2_500L) {
+            if (waited < 2_500L && posFrozenFor < 2_500L) {
                 armStallWatch(exo)
                 return@Runnable
             }
@@ -155,7 +169,7 @@ class PlaybackService : MediaSessionService() {
             if (stallRebindCount >= 2) {
                 AppLog.w(
                     "PlaybackService",
-                    "stall-buffer escalate-skip ${waited}ms rebinds=$stallRebindCount id=$curId pos=${exo.currentPosition}",
+                    "stall-buffer escalate-skip ${waited}ms frozen=${posFrozenFor}ms rebinds=$stallRebindCount id=$curId pos=$pos",
                 )
                 cancelStallWatch()
                 streamFailStreak.set(0)
@@ -174,12 +188,14 @@ class PlaybackService : MediaSessionService() {
             stallRebindCount += 1
             AppLog.w(
                 "PlaybackService",
-                "stall-buffer ${waited}ms progress=$progress local=$local rebind=$stallRebindCount id=$curId",
+                "stall-buffer ${waited}ms frozen=${posFrozenFor}ms progress=$progress local=$local rebind=$stallRebindCount id=$curId",
             )
             // Garde le compteur de rebind ; reset seulement le timer.
             cancelStallWatch(resetTrack = false)
             bufferingTrackId = curId
             bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
+            stallLastPos = pos
+            stallPosFrozenSince = android.os.SystemClock.elapsedRealtime()
             if (local) {
                 val container = runCatching { YtMusicApp.instance.container }.getOrNull()
                 scope.launch {
@@ -191,9 +207,9 @@ class PlaybackService : MediaSessionService() {
                     val remote = container?.remoteStreamUrl(curId) ?: return@launch
                     val rebuilt = mediaItemFor(track, { _ -> remote }, Holder.queueTitle)
                     runCatching {
-                        val pos = exo.currentPosition.coerceAtLeast(0L)
+                        val seekPos = exo.currentPosition.coerceAtLeast(0L)
                         exo.replaceMediaItem(exo.currentMediaItemIndex, rebuilt)
-                        exo.seekTo(exo.currentMediaItemIndex, pos)
+                        exo.seekTo(exo.currentMediaItemIndex, seekPos)
                         exo.prepare()
                         exo.playWhenReady = true
                         exo.play()
