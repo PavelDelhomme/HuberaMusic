@@ -527,7 +527,9 @@ export async function handleStream(req: Request, res: Response) {
         String(req.headers['x-ytm-client'] || '') === 'android' ||
         /PLM-Android/i.test(String(req.headers['user-agent'] || ''));
       if (diskBytes <= 1024 * 1024) {
-        const waitMs = isAndroid ? 45_000 : 0;
+        // Android : attente courte seulement — 45 s bloquait derrière nginx → 504 Exo.
+        // Le pipeline relais/GV prend le relais ; downloadTrack tourne déjà en fond plus bas.
+        const waitMs = isAndroid ? 2_500 : 0;
         if (waitMs > 0) {
           try {
             await Promise.race([

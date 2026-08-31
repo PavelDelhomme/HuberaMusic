@@ -276,6 +276,14 @@ class PlaybackService : MediaSessionService() {
             if (events.contains(Player.EVENT_IS_PLAYING_CHANGED)) {
                 PlaybackIdleGuard.onPlayingChanged(player.isPlaying)
             }
+            // Titre courant encore en file:// alors qu’on est en ligne → bascule proxy
+            if (
+                events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+                (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
+                    player.playbackState == Player.STATE_READY)
+            ) {
+                demoteCurrentLocalIfOnline(player)
+            }
             if (
                 events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
                 events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
@@ -617,8 +625,12 @@ class PlaybackService : MediaSessionService() {
                     return
                 }
                 // Encore « online » : glitch / URL stream expirée — retenter LE MÊME titre (pas de skip)
-                // 5xx : 2 essais rapides puis titre suivant (la même URL 502 ne guérit pas en 4 retries)
-                val maxSameTrack = if (httpStatus != null && httpStatus >= 500) 2 else 4
+                // 5xx / réseau : 1 retry rapide puis titre suivant (évite streak=5 + silence)
+                val maxSameTrack = when {
+                    httpStatus != null && httpStatus >= 500 -> 1
+                    networkish -> 2
+                    else -> 3
+                }
                 if (streak <= maxSameTrack) {
                     val attempt = recoverGen.incrementAndGet()
                 val resumePos = exo.currentPosition.coerceAtLeast(0L)
@@ -1656,25 +1668,69 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Remplace les MediaItem HTTP des titres suivants par `file://` dès qu’un DL est prêt.
-     * Évite le trou audible au changement de piste (plus de rebuffer réseau).
+     * Remplace les MediaItem HTTP des titres suivants par `file://` dès qu’un DL est prêt
+     * **uniquement hors-ligne**. En ligne : rebascule file:// → proxy (les .m4a locaux
+     * provoquaient des KO mid-song + mails « local=true »).
      */
     private fun promoteUpcomingToLocal(exo: ExoPlayer, fromIndex: Int) {
         val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return
+        val online = runCatching {
+            ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+        }.getOrDefault(true)
         val queue = Holder.queue
         val start = fromIndex.coerceAtLeast(0)
         val end = (start + 4).coerceAtMost(minOf(queue.size, exo.mediaItemCount))
         for (i in start until end) {
             val track = queue.getOrNull(i) ?: continue
-            if (!container.offlineStore.has(track.id)) continue
             val cur = exo.getMediaItemAt(i)
             val scheme = cur.localConfiguration?.uri?.scheme
+            if (online) {
+                // Remonter au proxy si un file:// trainait depuis une session hors-ligne
+                if (scheme != "file") continue
+                runCatching {
+                    exo.replaceMediaItem(
+                        i,
+                        mediaItemFor(track, { tid -> container.remoteStreamUrl(tid) }, Holder.queueTitle),
+                    )
+                }
+                continue
+            }
+            if (!container.offlineStore.has(track.id)) continue
             if (scheme == "file") continue
             runCatching {
                 exo.replaceMediaItem(
                     i,
                     mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle),
                 )
+            }
+        }
+    }
+
+    /** Si le titre courant est encore file:// en Wi‑Fi → proxy immédiat (évite KO local). */
+    private fun demoteCurrentLocalIfOnline(exo: Player) {
+        val scheme = exo.currentMediaItem?.localConfiguration?.uri?.scheme ?: return
+        if (scheme != "file") return
+        val online = runCatching {
+            ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+        }.getOrDefault(true)
+        if (!online) return
+        val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return
+        val id = exo.currentMediaItem?.mediaId ?: return
+        val track = Holder.queue.firstOrNull { it.id == id } ?: return
+        val pos = exo.currentPosition.coerceAtLeast(0L)
+        val wantPlay = exo.playWhenReady || exo.isPlaying
+        AppLog.i("PlaybackService", "demote local→proxy id=$id pos=$pos")
+        runCatching {
+            val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
+            exo.replaceMediaItem(
+                idx,
+                mediaItemFor(track, { tid -> container.remoteStreamUrl(tid) }, Holder.queueTitle),
+            )
+            exo.seekTo(idx, pos)
+            exo.prepare()
+            if (wantPlay) {
+                exo.playWhenReady = true
+                exo.play()
             }
         }
     }
