@@ -107,6 +107,7 @@ class LocalOfflineStore(
             audioFile(trackId).delete()
             File(dir, "$trackId.part").delete()
             sizeHintFile(trackId).delete()
+            okMarker(trackId).delete()
             val meta = readMetaUnlocked().toMutableMap()
             meta.remove(trackId)
             writeMetaUnlocked(meta)
@@ -200,15 +201,8 @@ class LocalOfflineStore(
                     resp.header("Accept-Ranges").orEmpty().contains("bytes", ignoreCase = true)
                 lenHeader to accept
             }
-            val metered = !NetworkMonitor.isUnmeteredPreferred(
-                ovh.delhomme.ytmusic.YtMusicApp.instance,
-            )
-            // Parallel multi-Range : fragile si le proxy coupe mid-stream (« unexpected end of stream »)
-            if (!forceSequential && ranged && total > 512 * 1024L && !metered) {
-                downloadParallel(track, streamUrl, part, dest, total, onProgress, attempt)
-            } else {
-                downloadSequential(track, streamUrl, part, dest, onProgress, attempt)
-            }
+            // Toujours séquentiel hors-ligne : multi-Range laisse parfois des trous → coupe mid-song.
+            downloadSequential(track, streamUrl, part, dest, onProgress, attempt)
         }.onFailure {
             part.delete()
         }
@@ -337,18 +331,30 @@ class LocalOfflineStore(
             part.delete()
             error("Fichier audio invalide (pas de ftyp) — stream KO")
         }
+        if (isDashBrandFile(part)) {
+            part.delete()
+            error("Conteneur DASH — pas fiable hors-ligne (coupe mid-song)")
+        }
         if (!probeDecodable(part)) {
             part.delete()
             error("Fichier audio illisible (durée 0) — stream KO")
         }
         mutex.withLock {
             if (dest.exists()) dest.delete()
+            okMarker(track.id).delete()
             if (!part.renameTo(dest)) {
                 part.copyTo(dest, overwrite = true)
                 part.delete()
             }
+            // Re-valide après rename (évite un .m4a partiel promu)
+            if (!isFileComplete(dest, track) || !probeDecodable(dest)) {
+                dest.delete()
+                sizeHintFile(track.id).delete()
+                error("Validation finale KO — fichier non gardé")
+            }
             upsertMetaUnlocked(track)
             writeSizeHint(track.id, if (total > 0) total else dest.length())
+            okMarker(track.id).writeText("1")
             bump()
         }
         onProgress?.invoke(1f)
@@ -356,6 +362,8 @@ class LocalOfflineStore(
     }
 
     private fun sizeHintFile(trackId: String) = File(dir, "$trackId.size")
+
+    private fun okMarker(trackId: String) = File(dir, "$trackId.ok")
 
     private fun writeSizeHint(trackId: String, bytes: Long) {
         runCatching { sizeHintFile(trackId).writeText(bytes.toString()) }
@@ -373,6 +381,13 @@ class LocalOfflineStore(
         if (hinted != null && hinted > minBytes && len < hinted * 98 / 100) return false
         // En-tête ISO/MP4 (ftyp) obligatoire — refuse HTML/JSON/tronqués déguisés en .m4a
         if (!hasFtypHeader(file)) return false
+        if (isDashBrandFile(file)) return false
+        val id = file.nameWithoutExtension
+        // Marqueur écrit seulement après probeDecodable OK
+        if (okMarker(id).isFile) return true
+        // Anciens fichiers : re-probe une fois, sinon refuse (sera purgé)
+        if (!probeDecodable(file)) return false
+        runCatching { okMarker(id).writeText("1") }
         return true
     }
 
@@ -386,8 +401,15 @@ class LocalOfflineStore(
             dashCache[trackId] = false
             return false
         }
-        val dash = runCatching {
-            RandomAccessFile(f, "r").use { raf ->
+        val dash = isDashBrandFile(f)
+        dashCache[trackId] = dash
+        return dash
+    }
+
+    /** Brands DASH / fragmentés — Exo coupe souvent mid-song hors-ligne. */
+    private fun isDashBrandFile(file: File): Boolean {
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
                 val buf = ByteArray(32)
                 val n = raf.read(buf)
                 if (n < 12) return@use false
@@ -406,8 +428,6 @@ class LocalOfflineStore(
                 false
             }
         }.getOrDefault(false)
-        dashCache[trackId] = dash
-        return dash
     }
 
     fun invalidateDashCache(trackId: String? = null) {
@@ -474,15 +494,15 @@ class LocalOfflineStore(
     }
 
     /**
-     * Floor plus strict : sans durée connue, 350 Ko (évite les DL 96 Ko acceptés puis KO mid-song).
-     * Avec durée : ~96 kb/s × secondes (inchangé).
+     * Floor plus strict : sans durée connue, 500 Ko (évite DL courts acceptés puis KO mid-song).
+     * Avec durée : ~96 kb/s × secondes.
      */
     private fun minBytesFor(track: TrackDto?): Long {
         val sec = track?.durationMsOrNull()?.div(1000)?.toInt()
             ?: track?.durationSeconds
             ?: 0
-        if (sec > 0) return maxOf(96_000L, sec * 12_000L)
-        return 350_000L
+        if (sec > 0) return maxOf(120_000L, sec * 12_000L)
+        return 500_000L
     }
 
     private fun readMetaUnlocked(): Map<String, TrackDto> {
