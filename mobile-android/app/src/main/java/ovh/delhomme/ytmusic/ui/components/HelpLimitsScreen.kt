@@ -88,15 +88,15 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item { SectionTitle("Problèmes fréquents") }
             item {
                 Bullet(
-                    "Titre de la file qui ne démarre pas / long silence : souvent un flux lent ou " +
-                        "indisponible temporairement (YouTube / serveur). Attends quelques secondes, " +
-                        "ou saute au suivant. PLM essaie aussi de reprendre automatiquement après ~8 s bloqués.",
+                    "Titre de la file qui ne démarre pas : PLM reprend le flux après ~2,5 s bloqués " +
+                        "(plus d’attente de 8 s). Si ça coince encore, saute au suivant.",
                 )
             }
             item {
                 Bullet(
-                    "Son qui coupe au milieu : fichier hors-ligne abîmé, ou coupure réseau. " +
-                        "PLM peut basculer en streaming ; un toast l’indique.",
+                    "Son qui coupe au milieu : plutôt une coupure réseau. Les fichiers hors-ligne " +
+                        "sont validés (taille + décodage) avant d’être gardés ; un fichier abîmé " +
+                        "est purgé et PLM bascule en streaming.",
                 )
             }
             item {

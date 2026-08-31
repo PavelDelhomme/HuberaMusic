@@ -108,7 +108,7 @@ class PlaybackService : MediaSessionService() {
         bufferingTrackId = ""
     }
 
-    /** Si BUFFERING sans progrès > ~8 s → purge local / rebind stream (évite minutes de silence). */
+    /** Si BUFFERING sans progrès > ~2,5 s → purge local / rebind (plus d’attente ~8 s). */
     private fun armStallWatch(player: Player) {
         if (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING) {
             cancelStallWatch()
@@ -134,12 +134,13 @@ class PlaybackService : MediaSessionService() {
             }
             val waited = android.os.SystemClock.elapsedRealtime() - bufferingSinceElapsed
             val progress = exo.bufferedPosition - exo.currentPosition
-            if (progress > 1_200L) {
+            // Un peu de buffer qui avance = on laisse encore un peu
+            if (progress > 800L) {
                 bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
                 armStallWatch(exo)
                 return@Runnable
             }
-            if (waited < 8_000L) {
+            if (waited < 2_500L) {
                 armStallWatch(exo)
                 return@Runnable
             }
@@ -166,14 +167,14 @@ class PlaybackService : MediaSessionService() {
                     }
                 }
                 android.os.Handler(mainLooper).post {
-                    toastMain("Lecture bloquée — reprise en streaming…", Toast.LENGTH_SHORT)
+                    toastMain("Fichier local KO — reprise en streaming…", Toast.LENGTH_SHORT)
                 }
             } else {
                 rebindCurrentStream("stall-buffer", forcePlay = true)
             }
         }
         stallRunnable = r
-        stallHandler.postDelayed(r, 2_500L)
+        stallHandler.postDelayed(r, 800L)
     }
 
     private fun refreshPlaybackActiveFlag(player: Player) {
