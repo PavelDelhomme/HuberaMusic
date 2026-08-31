@@ -10,7 +10,11 @@ import ovh.delhomme.ytmusic.debug.AppLog
 
 /**
  * Focus audio **uniquement** quand PLM lit vraiment.
- * Évite de couper Netflix / YouTube lors d’un seek, d’une ouverture d’app ou d’une MAJ.
+ * - Appel / interruption courte : pause puis **reprise auto** au GAIN.
+ * - Notif système (CAN_DUCK) : baisse le volume puis remonte.
+ *
+ * Important : ne pas [abandon] pendant une LOSS_TRANSIENT, sinon le GAIN
+ * n’arrive jamais et la musique reste coupée après un appel.
  */
 class PlayerAudioFocus(
     context: Context,
@@ -19,28 +23,67 @@ class PlayerAudioFocus(
     private val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private var request: AudioFocusRequest? = null
     private var held = false
+    /** Reprendre automatiquement après LOSS_TRANSIENT (appel, GPS, etc.). */
+    private var resumeOnGain = false
+    /** Focus encore « à nous » en attente du GAIN — ne pas abandonner. */
+    private var waitingTransientGain = false
+    private var ducked = false
+    private var volumeBeforeDuck = 1f
 
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
         val p = player() ?: return@OnAudioFocusChangeListener
         when (change) {
-            AudioManager.AUDIOFOCUS_LOSS,
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-            -> {
-                AppLog.i("audio-focus", "loss → pause PLM (autre app média)")
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                AppLog.i("audio-focus", "LOSS permanent → pause")
+                resumeOnGain = false
+                waitingTransientGain = false
+                unduck(p)
                 runCatching { p.pause() }
                 held = false
             }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                val wasPlaying = p.playWhenReady || p.isPlaying
+                AppLog.i("audio-focus", "LOSS_TRANSIENT → pause (resumeOnGain=$wasPlaying)")
+                resumeOnGain = wasPlaying
+                waitingTransientGain = true
+                unduck(p)
+                runCatching { p.pause() }
+            }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                // On ne duck pas : on laisse l’autre app ; PLM reste en pause si besoin.
+                AppLog.i("audio-focus", "CAN_DUCK → volume bas")
+                duck(p)
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                /* pas d’auto-resume — l’utilisateur décide */
+                AppLog.i("audio-focus", "GAIN resumeOnGain=$resumeOnGain ducked=$ducked")
+                unduck(p)
+                held = true
+                waitingTransientGain = false
+                if (resumeOnGain) {
+                    resumeOnGain = false
+                    runCatching {
+                        p.playWhenReady = true
+                        p.play()
+                    }
+                }
             }
         }
     }
 
+    private fun duck(p: Player) {
+        if (ducked) return
+        volumeBeforeDuck = p.volume.coerceIn(0.05f, 1f)
+        ducked = true
+        runCatching { p.volume = (volumeBeforeDuck * 0.22f).coerceAtLeast(0.05f) }
+    }
+
+    private fun unduck(p: Player) {
+        if (!ducked) return
+        ducked = false
+        runCatching { p.volume = volumeBeforeDuck.coerceIn(0.05f, 1f) }
+    }
+
     fun requestIfNeeded(): Boolean {
-        if (held) return true
+        if (held || waitingTransientGain) return true
         val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val attrs = PlatformAudioAttributes.Builder()
                 .setUsage(PlatformAudioAttributes.USAGE_MEDIA)
@@ -49,8 +92,8 @@ class PlayerAudioFocus(
             val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attrs)
                 .setOnAudioFocusChangeListener(listener)
-                .setAcceptsDelayedFocusGain(false)
-                .setWillPauseWhenDucked(true)
+                .setAcceptsDelayedFocusGain(true)
+                .setWillPauseWhenDucked(false)
                 .build()
             request = req
             am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
@@ -67,8 +110,19 @@ class PlayerAudioFocus(
         return ok
     }
 
-    fun abandon() {
+    /**
+     * Abandonne le focus sauf si on attend un GAIN après interruption système
+     * (appel). [force] = destroy / idle.
+     */
+    fun abandon(force: Boolean = false) {
+        if (!force && waitingTransientGain) {
+            AppLog.i("audio-focus", "abandon ignoré (attente GAIN après appel)")
+            return
+        }
         if (!held && request == null) return
+        resumeOnGain = false
+        waitingTransientGain = false
+        player()?.let { unduck(it) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             request?.let { runCatching { am.abandonAudioFocusRequest(it) } }
         } else {
