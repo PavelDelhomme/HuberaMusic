@@ -1,8 +1,9 @@
 package ovh.delhomme.ytmusic.data
 
 /**
- * Remplit la zone « À suivre » rapidement (related?fast=1 = upNext côté API).
- * Un seul appel — pas de double getUpNext.
+ * Remplit la zone « À suivre ».
+ * Préfère related?full=0 (rank + exclusion déjà joués / tops) ;
+ * fallback fast (upNext) si le batch court échoue.
  */
 suspend fun fetchAutoplayTracksFast(api: YtMusicApi, seedId: String): List<TrackDto> {
     if (seedId.length != 11) return emptyList()
@@ -27,4 +28,13 @@ suspend fun fetchAutoplayTracksFull(api: YtMusicApi, seedId: String): List<Track
         )
         .filter { it.isPlayable() && it.id != seedId }
         .distinctBy { it.id }
+}
+
+/** Autoplay client : full court d’abord, sinon upNext rapide. */
+suspend fun fetchAutoplayTracks(api: YtMusicApi, seedId: String): List<TrackDto> {
+    val full = fetchAutoplayTracksFull(api, seedId)
+    if (full.size >= 4) return full
+    val fast = fetchAutoplayTracksFast(api, seedId)
+    if (full.isEmpty()) return fast
+    return (full + fast).distinctBy { it.id }
 }

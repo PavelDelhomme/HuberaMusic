@@ -51,6 +51,16 @@ function fingerprint(level: string, kind: string, message: string, stack?: strin
     const tid = /id=([a-zA-Z0-9_-]{11})/.exec(msg)?.[1] || 'unknown';
     return `${level}|${kind}|exo-eof|${tid}`;
   }
+  // Même piste / même code Exo (2001, 2004…) → un mail par fenêtre, pas une rafale
+  if (/onPlayerError code=(\d+)/i.test(msg)) {
+    const code = /onPlayerError code=(\d+)/i.exec(msg)?.[1] || 'x';
+    const tid = /id=([a-zA-Z0-9_-]{11})/.exec(msg)?.[1] || 'unknown';
+    const http = /http=(\d{3})/i.exec(msg)?.[1] || '';
+    return `${level}|${kind}|exo-${code}|${http}|${tid}`;
+  }
+  if (/^Script error\.?$/i.test(msg.trim())) {
+    return `${level}|${kind}|script-error`;
+  }
   const tip = msg.slice(0, 120);
   const stackTip = (stack || '').split('\n').slice(0, 2).join('|').slice(0, 120);
   return `${level}|${kind}|${tip}|${stackTip}`;
@@ -144,6 +154,26 @@ export async function maybeAlertTelemetryError(ev: {
   if (isEofSpam) {
     return { sent: false, reason: 'eof-no-mail' };
   }
+  // Cross-origin / SW noise web — inutile en mail
+  if (
+    (kind0 === 'window.error' && /^Script error\.?$/i.test(String(ev.message || '').trim())) ||
+    (kind0 === 'unhandledrejection' && /ServiceWorker script at /i.test(blob0))
+  ) {
+    return { sent: false, reason: 'web-noise' };
+  }
+  // Fichier local KO déjà récupéré en streaming : warn côté client ; si error, throttle fort
+  if (
+    kind0.includes('android.player') &&
+    meta0.local === true &&
+    meta0.serious !== true &&
+    Number(meta0.streak || 0) < 3
+  ) {
+    return { sent: false, reason: 'local-soft' };
+  }
+  // Toast hors main thread — déjà corrigé, pas de mail
+  if (kind0.includes('android.coroutine') && /Can't toast on a thread|Looper\.prepare/i.test(blob0)) {
+    return { sent: false, reason: 'toast-thread' };
+  }
   // APK obsolètes encore en prod : ignorer leurs alertes player non fatales.
   const ver = String(meta0.appVersion || meta0.versionName || '');
   if (
@@ -161,10 +191,10 @@ export async function maybeAlertTelemetryError(ev: {
   const now = Date.now();
   const prev = lastSent.get(fp) || 0;
   const kind = String(ev.kind || '');
-  const gapPlayer = THROTTLE_PLAYER_MS;
+  const gapPlayer = Math.max(THROTTLE_PLAYER_MS, 45_000);
   const gap =
-    /\|exo-eof\|/.test(fp)
-      ? Math.max(gapPlayer, 180_000) // EOF même piste : 3 min
+    /\|exo-eof\|/.test(fp) || /\|exo-\d+\|/.test(fp)
+      ? Math.max(gapPlayer, 180_000) // même piste / code : 3 min
       : kind.startsWith('android.') || kind.includes('player') || kind.includes('crash')
         ? gapPlayer
         : THROTTLE_MS;
