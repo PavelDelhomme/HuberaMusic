@@ -684,6 +684,10 @@ class ApkUpdateManager(
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(context.packageName)
+        // API 34+ : évite le kill immédiat → on peut relancer PLM après SUCCESS
+        if (Build.VERSION.SDK_INT >= 34) {
+            runCatching { params.setDontKillApp(true) }
+        }
         val sessionId = installer.createSession(params)
         installer.openSession(sessionId).use { session ->
             file.inputStream().use { input ->
@@ -727,7 +731,7 @@ class ApkUpdateManager(
                                 publish(
                                     _ui.value.copy(
                                         phase = Phase.AwaitingConfirm,
-                                        message = "Installation lancée — confirme sur l’écran système, puis rouvre PLM",
+                                        message = "Confirme l’installation — PLM se rouvrira ensuite",
                                         available = true,
                                         progress = 1f,
                                     ),
@@ -740,11 +744,12 @@ class ApkUpdateManager(
                                 publish(
                                     UiState(
                                         phase = Phase.Done,
-                                        message = "Mise à jour installée — redémarre PLM si besoin",
+                                        message = "Mise à jour installée — réouverture…",
                                         available = false,
                                         progress = 1f,
                                     ),
                                 )
+                                relaunchAppAfterUpdate(ctx ?: context)
                             }
                             PackageInstaller.STATUS_FAILURE_ABORTED,
                             PackageInstaller.STATUS_FAILURE,
@@ -773,6 +778,29 @@ class ApkUpdateManager(
             session.commit(pi.intentSender)
         }
         return true
+    }
+
+    /** Relance PLM juste après une MAJ réussie (avant kill process éventuel). */
+    private fun relaunchAppAfterUpdate(ctx: Context) {
+        val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return
+        launch.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
+        )
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        // Immédiat + rappel : certains OEM tuent le process juste après le broadcast
+        main.post {
+            runCatching { ctx.startActivity(launch) }
+                .onFailure { AppLog.w("apk-update", "relaunch immédiat KO: ${it.message}") }
+        }
+        main.postDelayed({
+            runCatching { ctx.startActivity(launch) }
+                .onFailure { AppLog.w("apk-update", "relaunch différé KO: ${it.message}") }
+        }, 600L)
+        main.postDelayed({
+            runCatching { ctx.startActivity(launch) }
+        }, 1_500L)
     }
 
     private fun installApkViaView(file: File) {
