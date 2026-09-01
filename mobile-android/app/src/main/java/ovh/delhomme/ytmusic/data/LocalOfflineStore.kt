@@ -46,6 +46,11 @@ class LocalOfflineStore(
         _revision.value = _revision.value + 1L
     }
 
+    /**
+     * Même identité qu’Exo ([PlayerCache]) : sans `PLM-Android` / `X-YTM-Client`,
+     * l’API traite le DL comme un navigateur et tronque les titres cold à 1 MiB
+     * → fichiers offline pourris / « téléchargement marche pas ».
+     */
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.MINUTES)
@@ -54,7 +59,21 @@ class LocalOfflineStore(
         // HTTP/2 RST fréquents sur proxy maison / CDN pendant la lecture → forcer h1
         .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
         .retryOnConnectionFailure(true)
+        .addInterceptor { chain ->
+            val req = chain.request().newBuilder()
+                .header("User-Agent", "PLM-Android")
+                .header("X-YTM-Client", "android")
+                .header("Accept", "*/*")
+                .build()
+            chain.proceed(req)
+        }
         .build()
+
+    private fun streamGet(url: String): Request =
+        Request.Builder().url(url).get().build()
+
+    private fun streamRange(url: String, range: String): Request =
+        Request.Builder().url(url).header("Range", range).get().build()
 
     init {
         // Nettoie les .part orphelins (kill app / cancel mid-download)
@@ -181,11 +200,7 @@ class LocalOfflineStore(
         part.delete()
         return runCatching {
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            val probe = Request.Builder()
-                .url(streamUrl)
-                .header("Range", "bytes=0-0")
-                .get()
-                .build()
+            val probe = streamRange(streamUrl, "bytes=0-0")
             val (total, ranged) = http.newCall(probe).execute().use { resp ->
                 if (resp.code == 502 || resp.code == 503 || resp.code == 504) {
                     error("HTTP ${resp.code}")
@@ -216,7 +231,7 @@ class LocalOfflineStore(
         onProgress: ((Float) -> Unit)?,
         attempt: Int,
     ): File {
-        val req = Request.Builder().url(streamUrl).get().build()
+        val req = streamGet(streamUrl)
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("HTTP ${resp.code}")
             val body = resp.body ?: error("Réponse vide")
@@ -248,6 +263,16 @@ class LocalOfflineStore(
                     output.flush()
                 }
             }
+            // Signature classique de la troncature API « client web » (1 MiB forcé).
+            if (total < 0 && readTotal in 1_000_000L..1_100_000L) {
+                val expectSec = track.durationMsOrNull()?.div(1000)?.toInt()
+                    ?: track.durationSeconds
+                    ?: 0
+                if (expectSec >= 90) {
+                    part.delete()
+                    error("Stream tronqué ~1 MiB (identité Android manquante / cold) — refuse")
+                }
+            }
             finalizeDownload(track, part, dest, total, readTotal, onProgress, attempt)
         }
         return dest
@@ -273,11 +298,7 @@ class LocalOfflineStore(
                     async(Dispatchers.IO) {
                         val from = i * size
                         val to = if (i == chunks - 1) total - 1 else (from + size - 1)
-                        val req = Request.Builder()
-                            .url(streamUrl)
-                            .header("Range", "bytes=$from-$to")
-                            .get()
-                            .build()
+                        val req = streamRange(streamUrl, "bytes=$from-$to")
                         http.newCall(req).execute().use { resp ->
                             if (resp.code != 206 && !resp.isSuccessful) error("HTTP ${resp.code}")
                             val body = resp.body ?: error("Réponse vide")
@@ -335,9 +356,9 @@ class LocalOfflineStore(
             part.delete()
             error("Conteneur DASH — pas fiable hors-ligne (coupe mid-song)")
         }
-        if (!probeDecodable(part)) {
+        if (!probeDecodable(part, track)) {
             part.delete()
-            error("Fichier audio illisible (durée 0) — stream KO")
+            error("Fichier audio illisible / durée trop courte — stream KO")
         }
         mutex.withLock {
             if (dest.exists()) dest.delete()
@@ -347,7 +368,7 @@ class LocalOfflineStore(
                 part.delete()
             }
             // Re-valide après rename (évite un .m4a partiel promu)
-            if (!isFileComplete(dest, track) || !probeDecodable(dest)) {
+            if (!isFileComplete(dest, track) || !probeDecodable(dest, track)) {
                 dest.delete()
                 sizeHintFile(track.id).delete()
                 error("Validation finale KO — fichier non gardé")
@@ -386,7 +407,7 @@ class LocalOfflineStore(
         // Marqueur écrit seulement après probeDecodable OK
         if (okMarker(id).isFile) return true
         // Anciens fichiers : re-probe une fois, sinon refuse (sera purgé)
-        if (!probeDecodable(file)) return false
+        if (!probeDecodable(file, track)) return false
         runCatching { okMarker(id).writeText("1") }
         return true
     }
@@ -446,7 +467,7 @@ class LocalOfflineStore(
             if (removed >= limit) break
             val id = f.nameWithoutExtension
             val meta = synchronized(this@LocalOfflineStore) { readMetaUnlocked()[id] }
-            if (isFileComplete(f, meta) && probeDecodable(f)) continue
+            if (isFileComplete(f, meta) && probeDecodable(f, meta)) continue
             AppLog.w("offline", "purge corrupt $id size=${f.length()}")
             runCatching { remove(id) }
             removed++
@@ -478,15 +499,28 @@ class LocalOfflineStore(
         }.getOrDefault(false)
     }
 
-    /** Durée décodable > 3 s — attrape les DASH tronqués qui passent le ftyp. */
-    private fun probeDecodable(file: File): Boolean {
+    /**
+     * Durée décodable > 3 s — attrape les DASH / 1 MiB tronqués qui passent le ftyp.
+     * Si on connaît la durée catalogue, refuse un fichier &lt; ~55 % (souvent coupe mid-song).
+     */
+    private fun probeDecodable(file: File, track: TrackDto? = null): Boolean {
         return runCatching {
             val mmr = MediaMetadataRetriever()
             try {
                 mmr.setDataSource(file.absolutePath)
                 val dur = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: 0L
-                dur >= 3_000L
+                if (dur < 3_000L) return@runCatching false
+                val expected = track?.durationMsOrNull()
+                    ?: track?.durationSeconds?.times(1000L)
+                if (expected != null && expected >= 60_000L && dur < (expected * 55L / 100L)) {
+                    AppLog.w(
+                        "offline",
+                        "probe durée trop courte ${file.nameWithoutExtension}: ${dur}ms < 55% de ${expected}ms",
+                    )
+                    return@runCatching false
+                }
+                true
             } finally {
                 runCatching { mmr.release() }
             }

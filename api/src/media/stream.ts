@@ -538,7 +538,8 @@ export async function handleStream(req: Request, res: Response) {
       refreshDisk();
       const isAndroid =
         String(req.headers['x-ytm-client'] || '') === 'android' ||
-        /PLM-Android/i.test(String(req.headers['user-agent'] || ''));
+        /PLM-Android/i.test(String(req.headers['user-agent'] || '')) ||
+        String(req.query?.client || '') === 'android';
       if (diskBytes <= 1024 * 1024) {
         // Android : attente courte seulement — 45 s bloquait derrière nginx → 504 Exo.
         // Le pipeline relais/GV prend le relais ; downloadTrack tourne déjà en fond plus bas.
