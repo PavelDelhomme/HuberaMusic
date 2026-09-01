@@ -117,10 +117,20 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun bufferedPositionSafe(exo: Player): Long =
+        runCatching { exo.bufferedPosition }.getOrDefault(0L).coerceAtLeast(0L)
+
     /** Si BUFFERING sans progrès > ~2,5 s → purge local / rebind ; 2ᵉ échec → titre suivant. */
     private fun armStallWatch(player: Player) {
         if (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING) {
-            cancelStallWatch()
+            // Ne reset le compteur de rebind que si la lecture repart vraiment (ou pause user).
+            // Un passage bref READY→BUFFERING remettait stallRebindCount à 0 → boucle infinie.
+            if (player.isPlaying || !player.playWhenReady) {
+                cancelStallWatch()
+            } else {
+                stallRunnable?.let { stallHandler.removeCallbacks(it) }
+                stallRunnable = null
+            }
             return
         }
         val id = player.currentMediaItem?.mediaId.orEmpty()
@@ -164,9 +174,14 @@ class PlaybackService : MediaSessionService() {
                 armStallWatch(exo)
                 return@Runnable
             }
+            // Cold start (pos≈0) : laisser plus de temps au 1er octet (Blackview / titres GIMS cold).
+            if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < 7_000L) {
+                armStallWatch(exo)
+                return@Runnable
+            }
             val local = exo.currentMediaItem?.localConfiguration?.uri?.scheme == "file"
-            // 2 rebinds déjà tentés sur ce titre sans sortir du trou → skip (pas de silence 45 s).
-            if (stallRebindCount >= 2) {
+            // 2 rebinds déjà tentés, ou blocage > 8 s → skip (pas de silence 45 s).
+            if (stallRebindCount >= 2 || (waited >= 8_000L && posFrozenFor >= 5_000L)) {
                 AppLog.w(
                     "PlaybackService",
                     "stall-buffer escalate-skip ${waited}ms frozen=${posFrozenFor}ms rebinds=$stallRebindCount id=$curId pos=$pos",
@@ -214,12 +229,21 @@ class PlaybackService : MediaSessionService() {
                         exo.playWhenReady = true
                         exo.play()
                     }
+                    android.os.Handler(mainLooper).post { armStallWatch(exo) }
                 }
                 android.os.Handler(mainLooper).post {
                     toastMain("Fichier local KO — reprise en streaming…", Toast.LENGTH_SHORT)
                 }
             } else {
-                rebindCurrentStream("stall-buffer", forcePlay = true)
+                // 2ᵉ rebind mid-song : repartir du début (502/Range sur offset figé).
+                val seekFromStart = stallRebindCount >= 2 && pos > 30_000L
+                rebindCurrentStream(
+                    reason = if (seekFromStart) "stall-buffer-restart" else "stall-buffer",
+                    forcePlay = true,
+                    seekPos = if (seekFromStart) 0L else null,
+                )
+                // Exo peut rester BUFFERING sans EVENT → réarmer le watchdog stall.
+                armStallWatch(exo)
             }
         }
         stallRunnable = r
@@ -1790,7 +1814,7 @@ class PlaybackService : MediaSessionService() {
      * Reconstruit l’URI du titre courant (proxy frais) et reprend à la position.
      * À appeler après Wi‑Fi ↔ 4G, coupure données, ou retour en ligne.
      */
-    fun rebindCurrentStream(reason: String, forcePlay: Boolean = true) {
+    fun rebindCurrentStream(reason: String, forcePlay: Boolean = true, seekPos: Long? = null) {
         val exo = player ?: return
         if (exo.mediaItemCount <= 0) return
         val id = exo.currentMediaItem?.mediaId ?: return
@@ -1808,7 +1832,7 @@ class PlaybackService : MediaSessionService() {
         }
         val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return
         val track = Holder.queue.firstOrNull { it.id == id } ?: return
-        val pos = bestKnownPos(exo)
+        val pos = seekPos ?: bestKnownPos(exo)
         // Coupure pile à la fin : enchaîner, ne pas rebobiner (ex. 215s → 146s).
         val durGuess = when {
             exo.duration > 0L && exo.duration != C.TIME_UNSET -> exo.duration
