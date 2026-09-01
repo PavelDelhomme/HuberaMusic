@@ -68,7 +68,12 @@ class AppContainer(context: Context) {
             notifyServer = { id -> runCatching { api.download(id, ack = 1) } },
             warmStream = { id ->
                 runCatching {
-                    val req = okhttp3.Request.Builder().url(warmStreamUrl(id)).get().build()
+                    val req = okhttp3.Request.Builder()
+                        .url(warmStreamUrl(id))
+                        .header("User-Agent", "PLM-Android")
+                        .header("X-YTM-Client", "android")
+                        .get()
+                        .build()
                     client.newCall(req).execute().close()
                 }
             },
@@ -360,10 +365,11 @@ class AppContainer(context: Context) {
     fun remoteStreamUrl(trackId: String): String {
         val base = resolvedApiBase() + "/api/stream/$trackId"
         val token = tokenStore.peekAccess()
+        val withClient = if (base.contains('?')) "$base&client=android" else "$base?client=android"
         return if (!token.isNullOrBlank()) {
-            "$base?access_token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
+            "$withClient&access_token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
         } else {
-            base
+            withClient
         }
     }
 

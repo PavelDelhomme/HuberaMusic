@@ -170,9 +170,9 @@ class OfflineDownloadManager(
                     if (offlineStore.has(track.id)) return@withPermit
                     ensureToken()
                     _progress.update { it + (track.id to 0.05f) }
-                    if (!duringPlaybackSafe && !isPlaybackActive()) {
-                        withTimeoutOrNull(800L) { warmStream?.invoke(track.id) }
-                    }
+                    // Warm resolve même pendant la lecture (timeout court) — titres « cold »
+                    // (nouvel artiste / jamais écouté) sinon 502 + DL tronqué.
+                    withTimeoutOrNull(2_500L) { warmStream?.invoke(track.id) }
                     _progress.update { it + (track.id to 0.12f) }
                     offlineStore
                         .download(track, streamUrl(track.id)) { p ->
