@@ -403,9 +403,10 @@ class LocalOfflineStore(
         // En-tête ISO/MP4 (ftyp) obligatoire — refuse HTML/JSON/tronqués déguisés en .m4a
         if (!hasFtypHeader(file)) return false
         if (isDashBrandFile(file)) return false
+        if (isLikelyWebTruncated(file, track)) return false
         val id = file.nameWithoutExtension
         // Marqueur écrit seulement après probeDecodable OK
-        if (okMarker(id).isFile) return true
+        if (okMarker(id).isFile && !isLikelyWebTruncated(file, track)) return true
         // Anciens fichiers : re-probe une fois, sinon refuse (sera purgé)
         if (!probeDecodable(file, track)) return false
         runCatching { okMarker(id).writeText("1") }
@@ -474,6 +475,21 @@ class LocalOfflineStore(
         }
         if (removed > 0) AppLog.i("offline", "purgeCorrupt removed=$removed")
         removed
+    }
+
+    /**
+     * Anciens DL sans UA Android : l’API tronquait à ~1 MiB (cold).
+     * Le moov peut faire passer probeDecodable alors que la lecture coupe mid-song.
+     */
+    private fun isLikelyWebTruncated(file: File, track: TrackDto?): Boolean {
+        val len = file.length()
+        if (len !in 1_000_000L..1_150_000L) return false
+        val expectSec = track?.durationMsOrNull()?.div(1000)?.toInt()
+            ?: track?.durationSeconds
+            ?: 0
+        if (expectSec >= 90) return true
+        // Sans méta : zone ~1 048 576 o (Range web forcé sur cold).
+        return expectSec == 0 && len in 1_000_000L..1_100_000L
     }
 
     /** ftyp atom dans les 32 premiers octets (isom / mp42 / dash / M4A …). */

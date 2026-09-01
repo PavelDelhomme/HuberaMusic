@@ -30,6 +30,9 @@ class PlayerAudioFocus(
     private var ducked = false
     private var volumeBeforeDuck = 1f
 
+    /** Focus accordé ou en attente (DELAYED) — pas un refus. */
+    private var pendingDelayedGain = false
+
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->
         val p = player() ?: return@OnAudioFocusChangeListener
         when (change) {
@@ -54,10 +57,11 @@ class PlayerAudioFocus(
                 duck(p)
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
-                AppLog.i("audio-focus", "GAIN resumeOnGain=$resumeOnGain ducked=$ducked")
+                AppLog.i("audio-focus", "GAIN resumeOnGain=$resumeOnGain ducked=$ducked delayed=$pendingDelayedGain")
                 unduck(p)
                 held = true
                 waitingTransientGain = false
+                pendingDelayedGain = false
                 if (resumeOnGain) {
                     resumeOnGain = false
                     runCatching {
@@ -83,7 +87,7 @@ class PlayerAudioFocus(
     }
 
     fun requestIfNeeded(): Boolean {
-        if (held || waitingTransientGain) return true
+        if (held || waitingTransientGain || pendingDelayedGain) return true
         val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val attrs = PlatformAudioAttributes.Builder()
                 .setUsage(PlatformAudioAttributes.USAGE_MEDIA)
@@ -96,16 +100,33 @@ class PlayerAudioFocus(
                 .setWillPauseWhenDucked(false)
                 .build()
             request = req
-            am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            when (val result = am.requestAudioFocus(req)) {
+                AudioManager.AUDIOFOCUS_REQUEST_GRANTED -> {
+                    held = true
+                    true
+                }
+                AudioManager.AUDIOFOCUS_REQUEST_DELAYED -> {
+                    // Blackview / API 28 : DELAY_OK → ne pas traiter comme refus (sinon pause immédiate).
+                    pendingDelayedGain = true
+                    resumeOnGain = true
+                    AppLog.i("audio-focus", "request DELAYED — attente GAIN")
+                    true
+                }
+                else -> {
+                    AppLog.w("audio-focus", "request refused code=$result")
+                    false
+                }
+            }
         } else {
             @Suppress("DEPRECATION")
-            am.requestAudioFocus(
+            (am.requestAudioFocus(
                 listener,
                 AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN,
-            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED).also { granted ->
+                held = granted
+            }
         }
-        held = ok
         if (!ok) AppLog.w("audio-focus", "request refused")
         return ok
     }
@@ -119,9 +140,14 @@ class PlayerAudioFocus(
             AppLog.i("audio-focus", "abandon ignoré (attente GAIN après appel)")
             return
         }
+        if (!force && pendingDelayedGain) {
+            AppLog.i("audio-focus", "abandon ignoré (attente GAIN delayed)")
+            return
+        }
         if (!held && request == null) return
         resumeOnGain = false
         waitingTransientGain = false
+        pendingDelayedGain = false
         player()?.let { unduck(it) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             request?.let { runCatching { am.abandonAudioFocusRequest(it) } }
