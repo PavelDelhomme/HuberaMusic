@@ -322,6 +322,11 @@ object StreamPrefetcher {
         }
         val base = baseApi.trimEnd('/')
         quietPrefetch(2_200L)
+        // Libère getAudioFormat : coupe prefetch biblio / suite pendant le warm courant.
+        cancelIdle()
+        runCatching {
+            YtMusicApp.instance.container.downloadManager.cancelAll()
+        }
         val app = YtMusicApp.instance
         // 1) Format sync puis tête ~10–12 s (priorité absolue)
         warmCurrentBlocking(base, currentId, timeoutMs = 3_200L, wait = true)

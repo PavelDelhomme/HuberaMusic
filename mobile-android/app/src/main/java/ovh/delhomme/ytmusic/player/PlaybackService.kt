@@ -219,6 +219,16 @@ class PlaybackService : MediaSessionService() {
                 armStallWatch(exo)
                 return@Runnable
             }
+            // 1er buffer après seek mid-track (restore) : ne pas rebind à 2,5 s — laisser Range aboutir.
+            if (
+                stallRebindCount == 0 &&
+                stallSessionCount <= 1 &&
+                progress <= 0L &&
+                waited < (if (headWarmed) 10_000L else 8_000L)
+            ) {
+                armStallWatch(exo)
+                return@Runnable
+            }
             val local = exo.currentMediaItem?.localConfiguration?.uri?.scheme == "file"
             stallRebindCount += 1
             stallSessionTrackId = curId
@@ -638,11 +648,18 @@ class PlaybackService : MediaSessionService() {
                 error,
             )
             if (httpStatus != null && httpStatus >= 500) {
-                // Coupe prefetch + DL offline : ils saturent getAudioFormat et aggravent les 502.
-                StreamPrefetcher.markStreamDown(120_000L)
-                StreamPrefetcher.cancelIdle()
-                runCatching {
-                    ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.cancelAll()
+                // Ne coupe le prefetch / offline qu’après plusieurs 5xx — un seul 502
+                // (getAudioFormat deadline) ne doit pas bloquer 2 min toute la file.
+                if (streak >= 3) {
+                    StreamPrefetcher.markStreamDown(90_000L)
+                    StreamPrefetcher.cancelIdle()
+                    runCatching {
+                        ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.cancelAll()
+                    }
+                } else {
+                    // Laisse le titre courant retenter : coupe seulement le bruit (LibHeads / prefetch suite).
+                    StreamPrefetcher.cancelIdle()
+                    StreamPrefetcher.quietPrefetch(4_000L)
                 }
             }
             runCatching {
@@ -769,11 +786,10 @@ class PlaybackService : MediaSessionService() {
                     }
                     return
                 }
-                // Encore « online » : glitch / URL stream expirée — retenter LE MÊME titre (pas de skip)
-                // 5xx mid-song : 2 retries courts (502 souvent transitoire) ; début de piste : 1 puis skip
+                // 5xx : plus de retries (getAudioFormat deadline / proxy) avant toast / skip.
                 val maxSameTrack = when {
-                    httpStatus != null && httpStatus >= 500 && pos > 5_000L -> 2
-                    httpStatus != null && httpStatus >= 500 -> 1
+                    httpStatus != null && httpStatus >= 500 && pos > 5_000L -> 3
+                    httpStatus != null && httpStatus >= 500 -> 3
                     networkish -> 2
                     else -> 3
                 }
@@ -821,8 +837,9 @@ class PlaybackService : MediaSessionService() {
                         val retryDelay = when {
                             truncatedMid -> 2_500L * streak
                             httpStatus != null && httpStatus >= 500 && pos > 45_000L ->
-                                800L * streak
-                            httpStatus != null && httpStatus >= 500 -> 140L * streak
+                                1_200L * streak
+                            httpStatus != null && httpStatus >= 500 ->
+                                900L * streak // laisser getAudioFormat se libérer (LibHeads / proxy)
                             else -> 250L * streak
                         }
                         delay(retryDelay)
