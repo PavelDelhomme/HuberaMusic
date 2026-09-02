@@ -439,6 +439,55 @@ object StreamPrefetcher {
         }
     }
 
+    /**
+     * Ajout file / « lire ensuite » pendant une lecture : chauffe ~15 s du titre
+     * tout de suite (sans attendre la fin du buffer courant), pour un skip sans coupure.
+     * [asNext]=true → pin + file prioritaire (play next / seul suivant).
+     */
+    fun prefetchUserQueuedHead(
+        baseApi: String,
+        trackId: String,
+        asNext: Boolean = false,
+    ) {
+        if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
+        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        val unmetered = isUnmetered()
+        val bytes = when {
+            ovh.delhomme.ytmusic.data.BatterySaver.isActive() -> HEAD_NEAR_WIFI
+            asNext && unmetered -> HEAD_NEXT_PLAYING // ~12–15 s
+            asNext -> HEAD_NEXT_METERED
+            unmetered -> HEAD_NEXT_WIFI // ~8–12 s en file
+            else -> HEAD_NEXT_METERED
+        }
+        val key = "user-queue:$trackId"
+        synchronized(recent) {
+            val last = recent[key]
+            // Ré-priorise si nouvel ajout récent du même id (nouvel « encore »)
+            if (last != null && System.currentTimeMillis() - last < 1_200L) return
+            recent[key] = System.currentTimeMillis()
+        }
+        Thread {
+            try {
+                warmCurrentBlocking(baseApi, trackId, timeoutMs = 1_600L, wait = true)
+                val url = "${baseApi.trimEnd('/')}/api/stream/$trackId"
+                PlayerCache.prefetchHead(
+                    YtMusicApp.instance,
+                    url,
+                    trackId,
+                    bytes,
+                    priorityNext = asNext,
+                )
+            } catch (_: Exception) {
+                /* retry via rolling / mid-track */
+            }
+        }.apply {
+            name = "ytm-prefetch-user-queue"
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY + if (asNext) 1 else 0
+            start()
+        }
+    }
+
     /** Fenêtre glissante : maintient idx+1…idx+[window] à jour pendant la lecture. */
     fun maintainRollingPrefetch(
         baseApi: String,
