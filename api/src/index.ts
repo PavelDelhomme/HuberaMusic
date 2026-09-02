@@ -333,6 +333,7 @@ const authStrict = rateLimit({ windowMs: 15 * 60_000, max: 40 });
 app.get('/api/version-notes', (_req, res) => {
   const candidates = [
     join(ROOT, 'VERSION_NOTES.json'),
+    join(ROOT, 'web', 'dist', 'version-notes.json'),
     join(ROOT, 'web', 'public', 'version-notes.json'),
     join(ROOT, 'mobile-android', 'app', 'src', 'main', 'assets', 'version-notes.json'),
   ];
