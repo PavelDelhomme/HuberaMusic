@@ -657,7 +657,7 @@ fun NowPlayingScreen(
         if (track == null) {
             return@Box
         }
-        // Ambient blur YTM — uniquement sheet visible (coûteux en GPU)
+        // Ambient blur — fond unifié sous cover + chrome (sheet visible uniquement)
         if (sheetVisible) {
             AsyncImage(
                 model = track.coverUrl(160),
@@ -665,13 +665,13 @@ fun NowPlayingScreen(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .blur(48.dp)
-                    .alpha(0.38f),
+                    .blur(56.dp)
+                    .alpha(0.52f),
             )
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.55f)),
+                    .background(Color.Black.copy(alpha = 0.42f)),
             )
         }
         val duration = ui.durationMs.coerceAtLeast(1L).toFloat()
@@ -1210,7 +1210,7 @@ fun NowPlayingScreen(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .zIndex(4f)
-                                                .background(MaterialTheme.colorScheme.background)
+                                                .background(Color.Black.copy(alpha = 0.72f))
                                                 .clickable(
                                                     interactionSource = remember { MutableInteractionSource() },
                                                     indication = null,
@@ -1220,31 +1220,27 @@ fun NowPlayingScreen(
                                     }
                                 }
                             } else {
-                                // Portrait : une colonne pleine hauteur —
-                                // cover (weight) puis titre → artiste → chips → seek collés en bas.
+                                // Portrait : cover remplit toute la zone au-dessus du chrome
+                                // (plus de carré « carte » flottant dans un bandeau noir).
                                 Column(
                                     Modifier
                                         .fillParentMaxWidth()
                                         .fillMaxWidth()
                                         .fillParentMaxHeight(),
                                 ) {
-                                    Box(
+                                    BoxWithConstraints(
                                         Modifier
                                             .weight(1f)
-                                            .fillMaxWidth()
-                                            .background(Color.Black),
-                                        contentAlignment = Alignment.TopCenter,
+                                            .fillMaxWidth(),
                                     ) {
-                                        BoxWithConstraints(Modifier.fillMaxWidth()) {
-                                            // Carré = largeur écran ; zoom cover croppe les piliers 16:9 YT.
-                                            mediaBlock(maxWidth)
-                                        }
+                                        // Hauteur = zone dispo ; Crop enlève les piliers 16:9.
+                                        mediaBlock(maxHeight)
                                     }
                                     Column(
                                         Modifier
                                             .fillMaxWidth()
                                             .zIndex(5f)
-                                            .background(MaterialTheme.colorScheme.background)
+                                            .background(Color.Black.copy(alpha = 0.72f))
                                             .padding(horizontal = 18.dp)
                                             .padding(top = 10.dp, bottom = 0.dp),
                                     ) {
@@ -3391,36 +3387,43 @@ private fun SaveQueueSheet(
     }
 }
 
-/** Cover carrée pleine largeur — zoom ~16/9 pour cropper les piliers YouTube. */
+/**
+ * Cover hero pleine largeur / hauteur dispo.
+ * Crop + zoom léger si la zone est plus large que haute (sinon piliers 16:9 YT visibles).
+ */
 @Composable
 private fun NowPlayingHeroCover(
     track: TrackDto,
     coverH: Dp,
     landscape: Boolean,
     modifier: Modifier = Modifier,
-    zoomCrop: Float = if (landscape) 1.12f else 2.05f,
 ) {
     val context = LocalContext.current
-    val fullPx = if (landscape) 720 else 800
+    val fullPx = if (landscape) 720 else 900
     val fullUrl = track.coverUrl(fullPx)
     val thumbUrl = track.coverUrl(520)
-    val cacheTag = if (landscape) "np-l" else "np-hero-v3"
+    val cacheTag = if (landscape) "np-l" else "np-hero-v5"
     fun coverRequest(url: String?, px: Int) = ImageRequest.Builder(context)
         .data(url)
         .size(px)
         .memoryCacheKey("$cacheTag:$url")
         .diskCacheKey("$cacheTag:$url")
         .build()
-    val zoom = zoomCrop.coerceIn(1f, 2.2f)
-    val radius = if (landscape) 12.dp else 0.dp
-    Box(
+    BoxWithConstraints(
         modifier
             .fillMaxWidth()
             .height(coverH)
-            .clip(RoundedCornerShape(radius))
+            .clip(RoundedCornerShape(if (landscape) 12.dp else 0.dp))
             .background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
+        // Zone plus large que haute → Crop seul laisse les piliers du cadre 16:9.
+        val boxAspect = if (maxHeight > 0.dp) maxWidth / maxHeight else 1f
+        val zoom = when {
+            landscape -> 1.08f
+            boxAspect > 1.02f -> boxAspect.coerceIn(1.02f, 1.35f)
+            else -> 1f
+        }
         SubcomposeAsyncImage(
             model = ImageRequest.Builder(context)
                 .data(fullUrl)
@@ -3434,10 +3437,16 @@ private fun NowPlayingHeroCover(
             alignment = Alignment.Center,
             modifier = Modifier
                 .matchParentSize()
-                .graphicsLayer {
-                    scaleX = zoom
-                    scaleY = zoom
-                },
+                .then(
+                    if (zoom > 1.01f) {
+                        Modifier.graphicsLayer {
+                            scaleX = zoom
+                            scaleY = zoom
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
             loading = {
                 AsyncImage(
                     model = coverRequest(thumbUrl, 520),
@@ -3446,10 +3455,16 @@ private fun NowPlayingHeroCover(
                     alignment = Alignment.Center,
                     modifier = Modifier
                         .matchParentSize()
-                        .graphicsLayer {
-                            scaleX = zoom
-                            scaleY = zoom
-                        },
+                        .then(
+                            if (zoom > 1.01f) {
+                                Modifier.graphicsLayer {
+                                    scaleX = zoom
+                                    scaleY = zoom
+                                }
+                            } else {
+                                Modifier
+                            },
+                        ),
                 )
             },
             error = {
@@ -3460,10 +3475,16 @@ private fun NowPlayingHeroCover(
                     alignment = Alignment.Center,
                     modifier = Modifier
                         .matchParentSize()
-                        .graphicsLayer {
-                            scaleX = zoom
-                            scaleY = zoom
-                        },
+                        .then(
+                            if (zoom > 1.01f) {
+                                Modifier.graphicsLayer {
+                                    scaleX = zoom
+                                    scaleY = zoom
+                                }
+                            } else {
+                                Modifier
+                            },
+                        ),
                 )
             },
         )
