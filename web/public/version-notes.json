@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.132",
+      "date": "2026-09-02",
+      "title": "Seek : tap court sur la barre",
+      "notes": [
+        "Un appui court sur la barre de progression va à l’endroit touché — plus de retour au début",
+        "Seek basé sur la position du doigt (comme le mini-lecteur), plus fiable que le Slider Material"
+      ]
+    },
+    {
       "version": "1.3.131",
       "date": "2026-09-02",
       "title": "Seek barre : plus de retour au début",

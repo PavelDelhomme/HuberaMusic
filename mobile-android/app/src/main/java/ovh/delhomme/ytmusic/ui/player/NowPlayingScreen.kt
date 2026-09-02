@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.onSizeChanged
 import ovh.delhomme.ytmusic.ui.util.isLandscape
 import ovh.delhomme.ytmusic.ui.util.screenHeightDp
 import androidx.compose.foundation.lazy.LazyColumn
@@ -78,8 +80,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -119,7 +119,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -1566,9 +1565,8 @@ private fun NowPlayingSeekTransport(
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Spacer(Modifier.height(if (landscape) 4.dp else 4.dp))
-        val seekInteraction = remember { MutableInteractionSource() }
-        // Valeur synchrone du geste : onValueChangeFinished lit sinon le scrub parent
-        // encore à -1 → seek(-durée) → coerce 0 → reprise au début (bug fréquent).
+        // Seek par position X (tap court + glissé) — pas le Slider Material3
+        // qui mappe mal les taps → ratio 0 / reprise au début.
         var dragRatio by remember { mutableFloatStateOf(-1f) }
         val shownProgress = if (dragRatio >= 0f) dragRatio else progress
         val bufferedFrac = if (ui.durationMs > 0) {
@@ -1576,72 +1574,25 @@ private fun NowPlayingSeekTransport(
         } else {
             0f
         }
-        val seekColors = SliderDefaults.colors(
-            thumbColor = Color.White,
-            activeTrackColor = SeekRed,
-            inactiveTrackColor = Color.Transparent,
+        PlayerSeekBar(
+            progress = shownProgress.coerceIn(0f, 1f),
+            buffered = bufferedFrac,
+            touchHeight = if (landscape) 40.dp else 48.dp,
+            trackHeight = 3.dp,
+            thumbSize = if (dragRatio >= 0f || scrub >= 0f) 14.dp else 10.dp,
+            onScrub = { ratio ->
+                dragRatio = ratio
+                onScrub(ratio)
+            },
+            onSeekCommit = { ratio ->
+                if (ratio >= 0f && duration > 1f) {
+                    player.seek((ratio * duration).toLong().coerceAtLeast(0L))
+                }
+                dragRatio = -1f
+                onScrub(-1f)
+            },
+            modifier = Modifier.fillMaxWidth(),
         )
-        Box(Modifier.fillMaxWidth()) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .align(Alignment.Center)
-                    .clip(RoundedCornerShape(1.5.dp))
-                    .background(PlayerFg.copy(alpha = 0.14f)),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(bufferedFrac)
-                        .height(3.dp)
-                        .background(PlayerFg.copy(alpha = 0.42f)),
-                )
-            }
-            Slider(
-                value = shownProgress.coerceIn(0f, 1f),
-                onValueChange = { v ->
-                    val ratio = v.coerceIn(0f, 1f)
-                    dragRatio = ratio
-                    onScrub(ratio)
-                },
-                onValueChangeFinished = {
-                    val ratio = dragRatio
-                    if (ratio >= 0f && duration > 1f) {
-                        player.seek((ratio * duration).toLong().coerceAtLeast(0L))
-                    }
-                    dragRatio = -1f
-                    onScrub(-1f)
-                },
-                colors = seekColors,
-                interactionSource = seekInteraction,
-                thumb = {
-                    SliderDefaults.Thumb(
-                        interactionSource = seekInteraction,
-                        colors = seekColors,
-                        enabled = true,
-                        thumbSize = if (dragRatio >= 0f || scrub >= 0f) {
-                            DpSize(14.dp, 14.dp)
-                        } else {
-                            DpSize(10.dp, 10.dp)
-                        },
-                    )
-                },
-                track = { sliderState ->
-                    SliderDefaults.Track(
-                        sliderState = sliderState,
-                        colors = seekColors,
-                        enabled = true,
-                        modifier = Modifier.height(3.dp),
-                        thumbTrackGapSize = 0.dp,
-                        drawStopIndicator = null,
-                    )
-                },
-                // Zone tactile large : évite de « rater » la barre et de taper la file dessous
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(if (landscape) 40.dp else 48.dp),
-            )
-        }
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -2130,12 +2081,6 @@ private fun QueueExpandedHeader(
         Spacer(Modifier.height(6.dp))
         // Seek + transport shuffle|prev|play|next|repeat (file plein écran)
         var scrub by remember(track.id) { mutableFloatStateOf(-1f) }
-        val seekInteraction = remember { MutableInteractionSource() }
-        val seekColors = SliderDefaults.colors(
-            thumbColor = SeekRed,
-            activeTrackColor = SeekRed,
-            inactiveTrackColor = PlayerMuted.copy(alpha = 0.28f),
-        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
@@ -2165,40 +2110,41 @@ private fun QueueExpandedHeader(
             }
         }
         Spacer(Modifier.height(4.dp))
-        // dragRatio local : même piège Compose que le seek NP (scrub parent stale → seek 0)
         var dragRatio by remember(track.id) { mutableFloatStateOf(-1f) }
         val shown = when {
             dragRatio >= 0f -> dragRatio
             scrub >= 0f -> scrub
             else -> (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
         }
-        Slider(
-            value = shown,
-            onValueChange = { v ->
-                val ratio = v.coerceIn(0f, 1f)
+        PlayerSeekBar(
+            progress = shown,
+            buffered = 0f,
+            touchHeight = 32.dp,
+            trackHeight = 3.dp,
+            thumbSize = 10.dp,
+            onScrub = { ratio ->
                 dragRatio = ratio
                 scrub = ratio
             },
-            onValueChangeFinished = {
-                val ratio = dragRatio.takeIf { it >= 0f } ?: scrub.takeIf { it >= 0f }
-                if (ratio != null && dur > 0L) {
-                    onSeek((ratio * dur).toLong().coerceAtLeast(0L))
-                }
+            onSeekCommit = { ratio ->
+                if (ratio >= 0f && dur > 0L) onSeek((ratio * dur).toLong().coerceAtLeast(0L))
                 dragRatio = -1f
                 scrub = -1f
             },
-            colors = seekColors,
-            interactionSource = seekInteraction,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(32.dp),
+            modifier = Modifier.fillMaxWidth(),
         )
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                formatMs(if (scrub >= 0f) (scrub * dur).toLong() else pos),
+                formatMs(
+                    when {
+                        dragRatio >= 0f -> (dragRatio * dur).toLong()
+                        scrub >= 0f -> (scrub * dur).toLong()
+                        else -> pos
+                    },
+                ),
                 style = MaterialTheme.typography.labelSmall,
                 color = PlayerMuted,
             )
@@ -3519,6 +3465,112 @@ private fun NowPlayingHeroCover(
                         ),
                 )
             },
+        )
+    }
+}
+
+/**
+ * Barre de progression fiable : tap court et glissé utilisent la position X du doigt.
+ * (Le Slider Material3 mappe mal les appuis courts → ratio ~0 → reprise au début.)
+ */
+@Composable
+private fun PlayerSeekBar(
+    progress: Float,
+    buffered: Float,
+    onScrub: (Float) -> Unit,
+    onSeekCommit: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    touchHeight: Dp = 48.dp,
+    trackHeight: Dp = 3.dp,
+    thumbSize: Dp = 10.dp,
+) {
+    val density = LocalDensity.current
+    var barWidthPx by remember { mutableFloatStateOf(1f) }
+    var lastRatio by remember { mutableFloatStateOf(-1f) }
+    val thumbPx = with(density) { thumbSize.toPx() }
+    val shown = progress.coerceIn(0f, 1f)
+    val buf = buffered.coerceIn(0f, 1f)
+
+    fun ratioFromX(x: Float): Float {
+        val w = barWidthPx.coerceAtLeast(1f)
+        return (x / w).coerceIn(0f, 1f)
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(touchHeight)
+            .clipToBounds()
+            .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    val ratio = ratioFromX(offset.x)
+                    lastRatio = ratio
+                    onScrub(ratio)
+                    onSeekCommit(ratio)
+                    lastRatio = -1f
+                }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        val ratio = ratioFromX(offset.x)
+                        lastRatio = ratio
+                        onScrub(ratio)
+                    },
+                    onDragEnd = {
+                        val ratio = lastRatio
+                        if (ratio >= 0f) onSeekCommit(ratio)
+                        lastRatio = -1f
+                    },
+                    onDragCancel = {
+                        lastRatio = -1f
+                        onScrub(-1f)
+                    },
+                    onHorizontalDrag = { change, _ ->
+                        change.consume()
+                        val ratio = ratioFromX(change.position.x)
+                        lastRatio = ratio
+                        onScrub(ratio)
+                    },
+                )
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(trackHeight)
+                .align(Alignment.Center)
+                .clip(RoundedCornerShape(trackHeight / 2))
+                .background(PlayerFg.copy(alpha = 0.14f)),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(buf)
+                    .height(trackHeight)
+                    .background(PlayerFg.copy(alpha = 0.42f)),
+            )
+            Box(
+                Modifier
+                    .fillMaxWidth(shown)
+                    .height(trackHeight)
+                    .background(SeekRed),
+            )
+        }
+        Box(
+            Modifier
+                .offset {
+                    IntOffset(
+                        x = ((shown * barWidthPx) - thumbPx / 2f).roundToInt()
+                            .coerceIn(0, (barWidthPx - thumbPx).roundToInt().coerceAtLeast(0)),
+                        y = 0,
+                    )
+                }
+                .size(thumbSize)
+                .align(Alignment.CenterStart)
+                .clip(CircleShape)
+                .background(Color.White),
         )
     }
 }
