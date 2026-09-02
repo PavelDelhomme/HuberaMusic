@@ -102,6 +102,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -121,6 +122,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
@@ -640,6 +642,12 @@ fun NowPlayingScreen(
             .offset { IntOffset(0, dragOffset.roundToInt().coerceAtLeast(0)) }
             .alpha(1f - dragProgress * 0.35f)
             .background(MaterialTheme.colorScheme.background)
+            // Bloque tout pointer vers Accueil/Biblio derrière (zones hors enfants cliquables)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+            )
             .statusBarsPadding()
             .navigationBarsPadding()
             .nestedScroll(dismissScroll),
@@ -826,6 +834,7 @@ fun NowPlayingScreen(
                     Modifier
                         .weight(if (landscapeLayout) 1f else 0.68f)
                         .fillMaxWidth()
+                        .clipToBounds()
                         .graphicsLayer {
                             // Léger slide sans assombrir (évite lag + grisé)
                             translationY = -qp * 24f
@@ -835,7 +844,8 @@ fun NowPlayingScreen(
                     state = listState,
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .clipToBounds(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     // Toujours scrollable en portrait (Samsung / grands écrans)
                     userScrollEnabled = true,
@@ -1252,6 +1262,15 @@ fun NowPlayingScreen(
                                             landscape = true,
                                             lastPrevTap = lastPrevTap,
                                             onPrevTap = { lastPrevTap = it },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .zIndex(4f)
+                                                .background(MaterialTheme.colorScheme.background)
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                    onClick = {},
+                                                ),
                                         )
                                     }
                                 }
@@ -1429,7 +1448,8 @@ fun NowPlayingScreen(
                 }
 
                 if (!landscapeLayout) {
-                    // Seek + transport épinglés (hors LazyColumn) — ne remontent plus avec les paroles
+                    // Seek + transport épinglés — au-dessus de la file (zIndex) + fond opaque
+                    // pour que play/pause/seek ne « passent » jamais sur les titres dessous.
                     NowPlayingSeekTransport(
                         ui = ui,
                         player = player,
@@ -1442,6 +1462,13 @@ fun NowPlayingScreen(
                         onPrevTap = { lastPrevTap = it },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .zIndex(4f)
+                            .background(MaterialTheme.colorScheme.background)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = {},
+                            )
                             .padding(horizontal = 20.dp),
                     )
                 }
@@ -1462,6 +1489,8 @@ fun NowPlayingScreen(
                         modifier = Modifier
                             .weight(0.32f)
                             .fillMaxWidth()
+                            .zIndex(1f)
+                            .clipToBounds()
                             .navigationBarsPadding(),
                     )
                 }
@@ -1577,9 +1606,10 @@ private fun NowPlayingSeekTransport(
                         drawStopIndicator = null,
                     )
                 },
+                // Zone tactile large : évite de « rater » la barre et de taper la file dessous
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (landscape) 24.dp else 28.dp),
+                    .height(if (landscape) 36.dp else 44.dp),
             )
         }
         Row(
