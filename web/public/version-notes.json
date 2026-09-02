@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.123",
+      "date": "2026-09-02",
+      "title": "Moins de skip sur 502 / titres froids",
+      "notes": [
+        "Après un 502 (resolve lent), jusqu’à 3 retries sur le même titre avant « Flux audio indisponible »",
+        "Un seul 502 ne coupe plus toute la file pendant 2 minutes",
+        "Premier buffer après seek (restore mid-piste) plus patient avant rebind"
+      ]
+    },
+    {
       "version": "1.3.122",
       "date": "2026-09-02",
       "title": "Démarrage : précharge ~10 s du titre restauré",
