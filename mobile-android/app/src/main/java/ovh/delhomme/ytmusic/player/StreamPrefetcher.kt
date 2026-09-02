@@ -300,15 +300,56 @@ object StreamPrefetcher {
         warmFormatsLight(base, trackIds.drop(3).take(6), limit = 6)
     }
 
+    /**
+     * Cold start / restore file : dès que l’UI a le titre courant, chauffe **en priorité**
+     * ~10–12 s de tête (format wait + CacheWriter), puis #1–2, puis formats légers.
+     * Le play utilisateur trouve alors déjà des octets en SimpleCache → moins de BUFFERING
+     * / « Flux audio indisponible » (Samsung / titres Gims froids).
+     */
+    fun prepareRestoredCurrent(
+        baseApi: String,
+        currentId: String,
+        upcomingIds: List<String> = emptyList(),
+    ) {
+        if (currentId.length != 11 || isStreamDown() || isLocalOffline(currentId)) return
+        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        if (wasHeadReadyRecently(currentId, withinMs = 45_000L)) {
+            // Déjà chaud — ne pas re-saturer getAudioFormat ; juste les suivants.
+            upcomingIds.filter { it.length == 11 && it != currentId && !isLocalOffline(it) }
+                .take(2)
+                .forEach { warmTrackFormatOnly(baseApi, it) }
+            return
+        }
+        val base = baseApi.trimEnd('/')
+        quietPrefetch(2_200L)
+        val app = YtMusicApp.instance
+        // 1) Format sync puis tête ~10–12 s (priorité absolue)
+        warmCurrentBlocking(base, currentId, timeoutMs = 3_200L, wait = true)
+        prefetchStartHeadBlocking(app, base, currentId, HEAD_NEXT_WIFI, timeoutMs = 4_500L)
+        markHeadReady(currentId)
+        // 2) Prochains titres (léger) — après le courant
+        val next = upcomingIds
+            .distinct()
+            .filter { it.length == 11 && it != currentId && !isLocalOffline(it) }
+            .take(3)
+        next.take(2).forEach { id ->
+            warmTrackFormatOnly(base, id)
+            prefetchStartHead(base, id, HEAD_3S)
+        }
+        // 3) Formats lointains sans têtes lourdes
+        warmFormatsLight(base, next.drop(2) + upcomingIds.drop(3).take(6), limit = 8)
+    }
+
     private fun prefetchStartHeadBlocking(
         context: android.content.Context,
         baseApi: String,
         trackId: String,
         bytes: Long,
+        timeoutMs: Long = 2_200L,
     ) {
         if (trackId.length != 11 || isLocalOffline(trackId)) return
         val url = "${baseApi.trimEnd('/')}/api/stream/$trackId"
-        PlayerCache.prefetchHeadBlocking(context, url, trackId, bytes, timeoutMs = 2_200L)
+        PlayerCache.prefetchHeadBlocking(context, url, trackId, bytes, timeoutMs = timeoutMs)
     }
 
     /** Fire-and-forget (scroll biblio). */
