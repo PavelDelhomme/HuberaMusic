@@ -151,7 +151,9 @@ export async function maybeAlertTelemetryError(ev: {
     /EOFException|SampleDataQueue|FragmentedMp4Extractor/i.test(blob0) &&
     meta0.local !== true &&
     meta0.serious !== true;
-  if (isEofSpam) {
+  if (/stall escalate-skip|android\.player\.stall/i.test(blob0) || kind0.includes('android.player.stall')) {
+    // always mail — intentional signal when silent buffering loop is broken
+  } else if (isEofSpam) {
     return { sent: false, reason: 'eof-no-mail' };
   }
   // Cross-origin / SW noise web — inutile en mail
