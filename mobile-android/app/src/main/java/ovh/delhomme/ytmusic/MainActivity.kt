@@ -12,6 +12,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1633,14 +1635,21 @@ private fun MainTabs(
         animationSpec = if (playerExpanded) tween(90) else tween(140),
         label = "np-slide",
     )
+    val npScrimInteraction = remember { MutableInteractionSource() }
+    val npSheetInteraction = remember { MutableInteractionSource() }
     if (playerSheetMounted) {
-        // Scrim opaque sous le sheet : absorbe les taps même si la liste se redessine
+        // Scrim opaque : DOIT consommer les taps (sinon Accueil/Biblio derrière changent de piste)
         if (playerExpanded) {
             Box(
                 Modifier
                     .fillMaxSize()
                     .zIndex(9f)
-                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.92f)),
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f))
+                    .clickable(
+                        interactionSource = npScrimInteraction,
+                        indication = null,
+                        onClick = {},
+                    ),
             )
         }
         Box(
@@ -1650,16 +1659,17 @@ private fun MainTabs(
                 .graphicsLayer {
                     alpha = sheetAlpha
                     translationY = size.height * 0.08f * sheetSlide
-                    // Hors écran + non interactif quand rétracté
-                    if (!playerExpanded) {
-                        // clip n’empêche pas les hits : on shrink via alpha + ignore
-                    }
                 }
                 .then(
                     if (!playerExpanded) {
                         Modifier.offset { IntOffset(0, 100_000) } // hors hit-test
                     } else {
-                        Modifier
+                        // Filet de sécurité : toute zone « vide » du sheet consomme le pointer
+                        Modifier.clickable(
+                            interactionSource = npSheetInteraction,
+                            indication = null,
+                            onClick = {},
+                        )
                     },
                 ),
         ) {
