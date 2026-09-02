@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.131",
+      "date": "2026-09-02",
+      "title": "Seek barre : plus de retour au début",
+      "notes": [
+        "Clic / glissé sur la barre de progression va bien à l’endroit touché — plus de reprise au début du titre",
+        "Même correctif sur le mini-seek de la file d’attente",
+        "Garde-fou : un seek négatif accidentel ne force plus la position à 0"
+      ]
+    },
+    {
       "version": "1.3.130",
       "date": "2026-09-02",
       "title": "Lecteur : cover remplie, plus de carte",
