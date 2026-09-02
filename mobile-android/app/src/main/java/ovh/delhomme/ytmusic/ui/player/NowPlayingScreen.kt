@@ -1567,6 +1567,10 @@ private fun NowPlayingSeekTransport(
     Column(modifier = modifier.fillMaxWidth()) {
         Spacer(Modifier.height(if (landscape) 4.dp else 4.dp))
         val seekInteraction = remember { MutableInteractionSource() }
+        // Valeur synchrone du geste : onValueChangeFinished lit sinon le scrub parent
+        // encore à -1 → seek(-durée) → coerce 0 → reprise au début (bug fréquent).
+        var dragRatio by remember { mutableFloatStateOf(-1f) }
+        val shownProgress = if (dragRatio >= 0f) dragRatio else progress
         val bufferedFrac = if (ui.durationMs > 0) {
             (ui.bufferedMs.toFloat() / ui.durationMs).coerceIn(0f, 1f)
         } else {
@@ -1594,10 +1598,18 @@ private fun NowPlayingSeekTransport(
                 )
             }
             Slider(
-                value = progress,
-                onValueChange = onScrub,
+                value = shownProgress.coerceIn(0f, 1f),
+                onValueChange = { v ->
+                    val ratio = v.coerceIn(0f, 1f)
+                    dragRatio = ratio
+                    onScrub(ratio)
+                },
                 onValueChangeFinished = {
-                    player.seek((scrub * duration).toLong())
+                    val ratio = dragRatio
+                    if (ratio >= 0f && duration > 1f) {
+                        player.seek((ratio * duration).toLong().coerceAtLeast(0L))
+                    }
+                    dragRatio = -1f
                     onScrub(-1f)
                 },
                 colors = seekColors,
@@ -1607,7 +1619,11 @@ private fun NowPlayingSeekTransport(
                         interactionSource = seekInteraction,
                         colors = seekColors,
                         enabled = true,
-                        thumbSize = if (scrub >= 0f) DpSize(14.dp, 14.dp) else DpSize(10.dp, 10.dp),
+                        thumbSize = if (dragRatio >= 0f || scrub >= 0f) {
+                            DpSize(14.dp, 14.dp)
+                        } else {
+                            DpSize(10.dp, 10.dp)
+                        },
                     )
                 },
                 track = { sliderState ->
@@ -1623,16 +1639,19 @@ private fun NowPlayingSeekTransport(
                 // Zone tactile large : évite de « rater » la barre et de taper la file dessous
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(if (landscape) 36.dp else 44.dp),
+                    .height(if (landscape) 40.dp else 48.dp),
             )
         }
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            val remainingMs = (
-                ui.durationMs - (if (scrub >= 0f) (scrub * duration).toLong() else ui.positionMs)
-                ).coerceAtLeast(0L)
+            val scrubPos = when {
+                dragRatio >= 0f -> (dragRatio * duration).toLong()
+                scrub >= 0f -> (scrub * duration).toLong()
+                else -> ui.positionMs
+            }
+            val remainingMs = (ui.durationMs - scrubPos).coerceAtLeast(0L)
             Text(
                 "-${formatMs(remainingMs)}",
                 style = MaterialTheme.typography.labelSmall,
@@ -2146,20 +2165,33 @@ private fun QueueExpandedHeader(
             }
         }
         Spacer(Modifier.height(4.dp))
+        // dragRatio local : même piège Compose que le seek NP (scrub parent stale → seek 0)
+        var dragRatio by remember(track.id) { mutableFloatStateOf(-1f) }
+        val shown = when {
+            dragRatio >= 0f -> dragRatio
+            scrub >= 0f -> scrub
+            else -> (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
+        }
         Slider(
-            value = if (scrub >= 0f) scrub else (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f),
-            onValueChange = { scrub = it },
+            value = shown,
+            onValueChange = { v ->
+                val ratio = v.coerceIn(0f, 1f)
+                dragRatio = ratio
+                scrub = ratio
+            },
             onValueChangeFinished = {
-                if (scrub >= 0f) {
-                    onSeek((scrub * dur).toLong())
-                    scrub = -1f
+                val ratio = dragRatio.takeIf { it >= 0f } ?: scrub.takeIf { it >= 0f }
+                if (ratio != null && dur > 0L) {
+                    onSeek((ratio * dur).toLong().coerceAtLeast(0L))
                 }
+                dragRatio = -1f
+                scrub = -1f
             },
             colors = seekColors,
             interactionSource = seekInteraction,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(28.dp),
+                .height(32.dp),
         )
         Row(
             Modifier.fillMaxWidth(),

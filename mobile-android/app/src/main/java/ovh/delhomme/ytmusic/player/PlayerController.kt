@@ -915,6 +915,15 @@ class PlayerController(
         val trackId = _state.value.track?.id
             ?: player()?.currentMediaItem?.mediaId
             ?: PlaybackService.Holder.queue.getOrNull(_state.value.queueIndex)?.id
+        val cur = player()?.currentPosition?.takeIf { it >= 0L } ?: _state.value.positionMs
+        // Garde-fou : seek(0) depuis une position avancée est souvent un bug UI (scrub stale).
+        if (target == 0L && cur > 8_000L && ms < 0L) {
+            AppLog.w(
+                "PlayerController",
+                "seek ignoré (négatif→0) depuis pos=${cur}ms track=$trackId",
+            )
+            return
+        }
         if (target > 45_000L && !trackId.isNullOrBlank()) {
             runCatching {
                 StreamPrefetcher.requestServerDiskCache(
