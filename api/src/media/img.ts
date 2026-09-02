@@ -11,8 +11,8 @@ if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
 const ALLOWED =
   /^(https?:\/\/)?([a-z0-9.-]+\.)?(googleusercontent\.com|ggpht\.com|ytimg\.com|youtube\.com|yt3\.ggpht\.com)\//i;
 
-/** Tailles ytimg fiables (maxres / hq720 / sddefault 404 souvent). */
-const YTIMG_SAFE = ['hqdefault.jpg', 'mqdefault.jpg', 'default.jpg'] as const;
+/** Préfère maxres / hq720 quand dispo (pochette carrée moins « piliers »). */
+const YTIMG_SAFE = ['maxresdefault.jpg', 'hq720.jpg', 'sddefault.jpg', 'hqdefault.jpg', 'mqdefault.jpg', 'default.jpg'] as const;
 
 function ytimgChain(videoId: string): string[] {
   return YTIMG_SAFE.map((f) => `https://i.ytimg.com/vi/${videoId}/${f}`);

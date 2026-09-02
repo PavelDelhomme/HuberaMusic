@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.129",
+      "date": "2026-09-02",
+      "title": "Lecteur : pochette pleine largeur",
+      "notes": [
+        "Pochette Now Playing bord-à-bord (plus de carte inset)",
+        "Crop fort des piliers YouTube 16:9 + fond unifié (blur ambiant)",
+        "Typo titre/artiste harmonisée sous la cover"
+      ]
+    },
+    {
       "version": "1.3.128",
       "date": "2026-09-02",
       "title": "Plus de reprise au début + stalls moins agressifs",
