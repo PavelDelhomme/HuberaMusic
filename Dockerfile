@@ -45,6 +45,7 @@ RUN npm ci --omit=dev \
 COPY api ./api
 COPY bin ./bin
 COPY VERSION ./VERSION
+COPY VERSION_NOTES.json ./VERSION_NOTES.json
 COPY --from=build /app/web/dist ./web/dist
 
 RUN mkdir -p /app/data /app/data/cache /app/data/img-cache /app/data/public/android \

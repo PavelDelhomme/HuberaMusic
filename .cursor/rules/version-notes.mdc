@@ -13,6 +13,7 @@ Avant **tout déploiement** (promo `dev` → `prod`, publish APK, redeploy VPS) 
    - `mobile-android/app/src/main/assets/version-notes.json`
 
    (`bash scripts/deploy/bump-version.sh` le fait aussi après un bump.)
+   L’image Docker copie aussi `VERSION_NOTES.json` à la racine (API `GET /api/version-notes`).
 3. L’utilisateur ouvre les notes via le libellé **Version** (Compte mobile, Profil / menu web). L’API expose `GET /api/version-notes`.
 
 Ne pas merger une promo sans notes à jour pour le numéro dans `VERSION`.
