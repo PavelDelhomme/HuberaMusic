@@ -89,6 +89,7 @@ fun AccountScreen(
     var user by remember { mutableStateOf<UserDto?>(null) }
     var passkeyInfo by remember { mutableStateOf<String?>(null) }
     var showEqualizer by remember { mutableStateOf(false) }
+    var showVersionNotes by remember { mutableStateOf(false) }
     var ytmLinked by remember {
         mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
     }
@@ -388,10 +389,21 @@ fun AccountScreen(
                 Text(
                     "Version ${BuildConfig.APP_VERSION_LABEL}  ·  code ${BuildConfig.VERSION_CODE}",
                     style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showVersionNotes = true }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+                Text(
+                    "Appuyer pour les notes de version",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .clickable { showVersionNotes = true }
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 16.dp),
                 )
             }
 
@@ -400,6 +412,9 @@ fun AccountScreen(
 
     if (showEqualizer) {
         EqualizerSheet(onDismiss = { showEqualizer = false })
+    }
+    if (showVersionNotes) {
+        VersionNotesSheet(container = container, onDismiss = { showVersionNotes = false })
     }
 }
 
