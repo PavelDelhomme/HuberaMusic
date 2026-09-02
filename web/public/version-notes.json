@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.122",
+      "date": "2026-09-02",
+      "title": "Démarrage : précharge ~10 s du titre restauré",
+      "notes": [
+        "Au lancement, les ~10 premières secondes du titre en cours sont préchargées en priorité (moins de BUFFERING / « Flux audio indisponible »)",
+        "Ensuite seulement : titres suivants + formats légers",
+        "Watchdog stall plus patient si la tête est déjà en cache (Samsung / titres Gims froids)"
+      ]
+    },
+    {
       "version": "1.3.121",
       "date": "2026-09-02",
       "title": "Lecteur : chips collés + pochette recadrée",
