@@ -1,0 +1,18 @@
+---
+description: Mettre à jour VERSION_NOTES.json avant chaque déploiement
+alwaysApply: true
+---
+
+# Notes de version (changelog utilisateur)
+
+Avant **tout déploiement** (promo `dev` → `prod`, publish APK, redeploy VPS) :
+
+1. Mettre à jour **`VERSION_NOTES.json`** à la racine (entrée en tête pour la version déployée : `version`, `date`, `title`, `notes[]`).
+2. Synchroniser les copies bundlées :
+   - `web/public/version-notes.json`
+   - `mobile-android/app/src/main/assets/version-notes.json`
+
+   (`bash scripts/deploy/bump-version.sh` le fait aussi après un bump.)
+3. L’utilisateur ouvre les notes via le libellé **Version** (Compte mobile, Profil / menu web). L’API expose `GET /api/version-notes`.
+
+Ne pas merger une promo sans notes à jour pour le numéro dans `VERSION`.
