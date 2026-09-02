@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.130",
+      "date": "2026-09-02",
+      "title": "Lecteur : cover remplie, plus de carte",
+      "notes": [
+        "La pochette remplit toute la zone au-dessus des contrôles (plus de carré flottant / bandeau noir)",
+        "Zoom adaptatif : plus de bandes marron YouTube 16:9, sans écraser les pochettes carrées",
+        "Fond flou ambiant plus visible sous le chrome titre / seek"
+      ]
+    },
+    {
       "version": "1.3.129",
       "date": "2026-09-02",
       "title": "Lecteur : pochette pleine largeur",
