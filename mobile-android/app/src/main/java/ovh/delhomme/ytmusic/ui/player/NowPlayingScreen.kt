@@ -671,7 +671,7 @@ fun NowPlayingScreen(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.72f)),
+                    .background(Color.Black.copy(alpha = 0.55f)),
             )
         }
         val duration = ui.durationMs.coerceAtLeast(1L).toFloat()
@@ -833,7 +833,7 @@ fun NowPlayingScreen(
                 Column(Modifier.fillMaxSize()) {
                 Column(
                     Modifier
-                        .weight(if (landscapeLayout) 1f else 0.78f)
+                        .weight(if (landscapeLayout) 1f else 0.86f)
                         .fillMaxWidth()
                         .clipToBounds()
                         .graphicsLayer {
@@ -847,7 +847,7 @@ fun NowPlayingScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .clipToBounds(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                    horizontalAlignment = Alignment.Start,
                     // Portrait : pas de scroll — cover remplit, chrome (titre/chips/seek) épinglé dessous
                     userScrollEnabled = landscapeLayout,
                 ) {
@@ -1176,7 +1176,8 @@ fun NowPlayingScreen(
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = if (landscape) 12.dp else 20.dp)
+                                .fillParentMaxWidth()
+                                .padding(horizontal = if (landscape) 12.dp else 0.dp)
                                 .graphicsLayer { translationX = mediaSlideX * 0.35f },
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
@@ -1223,6 +1224,7 @@ fun NowPlayingScreen(
                                 // cover (weight) puis titre → artiste → chips → seek collés en bas.
                                 Column(
                                     Modifier
+                                        .fillParentMaxWidth()
                                         .fillMaxWidth()
                                         .fillParentMaxHeight(),
                                 ) {
@@ -1230,25 +1232,26 @@ fun NowPlayingScreen(
                                         Modifier
                                             .weight(1f)
                                             .fillMaxWidth()
-                                            .padding(horizontal = 10.dp)
-                                            .padding(top = 2.dp, bottom = 6.dp),
+                                            .background(Color.Black),
+                                        contentAlignment = Alignment.TopCenter,
                                     ) {
-                                        BoxWithConstraints(Modifier.fillMaxSize()) {
-                                            mediaBlock(maxHeight)
+                                        BoxWithConstraints(Modifier.fillMaxWidth()) {
+                                            // Carré = largeur écran ; zoom cover croppe les piliers 16:9 YT.
+                                            mediaBlock(maxWidth)
                                         }
                                     }
                                     Column(
                                         Modifier
                                             .fillMaxWidth()
                                             .zIndex(5f)
-                                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.92f))
-                                            .padding(horizontal = 20.dp)
-                                            .padding(top = 2.dp, bottom = 0.dp),
+                                            .background(MaterialTheme.colorScheme.background)
+                                            .padding(horizontal = 18.dp)
+                                            .padding(top = 10.dp, bottom = 0.dp),
                                     ) {
                                         Text(
                                             track.title,
                                             style = MaterialTheme.typography.titleLarge,
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.SemiBold,
                                             color = PlayerFg,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
@@ -1502,7 +1505,7 @@ fun NowPlayingScreen(
                         onQueueDrag = ::onQueueDrag,
                         onQueueDragEnd = { settleQueue(it) },
                         modifier = Modifier
-                            .weight(0.22f)
+                            .weight(0.14f)
                             .fillMaxWidth()
                             .zIndex(1f)
                             .clipToBounds()
@@ -3388,56 +3391,61 @@ private fun SaveQueueSheet(
     }
 }
 
-/** Cover plein cadre : Crop + léger zoom pour manger les bandes latérales des pochettes YT. */
+/** Cover carrée pleine largeur — zoom ~16/9 pour cropper les piliers YouTube. */
 @Composable
 private fun NowPlayingHeroCover(
     track: TrackDto,
     coverH: Dp,
     landscape: Boolean,
     modifier: Modifier = Modifier,
-    /** Zoom >1 recadre le centre (supprime barres unies sur les côtés). */
-    zoomCrop: Float = 1.14f,
+    zoomCrop: Float = if (landscape) 1.12f else 2.05f,
 ) {
     val context = LocalContext.current
-    val fullPx = if (landscape) 720 else 1000
+    val fullPx = if (landscape) 720 else 800
     val fullUrl = track.coverUrl(fullPx)
-    val thumbUrl = track.coverUrl(360)
+    val thumbUrl = track.coverUrl(520)
+    val cacheTag = if (landscape) "np-l" else "np-hero-v3"
     fun coverRequest(url: String?, px: Int) = ImageRequest.Builder(context)
         .data(url)
         .size(px)
-        .memoryCacheKey(url)
-        .diskCacheKey(url)
+        .memoryCacheKey("$cacheTag:$url")
+        .diskCacheKey("$cacheTag:$url")
         .build()
-    val zoom = zoomCrop.coerceIn(1f, 1.35f)
+    val zoom = zoomCrop.coerceIn(1f, 2.2f)
+    val radius = if (landscape) 12.dp else 0.dp
     Box(
         modifier
             .fillMaxWidth()
             .height(coverH)
-            .clip(RoundedCornerShape(if (landscape) 12.dp else 16.dp)),
+            .clip(RoundedCornerShape(radius))
+            .background(Color.Black),
+        contentAlignment = Alignment.Center,
     ) {
         SubcomposeAsyncImage(
             model = ImageRequest.Builder(context)
                 .data(fullUrl)
                 .size(fullPx)
-                .memoryCacheKey(fullUrl)
-                .diskCacheKey(fullUrl)
-                .crossfade(100)
+                .memoryCacheKey("$cacheTag:$fullUrl")
+                .diskCacheKey("$cacheTag:$fullUrl")
+                .crossfade(80)
                 .build(),
             contentDescription = track.title,
             contentScale = ContentScale.Crop,
+            alignment = Alignment.Center,
             modifier = Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .graphicsLayer {
                     scaleX = zoom
                     scaleY = zoom
                 },
             loading = {
                 AsyncImage(
-                    model = coverRequest(thumbUrl, 360),
+                    model = coverRequest(thumbUrl, 520),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    alignment = Alignment.Center,
                     modifier = Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .graphicsLayer {
                             scaleX = zoom
                             scaleY = zoom
@@ -3446,11 +3454,12 @@ private fun NowPlayingHeroCover(
             },
             error = {
                 AsyncImage(
-                    model = coverRequest(thumbUrl, 360),
+                    model = coverRequest(thumbUrl, 520),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    alignment = Alignment.Center,
                     modifier = Modifier
-                        .fillMaxSize()
+                        .matchParentSize()
                         .graphicsLayer {
                             scaleX = zoom
                             scaleY = zoom
