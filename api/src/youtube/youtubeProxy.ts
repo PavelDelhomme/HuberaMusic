@@ -188,36 +188,61 @@ export async function nextYoutubeProxy(exclude: Set<string> = new Set()): Promis
   return pick.url;
 }
 
+function shuffleArray<T>(items: T[]): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 /** Liste de proxies à tenter. Direct VPS d’abord (rapide si OK), puis proxies (bypass 50x). */
 export async function youtubeProxyAttempts(opts?: {
   max?: number;
   includeDirect?: boolean;
+  /** Retry client : proxies d’abord, IP VPS en dernier. */
+  directLast?: boolean;
+  /** Mélange l’ordre (retry = IP/proxy aléatoire). */
+  shuffle?: boolean;
 }): Promise<(string | null)[]> {
   const max = Math.max(1, Math.min(opts?.max ?? 4, 8));
   const includeDirect = opts?.includeDirect !== false;
+  const directLast = Boolean(opts?.directLast);
   const used = new Set<string>();
-  const out: (string | null)[] = [];
-
-  if (includeDirect) out.push(null);
+  const proxies: string[] = [];
 
   // Proxy fixe prioritaire ensuite (souvent le plus fiable si fourni)
   const fixed = (process.env.YOUTUBE_HTTP_PROXY || '').trim();
   if (fixed) {
     const n = normalizeProxyUrl(fixed);
     if (n) {
-      out.push(n);
+      proxies.push(n);
       used.add(n);
     }
   }
 
-  while (out.length < max) {
+  while (proxies.length + (includeDirect ? 1 : 0) < max) {
     const p = await nextYoutubeProxy(used);
     if (!p) break;
     used.add(p);
-    out.push(p);
+    proxies.push(p);
   }
 
-  return out.length ? out : [null];
+  let ordered: (string | null)[];
+  if (directLast) {
+    ordered = [...proxies, ...(includeDirect ? [null] : [])];
+  } else {
+    ordered = [...(includeDirect ? [null] : []), ...proxies];
+  }
+
+  if (opts?.shuffle) {
+    const direct = ordered.filter((x) => x == null);
+    const px = shuffleArray(ordered.filter((x): x is string => x != null));
+    ordered = directLast ? [...px, ...direct] : shuffleArray([...direct, ...px]);
+  }
+
+  return ordered.length ? ordered : [null];
 }
 
 export function markYoutubeProxyFailure(proxy: string | null): void {

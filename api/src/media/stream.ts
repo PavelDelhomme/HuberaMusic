@@ -72,6 +72,21 @@ function googlevideoHeaders(url: string, range?: string): Record<string, string>
   return headers;
 }
 
+/** Retry client (header ou query) — bust cache format + rotation proxy. */
+export function streamRetryN(req: Request): number {
+  const hdr = req.headers['x-stream-retry'];
+  if (hdr != null && String(hdr).trim() !== '') {
+    const n = Number(String(hdr).trim());
+    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), 99);
+  }
+  const q = req.query.retry ?? req.query.r;
+  if (q != null && String(q).trim() !== '') {
+    const n = Number(String(Array.isArray(q) ? q[0] : q).trim());
+    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), 99);
+  }
+  return 0;
+}
+
 async function fetchGooglevideo(url: string, range?: string): Promise<globalThis.Response> {
   const doFetch = () =>
     fetch(url, {
@@ -516,6 +531,11 @@ export async function handleStream(req: Request, res: Response) {
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
+  const retryN = streamRetryN(req);
+  if (retryN > 0 && !wantVideo) {
+    invalidateAudioFormat(videoId);
+    invalidateStreamHead(videoId);
+  }
   // ExoPlayer / Media3 ouvre souvent SANS Range ou avec `bytes=0-` (illimité).
   // NE JAMAIS tronquer à 1 MiB pour Android : une coupure mid-mdat → EOFException
   // fatale (~64 s) + SimpleCache empoisonné (buf figé ~64500), même après invalidation.
@@ -802,7 +822,14 @@ export async function handleStream(req: Request, res: Response) {
     ensureTime('format');
     let format = wantVideo
       ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
-      : await withDeadline('getAudioFormat', getAudioFormat(videoId, { userId: (req as any).userId }));
+      : await withDeadline(
+          'getAudioFormat',
+          getAudioFormat(videoId, {
+            userId: (req as any).userId,
+            forceFresh: retryN > 0,
+            retryN,
+          }),
+        );
     if (format.url) {
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).
@@ -999,6 +1026,7 @@ export async function handleStreamUrl(req: Request, res: Response) {
     return;
   }
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
+  const retryN = streamRetryN(req);
 
   // VPS → PC maison : chauffe le resolve chez soi, mais renvoie TOUJOURS le proxy API.
   // Les URLs googlevideo sont liées à l’IP du PC maison → 403 depuis navigateur/téléphone.
@@ -1039,9 +1067,13 @@ export async function handleStreamUrl(req: Request, res: Response) {
 
   try {
     const uid = (req as any).userId as string | undefined;
+    if (retryN > 0 && !wantVideo) {
+      invalidateAudioFormat(videoId);
+      invalidateStreamHead(videoId);
+    }
     const format = wantVideo
       ? await getVideoFormat(videoId)
-      : await getAudioFormat(videoId, { userId: uid });
+      : await getAudioFormat(videoId, { userId: uid, forceFresh: retryN > 0, retryN });
     res.json({
       url: format.url,
       expiresAt: format.expiresAt,

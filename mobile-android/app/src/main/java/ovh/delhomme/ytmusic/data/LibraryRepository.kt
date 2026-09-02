@@ -70,17 +70,44 @@ class LibraryRepository(
                 return
             }
         }
+        // Seule la liste « downloaded » a bougé → pas de tri A–Z (14k titres = freeze UI).
+        val onlyDownloaded =
+            cur != null &&
+                cur.songs === lib.songs &&
+                cur.liked === lib.liked &&
+                cur.albums === lib.albums &&
+                cur.artists === lib.artists &&
+                cur.playlists === lib.playlists &&
+                cur.history === lib.history &&
+                cur.mixes === lib.mixes &&
+                cur.likedPlaylists === lib.likedPlaylists &&
+                cur.recentEntities === lib.recentEntities &&
+                cur.partial == lib.partial
         _library.value = lib
-        scope.launch {
-            val s = withContext(Dispatchers.Default) { buildSorted(lib) }
-            sorted = s
-            _sortedEpoch.value += 1
+        if (!onlyDownloaded) {
+            scope.launch {
+                val s = withContext(Dispatchers.Default) { buildSorted(lib) }
+                sorted = s
+                _sortedEpoch.value += 1
+            }
         }
         if (!fromDisk && lib.partial != true) {
             scope.launch(Dispatchers.IO) {
                 runCatching { disk.write(lib) }
             }
         }
+    }
+
+    /**
+     * Met à jour uniquement les IDs téléchargés — sans rescanner / retrier toute la biblio
+     * (chaque fin de DL offline bumpait revision → patch → freeze Compose ~30–70 s).
+     */
+    fun patchDownloadedIds(downloadedIds: Collection<String>) {
+        val cur = _library.value ?: return
+        val next = downloadedIds.toList()
+        if (cur.downloaded == next) return
+        // Même références de listes titres → publish détecte onlyDownloaded.
+        publish(cur.copy(downloaded = next))
     }
 
     private fun buildSorted(data: LibraryResponse): SortedLibrary {

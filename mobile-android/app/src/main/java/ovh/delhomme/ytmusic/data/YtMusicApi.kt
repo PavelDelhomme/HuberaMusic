@@ -775,6 +775,8 @@ interface YtMusicApi {
     suspend fun streamResolveUrl(
         @Path("id") id: String,
         @Query("type") type: String? = null,
+        @Query("retry") retry: Int? = null,
+        @retrofit2.http.Header("X-Stream-Retry") streamRetry: String? = null,
     ): Map<String, Any>
 
     /** Clip multimédia (même ID ou fallback titre+artiste). */

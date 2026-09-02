@@ -362,10 +362,11 @@ class AppContainer(context: Context) {
     }
 
     /** URL HTTP stream uniquement (pour télécharger en local). */
-    fun remoteStreamUrl(trackId: String): String {
+    fun remoteStreamUrl(trackId: String, retry: Int = 0): String {
         val base = resolvedApiBase() + "/api/stream/$trackId"
         val token = tokenStore.peekAccess()
-        val withClient = if (base.contains('?')) "$base&client=android" else "$base?client=android"
+        val retryQ = if (retry > 0) "&retry=$retry" else ""
+        val withClient = if (base.contains('?')) "$base&client=android$retryQ" else "$base?client=android$retryQ"
         return if (!token.isNullOrBlank()) {
             "$withClient&access_token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
         } else {

@@ -15,6 +15,29 @@
 version: "3.8"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ytmusic-postgres
+    restart: unless-stopped
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ytmusic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ytmusic_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-ytmusic}
+    volumes:
+      - ytmusic_pg_data:/var/lib/postgresql/data
+    networks:
+      - shared
+      - npm-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ytmusic} -d ${POSTGRES_DB:-ytmusic}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    labels:
+      - ytmusic.role=postgres
+
   ytmusic:
     image: ${YTMUSIC_IMAGE:-ghcr.io/paveldelhomme/ytmusic:latest}
     build:
@@ -30,6 +53,8 @@ services:
       PORT: "8787"
       APP_ENV: ${APP_ENV:-production}
       APP_URL: ${APP_URL:-https://ytmusic.delhomme.ovh}
+      # Postgres (cutover) — laisser vide pour rester sur SQLite volume
+      DATABASE_URL: ${DATABASE_URL:-}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-14d}
       AUTH_COOKIE_MS: ${AUTH_COOKIE_MS:-34560000000}
@@ -81,6 +106,7 @@ services:
 
 volumes:
   ytmusic_data:
+  ytmusic_pg_data:
 
 networks:
   npm-network:

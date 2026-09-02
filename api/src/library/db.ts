@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { sanitizeTrack, isWeakTitle } from '../youtube/mappers.js';
 import type { Track } from '../youtube/types.js';
+import { applyPgMigrations, databaseUrl, PgDatabase, usingPostgres } from './pgDb.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', '..', '..', 'data');
@@ -12,10 +13,29 @@ const DB_PATH = join(DATA_DIR, 'ytmusic.db');
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
-export const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+/**
+ * Backend DB :
+ * - DATABASE_URL défini → PostgreSQL (prod sécurisé)
+ * - sinon → SQLite better-sqlite3 (dev local)
+ */
+function openDb(): Database.Database | PgDatabase {
+  if (usingPostgres()) {
+    console.info('[db] backend=postgres');
+    const pg = new PgDatabase();
+    applyPgMigrations(pg);
+    return pg;
+  }
+  console.info('[db] backend=sqlite', DB_PATH);
+  const sqlite = new Database(DB_PATH);
+  sqlite.pragma('journal_mode = WAL');
+  sqlite.pragma('foreign_keys = ON');
+  return sqlite;
+}
 
+export const db = openDb() as Database.Database;
+export { usingPostgres, databaseUrl };
+
+if (!usingPostgres()) {
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -184,6 +204,7 @@ try {
 } catch {
   /* ok */
 }
+} // end !usingPostgres() bootstrap
 
 export function upsertTrack(track: Track) {
   const clean = sanitizeTrack(track);
@@ -323,6 +344,7 @@ export function publicUser(u: UserRow) {
 }
 
 function ensureAdminColumn() {
+  if (usingPostgres()) return;
   const cols = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
   if (!cols.some((c) => c.name === 'is_admin')) {
     db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
@@ -330,6 +352,7 @@ function ensureAdminColumn() {
 }
 ensureAdminColumn();
 
+if (!usingPostgres()) {
 db.exec(`
   CREATE TABLE IF NOT EXISTS playback_state (
     user_id TEXT PRIMARY KEY,
@@ -338,7 +361,7 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 `);
-
+}
 export function isAdminUser(u: UserRow) {
   const adminEmails = (process.env.ADMIN_EMAILS || '')
     .split(',')
