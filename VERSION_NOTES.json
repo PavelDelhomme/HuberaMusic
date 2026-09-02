@@ -1,0 +1,52 @@
+{
+  "updatedAt": "2026-09-02",
+  "versions": [
+    {
+      "version": "1.3.119",
+      "date": "2026-09-02",
+      "title": "Notes de version + lecteur adapté",
+      "notes": [
+        "Notes de version accessibles depuis Compte (mobile) et Profil / menu (web)",
+        "Lecteur plein écran : titre, artiste et contrôles restent visibles (Nothing / Samsung)",
+        "Moins d’espace perdu entre la pochette et le titre ; file d’attente plus compacte sur petits écrans"
+      ]
+    },
+    {
+      "version": "1.3.118",
+      "date": "2026-09-02",
+      "title": "Clics du lecteur plein écran",
+      "notes": [
+        "Play / pause / seek ne passent plus à travers vers la file ou l’Accueil derrière",
+        "Zone seek plus large et transport opaque au-dessus de la file"
+      ]
+    },
+    {
+      "version": "1.3.117",
+      "date": "2026-09-02",
+      "title": "Boucles de chargement",
+      "notes": [
+        "Fin des boucles BUFFERING silencieuses (stall → skip auto)",
+        "Mails d’erreur sur escalate-skip et 502",
+        "Moins de spam téléchargements offline DASH"
+      ]
+    },
+    {
+      "version": "1.3.116",
+      "date": "2026-09-01",
+      "title": "Lecture Blackview",
+      "notes": [
+        "Focus audio DELAYED (API 28) : plus de pause immédiate après play",
+        "Watchdog stall renforcé + purge offline ~1 Mo"
+      ]
+    },
+    {
+      "version": "1.3.115",
+      "date": "2026-09-01",
+      "title": "Téléchargements offline complets",
+      "notes": [
+        "UA Android sur les DL offline : plus de fichiers tronqués à 1 Mo (titres cold / Gims)",
+        "Probe durée + refus des DL incomplets"
+      ]
+    }
+  ]
+}

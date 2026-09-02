@@ -832,7 +832,7 @@ fun NowPlayingScreen(
                 Column(Modifier.fillMaxSize()) {
                 Column(
                     Modifier
-                        .weight(if (landscapeLayout) 1f else 0.68f)
+                        .weight(if (landscapeLayout) 1f else 0.78f)
                         .fillMaxWidth()
                         .clipToBounds()
                         .graphicsLayer {
@@ -852,17 +852,17 @@ fun NowPlayingScreen(
                 ) {
                     item {
                         val landscape = landscapeLayout
-                        // Petits écrans (Nothing, etc.) : cover plus basse pour laisser seek + transport visibles
+                        // Petits écrans (Nothing, etc.) : cover plus basse pour laisser titre + seek + transport visibles
                         val coverH = if (landscape) {
                             (screenHeightDp() * 0.62f).dp.coerceIn(110.dp, 200.dp)
                         } else {
                             val h = screenHeightDp()
                             val frac = when {
-                                h < 700 -> 0.26f
-                                h < 780 -> 0.30f
-                                else -> 0.34f
+                                h < 700 -> 0.22f
+                                h < 780 -> 0.26f
+                                else -> 0.30f
                             }
-                            (h * frac).dp.coerceIn(160.dp, 272.dp)
+                            (h * frac).dp.coerceIn(132.dp, 232.dp)
                         }
                         val lyricsH = coverH
                         val mediaBlock: @Composable () -> Unit = {
@@ -968,58 +968,8 @@ fun NowPlayingScreen(
                                         landscape = landscape,
                                     )
                                 }
-                                if (!landscape) {
-                                    Spacer(Modifier.height(18.dp))
-                                    Text(
-                                        track.title,
-                                        style = MaterialTheme.typography.headlineSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = PlayerFg,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        textAlign = TextAlign.Start,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .then(
-                                                if (sheetVisible && !queueInteractive) {
-                                                    Modifier.basicMarquee(
-                                                        iterations = 3,
-                                                        initialDelayMillis = 1_800,
-                                                    )
-                                                } else {
-                                                    Modifier
-                                                },
-                                            ),
-                                    )
-                                    if (ui.buffering) {
-                                        Text(
-                                            "Chargement du flux…",
-                                            color = Color(0xFFFF8A80),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 2.dp),
-                                        )
-                                    }
-                                    if (onOpenArtist != null) {
-                                        ArtistLinksText(
-                                            track = track,
-                                            onOpenArtist = onOpenArtist,
-                                            color = PlayerMuted,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            maxLines = 1,
-                                            modifier = Modifier.fillMaxWidth(),
-                                        )
-                                    } else {
-                                        Text(
-                                            track.artistLine(),
-                                            color = PlayerMuted,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.fillMaxWidth(),
-                                        )
-                                    }
-                                }
+                                // Portrait : titre + artiste épinglés sous la LazyColumn (au-dessus du seek),
+                                // pour ne plus passer sous la barre ni exiger un scroll.
                             }
                         }
                         val metaAndControls: @Composable () -> Unit = {
@@ -1053,7 +1003,7 @@ fun NowPlayingScreen(
                                 }
                                 Spacer(Modifier.height(6.dp))
                             }
-                            if (!landscape) Spacer(Modifier.height(10.dp))
+                            if (!landscape) Spacer(Modifier.height(6.dp))
                             ui.sleepLabel?.let { label ->
                                 Row(
                                     Modifier
@@ -1448,6 +1398,65 @@ fun NowPlayingScreen(
                 }
 
                 if (!landscapeLayout) {
+                    // Titre + artiste épinglés : toujours au-dessus du seek (jamais coupés / sous la barre)
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .zIndex(5f)
+                            .background(MaterialTheme.colorScheme.background)
+                            .padding(horizontal = 20.dp)
+                            .padding(top = 6.dp, bottom = 2.dp),
+                    ) {
+                        Text(
+                            track.title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = PlayerFg,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (sheetVisible && !queueInteractive) {
+                                        Modifier.basicMarquee(
+                                            iterations = 3,
+                                            initialDelayMillis = 1_800,
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
+                        )
+                        if (ui.buffering) {
+                            Text(
+                                "Chargement du flux…",
+                                color = Color(0xFFFF8A80),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 2.dp),
+                            )
+                        }
+                        if (onOpenArtist != null) {
+                            ArtistLinksText(
+                                track = track,
+                                onOpenArtist = onOpenArtist,
+                                color = PlayerMuted,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            Text(
+                                track.artistLine(),
+                                color = PlayerMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                     // Seek + transport épinglés — au-dessus de la file (zIndex) + fond opaque
                     // pour que play/pause/seek ne « passent » jamais sur les titres dessous.
                     NowPlayingSeekTransport(
@@ -1487,7 +1496,7 @@ fun NowPlayingScreen(
                         onQueueDrag = ::onQueueDrag,
                         onQueueDragEnd = { settleQueue(it) },
                         modifier = Modifier
-                            .weight(0.32f)
+                            .weight(0.22f)
                             .fillMaxWidth()
                             .zIndex(1f)
                             .clipToBounds()
@@ -1551,7 +1560,7 @@ private fun NowPlayingSeekTransport(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
+        Spacer(Modifier.height(if (landscape) 4.dp else 4.dp))
         val seekInteraction = remember { MutableInteractionSource() }
         val bufferedFrac = if (ui.durationMs > 0) {
             (ui.bufferedMs.toFloat() / ui.durationMs).coerceIn(0f, 1f)
@@ -1630,7 +1639,7 @@ private fun NowPlayingSeekTransport(
                 color = PlayerMuted,
             )
         }
-        Spacer(Modifier.height(if (landscape) 4.dp else 8.dp))
+        Spacer(Modifier.height(if (landscape) 4.dp else 4.dp))
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
@@ -1698,7 +1707,7 @@ private fun NowPlayingSeekTransport(
                 }
             }
         }
-        if (!landscape) Spacer(Modifier.height(8.dp))
+        if (!landscape) Spacer(Modifier.height(4.dp))
     }
 }
 

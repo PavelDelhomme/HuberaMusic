@@ -34,7 +34,7 @@ import { useLibrary } from '../../store/library';
 import { usePlayer, wireRemotePlayer, reportListenProgress, flushPlayerPersist } from '../../store/player';
 import { useAuth } from '../../store/auth';
 import { useSession } from '../../store/session';
-import { appVersionLabel } from '../../lib/util/appVersion';
+import { VersionNotesTrigger } from './VersionNotesModal';
 import { usePins } from '../../store/pins';
 import { api } from '../../api';
 import { installMediaKeys } from '../../lib/audio/mediaKeys';
@@ -552,9 +552,10 @@ export function Layout() {
           )}
           <span className="truncate">{isGuest ? 'Se connecter' : 'Déconnexion'}</span>
         </button>
-        <p className="mt-1 px-3 pb-1 text-[11px] tabular-nums tracking-wide text-yt-muted/70" title="Canal + version">
-          {appVersionLabel()}
-        </p>
+        <VersionNotesTrigger
+          className="mt-1 block w-full px-3 pb-1 text-left text-[11px] tabular-nums tracking-wide text-yt-muted/70 underline-offset-2 hover:text-white hover:underline"
+          title="Canal + version — notes de version"
+        />
       </div>
     </>
   );

@@ -329,6 +329,27 @@ app.use(authOptional);
 const authBurst = rateLimit({ windowMs: 60_000, max: 20 });
 const authStrict = rateLimit({ windowMs: 15 * 60_000, max: 40 });
 
+/** Notes de version (Compte / Profil) — source : VERSION_NOTES.json à la racine. */
+app.get('/api/version-notes', (_req, res) => {
+  const candidates = [
+    join(ROOT, 'VERSION_NOTES.json'),
+    join(ROOT, 'web', 'public', 'version-notes.json'),
+    join(ROOT, 'mobile-android', 'app', 'src', 'main', 'assets', 'version-notes.json'),
+  ];
+  for (const p of candidates) {
+    if (!existsSync(p)) continue;
+    try {
+      const raw = readFileSync(p, 'utf8');
+      const data = JSON.parse(raw);
+      res.setHeader('Cache-Control', 'public, max-age=60');
+      return res.json(data);
+    } catch (e) {
+      console.error('[version-notes] parse', p, e);
+    }
+  }
+  res.status(404).json({ error: 'version-notes missing', versions: [] });
+});
+
 app.get('/api/health', (_req, res) => {
   const ytCookies = youtubeCookiesStatus();
   const ref = process.env.BUILD_REF || 'local';

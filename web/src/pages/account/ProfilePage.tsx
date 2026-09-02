@@ -8,7 +8,7 @@ import type { User } from '../../api';
 import { markLocalPasskeyReady } from '../../lib/auth/passkeyEnrollment';
 import { OnboardingWizard } from '../../components/auth/OnboardingWizard';
 import { PerfToggleButton } from '../../components/layout/PerfHud';
-import { appVersionLabel } from '../../lib/util/appVersion';
+import { VersionNotesTrigger } from '../../components/layout/VersionNotesModal';
 
 function TwoFactorSection({ user, onUpdated }: { user: User; onUpdated: () => Promise<void> }) {
   const [secret, setSecret] = useState<string | null>(null);
@@ -413,9 +413,9 @@ export function ProfilePage() {
         </div>
       </section>
 
-      <p className="mt-8 text-center text-xs tabular-nums tracking-wide text-yt-muted/70">
-        Version {appVersionLabel()}
-      </p>
+      <div className="mt-8 flex justify-center">
+        <VersionNotesTrigger />
+      </div>
     </div>
   );
 }

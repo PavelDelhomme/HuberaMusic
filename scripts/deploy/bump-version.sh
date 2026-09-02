@@ -43,8 +43,23 @@ for pkg in "$ROOT/package.json" "$ROOT/web/package.json" "$ROOT/api/package.json
   fi
 done
 
+# Notes de version : sync copies web + Android (source = VERSION_NOTES.json)
+NOTES_SRC="$ROOT/VERSION_NOTES.json"
+if [[ -f "$NOTES_SRC" ]]; then
+  mkdir -p "$ROOT/web/public" "$ROOT/mobile-android/app/src/main/assets"
+  cp "$NOTES_SRC" "$ROOT/web/public/version-notes.json"
+  cp "$NOTES_SRC" "$ROOT/mobile-android/app/src/main/assets/version-notes.json"
+  if ! grep -q "\"version\": \"$NEXT\"" "$NOTES_SRC"; then
+    echo "!! ATTENTION : VERSION_NOTES.json n’a pas d’entrée pour $NEXT"
+    echo "   Ajoute une entrée en tête avant de déployer (Compte / Profil)."
+  fi
+else
+  echo "!! ATTENTION : VERSION_NOTES.json manquant — crée-le avant déploiement."
+fi
+
 # versionCode Android = major*10000 + minor*100 + patch
 CODE=$((MA * 10000 + MI * 100 + PA))
 echo "==> VERSION $CUR → $NEXT (versionCode=$CODE)"
 echo "    Affichage : d+$NEXT (local/dev) · p+$NEXT (prod)"
 echo "    Pense à rebuild web / make android(-prod) pour propager."
+echo "    Notes : VERSION_NOTES.json (+ sync web/public + assets Android)."
