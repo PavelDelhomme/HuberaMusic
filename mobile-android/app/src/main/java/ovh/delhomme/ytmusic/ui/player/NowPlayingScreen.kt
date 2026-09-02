@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -113,6 +114,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -1577,9 +1579,9 @@ private fun NowPlayingSeekTransport(
         PlayerSeekBar(
             progress = shownProgress.coerceIn(0f, 1f),
             buffered = bufferedFrac,
-            touchHeight = if (landscape) 40.dp else 48.dp,
-            trackHeight = 3.dp,
-            thumbSize = if (dragRatio >= 0f || scrub >= 0f) 14.dp else 10.dp,
+            touchHeight = if (landscape) 48.dp else 64.dp,
+            trackHeight = 4.dp,
+            thumbSize = if (dragRatio >= 0f || scrub >= 0f) 16.dp else 12.dp,
             onScrub = { ratio ->
                 dragRatio = ratio
                 onScrub(ratio)
@@ -3471,7 +3473,7 @@ private fun NowPlayingHeroCover(
 
 /**
  * Barre de progression fiable : tap court et glissé utilisent la position X du doigt.
- * (Le Slider Material3 mappe mal les appuis courts → ratio ~0 → reprise au début.)
+ * Un seul gestionnaire de gestes (tap vs drag) pour éviter un seek(0) parasite.
  */
 @Composable
 private fun PlayerSeekBar(
@@ -3480,13 +3482,12 @@ private fun PlayerSeekBar(
     onScrub: (Float) -> Unit,
     onSeekCommit: (Float) -> Unit,
     modifier: Modifier = Modifier,
-    touchHeight: Dp = 48.dp,
-    trackHeight: Dp = 3.dp,
-    thumbSize: Dp = 10.dp,
+    touchHeight: Dp = 64.dp,
+    trackHeight: Dp = 4.dp,
+    thumbSize: Dp = 12.dp,
 ) {
     val density = LocalDensity.current
     var barWidthPx by remember { mutableFloatStateOf(1f) }
-    var lastRatio by remember { mutableFloatStateOf(-1f) }
     val thumbPx = with(density) { thumbSize.toPx() }
     val shown = progress.coerceIn(0f, 1f)
     val buf = buffered.coerceIn(0f, 1f)
@@ -3503,37 +3504,23 @@ private fun PlayerSeekBar(
             .clipToBounds()
             .onSizeChanged { barWidthPx = it.width.toFloat().coerceAtLeast(1f) }
             .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    val ratio = ratioFromX(offset.x)
-                    lastRatio = ratio
-                    onScrub(ratio)
-                    onSeekCommit(ratio)
-                    lastRatio = -1f
+                awaitPointerEventScope {
+                    while (true) {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var lastRatio = ratioFromX(down.position.x)
+                        onScrub(lastRatio)
+                        var pointer = down
+                        while (pointer.pressed) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            lastRatio = ratioFromX(change.position.x)
+                            onScrub(lastRatio)
+                            if (change.position != change.previousPosition) change.consume()
+                            pointer = change
+                        }
+                        onSeekCommit(lastRatio)
+                    }
                 }
-            }
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        val ratio = ratioFromX(offset.x)
-                        lastRatio = ratio
-                        onScrub(ratio)
-                    },
-                    onDragEnd = {
-                        val ratio = lastRatio
-                        if (ratio >= 0f) onSeekCommit(ratio)
-                        lastRatio = -1f
-                    },
-                    onDragCancel = {
-                        lastRatio = -1f
-                        onScrub(-1f)
-                    },
-                    onHorizontalDrag = { change, _ ->
-                        change.consume()
-                        val ratio = ratioFromX(change.position.x)
-                        lastRatio = ratio
-                        onScrub(ratio)
-                    },
-                )
             },
         contentAlignment = Alignment.CenterStart,
     ) {
