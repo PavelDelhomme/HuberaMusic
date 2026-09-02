@@ -155,10 +155,14 @@ object TelemetryReporter {
                 (http == null || http < 400)
         // Local KO / EOF récupérable : warn tant que streak bas (évite avalanche mails).
         val level = when {
+            // 5xx / Source error mid-song : mail dès le 1er (sinon boucle silent)
+            serious && !local && (http != null && http >= 500) -> "error"
             serious && !local && streak >= 2 -> "error"
             serious && local && streak >= 3 -> "error"
             local && streak < 3 -> "warn"
             eofMid && streak < 3 -> "warn"
+            // IO / Source error (2001) répété mid-piste → error pour mail
+            !local && streak >= 2 && (code == 2001 || code == 2004) -> "error"
             serious || streak >= 3 -> "error"
             else -> "warn"
         }

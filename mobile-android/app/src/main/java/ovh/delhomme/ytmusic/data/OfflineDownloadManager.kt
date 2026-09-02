@@ -41,6 +41,8 @@ class OfflineDownloadManager(
 
     private val _errors = MutableStateFlow<Map<String, String>>(emptyMap())
     val errors: StateFlow<Map<String, String>> = _errors.asStateFlow()
+    /** IDs refusés (DASH / ftyp) — ne plus ré-enqueue pendant la session. */
+    private val permanentFail = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     fun progressOf(trackId: String): Float? = _progress.value[trackId]
 
@@ -133,6 +135,7 @@ class OfflineDownloadManager(
 
     private fun enqueueInternal(track: TrackDto, duringPlaybackSafe: Boolean = false): Boolean {
         if (offlineStore.has(track.id)) return false
+        if (permanentFail.contains(track.id)) return false
         val already = jobs[track.id]?.isActive == true
         if (already) return false
         if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return false
@@ -194,6 +197,13 @@ class OfflineDownloadManager(
             } catch (e: Exception) {
                 val msg = e.message ?: "Échec téléchargement"
                 _errors.update { it + (track.id to msg) }
+                if (
+                    msg.contains("DASH", ignoreCase = true) ||
+                    msg.contains("pas de ftyp", ignoreCase = true) ||
+                    msg.contains("Conteneur", ignoreCase = true)
+                ) {
+                    permanentFail.add(track.id)
+                }
                 if (isStreamInfraFailure(e)) {
                     onStreamInfraFailure(msg)
                 }
