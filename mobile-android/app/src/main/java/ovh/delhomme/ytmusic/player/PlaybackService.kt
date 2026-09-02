@@ -212,7 +212,10 @@ class PlaybackService : MediaSessionService() {
                 return@Runnable
             }
             // Cold start (pos≈0) : laisser plus de temps au 1er octet (Blackview / titres GIMS cold).
-            if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < 7_000L) {
+            // Si la tête a été préchargée au restore → encore plus de marge avant rebind/skip.
+            val headWarmed = StreamPrefetcher.wasHeadReadyRecently(curId, withinMs = 90_000L)
+            val coldGraceMs = if (headWarmed) 12_000L else 9_000L
+            if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < coldGraceMs) {
                 armStallWatch(exo)
                 return@Runnable
             }

@@ -1005,8 +1005,10 @@ class PlayerController(
             )
             curTrack?.id?.takeIf { it.length == 11 }?.let { id ->
                 val base = streamUrl("_").substringBefore("/api/stream/")
+                val upcoming = tracks.drop(idx + 1).map { it.id }
                 scope.launch(Dispatchers.IO) {
-                    StreamPrefetcher.warmTrackFormatOnly(base, id)
+                    // Priorité : ~10 s du titre restauré avant le reste (évite BUFFERING / skip Samsung).
+                    StreamPrefetcher.prepareRestoredCurrent(base, id, upcoming)
                 }
             }
             return
@@ -1598,9 +1600,19 @@ class PlayerController(
         publishOptimistic(window, idx, startPositionMs)
         val base = streamUrl("_").substringBefore("/api/stream/")
         val currentId = window.getOrNull(idx)?.id
-        StreamPrefetcher.quietPrefetch(120L)
-        if (!currentId.isNullOrBlank()) {
+        val headReady = !currentId.isNullOrBlank() &&
+            StreamPrefetcher.wasHeadReadyRecently(currentId, withinMs = 60_000L)
+        // Si tête déjà préchargée au restore : quieter court, pas de warm format redondant.
+        StreamPrefetcher.quietPrefetch(if (headReady) 60L else 120L)
+        if (!currentId.isNullOrBlank() && !headReady) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
+            scope.launch(Dispatchers.IO) {
+                StreamPrefetcher.prepareRestoredCurrent(
+                    base,
+                    currentId,
+                    window.drop(idx + 1).map { it.id },
+                )
+            }
         }
         if (autoplay) {
             val startId = currentId
