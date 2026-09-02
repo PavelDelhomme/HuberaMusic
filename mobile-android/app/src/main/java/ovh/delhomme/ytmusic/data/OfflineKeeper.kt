@@ -68,8 +68,10 @@ class OfflineKeeper(
             AppLog.d("OfflineKeeper", "skip tick — économiseur batterie")
             return
         }
-        if (downloadManager.isPlaybackBusy()) {
-            AppLog.d("OfflineKeeper", "skip tick — lecture active")
+        // File média non vide = session active (même en pause en fin de titre) :
+        // ne pas saturer /api/stream pendant Mama → Sapé.
+        if (downloadManager.isPlaybackBusy() || mediaSessionBusy()) {
+            AppLog.d("OfflineKeeper", "skip tick — session média active")
             return
         }
         if (!NetworkMonitor.isUnmeteredPreferred(context)) {
@@ -137,6 +139,11 @@ class OfflineKeeper(
         }
         if (started > 0) AppLog.i("OfflineKeeper", "monMix enqueued=$started target=${pool.size}")
     }
+
+    private fun mediaSessionBusy(): Boolean =
+        runCatching {
+            ovh.delhomme.ytmusic.player.PlaybackService.Holder.queue.isNotEmpty()
+        }.getOrDefault(false)
 
     companion object {
         private const val KEY_LAST_TICK = "last_tick_ms"

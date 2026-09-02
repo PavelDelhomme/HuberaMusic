@@ -2450,12 +2450,20 @@ async function audioFormatViaYtDlpFast(videoId: string): Promise<AudioFormat> {
   };
 }
 
-async function audioFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
+async function audioFormatViaYtDlp(
+  videoId: string,
+  proxyOpts?: { shuffle?: boolean; directLast?: boolean },
+): Promise<AudioFormat> {
   const { isYtDlpCoolingDown, noteYtDlpFailure } = await import('../media/ytDlpGate.js');
   // Anonyme d’abord — cookies optionnels (jamais Premium requis)
   const cookieSets = ytDlpCookieArgSets();
   // Direct puis proxies (bypass bot IP) — cooldown VPS ≠ stop proxies
-  const proxies = await youtubeProxyAttempts({ max: 5, includeDirect: true });
+  const proxies = await youtubeProxyAttempts({
+    max: 5,
+    includeDirect: true,
+    shuffle: proxyOpts?.shuffle,
+    directLast: proxyOpts?.directLast,
+  });
 
   let lastErr: Error | null = null;
   let sawBot = false;
@@ -2504,17 +2512,26 @@ async function audioFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
 
 export async function getAudioFormat(
   videoId: string,
-  opts?: { userId?: string },
+  opts?: { userId?: string; forceFresh?: boolean; retryN?: number },
 ): Promise<AudioFormat> {
+  const forceFresh = Boolean(opts?.forceFresh || (opts?.retryN ?? 0) > 0);
+  const proxyRetry = forceFresh
+    ? { shuffle: true, directLast: true }
+    : undefined;
+
   const baseKey = audioCacheKey(videoId);
   const key = opts?.userId ? `${baseKey}:u:${opts.userId.slice(0, 8)}` : baseKey;
-  const cached = audioFormatCache.get(key) || audioFormatCache.get(baseKey);
-  // Marge 90 s avant expire pour éviter une URL déjà morte
-  if (cached && cached.expiresAt > Date.now() + 90_000) {
-    return cached;
+  if (forceFresh) {
+    invalidateAudioFormat(videoId);
+  } else {
+    const cached = audioFormatCache.get(key) || audioFormatCache.get(baseKey);
+    // Marge 90 s avant expire pour éviter une URL déjà morte
+    if (cached && cached.expiresAt > Date.now() + 90_000) {
+      return cached;
+    }
   }
 
-  const pending = audioFormatInflight.get(key) || audioFormatInflight.get(baseKey);
+  const pending = forceFresh ? undefined : audioFormatInflight.get(key) || audioFormatInflight.get(baseKey);
   if (pending) return pending;
 
   const job = (async (): Promise<AudioFormat> => {
@@ -2571,7 +2588,7 @@ export async function getAudioFormat(
       // Chemin lent : yt-dlp complet (proxies) puis Innertube élargi
       try {
         entry = await Promise.race([
-          audioFormatViaYtDlp(videoId),
+          audioFormatViaYtDlp(videoId, proxyRetry),
           new Promise<never>((_, rej) =>
             setTimeout(() => rej(new Error('yt-dlp format timeout')), 12_000),
           ),
@@ -2582,6 +2599,14 @@ export async function getAudioFormat(
         } catch {
           entry = null;
         }
+      }
+    }
+
+    if (!entry && forceFresh) {
+      try {
+        entry = await getAudioFormatViaYtDlpOnly(videoId);
+      } catch {
+        /* dernier recours */
       }
     }
 

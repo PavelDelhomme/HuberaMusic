@@ -127,14 +127,16 @@ fun LibraryScreen(
 
     // Préchargement formats — jamais pendant une session média (lecture ou pause)
     LaunchedEffect(lib?.songs?.size) {
-        val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
-        if (songs.size < 8) return@LaunchedEffect
+        val songCount = lib?.songs?.size ?: 0
+        if (songCount < 8) return@LaunchedEffect
         if (libraryPrefetchBlocked()) return@LaunchedEffect
         val base = container.resolvedApiBase()
         if (base.isBlank()) return@LaunchedEffect
         delay(2_500)
         if (StreamPrefetcher.isStreamDown() || libraryPrefetchBlocked()) return@LaunchedEffect
         withContext(Dispatchers.IO) {
+            val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
+            if (songs.size < 8) return@withContext
             val sample = songs.shuffled().take(24).map { it.id }
             StreamPrefetcher.warmFormatsLight(base, sample, limit = 24)
             StreamPrefetcher.warmHeads3s(base, sample.take(6), limit = 6)
@@ -149,23 +151,27 @@ fun LibraryScreen(
         }
     }
 
-    // Sync live des DL locaux → liste / filtre Téléchargés sans pull-to-refresh
+    // Sync live des DL locaux → filtre Téléchargés (sans republier 14k titres à chaque DL).
     LaunchedEffect(offlineRev) {
-        val local = container.offlineStore.listTracks()
-        val localMap = local.associateBy { it.id }
-        val localIds = localMap.keys
+        val (localMap, localIds) = withContext(Dispatchers.IO) {
+            val local = container.offlineStore.listTracks()
+            val map = local.associateBy { it.id }
+            map to map.keys
+        }
         downloadMeta = downloadMeta.filterKeys { it in localIds } + localMap
-        val cur = lib
+        val cur = repo.library.value
         when {
-            cur != null -> repo.patchFromServer(
-                cur.copy(downloaded = (cur.downloaded.filter { it in localIds } + localIds).distinct()),
-            )
+            cur != null -> {
+                val merged = (cur.downloaded.filter { it in localIds } + localIds).distinct()
+                repo.patchDownloadedIds(merged)
+            }
             localIds.isNotEmpty() -> {
+                // Première hydratation hors-ligne seulement (pas de full songs côté serveur).
                 repo.patchFromServer(
                     LibraryResponse(
                         downloaded = localIds.toList(),
-                        songs = local,
-                        liked = local,
+                        songs = localMap.values.toList(),
+                        liked = localMap.values.toList(),
                     ),
                 )
                 error = null
