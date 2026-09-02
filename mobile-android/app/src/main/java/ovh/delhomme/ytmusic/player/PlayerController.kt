@@ -1410,13 +1410,24 @@ class PlayerController(
         if (insertAt < userQueueEnd) userQueueEnd += 1
         else userQueueEnd = insertAt + 1
         c.addMediaItem(insertAt, mediaItem(track))
-        StreamPrefetcher.warmTrack(streamUrl("_").substringBefore("/api/stream/"), track.id)
+        val base = PlaybackService.Holder.resolvedApiBase()
+        // Priorité max : ce titre est le prochain — ~15 s tout de suite.
+        StreamPrefetcher.prefetchUserQueuedHead(base, track.id, asNext = true)
         syncFrom(c)
     }
 
     /** Insère plusieurs titres juste après le courant (ordre conservé). */
     fun playNextMany(tracks: List<TrackDto>) {
-        tracks.filter { it.isPlayable() }.asReversed().forEach { playNext(it) }
+        val playable = tracks.filter { it.isPlayable() }
+        playable.asReversed().forEach { playNext(it) }
+        // Re-priorise le vrai +1 (premier de la liste) après les inserts inversés.
+        playable.firstOrNull()?.let { first ->
+            StreamPrefetcher.prefetchUserQueuedHead(
+                PlaybackService.Holder.resolvedApiBase(),
+                first.id,
+                asNext = true,
+            )
+        }
     }
 
     fun addToQueue(track: TrackDto) {
@@ -1426,19 +1437,37 @@ class PlayerController(
             return
         }
         val queue = PlaybackService.Holder.queue.toMutableList()
+        val idx = c.currentMediaItemIndex.coerceAtLeast(0)
         val end = userQueueEnd.coerceIn(0, queue.size).coerceAtLeast(
-            (c.currentMediaItemIndex + 1).coerceAtMost(queue.size),
+            (idx + 1).coerceAtMost(queue.size),
         )
         queue.add(end, track)
         userQueueEnd = end + 1
         PlaybackService.Holder.queue = queue
         c.addMediaItem(end, mediaItem(track))
-        StreamPrefetcher.warmTrack(streamUrl("_").substringBefore("/api/stream/"), track.id)
+        val base = PlaybackService.Holder.resolvedApiBase()
+        // Si c’est le nouveau « suivant », pin prioritaire ; sinon tête ~15 s en parallèle.
+        val asNext = end == idx + 1
+        StreamPrefetcher.prefetchUserQueuedHead(base, track.id, asNext = asNext)
         syncFrom(c)
     }
 
     fun addManyToQueue(tracks: List<TrackDto>) {
-        tracks.filter { it.isPlayable() }.forEach { addToQueue(it) }
+        val playable = tracks.filter { it.isPlayable() }
+        if (playable.isEmpty()) return
+        playable.forEach { addToQueue(it) }
+        // Dernier ajout = priorité utilisateur « encore et encore »
+        playable.lastOrNull()?.let { last ->
+            val c = player()
+            val idx = c?.currentMediaItemIndex ?: -1
+            val q = PlaybackService.Holder.queue
+            val pos = q.indexOfLast { it.id == last.id }
+            StreamPrefetcher.prefetchUserQueuedHead(
+                PlaybackService.Holder.resolvedApiBase(),
+                last.id,
+                asNext = pos == idx + 1,
+            )
+        }
     }
 
     /**

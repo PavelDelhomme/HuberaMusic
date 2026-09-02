@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.134",
+      "date": "2026-09-02",
+      "title": "Précharge ~15 s à l’ajout en file",
+      "notes": [
+        "Dès qu’un titre est ajouté à la file (ou « lire ensuite »), les ~15 premières secondes se chargent tout de suite",
+        "Priorité au nouveau titre sans couper la lecture en cours — skip / lancement sans blanc",
+        "Ajouts répétés : le dernier ajouté reste prioritaire pour le prefetch"
+      ]
+    },
+    {
       "version": "1.3.133",
       "date": "2026-09-02",
       "title": "Seek fiable + zone tactile large",
