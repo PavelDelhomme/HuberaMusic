@@ -167,6 +167,15 @@ class LocalOfflineStore(
             lastError = result.exceptionOrNull()
             val msg = lastError?.message.orEmpty()
             AppLog.w("offline", "DL retry ${attempt + 1} ${track.id}: $msg")
+            // DASH / format invalide : inutile de retenter 3× (spam logs + saturation).
+            if (
+                msg.contains("DASH", ignoreCase = true) ||
+                msg.contains("pas de ftyp", ignoreCase = true) ||
+                msg.contains("Conteneur", ignoreCase = true)
+            ) {
+                partFile(track.id).delete()
+                return@withContext Result.failure(lastError ?: Exception(msg))
+            }
             val infra =
                 msg.contains("HTTP 502") ||
                     msg.contains("HTTP 503") ||

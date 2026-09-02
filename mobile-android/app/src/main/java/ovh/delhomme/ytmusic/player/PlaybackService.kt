@@ -104,6 +104,13 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var stallRebindCount: Int = 0
     @Volatile private var stallLastPos: Long = -1L
     @Volatile private var stallPosFrozenSince: Long = 0L
+    /**
+     * Compteur d’épisodes sur LE MÊME titre : survit aux flashes READY après rebind
+     * (sinon boucle rebind→READY→stall→rebind sans jamais escalate, Nothing/Blackview).
+     */
+    @Volatile private var stallSessionTrackId: String = ""
+    @Volatile private var stallSessionCount: Int = 0
+    @Volatile private var stallSessionAnchorPos: Long = -1L
 
     private fun cancelStallWatch(resetTrack: Boolean = true) {
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
@@ -117,16 +124,41 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun clearStallSession() {
+        stallSessionTrackId = ""
+        stallSessionCount = 0
+        stallSessionAnchorPos = -1L
+    }
+
     private fun bufferedPositionSafe(exo: Player): Long =
         runCatching { exo.bufferedPosition }.getOrDefault(0L).coerceAtLeast(0L)
 
     /** Si BUFFERING sans progrès > ~2,5 s → purge local / rebind ; 2ᵉ échec → titre suivant. */
     private fun armStallWatch(player: Player) {
         if (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING) {
-            // Ne reset le compteur de rebind que si la lecture repart vraiment (ou pause user).
-            // Un passage bref READY→BUFFERING remettait stallRebindCount à 0 → boucle infinie.
-            if (player.isPlaying || !player.playWhenReady) {
+            // Pause user → reset total. READY bref après rebind → garder la session.
+            if (!player.playWhenReady) {
                 cancelStallWatch()
+                clearStallSession()
+                return
+            }
+            if (player.isPlaying) {
+                val id = player.currentMediaItem?.mediaId.orEmpty()
+                val pos = player.currentPosition
+                val pastAnchor =
+                    stallSessionTrackId == id &&
+                        stallSessionAnchorPos >= 0L &&
+                        pos > stallSessionAnchorPos + 15_000L
+                if (pastAnchor || id != stallSessionTrackId) {
+                    cancelStallWatch()
+                    if (id != stallSessionTrackId) clearStallSession()
+                    else if (pastAnchor) clearStallSession()
+                } else {
+                    // Flash READY sans progrès réel — ne pas reset le compteur d’épisodes.
+                    stallRunnable?.let { stallHandler.removeCallbacks(it) }
+                    stallRunnable = null
+                    bufferingSinceElapsed = 0L
+                }
             } else {
                 stallRunnable?.let { stallHandler.removeCallbacks(it) }
                 stallRunnable = null
@@ -141,12 +173,17 @@ class PlaybackService : MediaSessionService() {
             stallRebindCount = 0
             stallLastPos = player.currentPosition
             stallPosFrozenSince = android.os.SystemClock.elapsedRealtime()
+            if (id != stallSessionTrackId) {
+                stallSessionTrackId = id
+                stallSessionCount = 0
+                stallSessionAnchorPos = -1L
+            }
         }
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
         val r = Runnable {
             val exo = this.player ?: return@Runnable
             if (!exo.playWhenReady || exo.playbackState != Player.STATE_BUFFERING) {
-                cancelStallWatch()
+                armStallWatch(exo)
                 return@Runnable
             }
             val curId = exo.currentMediaItem?.mediaId.orEmpty()
@@ -180,13 +217,44 @@ class PlaybackService : MediaSessionService() {
                 return@Runnable
             }
             val local = exo.currentMediaItem?.localConfiguration?.uri?.scheme == "file"
-            // 2 rebinds déjà tentés, ou blocage > 8 s → skip (pas de silence 45 s).
-            if (stallRebindCount >= 2 || (waited >= 8_000L && posFrozenFor >= 5_000L)) {
+            stallRebindCount += 1
+            stallSessionTrackId = curId
+            stallSessionCount += 1
+            if (stallSessionAnchorPos < 0L || pos > stallSessionAnchorPos) {
+                stallSessionAnchorPos = pos
+            }
+            // 2 rebinds OU 2ᵉ épisode (flash READY entre deux) OU blocage > 8 s → skip.
+            val escalate =
+                stallRebindCount >= 2 ||
+                    stallSessionCount >= 2 ||
+                    (waited >= 8_000L && posFrozenFor >= 5_000L)
+            if (escalate) {
                 AppLog.w(
                     "PlaybackService",
-                    "stall-buffer escalate-skip ${waited}ms frozen=${posFrozenFor}ms rebinds=$stallRebindCount id=$curId pos=$pos",
+                    "stall-buffer escalate-skip ${waited}ms frozen=${posFrozenFor}ms " +
+                        "rebinds=$stallRebindCount episodes=$stallSessionCount id=$curId pos=$pos",
                 )
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "error",
+                        kind = "android.player.stall",
+                        message = "stall escalate-skip id=$curId pos=$pos " +
+                            "rebinds=$stallRebindCount episodes=$stallSessionCount " +
+                            "waited=${waited}ms",
+                        meta = mapOf(
+                            "trackId" to curId,
+                            "positionMs" to pos,
+                            "rebinds" to stallRebindCount,
+                            "episodes" to stallSessionCount,
+                            "waitedMs" to waited,
+                            "local" to local,
+                            "serious" to true,
+                        ),
+                        force = true,
+                    )
+                }
                 cancelStallWatch()
+                clearStallSession()
                 streamFailStreak.set(0)
                 val nextIdx = exo.currentMediaItemIndex + 1
                 if (nextIdx < exo.mediaItemCount && nextIdx < Holder.queue.size) {
@@ -200,10 +268,10 @@ class PlaybackService : MediaSessionService() {
                 }
                 return@Runnable
             }
-            stallRebindCount += 1
             AppLog.w(
                 "PlaybackService",
-                "stall-buffer ${waited}ms frozen=${posFrozenFor}ms progress=$progress local=$local rebind=$stallRebindCount id=$curId",
+                "stall-buffer ${waited}ms frozen=${posFrozenFor}ms progress=$progress " +
+                    "local=$local rebind=$stallRebindCount episode=$stallSessionCount id=$curId",
             )
             // Garde le compteur de rebind ; reset seulement le timer.
             cancelStallWatch(resetTrack = false)
