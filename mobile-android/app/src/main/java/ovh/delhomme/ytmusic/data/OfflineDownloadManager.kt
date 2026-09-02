@@ -259,8 +259,12 @@ class OfflineDownloadManager(
             ovh.delhomme.ytmusic.player.PlaybackService.Holder.isPlaybackActiveSafe()
         }.getOrDefault(true) // en doute : ne pas DL pendant une éventuelle lecture
 
-    /** Exposé à OfflineKeeper — ne pas saturer /api/stream pendant la lecture. */
-    fun isPlaybackBusy(): Boolean = isPlaybackActive()
+    /** Exposé à OfflineKeeper — file non vide OU lecture/buffer = busy. */
+    fun isPlaybackBusy(): Boolean =
+        isPlaybackActive() ||
+            runCatching {
+                ovh.delhomme.ytmusic.player.PlaybackService.Holder.queue.isNotEmpty()
+            }.getOrDefault(false)
 
     fun consumeError(trackId: String): String? {
         val msg = _errors.value[trackId] ?: return null
