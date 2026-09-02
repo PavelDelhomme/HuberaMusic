@@ -19,6 +19,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -847,25 +848,15 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .clipToBounds(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    // Toujours scrollable en portrait (Samsung / grands écrans)
-                    userScrollEnabled = true,
+                    // Portrait : pas de scroll — cover remplit, chrome (titre/chips/seek) épinglé dessous
+                    userScrollEnabled = landscapeLayout,
                 ) {
                     item {
                         val landscape = landscapeLayout
-                        // Petits écrans (Nothing, etc.) : cover plus basse pour laisser titre + seek + transport visibles
-                        val coverH = if (landscape) {
-                            (screenHeightDp() * 0.62f).dp.coerceIn(110.dp, 200.dp)
-                        } else {
-                            val h = screenHeightDp()
-                            val frac = when {
-                                h < 700 -> 0.22f
-                                h < 780 -> 0.26f
-                                else -> 0.30f
-                            }
-                            (h * frac).dp.coerceIn(132.dp, 232.dp)
-                        }
-                        val lyricsH = coverH
-                        val mediaBlock: @Composable () -> Unit = {
+                        // Paysage : cover compacte. Portrait : remplie via fillParentMaxHeight plus bas.
+                        val coverHLandscape = (screenHeightDp() * 0.62f).dp.coerceIn(110.dp, 200.dp)
+                        val mediaBlock: @Composable (Dp) -> Unit = { coverH ->
+                            val lyricsH = coverH
                             Column(
                                 Modifier
                                     .fillMaxWidth()
@@ -940,7 +931,12 @@ fun NowPlayingScreen(
                                                 model = track.coverUrl(400),
                                                 contentDescription = track.title,
                                                 contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize(),
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .graphicsLayer {
+                                                        scaleX = 1.14f
+                                                        scaleY = 1.14f
+                                                    },
                                             )
                                             Text(
                                                 visualVideoError!!,
@@ -968,8 +964,6 @@ fun NowPlayingScreen(
                                         landscape = landscape,
                                     )
                                 }
-                                // Portrait : titre + artiste épinglés sous la LazyColumn (au-dessus du seek),
-                                // pour ne plus passer sous la barre ni exiger un scroll.
                             }
                         }
                         val metaAndControls: @Composable () -> Unit = {
@@ -1003,7 +997,7 @@ fun NowPlayingScreen(
                                 }
                                 Spacer(Modifier.height(6.dp))
                             }
-                            if (!landscape) Spacer(Modifier.height(6.dp))
+                            if (!landscape) Spacer(Modifier.height(4.dp))
                             ui.sleepLabel?.let { label ->
                                 Row(
                                     Modifier
@@ -1194,7 +1188,7 @@ fun NowPlayingScreen(
                                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Box(Modifier.weight(0.40f)) { mediaBlock() }
+                                    Box(Modifier.weight(0.40f)) { mediaBlock(coverHLandscape) }
                                     Column(
                                         Modifier
                                             .weight(0.60f)
@@ -1225,9 +1219,104 @@ fun NowPlayingScreen(
                                     }
                                 }
                             } else {
-                                // Portrait : cover/paroles + chips scrollables ; seek/transport épinglés dessous
-                                mediaBlock()
-                                metaAndControls()
+                                // Portrait : une colonne pleine hauteur —
+                                // cover (weight) puis titre → artiste → chips → seek collés en bas.
+                                Column(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .fillParentMaxHeight(),
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .weight(1f)
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp)
+                                            .padding(top = 2.dp, bottom = 6.dp),
+                                    ) {
+                                        BoxWithConstraints(Modifier.fillMaxSize()) {
+                                            mediaBlock(maxHeight)
+                                        }
+                                    }
+                                    Column(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .zIndex(5f)
+                                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.92f))
+                                            .padding(horizontal = 20.dp)
+                                            .padding(top = 2.dp, bottom = 0.dp),
+                                    ) {
+                                        Text(
+                                            track.title,
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = PlayerFg,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Start,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .then(
+                                                    if (sheetVisible && !queueInteractive) {
+                                                        Modifier.basicMarquee(
+                                                            iterations = 3,
+                                                            initialDelayMillis = 1_800,
+                                                        )
+                                                    } else {
+                                                        Modifier
+                                                    },
+                                                ),
+                                        )
+                                        if (ui.buffering) {
+                                            Text(
+                                                "Chargement du flux…",
+                                                color = Color(0xFFFF8A80),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(top = 2.dp),
+                                            )
+                                        }
+                                        if (onOpenArtist != null) {
+                                            ArtistLinksText(
+                                                track = track,
+                                                onOpenArtist = onOpenArtist,
+                                                color = PlayerMuted,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                maxLines = 1,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                        } else {
+                                            Text(
+                                                track.artistLine(),
+                                                color = PlayerMuted,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                        }
+                                        // Chips collés sous l’artiste, juste au-dessus du seek
+                                        metaAndControls()
+                                        NowPlayingSeekTransport(
+                                            ui = ui,
+                                            player = player,
+                                            progress = progress,
+                                            scrub = scrub,
+                                            onScrub = { scrub = it },
+                                            duration = duration,
+                                            landscape = false,
+                                            lastPrevTap = lastPrevTap,
+                                            onPrevTap = { lastPrevTap = it },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .zIndex(4f)
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                    onClick = {},
+                                                ),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1397,91 +1486,8 @@ fun NowPlayingScreen(
                     }
                 }
 
-                if (!landscapeLayout) {
-                    // Titre + artiste épinglés : toujours au-dessus du seek (jamais coupés / sous la barre)
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .zIndex(5f)
-                            .background(MaterialTheme.colorScheme.background)
-                            .padding(horizontal = 20.dp)
-                            .padding(top = 6.dp, bottom = 2.dp),
-                    ) {
-                        Text(
-                            track.title,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = PlayerFg,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Start,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(
-                                    if (sheetVisible && !queueInteractive) {
-                                        Modifier.basicMarquee(
-                                            iterations = 3,
-                                            initialDelayMillis = 1_800,
-                                        )
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
-                        )
-                        if (ui.buffering) {
-                            Text(
-                                "Chargement du flux…",
-                                color = Color(0xFFFF8A80),
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 2.dp),
-                            )
-                        }
-                        if (onOpenArtist != null) {
-                            ArtistLinksText(
-                                track = track,
-                                onOpenArtist = onOpenArtist,
-                                color = PlayerMuted,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else {
-                            Text(
-                                track.artistLine(),
-                                color = PlayerMuted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
-                    // Seek + transport épinglés — au-dessus de la file (zIndex) + fond opaque
-                    // pour que play/pause/seek ne « passent » jamais sur les titres dessous.
-                    NowPlayingSeekTransport(
-                        ui = ui,
-                        player = player,
-                        progress = progress,
-                        scrub = scrub,
-                        onScrub = { scrub = it },
-                        duration = duration,
-                        landscape = false,
-                        lastPrevTap = lastPrevTap,
-                        onPrevTap = { lastPrevTap = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .zIndex(4f)
-                            .background(MaterialTheme.colorScheme.background)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = {},
-                            )
-                            .padding(horizontal = 20.dp),
-                    )
-                }
-                } // Column lecteur (LazyColumn + transport épinglé)
+                // Seek portrait est dans l’item LazyColumn (collé sous chips). Paysage : seek dans la colonne droite.
+                } // Column lecteur (LazyColumn + chrome)
 
                 if (!landscapeLayout) {
                     PortraitQueuePreview(
@@ -3382,15 +3388,18 @@ private fun SaveQueueSheet(
     }
 }
 
-/** Cover plein écran : vignette 360 px immédiate (mini-player) puis 800 px sans flash. */
+/** Cover plein cadre : Crop + léger zoom pour manger les bandes latérales des pochettes YT. */
 @Composable
 private fun NowPlayingHeroCover(
     track: TrackDto,
     coverH: Dp,
     landscape: Boolean,
+    modifier: Modifier = Modifier,
+    /** Zoom >1 recadre le centre (supprime barres unies sur les côtés). */
+    zoomCrop: Float = 1.14f,
 ) {
     val context = LocalContext.current
-    val fullPx = if (landscape) 600 else 800
+    val fullPx = if (landscape) 720 else 1000
     val fullUrl = track.coverUrl(fullPx)
     val thumbUrl = track.coverUrl(360)
     fun coverRequest(url: String?, px: Int) = ImageRequest.Builder(context)
@@ -3399,37 +3408,57 @@ private fun NowPlayingHeroCover(
         .memoryCacheKey(url)
         .diskCacheKey(url)
         .build()
-    SubcomposeAsyncImage(
-        model = ImageRequest.Builder(context)
-            .data(fullUrl)
-            .size(fullPx)
-            .memoryCacheKey(fullUrl)
-            .diskCacheKey(fullUrl)
-            .crossfade(100)
-            .build(),
-        contentDescription = track.title,
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
+    val zoom = zoomCrop.coerceIn(1f, 1.35f)
+    Box(
+        modifier
             .fillMaxWidth()
             .height(coverH)
-            .clip(RoundedCornerShape(12.dp)),
-        loading = {
-            AsyncImage(
-                model = coverRequest(thumbUrl, 360),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        },
-        error = {
-            AsyncImage(
-                model = coverRequest(thumbUrl, 360),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        },
-    )
+            .clip(RoundedCornerShape(if (landscape) 12.dp else 16.dp)),
+    ) {
+        SubcomposeAsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(fullUrl)
+                .size(fullPx)
+                .memoryCacheKey(fullUrl)
+                .diskCacheKey(fullUrl)
+                .crossfade(100)
+                .build(),
+            contentDescription = track.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = zoom
+                    scaleY = zoom
+                },
+            loading = {
+                AsyncImage(
+                    model = coverRequest(thumbUrl, 360),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = zoom
+                            scaleY = zoom
+                        },
+                )
+            },
+            error = {
+                AsyncImage(
+                    model = coverRequest(thumbUrl, 360),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = zoom
+                            scaleY = zoom
+                        },
+                )
+            },
+        )
+    }
 }
 
 private fun formatMs(ms: Long): String {

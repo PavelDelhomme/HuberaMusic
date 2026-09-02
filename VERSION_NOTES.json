@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.121",
+      "date": "2026-09-02",
+      "title": "Lecteur : chips collés + pochette recadrée",
+      "notes": [
+        "Ligne like / playlist / paroles collée sous l’artiste, juste au-dessus de la barre de progression (tous écrans)",
+        "Pochette plus grande : Crop + léger zoom pour réduire les bandes unies sur les côtés",
+        "Chrome titre → artiste → actions → seek toujours groupé en bas du lecteur"
+      ]
+    },
+    {
       "version": "1.3.120",
       "date": "2026-09-02",
       "title": "APK OTA alignée serveur",
