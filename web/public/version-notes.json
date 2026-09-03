@@ -2,6 +2,14 @@
   "updatedAt": "2026-09-03",
   "versions": [
     {
+      "version": "1.3.139",
+      "date": "2026-09-03",
+      "title": "Paroles au bon endroit dès le changement de titre",
+      "notes": [
+        "Les paroles repartent du haut dès que la chanson change, au lieu de rester à la fin des paroles précédentes jusqu’au démarrage du son"
+      ]
+    },
+    {
       "version": "1.3.138",
       "date": "2026-09-03",
       "title": "La lecture reste sur tes titres",
