@@ -8,14 +8,33 @@
  * lisible, puis on mémorise la correspondance pour que les lectures suivantes soient
  * immédiates.
  */
+import { existsSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { db, getTrackPayload } from '../library/db.js';
 import { getAudioFormat, getTrack, search } from '../youtube/yt.js';
 import type { Track } from '../youtube/types.js';
 
+const CACHE_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  'data',
+  'cache',
+);
+
 const VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/;
-const PROBE_MS = 20_000;
+const PROBE_MS = 40_000;
 /** Score minimal pour accepter un remplaçant — au-dessous, mieux vaut échouer que jouer un autre morceau. */
 const MIN_SCORE = 75;
+/**
+ * Au-dessus de ce score (titre et artiste quasi identiques), on redirige même sans
+ * avoir pu vérifier le candidat : le pipeline de stream complet a bien plus de
+ * recours que la seule résolution de format. La correspondance n'est alors pas
+ * mémorisée, pour la revalider à la lecture suivante.
+ */
+const TRUST_SCORE = 85;
 
 let schemaReady = false;
 const inflight = new Map<string, Promise<string | null>>();
@@ -152,6 +171,13 @@ function scoreCandidate(
 }
 
 async function playable(id: string): Promise<boolean> {
+  // Déjà sur disque : inutile d'interroger YouTube.
+  try {
+    const file = join(CACHE_DIR, `${id}.m4a`);
+    if (existsSync(file) && statSync(file).size > 1024 * 1024) return true;
+  } catch {
+    /* pas de cache lisible */
+  }
   try {
     const fmt = await Promise.race([
       getAudioFormat(id),
@@ -237,9 +263,9 @@ export async function findReplacementId(
       .sort((a, b) => b.s - a.s);
 
     const seen = new Set<string>();
-    for (const { t, s } of ranked.slice(0, 6)) {
-      if (seen.has(t.id)) continue;
-      seen.add(t.id);
+    const unique = ranked.filter(({ t }) => (seen.has(t.id) ? false : seen.add(t.id)));
+
+    for (const { t, s } of unique.slice(0, 6)) {
       if (!(await playable(t.id))) continue;
       console.log(
         `[replacement] ${deadId} → ${t.id} (score ${s}) « ${t.title} — ${artistLine(t)} »`,
@@ -247,7 +273,17 @@ export async function findReplacementId(
       saveReplacement(deadId, t.id, title, artist, s);
       return t.id;
     }
-    console.warn(`[replacement] ${deadId} : aucun remplaçant fiable (${ranked.length} candidats)`);
+
+    const trusted = unique.find(({ s }) => s >= TRUST_SCORE);
+    if (trusted) {
+      console.log(
+        `[replacement] ${deadId} → ${trusted.t.id} (score ${trusted.s}, non vérifié) ` +
+          `« ${trusted.t.title} — ${artistLine(trusted.t)} »`,
+      );
+      return trusted.t.id;
+    }
+
+    console.warn(`[replacement] ${deadId} : aucun remplaçant fiable (${unique.length} candidats)`);
     return null;
   })();
 
