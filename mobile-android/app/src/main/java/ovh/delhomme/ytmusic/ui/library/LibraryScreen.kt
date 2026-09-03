@@ -639,7 +639,13 @@ private fun buildLibraryContent(
                     addAll(data.likedPlaylists.take(10).map { likedPlaylistAsTrack(it) })
                 }.distinctBy { it.id }
             }
-            val playable = sorted?.additionsPlayable ?: recent.filter { it.isPlayable() }
+            val playableRecent = sorted?.additionsPlayable ?: recent.filter { it.isPlayable() }
+            // Les ajouts récents ouvrent la file, mais celle-ci se poursuit sur le reste
+            // de la bibliothèque : sans cela la lecture s'épuise après une quarantaine de
+            // titres et bascule sur des suggestions extérieures.
+            val playable = (
+                playableRecent + (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }
+                ).distinctBy { it.id }
             LibraryContent(
                 headline = "Enregistré récemment",
                 rows = recent,
