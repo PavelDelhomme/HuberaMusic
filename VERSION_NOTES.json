@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-03",
   "versions": [
     {
+      "version": "1.3.141",
+      "date": "2026-09-03",
+      "title": "Notifications et appels sans casser l’écoute",
+      "notes": [
+        "Une notification ou un bip d’une autre application baisse le volume le temps du son, puis le remonte, au lieu de couper la musique",
+        "La musique redémarre toute seule à la fin d’un appel, y compris sur les téléphones qui ne préviennent jamais l’application que la ligne est libérée",
+        "Une interruption qui s’éternise met la lecture en pause plutôt que de la laisser en volume réduit"
+      ]
+    },
+    {
       "version": "1.3.140",
       "date": "2026-09-03",
       "title": "« À suivre » reprend son rôle",
