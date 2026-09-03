@@ -27,6 +27,7 @@ import {
   stableContentTotal,
   safeDiskRangeBounds,
 } from './streamHeadCache.js';
+import { findReplacementId, getReplacementId, looksUnavailable } from './trackReplacement.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..', '..');
@@ -522,11 +523,31 @@ function tryServeRamHead(req: Request, res: Response, videoId: string): boolean 
   return true;
 }
 
+/** URL de stream pour un autre videoId, en conservant les paramètres d'origine. */
+function streamPathFor(req: Request, videoId: string): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(req.query || {})) {
+    if (typeof v === 'string') qs.set(k, v);
+  }
+  const suffix = qs.toString();
+  return `/api/stream/${videoId}${suffix ? `?${suffix}` : ''}`;
+}
+
 export async function handleStream(req: Request, res: Response) {
   const videoId = String(req.params.id || '');
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     res.status(400).json({ error: 'ID invalide' });
     return;
+  }
+  // Titre déjà connu comme mort : rejouer directement le remplaçant validé.
+  {
+    const known = getReplacementId(videoId);
+    if (known) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-PLM-Replaced-From', videoId);
+      res.redirect(302, streamPathFor(req, known));
+      return;
+    }
   }
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
@@ -1015,11 +1036,30 @@ export async function handleStream(req: Request, res: Response) {
     await streamViaInnertube(videoId, res);
   } catch (err) {
     if (!res.headersSent) {
-      const cookies = resolveYoutubeCookieHeader();
+      const detail = String(err);
       console.warn('[stream] all backends KO:', String((err as Error).message || err).slice(0, 160));
+      // Vidéo réellement supprimée / privée : rejouer le même morceau sous un autre
+      // identifiant plutôt que de renvoyer une erreur définitive au lecteur.
+      if (!wantVideo && looksUnavailable(detail)) {
+        try {
+          const replacement = await findReplacementId(videoId);
+          if (replacement && !res.headersSent) {
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('X-PLM-Replaced-From', videoId);
+            res.redirect(302, streamPathFor(req, replacement));
+            return;
+          }
+        } catch (replErr) {
+          console.warn(
+            '[stream] remplacement KO:',
+            String((replErr as Error).message || replErr).slice(0, 140),
+          );
+        }
+      }
+      const cookies = resolveYoutubeCookieHeader();
       res.status(502).json({
         error: 'Impossible de streamer audio',
-        detail: String(err),
+        detail,
         hint: cookies
           ? 'Réessaie dans quelques secondes — ou rafraîchis la session navigateur (ops)'
           : 'Vérifie le réseau / relais maison (link-home-stream.sh). Session navigateur optionnelle.',
