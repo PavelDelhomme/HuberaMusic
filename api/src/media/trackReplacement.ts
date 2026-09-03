@@ -175,10 +175,14 @@ async function collectCandidates(
   const out = new Map<string, Track>();
   for (const q of queries) {
     try {
-      const buckets = await search(q, 'song', userId ? { userId } : undefined);
+      // « all » et non « song » : quand un morceau du catalogue meurt, la copie
+      // encore lisible est souvent une vidéo (chaîne de l'artiste, titre inédit),
+      // que le filtre morceaux ne remonte jamais.
+      const buckets = await search(q, 'all', userId ? { userId } : undefined);
       const pool = [
         ...(buckets.topResult ? [buckets.topResult as Track] : []),
         ...((buckets.songs || []) as Track[]),
+        ...((buckets.videos || []) as Track[]),
       ];
       for (const t of pool) {
         if (t?.id && t.id !== deadId && VIDEO_ID.test(t.id) && !out.has(t.id)) out.set(t.id, t);
