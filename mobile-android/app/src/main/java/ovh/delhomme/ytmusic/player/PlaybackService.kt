@@ -221,8 +221,10 @@ class PlaybackService : MediaSessionService() {
                 return@Runnable
             }
             // Cold start (pos≈0) : laisser plus de temps au 1er octet (Blackview / titres GIMS cold).
+            // Un titre absent du cache serveur demande une résolution yt-dlp (jusqu’à ~35 s) :
+            // rebinder à 11 s relançait la requête sans jamais lui laisser aboutir.
             val headWarmed = StreamPrefetcher.wasHeadReadyRecently(curId, withinMs = 90_000L)
-            val coldGraceMs = if (headWarmed) 14_000L else 11_000L
+            val coldGraceMs = if (headWarmed) 20_000L else 42_000L
             if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < coldGraceMs) {
                 armStallWatch(exo)
                 return@Runnable
@@ -254,7 +256,7 @@ class PlaybackService : MediaSessionService() {
             val stuckHard =
                 samePos &&
                     (
-                        (coldStuck && stallSessionCount >= 4) ||
+                        (coldStuck && stallSessionCount >= 3) ||
                             (!coldStuck && stallSessionCount >= 6)
                     )
             if (stuckHard) {
