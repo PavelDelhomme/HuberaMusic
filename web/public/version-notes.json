@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.137",
+      "date": "2026-09-03",
+      "title": "Titres qui mettaient du temps à démarrer",
+      "notes": [
+        "Un titre encore inconnu du serveur a maintenant le temps de se préparer au lieu d’être relancé en boucle",
+        "Le lecteur ne passe plus au suivant tant que le titre demandé peut encore démarrer"
+      ]
+    },
+    {
       "version": "1.3.136",
       "date": "2026-09-03",
       "title": "Fin des coupures en cours de morceau",
