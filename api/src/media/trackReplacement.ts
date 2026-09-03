@@ -29,13 +29,6 @@ const VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/;
 const PROBE_MS = 40_000;
 /** Score minimal pour accepter un remplaçant — au-dessous, mieux vaut échouer que jouer un autre morceau. */
 const MIN_SCORE = 75;
-/**
- * Au-dessus de ce score (titre et artiste quasi identiques), on redirige même sans
- * avoir pu vérifier le candidat : le pipeline de stream complet a bien plus de
- * recours que la seule résolution de format. La correspondance n'est alors pas
- * mémorisée, pour la revalider à la lecture suivante.
- */
-const TRUST_SCORE = 85;
 
 let schemaReady = false;
 const inflight = new Map<string, Promise<string | null>>();
@@ -260,9 +253,10 @@ export async function findReplacementId(
         `[replacement] ${deadId} → ${best.t.id} (score ${best.s}, non vérifié) ` +
           `« ${best.t.title} — ${artistLine(best.t)} »`,
       );
-      // Au-dessus du seuil de confiance seulement : sinon on revalide à la
-      // lecture suivante plutôt que de figer une correspondance jamais éprouvée.
-      if (best.s >= TRUST_SCORE) saveReplacement(deadId, best.t.id, title, artist, best.s);
+      // Mémorisé au même seuil que celui qui autorise à le servir : sans cela
+      // chaque lecture repaie la recherche (~40 s). Si ce remplaçant est mort à
+      // son tour, il déclenchera sa propre substitution.
+      saveReplacement(deadId, best.t.id, title, artist, best.s);
       return best.t.id;
     }
 
