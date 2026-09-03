@@ -141,7 +141,7 @@ class PlaybackService : MediaSessionService() {
     private fun bufferedPositionSafe(exo: Player): Long =
         runCatching { exo.bufferedPosition }.getOrDefault(0L).coerceAtLeast(0L)
 
-    /** Si BUFFERING sans progrès → rebind + proxy frais ; jamais skip auto vers le suivant. */
+    /** Si BUFFERING sans progrès → rebind + proxy frais ; skip seulement après escalate épuisés. */
     private fun armStallWatch(player: Player) {
         if (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING) {
             // Pause user → reset total. READY bref après rebind → garder la session.
@@ -244,17 +244,79 @@ class PlaybackService : MediaSessionService() {
             if (stallSessionAnchorPos < 0L || pos > stallSessionAnchorPos) {
                 stallSessionAnchorPos = pos
             }
+            // Après trop d’épisodes figés au même pos → titre suivant.
+            // Ne pas exiger posFrozenFor long : chaque escalate remettait le chrono →
+            // episodes=10 sans jamais passer (ex. homura @64584).
+            val coldStuck = pos <= 1_000L
+            val samePos =
+                stallSessionAnchorPos < 0L ||
+                    kotlin.math.abs(pos - stallSessionAnchorPos) < 2_500L
+            val stuckHard =
+                samePos &&
+                    (
+                        (coldStuck && stallSessionCount >= 4) ||
+                            (!coldStuck && stallSessionCount >= 6)
+                    )
+            if (stuckHard) {
+                AppLog.w(
+                    "PlaybackService",
+                    "stall-buffer give-up → next id=$curId pos=$pos " +
+                        "rebinds=$stallRebindCount episodes=$stallSessionCount frozen=${posFrozenFor}ms",
+                )
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "error",
+                        kind = "android.player.stall",
+                        message = "stall give-up → next id=$curId pos=$pos " +
+                            "rebinds=$stallRebindCount episodes=$stallSessionCount",
+                        meta = mapOf(
+                            "trackId" to curId,
+                            "positionMs" to pos,
+                            "rebinds" to stallRebindCount,
+                            "episodes" to stallSessionCount,
+                            "action" to "skip_next",
+                        ),
+                        force = true,
+                    )
+                }
+                cancelStallWatch()
+                clearStallSession()
+                streamFailStreak.set(0)
+                val nextIdx = exo.currentMediaItemIndex + 1
+                val end = Holder.userQueueEnd
+                android.os.Handler(mainLooper).post {
+                    toastMain("Flux bloqué — titre suivant", Toast.LENGTH_SHORT)
+                }
+                if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
+                    exo.playWhenReady = false
+                    runCatching { exo.pause() }
+                    return@Runnable
+                }
+                if (nextIdx < exo.mediaItemCount) {
+                    runCatching { advanceToQueueIndex(exo, nextIdx) }
+                } else {
+                    val uiFill = Holder.onSkipAtEnd
+                    if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
+                }
+                return@Runnable
+            }
             // Escalade = URL fraîche + proxy, JAMAIS seek(0) (utilisateur entendait reprise au début).
             val escalate =
                 stallRebindCount >= 2 ||
                     stallSessionCount >= 2 ||
                     (waited >= 10_000L && posFrozenFor >= 6_000L)
             if (escalate) {
-                if (stallRebindCount >= 12) stallRebindCount = 4
+                // wipeCache après plusieurs escalate (cache / atom MP4 corrompu, code 3003).
+                // Cold start : wipe dès le 2ᵉ escalate (tête poison / 502).
+                val wipe =
+                    stallSessionCount >= 4 ||
+                        stallRebindCount >= 5 ||
+                        (pos <= 1_000L && stallSessionCount >= 2)
                 AppLog.w(
                     "PlaybackService",
                     "stall-buffer escalate-recover ${waited}ms frozen=${posFrozenFor}ms " +
-                        "rebinds=$stallRebindCount episodes=$stallSessionCount id=$curId pos=$pos",
+                        "rebinds=$stallRebindCount episodes=$stallSessionCount wipe=$wipe " +
+                        "id=$curId pos=$pos",
                 )
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
@@ -270,6 +332,7 @@ class PlaybackService : MediaSessionService() {
                             "episodes" to stallSessionCount,
                             "waitedMs" to waited,
                             "local" to local,
+                            "wipeCache" to wipe,
                         ),
                         force = streakToastDue(),
                     )
@@ -302,7 +365,7 @@ class PlaybackService : MediaSessionService() {
                         forcePlay = true,
                         seekPos = pos.coerceAtLeast(0L),
                         retryN = stallRebindCount.coerceAtLeast(1),
-                        wipeCache = false,
+                        wipeCache = wipe,
                     )
                     android.os.Handler(mainLooper).post {
                         if (streakToastDue()) {
@@ -860,10 +923,63 @@ class PlaybackService : MediaSessionService() {
                     }
                     return
                 }
-                // Réseau / 5xx : rester sur LE MÊME titre — retry infini avec proxy frais (jamais skip auto).
+                // Réseau / 5xx : retry proxy frais ; après trop d’échecs → titre suivant
+                // (évite silence interminable type Melrose Place / 502 en boucle).
+                val errBlobEarly = runCatching { error.stackTraceToString() }.getOrDefault("")
+                val httpBody = httpResponseBodyOf(error)
+                val unavailable =
+                    Regex(
+                        "unavailable|not available|private video|copyright|Impossible de streamer",
+                        RegexOption.IGNORE_CASE,
+                    ).containsMatchIn(errBlobEarly + "\n" + httpBody) ||
+                        (httpStatus != null && httpStatus == 404)
+                // DNS / connexion data qui saute (code 2001) : le titre n’a rien à se reprocher,
+                // c’est le réseau. On retente indéfiniment avec backoff au lieu de passer au
+                // suivant — un creux de 4G ne doit jamais faire changer de musique.
+                val transientNetwork =
+                    error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                        error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                        Regex(
+                            "UnknownHost|Unable to resolve host|ECONNRESET|SocketTimeout",
+                            RegexOption.IGNORE_CASE,
+                        ).containsMatchIn(errBlobEarly)
+                val giveUpStreak = when {
+                    unavailable -> 2
+                    transientNetwork -> Int.MAX_VALUE
+                    else -> 8
+                }
+                if (streak >= giveUpStreak) {
+                    AppLog.w(
+                        "PlaybackService",
+                        "onPlayerError give-up streak=$streak → next id=$id pos=$pos http=$httpStatus unavailable=$unavailable",
+                    )
+                    streamFailStreak.set(0)
+                    cancelStallWatch()
+                    clearStallSession()
+                    val nextIdx = exo.currentMediaItemIndex + 1
+                    val end = Holder.userQueueEnd
+                    android.os.Handler(mainLooper).post {
+                        toastMain(
+                            if (unavailable) "Titre indisponible — suivant" else "Flux KO — titre suivant",
+                            Toast.LENGTH_SHORT,
+                        )
+                    }
+                    if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
+                        exo.playWhenReady = false
+                        runCatching { exo.pause() }
+                        return
+                    }
+                    if (nextIdx < exo.mediaItemCount) {
+                        runCatching { advanceToQueueIndex(exo, nextIdx) }
+                    } else {
+                        val uiFill = Holder.onSkipAtEnd
+                        if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
+                    }
+                    return
+                }
                 val attempt = recoverGen.incrementAndGet()
                 val resumePos = exo.currentPosition.coerceAtLeast(0L)
-                val errBlob = runCatching { error.stackTraceToString() }.getOrDefault("")
+                val errBlob = errBlobEarly
                 val isEof = errBlob.contains("EOFException", ignoreCase = true)
                 val truncatedMid =
                     !localFile &&
@@ -903,6 +1019,8 @@ class PlaybackService : MediaSessionService() {
                         }
                     }.isSuccess
                     val retryDelay = when {
+                        // DNS / data coupée : backoff plus large, on attend que le réseau revienne.
+                        transientNetwork -> (1_500L * streak).coerceAtMost(10_000L)
                         truncatedMid -> (2_000L * streak).coerceAtMost(8_000L)
                         httpStatus != null && httpStatus >= 500 ->
                             (800L * streak).coerceAtMost(6_000L)
@@ -941,7 +1059,47 @@ class PlaybackService : MediaSessionService() {
                 return
             }
 
-            // Autres erreurs : retry sur le même titre (pas de skip auto).
+            // Conteneur MP4 malformé (atom length) : wipe + retry, puis skip.
+            val parseMalformed =
+                error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+                    (error.cause?.message?.contains("atom with length", ignoreCase = true) == true)
+            if (parseMalformed && streak >= 3) {
+                AppLog.w("PlaybackService", "parse malformed give-up → next id=$id streak=$streak")
+                streamFailStreak.set(0)
+                cancelStallWatch()
+                clearStallSession()
+                val nextIdx = exo.currentMediaItemIndex + 1
+                android.os.Handler(mainLooper).post {
+                    toastMain("Fichier illisible — titre suivant", Toast.LENGTH_SHORT)
+                }
+                if (nextIdx < exo.mediaItemCount) {
+                    runCatching { advanceToQueueIndex(exo, nextIdx) }
+                } else {
+                    val uiFill = Holder.onSkipAtEnd
+                    if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
+                }
+                return
+            }
+
+            // Autres erreurs : retry sur le même titre ; skip après trop d’échecs.
+            if (streak >= 6) {
+                AppLog.w("PlaybackService", "player-error give-up streak=$streak → next id=$id code=${error.errorCode}")
+                streamFailStreak.set(0)
+                cancelStallWatch()
+                clearStallSession()
+                val nextIdx = exo.currentMediaItemIndex + 1
+                android.os.Handler(mainLooper).post {
+                    toastMain("Erreur lecture — titre suivant", Toast.LENGTH_SHORT)
+                }
+                if (nextIdx < exo.mediaItemCount) {
+                    runCatching { advanceToQueueIndex(exo, nextIdx) }
+                } else {
+                    val uiFill = Holder.onSkipAtEnd
+                    if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
+                }
+                return
+            }
             val attempt = recoverGen.incrementAndGet()
             scope.launch {
                 runCatching { PlayerCache.invalidate(this@PlaybackService, id) }
@@ -955,6 +1113,7 @@ class PlaybackService : MediaSessionService() {
                     reason = "player-error-${error.errorCode}",
                     forcePlay = true,
                     retryN = streak.coerceAtLeast(1),
+                    wipeCache = parseMalformed || streak >= 2,
                 )
                 android.os.Handler(mainLooper).post { armStallWatch(exo) }
             }
@@ -973,6 +1132,20 @@ class PlaybackService : MediaSessionService() {
                 c = c.cause
             }
             return null
+        }
+
+        /** Corps JSON d’erreur API (`Impossible de streamer` / video unavailable). */
+        private fun httpResponseBodyOf(error: PlaybackException): String {
+            var c: Throwable? = error
+            var depth = 0
+            while (c != null && depth++ < 8) {
+                if (c is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+                    val bytes = c.responseBody ?: return ""
+                    return runCatching { bytes.toString(Charsets.UTF_8) }.getOrDefault("").take(800)
+                }
+                c = c.cause
+            }
+            return ""
         }
 
         private fun isNetworkOrServerError(error: PlaybackException): Boolean {
@@ -1026,14 +1199,18 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
 
+        // maxBuffer très large = le titre entier est aspiré en une seule connexion dès le
+        // départ. Une coupure data / échec DNS en milieu de morceau ne provoque alors plus
+        // ni silence ni Range mid-fichier (que le serveur ne sait pas toujours servir).
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 /* minBufferMs */ 15_000,
-                /* maxBufferMs */ 60_000,
+                /* maxBufferMs */ 600_000,
                 /* bufferForPlaybackMs */ 350,
                 /* bufferForPlaybackAfterRebufferMs */ 1_200,
             )
             .setPrioritizeTimeOverSizeThresholds(true)
+            .setTargetBufferBytes(24 * 1024 * 1024)
             .build()
 
         val mediaSourceFactory = DefaultMediaSourceFactory(this)
