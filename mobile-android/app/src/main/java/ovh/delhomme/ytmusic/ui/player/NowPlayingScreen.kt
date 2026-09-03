@@ -2990,7 +2990,10 @@ private fun InlineSyncedLyrics(
     // Ne PAS forcer l’index 0 avant la 1ʳᵉ ligne (sinon « désync » totale en intro)
     val active = if (timed.isEmpty()) -1
     else timed.indexOfLast { it.startMsLong() <= syncPos }
-    val listState = rememberLazyListState()
+    // Nouvelle chanson, nouveau défilement : sans cela le panneau garde la position de
+    // la fin des paroles précédentes jusqu'à ce que la lecture atteigne la première
+    // ligne synchronisée.
+    val listState = remember(track.id) { LazyListState() }
     LaunchedEffect(active, track.id) {
         if (active < 0) return@LaunchedEffect
         runCatching {
