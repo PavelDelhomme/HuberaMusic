@@ -285,7 +285,7 @@ class PlaybackService : MediaSessionService() {
                 clearStallSession()
                 streamFailStreak.set(0)
                 val nextIdx = exo.currentMediaItemIndex + 1
-                val end = Holder.userQueueEnd
+                val end = userQueueEndAfterExtend(nextIdx)
                 android.os.Handler(mainLooper).post {
                     toastMain("Flux bloqué — titre suivant", Toast.LENGTH_SHORT)
                 }
@@ -759,8 +759,8 @@ class PlaybackService : MediaSessionService() {
                     "EOS via error (pas une panne réseau) id=$id pos=$pos dur=$dur code=${error.errorCode}",
                 )
                 val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
-                val end = Holder.userQueueEnd
                 val nextIdx = curIdx + 1
+                val end = userQueueEndAfterExtend(nextIdx)
                 if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
                     exo.playWhenReady = false
                     runCatching { exo.pause() }
@@ -959,7 +959,7 @@ class PlaybackService : MediaSessionService() {
                     cancelStallWatch()
                     clearStallSession()
                     val nextIdx = exo.currentMediaItemIndex + 1
-                    val end = Holder.userQueueEnd
+                    val end = userQueueEndAfterExtend(nextIdx)
                     android.os.Handler(mainLooper).post {
                         toastMain(
                             if (unavailable) "Titre indisponible — suivant" else "Flux KO — titre suivant",
@@ -1707,8 +1707,8 @@ class PlaybackService : MediaSessionService() {
         }
         recoveringTrackId = ""
         earlyEndRetries = 0
-        val end = Holder.userQueueEnd
         val nextIdx = curIdx + 1
+        val end = userQueueEndAfterExtend(nextIdx)
         AppLog.i(
             "PlaybackService",
             "STATE_ENDED idx=$curIdx next=$nextIdx count=${exo.mediaItemCount} auto=${Holder.autoplaySuggestions} userEnd=$end",
@@ -1734,12 +1734,24 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    /**
+     * Frontière de la file utilisateur, après avoir tenté de charger la tranche suivante.
+     * Arriver au bout de la fenêtre ExoPlayer ne veut pas dire que l'utilisateur a fini
+     * sa sélection : sur une bibliothèque de plusieurs milliers de titres, seule une
+     * petite partie est chargée à un instant donné.
+     */
+    private fun userQueueEndAfterExtend(nextIdx: Int): Int {
+        if (Holder.userQueueEnd in 1..nextIdx) Holder.extendUserQueue()
+        return Holder.userQueueEnd
+    }
+
     /** Précharge « À suivre » dans Exo — indépendant du toggle auto-avance. */
     private fun ensureServiceAutoplayAhead(exo: Player) {
         if (serviceFillInFlight) return
         val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
         val remaining = (exo.mediaItemCount - idx - 1).coerceAtLeast(0)
         if (remaining >= 6) return
+        if (Holder.extendUserQueue() > 0) return
         fillAutoplayFromService(advanceAfterFill = false)
     }
 
@@ -2302,6 +2314,13 @@ class PlaybackService : MediaSessionService() {
         @Volatile var onCycleRepeat: (() -> Unit)? = null
         /** Frontière file utilisateur / suggestions. */
         @Volatile var userQueueEnd: Int = 0
+        /**
+         * File choisie par l'utilisateur dans son intégralité — une bibliothèque peut
+         * compter des milliers de titres, dont seule une fenêtre est confiée à ExoPlayer.
+         */
+        @Volatile var fullQueue: List<TrackDto> = emptyList()
+        /** Position dans [fullQueue] du prochain titre à charger dans la fenêtre. */
+        @Volatile var fullQueueCursor: Int = 0
         /** Auto-avance dans « À suivre » (sinon stop en fin de file user). */
         @Volatile var autoplaySuggestions: Boolean = true
         /** Service détruit (idle guard / OS) → invalider MediaController UI. */
@@ -2310,6 +2329,78 @@ class PlaybackService : MediaSessionService() {
         @Volatile var playbackActive: Boolean = false
 
         fun isPlaybackActiveSafe(): Boolean = playbackActive
+
+        /** Mémorise la file complète dont [window] n'est que la tranche chargée. */
+        fun rememberFullQueue(full: List<TrackDto>, loadedUpTo: Int) {
+            fullQueue = full
+            fullQueueCursor = loadedUpTo.coerceIn(0, full.size)
+        }
+
+        /**
+         * Charge la tranche suivante de la file utilisateur dans le lecteur.
+         * Appelé avant toute suggestion automatique : tant qu'il reste des titres
+         * choisis par l'utilisateur, l'enchaînement doit rester sur les siens.
+         * À appeler depuis le thread principal. Retourne le nombre de titres ajoutés.
+         */
+        fun extendUserQueue(chunk: Int = 40): Int {
+            val p = player ?: return 0
+            val full = fullQueue
+            var cursor = fullQueueCursor
+            if (cursor >= full.size) return 0
+
+            val known = queue.mapTo(HashSet()) { it.id }
+            val add = ArrayList<TrackDto>(chunk)
+            while (cursor < full.size && add.size < chunk) {
+                val t = full[cursor]
+                cursor++
+                if (t.isPlayable() && known.add(t.id)) add.add(t)
+            }
+            fullQueueCursor = cursor
+            if (add.isEmpty()) return 0
+
+            return runCatching {
+                releasePlayedTail(p)
+                val current = queue
+                // Insertion à la frontière de la file utilisateur, et jamais avant le titre
+                // en cours : les suggestions déjà chargées restent derrière.
+                val end = userQueueEnd
+                    .coerceIn(0, current.size)
+                    .let { if (it <= 0) current.size else it }
+                    .coerceAtLeast((p.currentMediaItemIndex + 1).coerceAtMost(current.size))
+                val base = { id: String ->
+                    runCatching { YtMusicApp.instance.container.remoteStreamUrl(id) }.getOrDefault(id)
+                }
+                p.addMediaItems(
+                    end.coerceAtMost(p.mediaItemCount),
+                    add.map { mediaItemFor(it, base, queueTitle) },
+                )
+                queue = current.subList(0, end) + add + current.subList(end, current.size)
+                userQueueEnd = end + add.size
+                AppLog.i(
+                    "PlaybackService",
+                    "file utilisateur étendue +${add.size} ($fullQueueCursor/${full.size}) userEnd=$userQueueEnd",
+                )
+                add.size
+            }.getOrDefault(0)
+        }
+
+        /**
+         * Relâche les titres déjà écoutés loin derrière. Une bibliothèque entière chargée
+         * d'un bloc dans ExoPlayer finit par saturer la mémoire et la transaction Binder ;
+         * la file avance donc en fenêtre glissante.
+         */
+        private fun releasePlayedTail(p: ExoPlayer, keepBehind: Int = 40, maxSize: Int = 240) {
+            val current = queue
+            if (current.size <= maxSize) return
+            val drop = (p.currentMediaItemIndex - keepBehind).coerceAtMost(current.size - maxSize)
+            if (drop <= 0) return
+            runCatching {
+                p.removeMediaItems(0, drop.coerceAtMost(p.mediaItemCount))
+                queue = current.subList(drop, current.size)
+                userQueueEnd = (userQueueEnd - drop).coerceAtLeast(0)
+                index = (index - drop).coerceAtLeast(0)
+            }
+        }
 
         fun fillAtEnd(advance: Boolean = true) {
             service?.requestAutoplayFill(advance)
@@ -2456,11 +2547,13 @@ fun ExoPlayer.playTracks(baseStreamUrl: (String) -> String, tracks: List<TrackDt
     val playable = tracks.filter { it.isPlayable() }
     if (playable.isEmpty()) return
     val maxItems = 80
+    var loadedUpTo = playable.size
     val (window, idx) = if (playable.size > maxItems) {
         val half = maxItems / 2
         val raw = startIndex.coerceIn(0, playable.lastIndex)
         val from = (raw - half).coerceAtLeast(0)
         val to = (from + maxItems).coerceAtMost(playable.size)
+        loadedUpTo = to
         val slice = playable.subList(from, to)
         slice to (raw - from).coerceIn(0, slice.lastIndex)
     } else {
@@ -2468,6 +2561,7 @@ fun ExoPlayer.playTracks(baseStreamUrl: (String) -> String, tracks: List<TrackDt
     }
     PlaybackService.Holder.queue = window
     PlaybackService.Holder.index = idx
+    PlaybackService.Holder.rememberFullQueue(playable, loadedUpTo)
     StreamPrefetcher.quietPrefetch(120L)
     val current = window.getOrNull(idx)
     if (current != null && current.id.length == 11) {
