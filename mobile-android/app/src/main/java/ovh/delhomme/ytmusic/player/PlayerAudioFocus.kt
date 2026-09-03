@@ -58,20 +58,11 @@ class PlayerAudioFocus(
     /** Horodate nos propres pauses, pour distinguer l'abandon qu'elles déclenchent d'une pause volontaire. */
     private var focusPauseAtMs = 0L
 
-    /** Builds debug uniquement : force la réponse de [inCall] pour rejouer un appel. */
-    @Volatile var forcedInCall: Boolean? = null
-
     private fun inCall(): Boolean {
-        forcedInCall?.let { return it }
         val mode = runCatching { am.mode }.getOrDefault(AudioManager.MODE_NORMAL)
         return mode == AudioManager.MODE_IN_CALL ||
             mode == AudioManager.MODE_IN_COMMUNICATION ||
             mode == AudioManager.MODE_RINGTONE
-    }
-
-    /** Builds debug uniquement : rejoue une interruption système sans en provoquer une vraie. */
-    fun debugDispatch(change: Int) {
-        handler.post { listener.onAudioFocusChange(change) }
     }
 
     private val listener = AudioManager.OnAudioFocusChangeListener { change ->

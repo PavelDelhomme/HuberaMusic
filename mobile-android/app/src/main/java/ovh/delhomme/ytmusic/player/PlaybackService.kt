@@ -63,7 +63,6 @@ class PlaybackService : MediaSessionService() {
     private var sessionPlayer: Player? = null
     private var session: MediaSession? = null
     private var audioFocus: PlayerAudioFocus? = null
-    private var focusTestReceiver: android.content.BroadcastReceiver? = null
     private val scope = CoroutineScope(
         SupervisorJob() + Dispatchers.Main.immediate + CrashReporter.coroutineHandler("PlaybackService"),
     )
@@ -1243,7 +1242,6 @@ class PlaybackService : MediaSessionService() {
         exo.addListener(playerListener)
         player = exo
         audioFocus = PlayerAudioFocus(this) { player }
-        registerFocusTestReceiver()
         val forwarding = YtmForwardingPlayer(exo)
         sessionPlayer = forwarding
 
@@ -1396,46 +1394,9 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /**
-     * Builds debug : rejoue une interruption système (`adb shell am broadcast`), les vraies
-     * — notification d'une autre appli, appel — n'étant pas déclenchables depuis ADB.
-     * `--es focus LOSS|LOSS_TRANSIENT|CAN_DUCK|GAIN` et `--es call true|false|auto`.
-     */
-    private fun registerFocusTestReceiver() {
-        if (!ovh.delhomme.ytmusic.BuildConfig.DEBUG || focusTestReceiver != null) return
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
-                val focus = audioFocus ?: return
-                when (intent?.getStringExtra("call")) {
-                    "true" -> focus.forcedInCall = true
-                    "false" -> focus.forcedInCall = false
-                    "auto" -> focus.forcedInCall = null
-                }
-                val change = when (intent?.getStringExtra("focus")) {
-                    "LOSS" -> android.media.AudioManager.AUDIOFOCUS_LOSS
-                    "LOSS_TRANSIENT" -> android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-                    "CAN_DUCK" -> android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
-                    "GAIN" -> android.media.AudioManager.AUDIOFOCUS_GAIN
-                    else -> null
-                }
-                if (change != null) focus.debugDispatch(change)
-            }
-        }
-        val filter = android.content.IntentFilter(ACTION_DEBUG_FOCUS)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, android.content.Context.RECEIVER_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(receiver, filter)
-        }
-        focusTestReceiver = receiver
-    }
-
     override fun onDestroy() {
         persistPlaybackSnapshot(durable = true)
         scope.cancel()
-        focusTestReceiver?.let { runCatching { unregisterReceiver(it) } }
-        focusTestReceiver = null
         audioFocus?.abandon(force = true)
         audioFocus = null
         player?.removeListener(playerListener)
@@ -2485,7 +2446,6 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         const val ACTION_TOGGLE_LIKE = "ytm.action.TOGGLE_LIKE"
-        const val ACTION_DEBUG_FOCUS = "ytm.debug.AUDIO_FOCUS"
         const val ACTION_CYCLE_REPEAT = "ytm.action.CYCLE_REPEAT"
         const val ACTION_TOGGLE_SHUFFLE = "ytm.action.TOGGLE_SHUFFLE"
         const val ACTION_ADD_PLAYLIST = "ytm.action.ADD_PLAYLIST"
