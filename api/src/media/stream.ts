@@ -606,18 +606,21 @@ export async function handleStream(req: Request, res: Response) {
   }
   // Mid-range : deadline plus longue (yt-dlp peut prendre 30–90 s la 1ʳᵉ fois).
   const midNeedsDisk = !wantVideo && audioRangeStart > 0;
+  // Tête audio : 16 s était trop court dès que la résolution passait par yt-dlp
+  // (30–90 s à froid) → 502 systématique sur les titres pas encore en cache.
   // Vidéo : resolve + fetch GV souvent plus lent (yt-dlp -g / pipe)
-  const deadlineAt = Date.now() + (wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 16_000);
+  const deadlineAt = Date.now() + (wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 35_000);
   const ensureTime = (label: string) => {
     if (Date.now() >= deadlineAt) throw new Error(`stream deadline (${label})`);
   };
-  const withDeadline = async <T>(label: string, p: Promise<T>): Promise<T> => {
+  const withDeadline = async <T>(label: string, p: Promise<T>, budgetMs?: number): Promise<T> => {
     ensureTime(label);
     const left = Math.max(500, deadlineAt - Date.now());
+    const wait = budgetMs ? Math.min(budgetMs, left) : left;
     return await Promise.race([
       p,
       new Promise<T>((_, rej) =>
-        setTimeout(() => rej(new Error(`timeout ${label}`)), left),
+        setTimeout(() => rej(new Error(`timeout ${label}`)), wait),
       ),
     ]);
   };
@@ -639,8 +642,15 @@ export async function handleStream(req: Request, res: Response) {
       }
     }
     if (midNeedsDisk && (!existsSync(cached) || !statSync(cached).size)) {
+      // Budget borné : avant, un downloadTrack lent mangeait les 95 s de deadline
+      // et le fallback relais/googlevideo n’avait plus de temps → 502/504 garanti.
+      // Le téléchargement continue en fond (downloadInflight) pour la requête suivante.
+      const dl = downloadTrack(videoId);
+      dl.catch(() => {
+        /* poursuivi en fond — l’erreur est traitée par le await borné ci-dessous */
+      });
       try {
-        await withDeadline('downloadTrack', downloadTrack(videoId));
+        await withDeadline('downloadTrack', dl, 35_000);
       } catch (err) {
         const msg = String((err as Error).message || err);
         // Cooldown bot : Exo retry Mid-Range × N — 1 log / 60 s max
