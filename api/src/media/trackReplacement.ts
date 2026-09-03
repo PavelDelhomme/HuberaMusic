@@ -273,12 +273,59 @@ async function metaFor(
 }
 
 /**
+ * Une seule formulation ne suffit pas : « GJS (feat. Jul & SCH) GIMS » ne remonte
+ * pas le bon titre alors que « GJS GIMS » le donne en tête. On cumule donc
+ * plusieurs formulations, du plus précis au plus large.
+ */
+async function collectCandidates(
+  deadId: string,
+  title: string,
+  artist: string,
+  userId?: string,
+): Promise<Track[]> {
+  const bareTitle = title.replace(/\(.*?\)|\[.*?\]/g, ' ').replace(/\s+/g, ' ').trim();
+  const mainArtist = artist.split(',')[0]?.trim() || artist;
+  const queries = [...new Set([
+    `${title} ${artist}`,
+    `${bareTitle} ${mainArtist}`,
+    bareTitle,
+  ].map((q) => q.trim()).filter(Boolean))];
+
+  const out = new Map<string, Track>();
+  for (const q of queries) {
+    try {
+      const buckets = await search(q, 'song', userId ? { userId } : undefined);
+      const pool = [
+        ...(buckets.topResult ? [buckets.topResult as Track] : []),
+        ...((buckets.songs || []) as Track[]),
+      ];
+      for (const t of pool) {
+        if (t?.id && t.id !== deadId && VIDEO_ID.test(t.id) && !out.has(t.id)) out.set(t.id, t);
+      }
+    } catch (err) {
+      console.warn(
+        `[replacement] recherche KO ${deadId} « ${q} »:`,
+        String((err as Error).message || err).slice(0, 120),
+      );
+    }
+    // Un candidat parfait rend les formulations suivantes inutiles.
+    if ([...out.values()].some((t) => scoreCandidate(t, title, artist) >= 90)) break;
+  }
+  return [...out.values()];
+}
+
+/**
  * Cherche un identifiant de remplacement lisible pour un titre mort.
  * Retourne `null` plutôt que de risquer un morceau différent.
  */
 export async function findReplacementId(
   deadId: string,
-  hints?: { title?: string; artist?: string; durationSeconds?: number | null },
+  hints?: {
+    title?: string;
+    artist?: string;
+    durationSeconds?: number | null;
+    userId?: string;
+  },
 ): Promise<string | null> {
   if (!VIDEO_ID.test(deadId)) return null;
 
@@ -295,18 +342,9 @@ export async function findReplacementId(
       return null;
     }
 
-    let candidates: Track[] = [];
-    try {
-      const buckets = await search(`${title} ${artist}`, 'song');
-      candidates = [
-        ...(buckets.topResult ? [buckets.topResult as Track] : []),
-        ...((buckets.songs || []) as Track[]),
-      ].filter((t) => t?.id && t.id !== deadId && VIDEO_ID.test(t.id));
-    } catch (err) {
-      console.warn(
-        `[replacement] recherche KO ${deadId}:`,
-        String((err as Error).message || err).slice(0, 120),
-      );
+    const candidates = await collectCandidates(deadId, title, artist, hints?.userId);
+    if (!candidates.length) {
+      console.warn(`[replacement] ${deadId} « ${title} — ${artist} » : recherche sans résultat`);
       return null;
     }
 
