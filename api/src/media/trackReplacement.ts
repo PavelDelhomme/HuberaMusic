@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { db, getTrackPayload } from '../library/db.js';
 import { getAudioFormat, getTrack, search } from '../youtube/yt.js';
 import type { Track } from '../youtube/types.js';
+import { artistLine, scoreCandidate } from './trackMatch.js';
 
 const CACHE_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -101,126 +102,6 @@ function saveReplacement(
   } catch (err) {
     console.warn('[replacement] persist KO:', String((err as Error).message || err).slice(0, 120));
   }
-}
-
-function normalize(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\(.*?\)|\[.*?\]/g, ' ')
-    .replace(/\b(official|video|lyrics|audio|mv|clip|hd|4k|remaster(ed)?)\b/gi, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-const VERSION_MARKERS: [RegExp, string][] = [
-  [/\bremix(e|ed)?\b|\bmix\b/i, 'remix'],
-  [/\blive\b|\ben concert\b|\bconcert\b|\bsession\b/i, 'live'],
-  [/\bacoustic|\bacoustique|\bunplugged\b/i, 'acoustic'],
-  [/\binstrumental\b|\bkaraok/i, 'instrumental'],
-  [/\bextended\b|\bclub edit\b|\blong version\b/i, 'extended'],
-  [/\bradio edit\b|\bshort version\b/i, 'radio'],
-  [/\bsped ?up\b|\bnightcore\b|\bslowed\b|\breverb\b/i, 'speed'],
-  [/\bcover\b|\breprise\b/i, 'cover'],
-  [/\bdemo\b|\bwork in progress\b|\brehearsal\b|\bmaquette\b/i, 'demo'],
-];
-
-/**
- * `normalize` supprime les parenthèses, donc « Don't Be So Shy (Filatov & Karas Remix) »
- * et « Don't Be So Shy (Work in Progress) » deviennent identiques. On compare donc à
- * part les mentions de version pour ne pas substituer un remix par l'original.
- */
-function versionTags(title: string): Set<string> {
-  const out = new Set<string>();
-  for (const [re, tag] of VERSION_MARKERS) if (re.test(title)) out.add(tag);
-  return out;
-}
-
-function sameVersion(deadTitle: string, candTitle: string): boolean {
-  const want = versionTags(deadTitle);
-  const got = versionTags(candTitle);
-  if (want.size !== got.size) return false;
-  for (const tag of want) if (!got.has(tag)) return false;
-  return true;
-}
-
-function artistLine(t: Pick<Track, 'artists'>): string {
-  return (t.artists || [])
-    .map((a) => a?.name)
-    .filter(Boolean)
-    .join(', ');
-}
-
-/** Les titres de la bibliothèque contiennent des coquilles (« Juqu'à la mort »). */
-function similarity(a: string, b: string): number {
-  if (a === b) return 1;
-  if (!a || !b) return 0;
-  const rows = a.length + 1;
-  const cols = b.length + 1;
-  let prev = new Array<number>(cols);
-  let cur = new Array<number>(cols);
-  for (let j = 0; j < cols; j++) prev[j] = j;
-  for (let i = 1; i < rows; i++) {
-    cur[0] = i;
-    for (let j = 1; j < cols; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    [prev, cur] = [cur, prev];
-  }
-  return 1 - prev[cols - 1] / Math.max(a.length, b.length);
-}
-
-/**
- * Exigeant volontairement : un mauvais remplaçant ferait jouer une reprise ou un
- * autre morceau, ce qui est pire qu'une erreur franche.
- */
-function scoreCandidate(
-  cand: Track,
-  title: string,
-  artist: string,
-  durationSec?: number | null,
-): number {
-  const nt = normalize(title);
-  const na = normalize(artist);
-  const ct = normalize(cand.title || '');
-  const ca = normalize(artistLine(cand));
-  if (!nt || !ct) return 0;
-  if (!sameVersion(title, cand.title || '')) return 0;
-
-  let score = 0;
-  if (ct === nt) score += 50;
-  else if (similarity(nt, ct) >= 0.85) score += 44;
-  else if (ct.includes(nt) || nt.includes(ct)) score += 34;
-  else {
-    const want = new Set(nt.split(' ').filter((w) => w.length > 2));
-    const got = ct.split(' ').filter((w) => w.length > 2);
-    const hit = got.filter((w) => want.has(w)).length;
-    const ratio = want.size ? hit / want.size : 0;
-    if (ratio < 0.7) return 0;
-    score += Math.round(ratio * 26);
-  }
-
-  // Sans correspondance d'artiste on refuse : c'est le garde-fou principal.
-  if (!na || !ca) return 0;
-  if (ca === na) score += 40;
-  else if (ca.includes(na) || na.includes(ca)) score += 30;
-  else {
-    const want = new Set(na.split(' ').filter((w) => w.length > 2));
-    const got = ca.split(' ').filter((w) => w.length > 2);
-    if (!got.some((w) => want.has(w))) return 0;
-    score += 16;
-  }
-
-  if (durationSec && cand.durationSeconds && cand.durationSeconds > 0) {
-    const delta = Math.abs(cand.durationSeconds - durationSec) / durationSec;
-    if (delta <= 0.05) score += 15;
-    else if (delta <= 0.15) score += 8;
-    else if (delta > 0.35) return 0;
-  }
-  return score;
 }
 
 async function playable(id: string): Promise<boolean> {
