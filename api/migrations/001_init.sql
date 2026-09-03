@@ -55,6 +55,17 @@ CREATE TABLE IF NOT EXISTS track_duration_cache (
   updated_at BIGINT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS track_id_replacements (
+  dead_id TEXT PRIMARY KEY,
+  replacement_id TEXT NOT NULL,
+  title TEXT,
+  artist TEXT,
+  score BIGINT NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'auto',
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS telemetry_events (
   id TEXT PRIMARY KEY,
   created_at BIGINT NOT NULL,
