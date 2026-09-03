@@ -26,18 +26,22 @@ const TICK_MS = Number(process.env.LIBRARY_HEALTH_TICK_MS || 5_000);
 const FREE_BATCH = 40;
 /** Laisse le serveur démarrer et servir avant de consommer quoi que ce soit. */
 const START_DELAY_MS = Number(process.env.LIBRARY_HEALTH_START_DELAY_MS || 120_000);
-/** Une écoute plus récente que ça : on passe notre tour. */
+/**
+ * Au-delà de ce délai sans lecture servie, on s'autorise le travail lourd : la
+ * recherche d'un remplaçant enchaîne recherches et téléchargements d'essai.
+ */
 const IDLE_REQUIRED_MS = Number(process.env.LIBRARY_HEALTH_IDLE_MS || 20_000);
 const PROBE_MS = 25_000;
 /** Un titre sans remplaçant est retenté plus tard, le catalogue bouge. */
 const RETRY_DEAD_MS = 7 * 24 * 3_600_000;
 
-type State = 'ok' | 'replaced' | 'dead';
+/** `pending` : vidéo morte constatée, remplaçant pas encore cherché. */
+type State = 'ok' | 'replaced' | 'dead' | 'pending';
 
 let schemaReady = false;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
-const stats = { checked: 0, ok: 0, replaced: 0, dead: 0, startedAt: 0 };
+const stats = { checked: 0, ok: 0, replaced: 0, dead: 0, pending: 0, startedAt: 0 };
 
 function ensureSchema() {
   if (schemaReady) return;
@@ -84,6 +88,15 @@ function nextTrackId(): string | null {
   return row?.id || null;
 }
 
+/** Vidéo morte constatée mais dont le remplaçant reste à chercher. */
+function nextPendingId(): string | null {
+  ensureSchema();
+  const row = db
+    .prepare(`SELECT track_id AS id FROM track_health WHERE state = 'pending' ORDER BY checked_at LIMIT 1`)
+    .get() as { id?: string } | undefined;
+  return row?.id || null;
+}
+
 function cachedOnDisk(id: string): boolean {
   try {
     const file = join(CACHE_DIR, `${id}.m4a`);
@@ -95,7 +108,8 @@ function cachedOnDisk(id: string): boolean {
 
 type Check = { state: State; network: boolean };
 
-async function checkOne(id: string): Promise<Check> {
+/** Sonde seule : constate la mort d'une vidéo sans chercher son remplaçant. */
+async function probeOne(id: string): Promise<Check> {
   if (cachedOnDisk(id) || getReplacementId(id)) return { state: 'ok', network: false };
   try {
     const fmt = await Promise.race([
@@ -109,37 +123,53 @@ async function checkOne(id: string): Promise<Check> {
       // Réseau, quota, délai dépassé : on ne conclut rien, le titre repassera.
       return { state: 'ok', network: true };
     }
-    const meta = getTrackPayload(id);
-    const replacement = await findReplacementId(id, {
-      title: meta?.title,
-      artist: (meta?.artists || []).map((a) => a?.name).filter(Boolean).join(', '),
-      durationSeconds: meta?.durationSeconds ?? null,
-    });
-    if (replacement) {
-      console.log(`[health] ${id} mort → ${replacement}`);
-      return { state: 'replaced', network: true };
-    }
-    console.warn(`[health] ${id} mort, sans remplaçant`);
-    return { state: 'dead', network: true };
+    return { state: 'pending', network: true };
   }
   return { state: 'ok', network: true };
 }
 
+/** Partie coûteuse, réservée aux moments sans écoute en cours. */
+async function resolvePending(id: string): Promise<State> {
+  const meta = getTrackPayload(id);
+  const replacement = await findReplacementId(id, {
+    title: meta?.title,
+    artist: (meta?.artists || []).map((a) => a?.name).filter(Boolean).join(', '),
+    durationSeconds: meta?.durationSeconds ?? null,
+  });
+  if (replacement) {
+    console.log(`[health] ${id} mort → ${replacement}`);
+    return 'replaced';
+  }
+  console.warn(`[health] ${id} mort, sans remplaçant`);
+  return 'dead';
+}
+
 async function tick() {
   if (running) return;
-  if (msSinceLastStream() < IDLE_REQUIRED_MS) return;
   running = true;
   try {
+    // La recherche d'un remplaçant est lourde : elle attend une accalmie. La
+    // simple sonde, elle, coûte un appel d'API et peut tourner pendant l'écoute,
+    // sans quoi une session de plusieurs heures gèlerait tout le balayage.
+    if (msSinceLastStream() >= IDLE_REQUIRED_MS) {
+      const pending = nextPendingId();
+      if (pending) {
+        const state = await resolvePending(pending);
+        markHealth(pending, state);
+        stats[state]++;
+        return;
+      }
+    }
     // Un titre déjà en cache se règle sans toucher au réseau : lui consacrer un
     // tour d'horloge complet ferait durer le balayage des jours pour rien.
     for (let i = 0; i < FREE_BATCH; i++) {
       const id = nextTrackId();
       if (!id) return;
-      const { state, network } = await checkOne(id);
+      const { state, network } = await probeOne(id);
       markHealth(id, state);
       stats.checked++;
       stats[state]++;
-      if (network || msSinceLastStream() < IDLE_REQUIRED_MS) return;
+      if (network) return;
     }
   } catch (err) {
     console.warn('[health] tick KO:', String((err as Error).message || err).slice(0, 120));
