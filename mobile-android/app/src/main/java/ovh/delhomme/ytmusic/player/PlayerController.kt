@@ -405,6 +405,12 @@ class PlayerController(
         val remaining = (PlaybackService.Holder.queue.size - _state.value.queueIndex - 1)
             .coerceAtLeast(0)
         if (remaining >= 6) return
+        // Toute la file choisie par l'utilisateur doit passer avant la moindre suggestion.
+        if (PlaybackService.Holder.extendUserQueue() > 0) {
+            userQueueEnd = PlaybackService.Holder.userQueueEnd
+            player()?.let { syncFrom(it) }
+            return
+        }
         val seed = _state.value.track?.id
             ?: PlaybackService.Holder.queue.getOrNull(_state.value.queueIndex)?.id
             ?: return
@@ -1617,13 +1623,16 @@ class PlayerController(
     ) {
         val playable = tracks.filter { it.isPlayable() }
         if (playable.isEmpty()) return
-        // Fenêtre autour de l’index : évite OOM / TransactionTooLarge sur grosses bibliothèques
+        // Fenêtre autour de l’index : évite OOM / TransactionTooLarge sur grosses bibliothèques.
+        // Le reste de la file est rechargé au fil de la lecture (voir Holder.extendUserQueue).
         val maxItems = 80
+        var loadedUpTo = playable.size
         val centered = if (playable.size > maxItems) {
             val half = maxItems / 2
             val raw = startIndex.coerceIn(0, playable.lastIndex)
             val from = (raw - half).coerceAtLeast(0)
             val to = (from + maxItems).coerceAtMost(playable.size)
+            loadedUpTo = to
             val slice = playable.subList(from, to)
             val localIdx = (raw - from).coerceIn(0, slice.lastIndex)
             slice to localIdx
@@ -1635,6 +1644,7 @@ class PlayerController(
         if (userQueueEnd <= 0 || userQueueEnd > window.size) {
             userQueueEnd = window.size
         }
+        PlaybackService.Holder.rememberFullQueue(playable, loadedUpTo)
         publishOptimistic(window, idx, startPositionMs)
         val base = streamUrl("_").substringBefore("/api/stream/")
         val currentId = window.getOrNull(idx)?.id

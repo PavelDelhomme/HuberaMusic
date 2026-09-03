@@ -1,6 +1,17 @@
 {
-  "updatedAt": "2026-09-02",
+  "updatedAt": "2026-09-03",
   "versions": [
+    {
+      "version": "1.3.138",
+      "date": "2026-09-03",
+      "title": "La lecture reste sur tes titres",
+      "notes": [
+        "Lancer la bibliothèque enchaîne maintenant sur toute la bibliothèque, chargée au fur et à mesure, au lieu de s’arrêter après quatre-vingts titres",
+        "Plus de suggestions extérieures tant qu’il reste des titres à toi devant : elles n’arrivent qu’une fois ta sélection épuisée",
+        "« Enregistré récemment » ouvre la file avec tes ajouts puis continue sur le reste de ta bibliothèque",
+        "Un titre dont la vidéo a disparu de YouTube est rejoué automatiquement depuis une autre source, au lieu d’échouer"
+      ]
+    },
     {
       "version": "1.3.137",
       "date": "2026-09-03",
