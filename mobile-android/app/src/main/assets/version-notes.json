@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-03",
   "versions": [
     {
+      "version": "1.3.140",
+      "date": "2026-09-03",
+      "title": "« À suivre » reprend son rôle",
+      "notes": [
+        "Après une écoute lancée depuis la bibliothèque, démarrer une radio ou un titre isolé ne ramène plus d’anciens morceaux à la place des suggestions",
+        "« À suivre » ajoute de nouveau ses titres à la file quand la sélection en cours est terminée"
+      ]
+    },
+    {
       "version": "1.3.139",
       "date": "2026-09-03",
       "title": "Paroles au bon endroit dès le changement de titre",

@@ -2330,10 +2330,25 @@ class PlaybackService : MediaSessionService() {
 
         fun isPlaybackActiveSafe(): Boolean = playbackActive
 
-        /** Mémorise la file complète dont [window] n'est que la tranche chargée. */
+        /** Mémorise la file complète dont la fenêtre chargée n'est qu'une tranche. */
         fun rememberFullQueue(full: List<TrackDto>, loadedUpTo: Int) {
             fullQueue = full
             fullQueueCursor = loadedUpTo.coerceIn(0, full.size)
+        }
+
+        /**
+         * La file en cours prolonge-t-elle bien [fullQueue] ? De nombreux chemins
+         * remplacent la file sans passer par [rememberFullQueue] — lancer une radio, un
+         * album, un titre isolé. Le dernier titre chargé doit alors clore la zone
+         * utilisateur ; sinon la sélection mémorisée n'a plus rien à voir avec ce qui joue.
+         */
+        private fun fullQueueStillOwnsQueue(): Boolean {
+            val expected = fullQueue.getOrNull(fullQueueCursor - 1)?.id ?: return false
+            val current = queue
+            val end = userQueueEnd.coerceIn(0, current.size).let { if (it <= 0) current.size else it }
+            // Recherché dans toute la zone utilisateur, et pas seulement en dernière
+            // position : l'utilisateur a pu glisser un titre en fin de file entre-temps.
+            return current.subList(0, end).any { it.id == expected }
         }
 
         /**
@@ -2347,6 +2362,14 @@ class PlaybackService : MediaSessionService() {
             val full = fullQueue
             var cursor = fullQueueCursor
             if (cursor >= full.size) return 0
+            if (!fullQueueStillOwnsQueue()) {
+                // La file vient d'ailleurs (radio, album, titre isolé…) : poursuivre sur
+                // l'ancienne sélection rejouerait de vieux titres et priverait « À suivre »
+                // de ses suggestions.
+                fullQueue = emptyList()
+                fullQueueCursor = 0
+                return 0
+            }
 
             val known = queue.mapTo(HashSet()) { it.id }
             val add = ArrayList<TrackDto>(chunk)
