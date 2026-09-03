@@ -113,6 +113,18 @@ export function titleScore(nt: string, ct: string, na: string, ca: string): numb
 }
 
 /**
+ * Les rééditions par des chaînes tierces nomment l'interprète dans le titre —
+ * « Ave Maria païen - NOA » publié par « B Walbyx ». Le nom de la chaîne ne dit
+ * alors rien du morceau, contrairement au titre.
+ */
+export function titleNamesArtist(normCandTitle: string, normArtist: string): boolean {
+  const words = normArtist.split(' ').filter((w) => w.length > 2);
+  if (!words.length) return false;
+  const inTitle = new Set(normCandTitle.split(' '));
+  return words.every((w) => inTitle.has(w));
+}
+
+/**
  * Exigeant volontairement : un mauvais remplaçant ferait jouer une reprise ou un
  * autre morceau, ce qui est pire qu'une erreur franche.
  */
@@ -137,6 +149,7 @@ export function scoreCandidate(
   if (!na || !ca) return 0;
   if (ca === na) score += 40;
   else if (ca.includes(na) || na.includes(ca)) score += 30;
+  else if (titleNamesArtist(ct, na)) score += 28;
   else {
     const want = new Set(na.split(' ').filter((w) => w.length > 2));
     const got = ca.split(' ').filter((w) => w.length > 2);
