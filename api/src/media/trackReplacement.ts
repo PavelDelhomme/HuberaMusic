@@ -115,6 +115,37 @@ function normalize(s: string): string {
     .trim();
 }
 
+const VERSION_MARKERS: [RegExp, string][] = [
+  [/\bremix(e|ed)?\b|\bmix\b/i, 'remix'],
+  [/\blive\b|\ben concert\b|\bconcert\b|\bsession\b/i, 'live'],
+  [/\bacoustic|\bacoustique|\bunplugged\b/i, 'acoustic'],
+  [/\binstrumental\b|\bkaraok/i, 'instrumental'],
+  [/\bextended\b|\bclub edit\b|\blong version\b/i, 'extended'],
+  [/\bradio edit\b|\bshort version\b/i, 'radio'],
+  [/\bsped ?up\b|\bnightcore\b|\bslowed\b|\breverb\b/i, 'speed'],
+  [/\bcover\b|\breprise\b/i, 'cover'],
+  [/\bdemo\b|\bwork in progress\b|\brehearsal\b|\bmaquette\b/i, 'demo'],
+];
+
+/**
+ * `normalize` supprime les parenthèses, donc « Don't Be So Shy (Filatov & Karas Remix) »
+ * et « Don't Be So Shy (Work in Progress) » deviennent identiques. On compare donc à
+ * part les mentions de version pour ne pas substituer un remix par l'original.
+ */
+function versionTags(title: string): Set<string> {
+  const out = new Set<string>();
+  for (const [re, tag] of VERSION_MARKERS) if (re.test(title)) out.add(tag);
+  return out;
+}
+
+function sameVersion(deadTitle: string, candTitle: string): boolean {
+  const want = versionTags(deadTitle);
+  const got = versionTags(candTitle);
+  if (want.size !== got.size) return false;
+  for (const tag of want) if (!got.has(tag)) return false;
+  return true;
+}
+
 function artistLine(t: Pick<Track, 'artists'>): string {
   return (t.artists || [])
     .map((a) => a?.name)
@@ -137,6 +168,7 @@ function scoreCandidate(
   const ct = normalize(cand.title || '');
   const ca = normalize(artistLine(cand));
   if (!nt || !ct) return 0;
+  if (!sameVersion(title, cand.title || '')) return 0;
 
   let score = 0;
   if (ct === nt) score += 50;
@@ -280,6 +312,10 @@ export async function findReplacementId(
         `[replacement] ${deadId} → ${trusted.t.id} (score ${trusted.s}, non vérifié) ` +
           `« ${trusted.t.title} — ${artistLine(trusted.t)} »`,
       );
+      // Mémorisé malgré l'absence de vérification : sans cela chaque lecture
+      // repaierait la recherche (~50 s). Si ce remplaçant est mort lui aussi, il
+      // déclenchera sa propre substitution.
+      saveReplacement(deadId, trusted.t.id, title, artist, trusted.s);
       return trusted.t.id;
     }
 
