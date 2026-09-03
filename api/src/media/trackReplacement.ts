@@ -153,6 +153,26 @@ function artistLine(t: Pick<Track, 'artists'>): string {
     .join(', ');
 }
 
+/** Les titres de la bibliothèque contiennent des coquilles (« Juqu'à la mort »). */
+function similarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (!a || !b) return 0;
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  let prev = new Array<number>(cols);
+  let cur = new Array<number>(cols);
+  for (let j = 0; j < cols; j++) prev[j] = j;
+  for (let i = 1; i < rows; i++) {
+    cur[0] = i;
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    [prev, cur] = [cur, prev];
+  }
+  return 1 - prev[cols - 1] / Math.max(a.length, b.length);
+}
+
 /**
  * Exigeant volontairement : un mauvais remplaçant ferait jouer une reprise ou un
  * autre morceau, ce qui est pire qu'une erreur franche.
@@ -172,6 +192,7 @@ function scoreCandidate(
 
   let score = 0;
   if (ct === nt) score += 50;
+  else if (similarity(nt, ct) >= 0.85) score += 44;
   else if (ct.includes(nt) || nt.includes(ct)) score += 34;
   else {
     const want = new Set(nt.split(' ').filter((w) => w.length > 2));
@@ -319,7 +340,16 @@ export async function findReplacementId(
       return trusted.t.id;
     }
 
-    console.warn(`[replacement] ${deadId} : aucun remplaçant fiable (${unique.length} candidats)`);
+    // Sans le détail des candidats écartés, impossible de savoir si le seuil est
+    // trop strict ou si le morceau a réellement disparu du catalogue.
+    const rejected = candidates
+      .slice(0, 4)
+      .map((t) => `${t.id}:${scoreCandidate(t, title, artist, durationSec)} « ${t.title} — ${artistLine(t)} »`)
+      .join(' | ');
+    console.warn(
+      `[replacement] ${deadId} « ${title} — ${artist} » : aucun remplaçant fiable ` +
+        `(${unique.length} retenus) écartés: ${rejected || 'aucun résultat'}`,
+    );
     return null;
   })();
 
