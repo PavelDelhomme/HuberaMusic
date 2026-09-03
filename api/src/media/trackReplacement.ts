@@ -250,17 +250,20 @@ export async function findReplacementId(
       return t.id;
     }
 
-    const trusted = unique.find(({ s }) => s >= TRUST_SCORE);
-    if (trusted) {
+    // La sonde ne dispose que de la résolution de format, là où le pipeline de
+    // stream complet a bien plus de recours : « Ave Maria païen - NOA » y échouait
+    // alors qu'il se lit sans accroc. Le score ayant déjà garanti la
+    // correspondance, un candidat non vérifié vaut mieux qu'un échec certain.
+    const best = unique[0];
+    if (best) {
       console.log(
-        `[replacement] ${deadId} → ${trusted.t.id} (score ${trusted.s}, non vérifié) ` +
-          `« ${trusted.t.title} — ${artistLine(trusted.t)} »`,
+        `[replacement] ${deadId} → ${best.t.id} (score ${best.s}, non vérifié) ` +
+          `« ${best.t.title} — ${artistLine(best.t)} »`,
       );
-      // Mémorisé malgré l'absence de vérification : sans cela chaque lecture
-      // repaierait la recherche (~50 s). Si ce remplaçant est mort lui aussi, il
-      // déclenchera sa propre substitution.
-      saveReplacement(deadId, trusted.t.id, title, artist, trusted.s);
-      return trusted.t.id;
+      // Au-dessus du seuil de confiance seulement : sinon on revalide à la
+      // lecture suivante plutôt que de figer une correspondance jamais éprouvée.
+      if (best.s >= TRUST_SCORE) saveReplacement(deadId, best.t.id, title, artist, best.s);
+      return best.t.id;
     }
 
     // Sans le détail des candidats écartés, impossible de savoir si le seuil est
@@ -271,7 +274,7 @@ export async function findReplacementId(
       .join(' | ');
     console.warn(
       `[replacement] ${deadId} « ${title} — ${artist} » : aucun remplaçant fiable ` +
-        `(${unique.length} retenus) écartés: ${rejected || 'aucun résultat'}`,
+        `écartés: ${rejected || 'aucun résultat'}`,
     );
     return null;
   })();
