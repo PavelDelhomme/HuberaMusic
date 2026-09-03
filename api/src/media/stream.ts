@@ -1042,7 +1042,9 @@ export async function handleStream(req: Request, res: Response) {
       // identifiant plutôt que de renvoyer une erreur définitive au lecteur.
       if (!wantVideo && looksUnavailable(detail)) {
         try {
-          const replacement = await findReplacementId(videoId);
+          const replacement = await findReplacementId(videoId, {
+            userId: (req as any).userId,
+          });
           if (replacement && !res.headersSent) {
             res.setHeader('Cache-Control', 'no-store');
             res.setHeader('X-PLM-Replaced-From', videoId);
