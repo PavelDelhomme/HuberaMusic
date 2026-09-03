@@ -83,6 +83,7 @@ import {
   libraryMembership,
 } from './library/library.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed } from './media/stream.js';
+import { libraryHealthStatus, startLibraryHealthScan } from './media/libraryHealth.js';
 import { streamHeadStats } from './media/streamHeadCache.js';
 import { youtubeProxyStats } from './youtube/youtubeProxy.js';
 import { resolveVisualVideo } from './media/visualResolve.js';
@@ -1144,6 +1145,10 @@ app.get('/api/admin/telemetry', requireAdmin, (req, res) => {
       offset: Number(req.query.offset || 0),
     }),
   });
+});
+
+app.get('/api/admin/library-health', requireAdmin, (_req, res) => {
+  res.json(libraryHealthStatus());
 });
 
 app.get('/api/admin/mail-outbox', requireAdmin, (_req, res) => {
@@ -2757,4 +2762,5 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`PLM API → http://localhost:${PORT}`);
   console.log(`PLM LAN → http://0.0.0.0:${PORT} (toutes interfaces)`);
   console.log(`PLM WS  → ws://localhost:${PORT}/ws`);
+  startLibraryHealthScan();
 });

@@ -35,6 +35,13 @@ const YTDLP = join(ROOT, 'bin', 'yt-dlp');
 const CACHE_DIR = join(ROOT, 'data', 'cache');
 const STREAM_UPSTREAM_FILE = join(ROOT, 'data', 'stream-upstream.url');
 
+/** Dernière lecture servie — les travaux de fond s'effacent devant une écoute en cours. */
+let lastStreamAtMs = 0;
+
+export function msSinceLastStream(): number {
+  return lastStreamAtMs ? Date.now() - lastStreamAtMs : Number.MAX_SAFE_INTEGER;
+}
+
 const GV_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const GV_UA_ANDROID =
@@ -535,6 +542,7 @@ function streamPathFor(req: Request, videoId: string): string {
 
 export async function handleStream(req: Request, res: Response) {
   const videoId = String(req.params.id || '');
+  lastStreamAtMs = Date.now();
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     res.status(400).json({ error: 'ID invalide' });
     return;
