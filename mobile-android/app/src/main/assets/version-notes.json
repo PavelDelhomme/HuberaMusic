@@ -2,6 +2,26 @@
   "updatedAt": "2026-09-02",
   "versions": [
     {
+      "version": "1.3.136",
+      "date": "2026-09-03",
+      "title": "Fin des coupures en cours de morceau",
+      "notes": [
+        "Le titre est désormais chargé en entier dès le début : une coupure de données mobiles au milieu ne coupe plus le son",
+        "Perte de réseau / DNS : le lecteur attend et reprend le même titre, il ne saute plus au suivant",
+        "Serveur : titres pas encore en cache et reprises après avance rapide ne renvoient plus d’erreur au bout de quelques secondes"
+      ]
+    },
+    {
+      "version": "1.3.135",
+      "date": "2026-09-02",
+      "title": "Plus de silence en boucle sur un titre bloqué",
+      "notes": [
+        "Si le flux reste figé malgré plusieurs reprises, passage automatique au titre suivant (plus de silence interminable)",
+        "Titres indisponibles / erreurs réseau répétées : enchaînement plus rapide, sans retour au début sur les reprises",
+        "Démarrage à froid bloqué : nettoyage cache plus tôt, puis skip si le titre ne part toujours pas"
+      ]
+    },
+    {
       "version": "1.3.134",
       "date": "2026-09-02",
       "title": "Précharge ~15 s à l’ajout en file",
