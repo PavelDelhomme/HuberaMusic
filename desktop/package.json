@@ -1,6 +1,6 @@
 {
   "name": "plm-desktop",
-  "version": "1.3.144",
+  "version": "1.3.145",
   "private": true,
   "description": "PLM desktop (shell Electron → PWA prod)",
   "main": "main.js",
