@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-04",
   "versions": [
     {
+      "version": "1.3.145",
+      "date": "2026-09-04",
+      "title": "Le suivi des paroles sur tous les titres",
+      "notes": [
+        "Les paroles avancent avec la musique même quand YouTube n’a pas de karaoké officiel — comme sur Welcome to the Internet",
+        "Les sous-titres YouTube sont maintenant lus dans toutes les langues, pas seulement le français et l’anglais"
+      ]
+    },
+    {
       "version": "1.3.144",
       "date": "2026-09-04",
       "title": "Chaque erreur a maintenant son document",

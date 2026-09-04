@@ -13,6 +13,7 @@ import {
   getLyricUserOffsetMs,
   nudgeLyricUserOffsetMs,
   setLyricUserOffsetMs,
+  estimateTimedFromPlain,
 } from '../../lib/player/lyricSync';
 
 function fmtClock(sec: number): string {
@@ -55,7 +56,7 @@ export function SyncedLyrics({
 }: {
   text: string | null;
   timed?: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | null;
+  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | null;
 }) {
   const audioEl = usePlayer((s) => s.audioEl);
   const isPlaying = usePlayer((s) => s.isPlaying);
@@ -93,7 +94,9 @@ export function SyncedLyrics({
         text: l.text,
       }));
     }
-    return parseLrcLines(text);
+    const lrc = parseLrcLines(text);
+    if (lrc.length) return lrc;
+    return estimateTimedFromPlain(text, duration > 0 ? duration : null);
   }, [text, timed, duration]);
 
   const leadSec = LYRIC_LEAD_SEC;
@@ -434,7 +437,9 @@ export function NowPlaying({
   const [tab, setTab] = useState<NowPlayingTab>(initialTab);
   const [lyricsText, setLyricsText] = useState<string | null>(null);
   const [lyricsTimed, setLyricsTimed] = useState<{ startMs: number; text: string }[] | null>(null);
-  const [lyricsSource, setLyricsSource] = useState<'youtube' | 'lrclib' | 'lrc' | null>(null);
+  const [lyricsSource, setLyricsSource] = useState<
+    'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | null
+  >(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [queueVisible, setQueueVisible] = useState(QUEUE_PAGE);
   const [similarVisible, setSimilarVisible] = useState(10);

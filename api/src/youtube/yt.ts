@@ -10,6 +10,7 @@ import {
   markYoutubeProxySuccess,
   youtubeProxyAttempts,
 } from './youtubeProxy.js';
+import { estimateTimedFromPlain, looksLikeLyrics } from './lyricsTiming.js';
 
 // youtubei.js loggue massivement des Type mismatch (WatchNext / Message) → pollue make logs
 try {
@@ -1521,12 +1522,12 @@ export async function getArtistSongs(
 }
 
 const LYRICS_CACHE_MAX = 400;
-/** bump pour invalider d’anciens timed mal alignés / écrasés */
-const LYRICS_CACHE_VER = 'v10';
+/** bump : timed estimés + sous-titres toutes langues */
+const LYRICS_CACHE_VER = 'v11';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'lyrics.ovh' | 'genius' | null;
+  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'lyrics.ovh' | 'genius' | 'estimated' | null;
   /** Décalage appliqué aux timed (ms) — positif = paroles retardées (corrige avance) */
   syncOffsetMs?: number;
 };
@@ -1879,64 +1880,77 @@ async function fetchYoutubeCaptionsTimed(
       | Array<{ base_url?: string; language_code?: string; kind?: string; name?: unknown }>
       | undefined;
     if (!tracks?.length) return null;
-    const prefer = (langs: string[]) =>
-      tracks.find((t) => langs.some((l) => (t.language_code || '').toLowerCase().startsWith(l)));
-    const track =
-      prefer(['fr']) ||
-      prefer(['en']) ||
-      tracks.find((t) => !(t.kind || '').includes('asr')) ||
-      tracks[0];
-    const base = track?.base_url;
-    if (!base) return null;
-    const url = new URL(base);
-    url.searchParams.set('fmt', 'json3');
-    const res = await fetch(url.toString(), {
-      signal: AbortSignal.timeout(5000),
-      headers: { 'User-Agent': 'PLM/1.0 (self-hosted)' },
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      events?: Array<{ tStartMs?: number; segs?: Array<{ utf8?: string }> }>;
+    const rank = (t: { language_code?: string; kind?: string }) => {
+      const lang = (t.language_code || '').toLowerCase();
+      const asr = (t.kind || '').includes('asr');
+      let s = asr ? 0 : 40;
+      if (lang.startsWith('fr')) s += 20;
+      else if (lang.startsWith('en')) s += 12;
+      else if (lang.startsWith('de')) s += 10;
+      else if (lang.startsWith('es') || lang.startsWith('it') || lang.startsWith('pt')) s += 6;
+      else s += 4;
+      return s;
     };
-    const timed: { startMs: number; text: string }[] = [];
-    let buf = '';
-    let bufStart = 0;
-    const flush = () => {
-      const text = buf.replace(/\s+/g, ' ').trim();
-      if (text) timed.push({ startMs: bufStart, text });
-      buf = '';
-    };
-    for (const ev of data.events || []) {
-      const start = Number(ev.tStartMs);
-      if (!Number.isFinite(start)) continue;
-      const piece = (ev.segs || []).map((s) => s.utf8 || '').join('');
-      if (!piece) continue;
-      if (!buf) bufStart = start;
-      buf += piece;
-      // Nouvelle ligne / fin de phrase → ligne karaoké
-      if (piece.includes('\n') || /[.!?…]$/.test(buf.trim()) || buf.length > 72) {
-        flush();
-      }
+    const ordered = [...tracks].sort((a, b) => rank(b) - rank(a));
+    for (const track of ordered.slice(0, 4)) {
+      const base = track?.base_url;
+      if (!base) continue;
+      const parsed = await parseCaptionTrack(base).catch(() => null);
+      if (parsed && parsed.timed.length >= 4) return parsed;
     }
-    flush();
-    // Fusionne micro-fragments ASR trop courts
-    const merged: { startMs: number; text: string }[] = [];
-    for (const line of timed) {
-      const last = merged[merged.length - 1];
-      if (last && last.text.length < 18 && line.startMs - last.startMs < 2500) {
-        last.text = `${last.text} ${line.text}`.replace(/\s+/g, ' ').trim();
-      } else {
-        merged.push({ ...line });
-      }
-    }
-    if (merged.length < 2) return null;
-    return {
-      lyrics: merged.map((l) => l.text).join('\n'),
-      timed: merged,
-    };
+    return null;
   } catch {
     return null;
   }
+}
+
+async function parseCaptionTrack(
+  base: string,
+): Promise<{ lyrics: string; timed: { startMs: number; text: string }[] } | null> {
+  const url = new URL(base);
+  url.searchParams.set('fmt', 'json3');
+  const res = await fetch(url.toString(), {
+    signal: AbortSignal.timeout(5000),
+    headers: { 'User-Agent': 'PLM/1.0 (self-hosted)' },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as {
+    events?: Array<{ tStartMs?: number; segs?: Array<{ utf8?: string }> }>;
+  };
+  const timed: { startMs: number; text: string }[] = [];
+  let buf = '';
+  let bufStart = 0;
+  const flush = () => {
+    const text = buf.replace(/\s+/g, ' ').trim();
+    if (text) timed.push({ startMs: bufStart, text });
+    buf = '';
+  };
+  for (const ev of data.events || []) {
+    const start = Number(ev.tStartMs);
+    if (!Number.isFinite(start)) continue;
+    const piece = (ev.segs || []).map((s) => s.utf8 || '').join('');
+    if (!piece) continue;
+    if (!buf) bufStart = start;
+    buf += piece;
+    if (piece.includes('\n') || /[.!?…]$/.test(buf.trim()) || buf.length > 72) {
+      flush();
+    }
+  }
+  flush();
+  const merged: { startMs: number; text: string }[] = [];
+  for (const line of timed) {
+    const last = merged[merged.length - 1];
+    if (last && last.text.length < 18 && line.startMs - last.startMs < 2500) {
+      last.text = `${last.text} ${line.text}`.replace(/\s+/g, ' ').trim();
+    } else {
+      merged.push({ ...line });
+    }
+  }
+  if (merged.length < 2) return null;
+  return {
+    lyrics: merged.map((l) => l.text).join('\n'),
+    timed: merged,
+  };
 }
 
 export async function getLyrics(videoId: string): Promise<LyricsResult> {
@@ -1981,6 +1995,7 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
         source = 'youtube';
       }
       if (!text && timed?.length) text = timed.map((l) => l.text).join('\n');
+      if (text && !looksLikeLyrics(text) && !timed?.length) text = null;
     }
   } catch {
     /* fallback LRCLIB */
@@ -2030,7 +2045,7 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
   }
 
   // Dernier recours texte : lyrics.ovh puis Genius.com
-  if (!text) {
+  if (!looksLikeLyrics(text)) {
     try {
       const meta = await getTrack(videoId, { light: true }).catch(() => null);
       const title = meta?.track?.title || '';
@@ -2065,9 +2080,26 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
     }
   }
 
+  // Texte brut sans timings : on les estime pour que le suivi avance
+  // comme sur un titre qui a un LRC (Welcome to the Internet).
+  if (!timed?.length && looksLikeLyrics(text)) {
+    try {
+      const meta = await getTrack(videoId, { light: true }).catch(() => null);
+      const durationSec =
+        typeof meta?.track?.durationSeconds === 'number' ? meta.track.durationSeconds : undefined;
+      const estimated = estimateTimedFromPlain(text!, durationSec);
+      if (estimated.length >= 4) {
+        timed = estimated;
+        source = 'estimated';
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   // Dernier filet : timings hors durée du titre → texte seul
-  // (sauf captions YT : l’ASR couvre souvent toute la vidéo, timings OK même si durée méta floue)
-  if (timed?.length && source !== 'captions') {
+  // (sauf captions YT / estimation : ils couvrent volontairement toute la piste)
+  if (timed?.length && source !== 'captions' && source !== 'estimated') {
     try {
       const meta = await getTrack(videoId, { light: true }).catch(() => null);
       const dur =
