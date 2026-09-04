@@ -1741,43 +1741,31 @@ async function fetchLrclibTimed(
     .replace(/\s*[\[(【].*?[\])】]/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
-  const titleVariants = [
-    cleanTitle,
-    title,
-    cleanTitle.replace(/['’]/g, ''),
-    cleanTitle.replace(/['’]/g, ' '),
-    cleanTitle.replace(/['’]/g, "'"),
-    // FR : « Soleil, fais-moi ta fête » → sans virgule / tirets
-    cleanTitle.replace(/,/g, ''),
-    cleanTitle.replace(/,/g, ' ').replace(/\s{2,}/g, ' ').trim(),
-    cleanTitle.replace(/[-–—]/g, ' ').replace(/\s{2,}/g, ' ').trim(),
-    fold(cleanTitle),
-  ].filter((t, i, arr) => t && arr.indexOf(t) === i);
-
-  // Variantes artiste (chaîne YT ≠ nom LRCLIB : « VelourVoix », « Topic », feat…)
-  const artistVariants = [
-    artist,
-    artist.replace(/\s*[-–—]\s*Topic\s*$/i, '').trim(),
-    artist.replace(/\s*VEVO\s*$/i, '').trim(),
-    artist.replace(/([a-z])([A-Z])/g, '$1 $2').trim(), // VelourVoix → Velour Voix
-    artist.split(/[,&/]| feat\.? | ft\.? /i)[0]?.trim() || '',
-    '',
-  ].filter((a, i, arr) => arr.indexOf(a) === i);
-
-  // 1) get exact (avec durée) → 2) get sans durée → 3) search
-  for (const a of artistVariants) {
-    for (const t of titleVariants) {
-      const hit =
-        (await tryGet(a, t, true).catch(() => null)) ||
-        (await tryGet(a, t, false).catch(() => null));
-      if (hit?.timed?.length || hit?.lyrics) return hit;
-    }
-  }
+  const mainArtist = artist.split(/[,&/]| feat\.? | ft\.? /i)[0]?.trim() || artist;
+  const attempts: Array<[string, string, boolean]> = [
+    [artist, cleanTitle || title, true],
+    [artist, cleanTitle || title, false],
+    [mainArtist, cleanTitle || title, true],
+    [artist, title, false],
+    [mainArtist, cleanTitle.replace(/,/g, ' ').replace(/\s{2,}/g, ' ').trim(), false],
+  ];
+  const seenAttempt = new Set<string>();
+  const uniqueAttempts = attempts.filter(([a, t, d]) => {
+    if (!t.trim()) return false;
+    const k = `${a}|${t}|${d}`;
+    if (seenAttempt.has(k)) return false;
+    seenAttempt.add(k);
+    return true;
+  });
+  const getHits = await Promise.all(uniqueAttempts.map(([a, t, d]) => tryGet(a, t, d).catch(() => null)));
+  const timedGet = getHits.find((h) => h?.timed?.length);
+  if (timedGet) return timedGet;
+  const plainGet = getHits.find((h) => h?.lyrics);
+  if (plainGet) return plainGet;
 
   const searchQueries = [
     [artist, cleanTitle || title].filter(Boolean).join(' '),
     cleanTitle || title,
-    [artistVariants[1] || artist, cleanTitle].filter(Boolean).join(' '),
   ]
     .map((q) => q.slice(0, 180).trim())
     .filter((q, i, arr) => q && arr.indexOf(q) === i);
@@ -1790,11 +1778,15 @@ async function fetchLrclibTimed(
     duration?: number;
   };
   const results: SearchHit[] = [];
-  for (const q of searchQueries) {
-    const searchRes = await fetch(
-      `https://lrclib.net/api/search?${new URLSearchParams({ q })}`,
-      { signal: ctrl, headers },
-    ).catch(() => null);
+  const searches = await Promise.all(
+    searchQueries.map((q) =>
+      fetch(`https://lrclib.net/api/search?${new URLSearchParams({ q })}`, {
+        signal: ctrl,
+        headers,
+      }).catch(() => null),
+    ),
+  );
+  for (const searchRes of searches) {
     if (!searchRes?.ok) continue;
     const batch = (await searchRes.json()) as SearchHit[];
     if (Array.isArray(batch)) results.push(...batch);
@@ -1900,14 +1892,11 @@ async function fetchYoutubeCaptionsTimed(
       else s += 4;
       return s;
     };
-    const ordered = [...tracks].sort((a, b) => rank(b) - rank(a));
-    for (const track of ordered.slice(0, 4)) {
-      const base = track?.base_url;
-      if (!base) continue;
-      const parsed = await parseCaptionTrack(base).catch(() => null);
-      if (parsed && parsed.timed.length >= 4) return parsed;
-    }
-    return null;
+    const ordered = [...tracks].sort((a, b) => rank(b) - rank(a)).slice(0, 3);
+    const parsed = await Promise.all(
+      ordered.map((track) => (track?.base_url ? parseCaptionTrack(track.base_url).catch(() => null) : null)),
+    );
+    return parsed.find((p) => p && p.timed.length >= 4) || null;
   } catch {
     return null;
   }
@@ -1978,10 +1967,14 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
   let source: LyricsResult['source'] = null;
   let syncOffsetMs = 0;
 
+  const metaP = getTrack(videoId, { light: true }).catch(() => null);
   try {
-    const lyrics = await innertube.music.getLyrics(videoId);
-    if (lyrics) {
-      const anyL = lyrics as any;
+    const [ytLyrics] = await Promise.all([
+      innertube.music.getLyrics(videoId).catch(() => null),
+      metaP,
+    ]);
+    if (ytLyrics) {
+      const anyL = ytLyrics as any;
       text = String(anyL.description?.text || anyL.description || anyL.lyrics?.text || '') || null;
       const timedSrc =
         anyL.lyrics?.lines ||
@@ -2007,73 +2000,51 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
       if (text && !looksLikeLyrics(text) && !timed?.length) text = null;
     }
   } catch {
-    /* fallback LRCLIB */
+    /* fallback */
   }
 
-  // LRCLIB uniquement si pas de timed YouTube (ne jamais écraser le sync YTM)
-  if (!timed?.length || !text) {
-    try {
-      const meta = await getTrack(videoId, { light: true }).catch(() => null);
-      const title = meta?.track?.title || '';
-      const artist =
-        meta?.track?.artists?.map((a) => a.name).filter(Boolean).join(' ') ||
-        meta?.track?.artists?.[0]?.name ||
-        '';
-      const durationSec =
-        typeof meta?.track?.durationSeconds === 'number'
-          ? meta.track.durationSeconds
-          : undefined;
-      const ext = await fetchLrclibTimed(artist, title, durationSec);
-      if (ext) {
-        if (!timed?.length && ext.timed?.length) {
-          const aligned = alignTimedToTrack(ext.timed, durationSec, ext.sourceDurationSec);
-          timed = aligned.timed;
-          syncOffsetMs = aligned.offsetMs;
-          source = 'lrclib';
-        }
-        if (!text && ext.lyrics) text = ext.lyrics;
-        else if (ext.lyrics && !timed?.length) text = text || ext.lyrics;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
+  const meta = await metaP;
+  const title = meta?.track?.title || '';
+  const artist =
+    meta?.track?.artists?.map((a) => a.name).filter(Boolean).join(' ') ||
+    meta?.track?.artists?.[0]?.name ||
+    '';
+  const durationSec =
+    typeof meta?.track?.durationSeconds === 'number' ? meta.track.durationSeconds : undefined;
 
-  // Sous-titres : timings réels, même si le texte ASR est sale.
-  // On les garde de côté pour y coller une feuille Genius ensuite.
   let caps: { lyrics: string; timed: { startMs: number; text: string }[] } | null = null;
-  if (source !== 'youtube' && source !== 'lrclib') {
-    try {
-      caps = await fetchYoutubeCaptionsTimed(videoId);
-    } catch {
-      caps = null;
+  const official = source === 'youtube' || source === 'lrclib';
+  if (!official || !timed?.length || !looksLikeLyrics(text)) {
+    const needLrc = !timed?.length || !looksLikeLyrics(text);
+    const needCaps = source !== 'youtube' && source !== 'lrclib';
+    const needPlain = !looksLikeLyrics(text);
+    const [ext, capHit, ovh, genius] = await Promise.all([
+      needLrc ? fetchLrclibTimed(artist, title, durationSec).catch(() => null) : null,
+      needCaps ? fetchYoutubeCaptionsTimed(videoId).catch(() => null) : null,
+      needPlain ? fetchLyricsOvh(artist, title).catch(() => null) : null,
+      needPlain
+        ? import('./lyricsGenius.js')
+            .then((m) => m.fetchGeniusLyrics(artist, title))
+            .catch(() => null)
+        : null,
+    ]);
+    if (ext) {
+      if (!timed?.length && ext.timed?.length) {
+        const aligned = alignTimedToTrack(ext.timed, durationSec, ext.sourceDurationSec);
+        timed = aligned.timed;
+        syncOffsetMs = aligned.offsetMs;
+        source = 'lrclib';
+      }
+      if (!looksLikeLyrics(text) && ext.lyrics) text = ext.lyrics;
     }
-  }
-
-  // Dernier recours texte : lyrics.ovh puis Genius.com
-  if (!looksLikeLyrics(text)) {
-    try {
-      const meta = await getTrack(videoId, { light: true }).catch(() => null);
-      const title = meta?.track?.title || '';
-      const artist =
-        meta?.track?.artists?.map((a) => a.name).filter(Boolean).join(' ') ||
-        meta?.track?.artists?.[0]?.name ||
-        '';
-      const plain = await fetchLyricsOvh(artist, title);
-      if (plain) {
-        text = plain;
-        source = source || 'lyrics.ovh';
-      }
-      if (!text) {
-        const { fetchGeniusLyrics } = await import('./lyricsGenius.js');
-        const g = await fetchGeniusLyrics(artist, title);
-        if (g?.lyrics) {
-          text = g.lyrics;
-          source = 'genius';
-        }
-      }
-    } catch {
-      /* ignore */
+    caps = capHit;
+    if (!looksLikeLyrics(text) && ovh) {
+      text = ovh;
+      source = source || 'lyrics.ovh';
+    }
+    if (!looksLikeLyrics(text) && genius?.lyrics) {
+      text = genius.lyrics;
+      source = 'genius';
     }
   }
 
@@ -2107,37 +2078,24 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
   // Texte brut sans timings : on les estime pour que le suivi avance
   // comme sur un titre qui a un LRC (Welcome to the Internet).
   if (!timed?.length && looksLikeLyrics(text)) {
-    try {
-      const meta = await getTrack(videoId, { light: true }).catch(() => null);
-      const durationSec =
-        typeof meta?.track?.durationSeconds === 'number' ? meta.track.durationSeconds : undefined;
-      const estimated = estimateTimedFromPlain(text!, durationSec);
-      if (estimated.length >= 4) {
-        timed = estimated;
-        source = 'estimated';
-      }
-    } catch {
-      /* ignore */
+    const estimated = estimateTimedFromPlain(text!, durationSec);
+    if (estimated.length >= 4) {
+      timed = estimated;
+      source = 'estimated';
     }
   }
 
   // Dernier filet : timings hors durée du titre → texte seul
   // (sauf captions YT / estimation : ils couvrent volontairement toute la piste)
   if (timed?.length && source !== 'captions' && source !== 'estimated' && source !== 'aligned') {
-    try {
-      const meta = await getTrack(videoId, { light: true }).catch(() => null);
-      const dur =
-        typeof meta?.track?.durationSeconds === 'number' ? meta.track.durationSeconds : 0;
-      if (dur >= 20) {
-        const last = timed[timed.length - 1]!.startMs / 1000;
-        if (last > dur * 1.4 || last < dur * 0.35) {
-          timed = null;
-          source = null;
-          syncOffsetMs = 0;
-        }
+    const dur = durationSec || 0;
+    if (dur >= 20) {
+      const last = timed[timed.length - 1]!.startMs / 1000;
+      if (last > dur * 1.4 || last < dur * 0.35) {
+        timed = null;
+        source = null;
+        syncOffsetMs = 0;
       }
-    } catch {
-      /* keep */
     }
   }
 

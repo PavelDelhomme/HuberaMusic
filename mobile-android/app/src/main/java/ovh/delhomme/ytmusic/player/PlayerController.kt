@@ -98,7 +98,7 @@ class PlayerController(
     private var silenceSkipTrackId: String? = null
     /** Fin de dernière lyric (ms) pour le titre courant. */
     private var lastLyricEndMs: Long = -1L
-    private var lyricsFetchTrackId: String? = null
+    private val lyricsWarmed = HashSet<String>()
     private var userQueueEnd: Int = 0
     private var sourceId: String? = null
     private var sourceKind: String? = null
@@ -1344,17 +1344,24 @@ class PlayerController(
     }
 
     private fun prefetchLyricsEnd(trackId: String) {
-        if (lyricsFetchTrackId == trackId) return
-        lyricsFetchTrackId = trackId
+        if (!lyricsWarmed.add(trackId)) return
         scope.launch(Dispatchers.IO) {
-            val endMs = runCatching {
+            runCatching {
                 val r = YtMusicApp.instance.container.api.lyrics(trackId)
                 val timed = r.timed.orEmpty()
-                if (timed.isNotEmpty()) timed.maxOf { it.startMsLong() } else -1L
-            }.getOrDefault(-1L)
-            if (silenceActiveTrackId == trackId) {
-                lastLyricEndMs = endMs
-            }
+                val prefs = context.getSharedPreferences("plm_lyrics_cache_v5", Context.MODE_PRIVATE)
+                prefs.edit()
+                    .putString("t_$trackId", r.lyrics ?: "")
+                    .putString("s_$trackId", r.source)
+                    .putString(
+                        "l_$trackId",
+                        timed.joinToString("\n") { "${it.startMsLong()}|${it.text}" },
+                    )
+                    .apply()
+                if (silenceActiveTrackId == trackId && timed.isNotEmpty()) {
+                    lastLyricEndMs = timed.maxOf { it.startMsLong() }
+                }
+            }.onFailure { lyricsWarmed.remove(trackId) }
         }
     }
 
@@ -1910,6 +1917,8 @@ class PlayerController(
         track?.id?.takeIf { it != lastCoverPrefetchId }?.let { id ->
             lastCoverPrefetchId = id
             CoverPrefetcher.warmCovers(queue, idx.coerceIn(0, (queue.size - 1).coerceAtLeast(0)), ahead = 2, behind = 0)
+            prefetchLyricsEnd(id)
+            queue.getOrNull(idx + 1)?.id?.let { prefetchLyricsEnd(it) }
         }
         persistLocalSnapshot()
     }

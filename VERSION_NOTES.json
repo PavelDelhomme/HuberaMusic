@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-04",
   "versions": [
     {
+      "version": "1.3.147",
+      "date": "2026-09-04",
+      "title": "Paroles plus vite, déjà prêtes au prochain titre",
+      "notes": [
+        "Les paroles s’affichent plus vite : les sources sont interrogées en même temps au lieu les unes après les autres",
+        "Le titre suivant a déjà ses paroles en cache quand tu l’ouvres"
+      ]
+    },
+    {
       "version": "1.3.146",
       "date": "2026-09-04",
       "title": "Paroles plus justes, titre suivant visible",
