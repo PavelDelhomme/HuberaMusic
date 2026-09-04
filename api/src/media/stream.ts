@@ -674,12 +674,15 @@ export async function handleStream(req: Request, res: Response) {
       // Budget borné : avant, un downloadTrack lent mangeait les 95 s de deadline
       // et le fallback relais/googlevideo n’avait plus de temps → 502/504 garanti.
       // Le téléchargement continue en fond (downloadInflight) pour la requête suivante.
+      const budget = midRangeWaitMs(videoId);
       const dl = downloadTrack(videoId);
       dl.catch(() => {
         /* poursuivi en fond — l’erreur est traitée par le await borné ci-dessous */
       });
       try {
-        await withDeadline('downloadTrack', dl, 35_000);
+        // Budget épuisé par les Ranges précédents : au relais sans attendre.
+        if (budget < 1_000) throw new Error('budget disque épuisé');
+        await withDeadline('downloadTrack', dl, budget);
       } catch (err) {
         const msg = String((err as Error).message || err);
         // Cooldown bot : Exo retry Mid-Range × N — 1 log / 60 s max
@@ -1270,7 +1273,28 @@ function wantsDirectRedirect(req: Request): boolean {
 const downloadInflight = new Map<string, Promise<string>>();
 /** Après échec bot/cooldown : ne pas relancer Innertube/yt-dlp en boucle (Exo multi-Range). */
 const downloadFailUntil = new Map<string, { until: number; msg: string }>();
+/** Début du téléchargement en cours, pour borner l'attente cumulée des Ranges. */
+const downloadStartedAt = new Map<string, number>();
 let lastMidRangeCoolingLog = 0;
+
+const MID_RANGE_BUDGET_MS = 35_000;
+
+/**
+ * Temps qu'un Range peut encore accorder au téléchargement disque.
+ *
+ * Le lecteur redemande le même Range toutes les quelques secondes, et tous ces
+ * appels retombent sur **un seul** téléchargement, qui enchaîne proxies,
+ * cookies et formats et peut durer plusieurs minutes. Un budget par requête
+ * faisait donc repayer l'attente complète à chaque fois : trente-cinq secondes
+ * de silence par Range, alors que le relais googlevideo, lui, répond en une
+ * fraction de seconde. Le budget court désormais depuis le lancement du
+ * téléchargement, pas depuis l'arrivée de la requête.
+ */
+function midRangeWaitMs(videoId: string): number {
+  const started = downloadStartedAt.get(videoId);
+  if (!started) return MID_RANGE_BUDGET_MS;
+  return Math.max(0, MID_RANGE_BUDGET_MS - (Date.now() - started));
+}
 
 export async function downloadTrack(videoId: string): Promise<string> {
   ensureCache();
@@ -1388,22 +1412,27 @@ export async function downloadTrack(videoId: string): Promise<string> {
     }
     if (sawBot && lastErr) noteYtDlpFailure(lastErr);
     const failMsg = lastErr?.message || 'Audio download KO';
+    // Quand YouTube nous prend pour un robot, réessayer quinze secondes plus tard
+    // relance des minutes de tentatives vouées à l'échec pendant que le lecteur
+    // attend. Le relais googlevideo sert très bien le morceau en attendant.
     if (/cooling down|Sign in to confirm|rate-limited|not a bot|LOGIN_REQUIRED/i.test(failMsg)) {
       downloadFailUntil.set(videoId, {
-        until: Date.now() + Math.max(15_000, ytDlpCooldownRemainingMs()),
+        until: Date.now() + Math.max(180_000, ytDlpCooldownRemainingMs()),
         msg: failMsg.slice(0, 160),
       });
     } else {
       downloadFailUntil.set(videoId, {
-        until: Date.now() + 12_000,
+        until: Date.now() + 30_000,
         msg: failMsg.slice(0, 160),
       });
     }
     throw lastErr || new Error('Audio download KO');
   })().finally(() => {
     downloadInflight.delete(videoId);
+    downloadStartedAt.delete(videoId);
   });
 
+  downloadStartedAt.set(videoId, Date.now());
   downloadInflight.set(videoId, job);
   return job;
 }
