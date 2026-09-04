@@ -32,6 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -202,7 +203,8 @@ fun AccountScreen(
                 val title = when (phase) {
                     ApkUpdateManager.Phase.Downloading ->
                         "Téléchargement… ${(updateUi.progress * 100).toInt()} %"
-                    ApkUpdateManager.Phase.Installing -> "Installation…"
+                    ApkUpdateManager.Phase.Installing ->
+                        "Préparation installateur… ${(updateUi.progress * 100).toInt()} %"
                     ApkUpdateManager.Phase.AwaitingConfirm -> "Confirmer l’installation"
                     ApkUpdateManager.Phase.Available -> "Mettre à jour l’application"
                     ApkUpdateManager.Phase.UpToDate -> "Application à jour"
@@ -218,34 +220,50 @@ fun AccountScreen(
                 }
                 val highlight = updateUi.available ||
                     phase == ApkUpdateManager.Phase.Downloading ||
+                    phase == ApkUpdateManager.Phase.Installing ||
+                    phase == ApkUpdateManager.Phase.Checking ||
                     phase == ApkUpdateManager.Phase.AwaitingConfirm ||
                     phase == ApkUpdateManager.Phase.Error
-                AccountRow(
-                    icon = {
-                        Icon(
-                            Icons.Default.SystemUpdate,
-                            contentDescription = null,
-                            tint = if (highlight) accentRed else Color.Unspecified,
-                        )
-                    },
-                    title = title,
-                    subtitle = subtitle,
-                    titleColor = if (highlight) accentRed else Color.Unspecified,
-                    onClick = {
-                        if (busy) {
-                            context.toastMain(subtitle.ifBlank { "Mise à jour en cours…" })
-                            return@AccountRow
-                        }
-                        if (phase == ApkUpdateManager.Phase.UpToDate ||
-                            (phase == ApkUpdateManager.Phase.Idle && !updateUi.available)
-                        ) {
-                            // Force re-check puis éventuellement DL
+                Column(Modifier.fillMaxWidth()) {
+                    AccountRow(
+                        icon = {
+                            Icon(
+                                Icons.Default.SystemUpdate,
+                                contentDescription = null,
+                                tint = if (highlight) accentRed else Color.Unspecified,
+                            )
+                        },
+                        title = title,
+                        subtitle = subtitle,
+                        titleColor = if (highlight) accentRed else Color.Unspecified,
+                        onClick = {
+                            if (busy) {
+                                context.toastMain(subtitle.ifBlank { "Mise à jour en cours…" })
+                                return@AccountRow
+                            }
+                            context.toastMain("Mise à jour… la barre avance ci-dessous")
                             updater.startManualUpdate()
-                            return@AccountRow
+                        },
+                    )
+                    if (busy || phase == ApkUpdateManager.Phase.AwaitingConfirm) {
+                        val determinate = phase == ApkUpdateManager.Phase.Downloading ||
+                            phase == ApkUpdateManager.Phase.Installing
+                        if (determinate) {
+                            LinearProgressIndicator(
+                                progress = { updateUi.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                            )
                         }
-                        updater.startManualUpdate()
-                    },
-                )
+                    }
+                }
             }
 
             item {

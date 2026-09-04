@@ -1,15 +1,12 @@
 package ovh.delhomme.ytmusic.update
 
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +44,7 @@ class ApkUpdateManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var updateJob: Job? = null
     private val busy = AtomicBoolean(false)
+    private val notifier = UpdateProgressNotifier(context.applicationContext)
 
     enum class Phase {
         Idle,
@@ -247,7 +245,7 @@ class ApkUpdateManager(
     suspend fun refreshAccountStatus() {
         val current = _ui.value
         if (current.phase == Phase.Downloading || current.phase == Phase.Installing ||
-            current.phase == Phase.Checking
+            current.phase == Phase.Checking || current.phase == Phase.AwaitingConfirm
         ) {
             // Job en cours : ne pas écraser le progrès
             return
@@ -336,26 +334,30 @@ class ApkUpdateManager(
 
     /**
      * Clic Compte « Mettre à jour » : tourne hors composition (survit navigation).
+     * Publie l’état **tout de suite** (thread UI) pour que le bouton ne paraisse pas mort.
      */
     fun startManualUpdate() {
         if (!busy.compareAndSet(false, true)) {
             AppLog.i("apk-update", "déjà en cours phase=${_ui.value.phase}")
             return
         }
+        publish(
+            _ui.value.copy(
+                phase = Phase.Checking,
+                message = "Vérification de la version…",
+                progress = 0f,
+                available = true,
+            ),
+        )
+        notifier.show("Mise à jour PLM", "Vérification de la version…", null, indeterminate = true)
         updateJob?.cancel()
         updateJob = scope.launch {
             try {
-                publish(
-                    _ui.value.copy(
-                        phase = Phase.Checking,
-                        message = "Vérification de la version…",
-                        progress = 0f,
-                    ),
-                )
                 val check = check(force = true, respectSnooze = false)
                 val remote = check.info?.versionCode ?: 0
                 val remoteName = check.info?.versionName
                 if (remote <= BuildConfig.VERSION_CODE) {
+                    notifier.cancel()
                     publish(
                         UiState(
                             phase = Phase.UpToDate,
@@ -372,18 +374,39 @@ class ApkUpdateManager(
                     publish(
                         UiState(
                             phase = Phase.Installing,
-                            message = "Lancement de l’installateur (${remoteName ?: remote})…",
+                            message = "Préparation de l’installateur (${remoteName ?: remote})…",
                             remoteName = remoteName,
                             remoteCode = remote,
                             available = true,
-                            progress = 1f,
+                            progress = 0f,
                         ),
                     )
+                    notifier.show(
+                        "Mise à jour PLM",
+                        "Préparation de l’installateur…",
+                        0,
+                        indeterminate = true,
+                    )
                     val msg = launchInstall(pending, remote)
+                    val okInstall = msg.startsWith("Installation")
+                    if (okInstall) {
+                        notifier.show(
+                            "Mise à jour PLM",
+                            "Confirme l’installation — PLM se relancera ensuite",
+                            100,
+                            indeterminate = false,
+                        )
+                    } else {
+                        notifier.cancel()
+                    }
                     publish(
                         UiState(
-                            phase = if (msg.startsWith("Installation")) Phase.AwaitingConfirm else Phase.Error,
-                            message = msg,
+                            phase = if (okInstall) Phase.AwaitingConfirm else Phase.Error,
+                            message = if (okInstall) {
+                                "Confirme l’installation — PLM se relancera toute seule"
+                            } else {
+                                msg
+                            },
                             remoteName = remoteName,
                             remoteCode = remote,
                             available = true,
@@ -402,20 +425,33 @@ class ApkUpdateManager(
                         progress = 0f,
                     ),
                 )
+                notifier.show("Mise à jour PLM", "Téléchargement… 0 %", 0, indeterminate = false)
                 val msg = downloadAndInstall(check.info) { p ->
                     val pct = (p * 100).toInt().coerceIn(0, 99)
+                    val line = "Téléchargement ${remoteName ?: remote}… $pct %"
                     _ui.update {
                         it.copy(
                             phase = Phase.Downloading,
                             progress = p,
-                            message = "Téléchargement ${remoteName ?: remote}… $pct %",
+                            message = line,
                             remoteName = remoteName,
                             remoteCode = remote,
                             available = true,
                         )
                     }
+                    notifier.show("Mise à jour PLM", line, pct, indeterminate = false)
                 }
                 val ok = msg.startsWith("Installation")
+                if (ok) {
+                    notifier.show(
+                        "Mise à jour PLM",
+                        "Confirme l’installation — PLM se relancera ensuite",
+                        100,
+                        indeterminate = false,
+                    )
+                } else {
+                    notifier.cancel()
+                }
                 publish(
                     UiState(
                         phase = when {
@@ -425,7 +461,7 @@ class ApkUpdateManager(
                             else -> Phase.Error
                         },
                         message = when {
-                            ok -> "$msg — confirme sur l’écran système, puis rouvre PLM"
+                            ok -> "Confirme l’installation — PLM se relancera toute seule"
                             else -> msg
                         },
                         remoteName = remoteName,
@@ -437,6 +473,7 @@ class ApkUpdateManager(
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 AppLog.w("apk-update", "manual update fail", e)
+                notifier.cancel()
                 publish(
                     _ui.value.copy(
                         phase = Phase.Error,
@@ -475,6 +512,7 @@ class ApkUpdateManager(
             }
         }
         clearSnooze()
+        UpdateRelaunch.markPending(context)
         val ok = runCatching { installViaPackageInstaller(file) }.getOrElse { err ->
             AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
             withContext(Dispatchers.Main) { installApkViaView(file) }
@@ -672,10 +710,11 @@ class ApkUpdateManager(
         publish(
             _ui.value.copy(
                 phase = Phase.Installing,
-                progress = 1f,
-                message = "Lancement de l’installateur (v$remote)…",
+                progress = 0f,
+                message = "Préparation de l’installateur (v$remote)… 0 %",
             ),
         )
+        notifier.show("Mise à jour PLM", "Préparation de l’installateur… 0 %", 0, indeterminate = false)
         launchInstall(out, remote)
     }
 
@@ -688,16 +727,55 @@ class ApkUpdateManager(
         if (Build.VERSION.SDK_INT >= 34) {
             runCatching { params.setDontKillApp(true) }
         }
+        UpdateRelaunch.markPending(context)
         val sessionId = installer.createSession(params)
         installer.openSession(sessionId).use { session ->
+            val total = file.length().coerceAtLeast(1L)
             file.inputStream().use { input ->
                 session.openWrite("base.apk", 0, file.length()).use { out ->
-                    input.copyTo(out)
+                    val buf = ByteArray(256 * 1024)
+                    var written = 0L
+                    var lastPct = -1
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        written += n
+                        val pct = ((written * 100L) / total).toInt().coerceIn(0, 99)
+                        if (pct != lastPct) {
+                            lastPct = pct
+                            val line = "Préparation de l’installateur… $pct %"
+                            publish(
+                                _ui.value.copy(
+                                    phase = Phase.Installing,
+                                    progress = (written.toFloat() / total.toFloat()).coerceIn(0f, 0.99f),
+                                    message = line,
+                                    available = true,
+                                ),
+                            )
+                            notifier.show("Mise à jour PLM", line, pct, indeterminate = false)
+                        }
+                    }
                     session.fsync(out)
                 }
             }
-            val action = "${context.packageName}.UPDATE_INSTALL"
-            val intent = Intent(action).setPackage(context.packageName)
+            publish(
+                _ui.value.copy(
+                    phase = Phase.Installing,
+                    progress = 1f,
+                    message = "Ouverture de l’écran d’installation…",
+                    available = true,
+                ),
+            )
+            notifier.show(
+                "Mise à jour PLM",
+                "Ouverture de l’écran d’installation…",
+                100,
+                indeterminate = true,
+            )
+            val intent = Intent(context, UpdateInstallReceiver::class.java).apply {
+                action = "${context.packageName}.UPDATE_INSTALL"
+            }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     PendingIntent.FLAG_MUTABLE
@@ -705,102 +783,68 @@ class ApkUpdateManager(
                     0
                 }
             val pi = PendingIntent.getBroadcast(context, sessionId, intent, flags)
-            val filter = IntentFilter(action)
-            ContextCompat.registerReceiver(
-                context,
-                object : BroadcastReceiver() {
-                    override fun onReceive(ctx: Context?, intent: Intent?) {
-                        val status = intent?.getIntExtra(
-                            PackageInstaller.EXTRA_STATUS,
-                            PackageInstaller.STATUS_FAILURE,
-                        ) ?: PackageInstaller.STATUS_FAILURE
-                        AppLog.i("apk-update", "install status=$status")
-                        when (status) {
-                            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                                val confirm = if (Build.VERSION.SDK_INT >= 33) {
-                                    intent?.getParcelableExtra(
-                                        Intent.EXTRA_INTENT,
-                                        Intent::class.java,
-                                    )
-                                } else {
-                                    @Suppress("DEPRECATION")
-                                    intent?.getParcelableExtra(Intent.EXTRA_INTENT)
-                                }
-                                confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                confirm?.let { ctx?.startActivity(it) }
-                                publish(
-                                    _ui.value.copy(
-                                        phase = Phase.AwaitingConfirm,
-                                        message = "Confirme l’installation — PLM se rouvrira ensuite",
-                                        available = true,
-                                        progress = 1f,
-                                    ),
-                                )
-                                // Garder le receiver pour le statut final (OK / annulé)
-                                return
-                            }
-                            PackageInstaller.STATUS_SUCCESS -> {
-                                prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
-                                publish(
-                                    UiState(
-                                        phase = Phase.Done,
-                                        message = "Mise à jour installée — réouverture…",
-                                        available = false,
-                                        progress = 1f,
-                                    ),
-                                )
-                                relaunchAppAfterUpdate(ctx ?: context)
-                            }
-                            PackageInstaller.STATUS_FAILURE_ABORTED,
-                            PackageInstaller.STATUS_FAILURE,
-                            PackageInstaller.STATUS_FAILURE_BLOCKED,
-                            PackageInstaller.STATUS_FAILURE_CONFLICT,
-                            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE,
-                            PackageInstaller.STATUS_FAILURE_INVALID,
-                            PackageInstaller.STATUS_FAILURE_STORAGE,
-                            -> {
-                                markInstallCancelled()
-                                publish(
-                                    _ui.value.copy(
-                                        phase = Phase.Error,
-                                        message = "Installation annulée ou échouée — appuie pour réessayer",
-                                        available = true,
-                                    ),
-                                )
-                            }
-                        }
-                        runCatching { ctx?.unregisterReceiver(this) }
-                    }
-                },
-                filter,
-                ContextCompat.RECEIVER_NOT_EXPORTED,
-            )
             session.commit(pi.intentSender)
         }
         return true
     }
 
-    /** Relance PLM juste après une MAJ réussie (avant kill process éventuel). */
-    private fun relaunchAppAfterUpdate(ctx: Context) {
-        val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return
-        launch.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED,
+    /** Appelé depuis [UpdateInstallReceiver] (manifeste — survit au kill du process). */
+    fun onInstallerStatus(ctx: Context, intent: Intent) {
+        val status = intent.getIntExtra(
+            PackageInstaller.EXTRA_STATUS,
+            PackageInstaller.STATUS_FAILURE,
         )
-        val main = android.os.Handler(android.os.Looper.getMainLooper())
-        // Immédiat + rappel : certains OEM tuent le process juste après le broadcast
-        main.post {
-            runCatching { ctx.startActivity(launch) }
-                .onFailure { AppLog.w("apk-update", "relaunch immédiat KO: ${it.message}") }
+        AppLog.i("apk-update", "install status=$status")
+        when (status) {
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                UpdateRelaunch.startConfirmIntent(ctx, intent)
+                publish(
+                    _ui.value.copy(
+                        phase = Phase.AwaitingConfirm,
+                        message = "Confirme l’installation — PLM se relancera toute seule",
+                        available = true,
+                        progress = 1f,
+                    ),
+                )
+                notifier.show(
+                    "Mise à jour PLM",
+                    "Confirme l’installation sur l’écran système",
+                    100,
+                    indeterminate = false,
+                )
+            }
+            PackageInstaller.STATUS_SUCCESS -> {
+                prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
+                notifier.done("Installée — réouverture…")
+                publish(
+                    UiState(
+                        phase = Phase.Done,
+                        message = "Mise à jour installée — réouverture…",
+                        available = false,
+                        progress = 1f,
+                    ),
+                )
+                UpdateRelaunch.relaunch(ctx.applicationContext)
+            }
+            PackageInstaller.STATUS_FAILURE_ABORTED,
+            PackageInstaller.STATUS_FAILURE,
+            PackageInstaller.STATUS_FAILURE_BLOCKED,
+            PackageInstaller.STATUS_FAILURE_CONFLICT,
+            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE,
+            PackageInstaller.STATUS_FAILURE_INVALID,
+            PackageInstaller.STATUS_FAILURE_STORAGE,
+            -> {
+                notifier.cancel()
+                markInstallCancelled()
+                publish(
+                    _ui.value.copy(
+                        phase = Phase.Error,
+                        message = "Installation annulée ou échouée — appuie pour réessayer",
+                        available = true,
+                    ),
+                )
+            }
         }
-        main.postDelayed({
-            runCatching { ctx.startActivity(launch) }
-                .onFailure { AppLog.w("apk-update", "relaunch différé KO: ${it.message}") }
-        }, 600L)
-        main.postDelayed({
-            runCatching { ctx.startActivity(launch) }
-        }, 1_500L)
     }
 
     private fun installApkViaView(file: File) {

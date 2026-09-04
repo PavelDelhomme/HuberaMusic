@@ -75,7 +75,6 @@ import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.MixCollageCover
 import ovh.delhomme.ytmusic.ui.components.PinnedBadge
 import ovh.delhomme.ytmusic.ui.components.TrackRow
-import ovh.delhomme.ytmusic.update.ApkUpdateManager
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -98,20 +97,16 @@ fun HomeScreen(
     val context = LocalContext.current
     var showHistory by remember { mutableStateOf(false) }
     var userPicture by remember { mutableStateOf<String?>(null) }
-    var updateInstalling by remember { mutableStateOf(false) }
 
     state.updatePrompt?.takeIf { it.available }?.let { upd ->
         ovh.delhomme.ytmusic.update.UpdateAvailableDialog(
             versionName = upd.info?.versionName,
-            installing = updateInstalling,
+            updater = container.apkUpdateManager,
             onInstall = {
-                updateInstalling = true
                 container.apkUpdateManager.startManualUpdate()
-                updateInstalling = false
-                vm.consumeUpdatePrompt()
                 Toast.makeText(
                     context,
-                    "Téléchargement… suis la progression dans Compte",
+                    "Téléchargement lancé — la barre avance en haut de l’écran",
                     Toast.LENGTH_LONG,
                 ).show()
             },
