@@ -718,7 +718,7 @@ export const api = {
     req<{
       lyrics: string | null;
       timed?: { startMs: number; text: string }[] | null;
-      source?: 'youtube' | 'lrclib' | 'lrc' | null;
+      source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | null;
       syncOffsetMs?: number;
     }>(`/api/track/${id}/lyrics`),
   streamUrl: (id: string, type: 'audio' | 'video' = 'audio') =>

@@ -2940,7 +2940,7 @@ private fun InlineSyncedLyrics(
     LaunchedEffect(track.id) {
         loading = true
         userOffsetMs = syncPrefs.getLong(track.id, 0L)
-        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v4")
+        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v5")
         val cachedText = lyricsCache.getString("t_${track.id}", null)
         val cachedTimed = lyricsCache.getString("l_${track.id}", null)
         if (!cachedText.isNullOrBlank()) {
@@ -2956,7 +2956,13 @@ private fun InlineSyncedLyrics(
                 parseLrcLines(cachedText)
             }
             timed = normalizeTimedLines(raw, durationMs)
-            lyricsSource = lyricsCache.getString("s_${track.id}", null)
+            if (timed.isEmpty()) {
+                timed = estimateTimedFromPlain(cachedText, durationMs)
+                if (timed.isNotEmpty()) lyricsSource = "estimated"
+            }
+            if (lyricsSource == null) {
+                lyricsSource = lyricsCache.getString("s_${track.id}", null)
+            }
             loading = false
         }
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() && !cachedText.isNullOrBlank()) {
@@ -2969,10 +2975,14 @@ private fun InlineSyncedLyrics(
                 val apiTimed = it.timed.orEmpty()
                 val raw = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
                 timed = normalizeTimedLines(raw, durationMs.coerceAtLeast(0L))
+                if (timed.isEmpty()) {
+                    timed = estimateTimedFromPlain(it.lyrics, durationMs.coerceAtLeast(0L))
+                    if (timed.isNotEmpty()) lyricsSource = "estimated"
+                }
                 runCatching {
                     lyricsCache.edit()
                         .putString("t_${track.id}", it.lyrics)
-                        .putString("s_${track.id}", it.source)
+                        .putString("s_${track.id}", lyricsSource ?: it.source)
                         .putString(
                             "l_${track.id}",
                             timed.joinToString("\n") { l -> "${l.startMsLong()}|${l.text}" },
@@ -3214,6 +3224,42 @@ private fun normalizeTimedLines(
         lines.map { it.copy(startMs = it.startMs * 1000.0) }
     } else {
         lines
+    }
+}
+
+/**
+ * Même idée que le serveur : sans LRC, on répartit les lignes sur la durée
+ * pour que le suivi avance — comme sur un titre qui a des timings officiels.
+ */
+private fun estimateTimedFromPlain(raw: String?, durationMs: Long): List<TimedLyricLine> {
+    if (raw.isNullOrBlank()) return emptyList()
+    val lines = raw.split('\n', '\r').map { it.replace('\u00a0', ' ').trim() }.filter { line ->
+        when {
+            line.isEmpty() -> false
+            line.matches(Regex("""^\[.+]$""")) -> false
+            line.matches(Regex("""^\(.+\)$""")) && line.length < 28 -> false
+            line.length < 28 &&
+                line.matches(
+                    Regex(
+                        """^(intro|outro|instrumental|bridge|chorus|refrain|couplet|verse|hook|solo)\b.*""",
+                        RegexOption.IGNORE_CASE,
+                    ),
+                ) -> false
+            else -> true
+        }
+    }
+    if (lines.size < 2) return emptyList()
+    val durSec = if (durationMs >= 20_000L) durationMs / 1000.0 else (lines.size * 3.2).coerceAtLeast(60.0)
+    val intro = (durSec * 0.08).coerceIn(6.0, 18.0)
+    val outro = (durSec * 0.07).coerceIn(5.0, 16.0)
+    val window = (durSec - intro - outro).coerceAtLeast(lines.size * 1.2)
+    val weights = lines.map { it.length.coerceAtLeast(8) }
+    val total = weights.sum().coerceAtLeast(1)
+    var acc = 0
+    return lines.mapIndexed { i, text ->
+        val startMs = ((intro + (acc.toDouble() / total) * window) * 1000.0)
+        acc += weights[i]
+        TimedLyricLine(startMs = startMs, text = text)
     }
 }
 
