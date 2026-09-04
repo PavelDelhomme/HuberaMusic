@@ -2,6 +2,14 @@
   "updatedAt": "2026-09-04",
   "versions": [
     {
+      "version": "1.3.143",
+      "date": "2026-09-04",
+      "title": "Le titre suivant visible sans déplier la file",
+      "notes": [
+        "La pochette laisse assez de hauteur pour lire le titre en cours et le suivant directement sous le lecteur"
+      ]
+    },
+    {
       "version": "1.3.142",
       "date": "2026-09-04",
       "title": "Plus de place pour la suite de la file",
