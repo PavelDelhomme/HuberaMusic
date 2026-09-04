@@ -38,6 +38,7 @@ import {
 } from './mappers.js';
 import { getFullLibrary, getHistory } from '../library/library.js';
 import { listFollows, listSearchHistory } from '../library/prefs.js';
+import { getGlobalCard, setGlobalCard } from '../library/globalCardCache.js';
 import {
   dedupeArtists,
   filterByRelevance,
@@ -188,10 +189,20 @@ function shelvesFrom(sections: any[]): Shelf[] {
 }
 
 export async function getHome(): Promise<Shelf[]> {
-  const innertube = await getYT();
-  const home = await innertube.music.getHomeFeed();
-  const sections = (home as any).sections || (home as any).contents || [];
-  return shelvesFrom(Array.isArray(sections) ? sections : []);
+  const fresh = getGlobalCard<Shelf[]>('yt-home', 45 * 60 * 1000);
+  if (fresh?.length) return fresh;
+  try {
+    const innertube = await getYT();
+    const home = await innertube.music.getHomeFeed();
+    const sections = (home as any).sections || (home as any).contents || [];
+    const shelves = shelvesFrom(Array.isArray(sections) ? sections : []);
+    if (shelves.length) setGlobalCard('yt-home', shelves);
+    return shelves;
+  } catch (err) {
+    const stale = getGlobalCard<Shelf[]>('yt-home', 24 * 60 * 60 * 1000);
+    if (stale?.length) return stale;
+    throw err;
+  }
 }
 
 export async function getHomeMore(page: number, seedIds: string[] = []): Promise<{

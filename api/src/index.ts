@@ -194,6 +194,11 @@ import {
   warmCategoryMixes,
 } from './reco/reco.js';
 import { MIX_TARGET } from './library/mixCache.js';
+import {
+  getLyricOffset,
+  listLyricOffsets,
+  saveLyricOffset,
+} from './library/lyricOffsets.js';
 import { sendBatteryOptimizationMail } from './platform/batteryReport.js';
 import {
   createEmailToken,
@@ -2061,10 +2066,27 @@ app.get('/api/track/:id/related', accountRequired, async (req, res) => {
 
 app.get('/api/track/:id/lyrics', accountRequired, async (req, res) => {
   try {
-    res.json(await getLyrics(p(req.params.id)));
+    const lyrics = await getLyrics(p(req.params.id));
+    res.json({
+      ...lyrics,
+      userOffsetMs: getLyricOffset(req.userId!, p(req.params.id)),
+    });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
+});
+
+app.get('/api/lyric-offsets', accountRequired, (req, res) => {
+  res.json({ offsets: listLyricOffsets(req.userId!) });
+});
+
+app.put('/api/track/:id/lyric-offset', accountRequired, (req, res) => {
+  const offsetMs = saveLyricOffset(
+    req.userId!,
+    p(req.params.id),
+    Number(req.body?.offsetMs ?? req.body?.offset_ms ?? 0),
+  );
+  res.json({ trackId: p(req.params.id), offsetMs });
 });
 
 app.get('/api/artist/:id', accountRequired, async (req, res) => {

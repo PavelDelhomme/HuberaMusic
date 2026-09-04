@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-04",
   "versions": [
     {
+      "version": "1.3.150",
+      "date": "2026-09-04",
+      "title": "Pochettes plus vite, sync paroles mémorisée",
+      "notes": [
+        "Les pochettes restent en mémoire et sur le serveur (plusieurs mois) : moins de requêtes, plus de tuiles vides",
+        "Les cartes d’accueil déjà chargées par quelqu’un sont réutilisées pour tous les comptes — le premier chargement n’est plus à refaire à chaque fois",
+        "Le décalage paroles que tu règles sur un titre est appris pour ce titre : il revient tout seul sur tes autres appareils"
+      ]
+    },
+    {
       "version": "1.3.149",
       "date": "2026-09-04",
       "title": "Le début de chaque titre se joue vraiment",

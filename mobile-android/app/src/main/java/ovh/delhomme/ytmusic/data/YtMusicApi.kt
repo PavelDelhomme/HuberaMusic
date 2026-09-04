@@ -237,6 +237,17 @@ data class LyricsResponse(
     val timed: List<TimedLyricLine>? = null,
     val source: String? = null,
     val syncOffsetMs: Long? = null,
+    val userOffsetMs: Long? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class LyricOffsetBody(
+    val offsetMs: Long = 0L,
+)
+
+@JsonClass(generateAdapter = false)
+data class LyricOffsetsResponse(
+    val offsets: Map<String, Long> = emptyMap(),
 )
 
 @JsonClass(generateAdapter = false)
@@ -558,6 +569,15 @@ interface YtMusicApi {
 
     @GET("api/track/{id}/lyrics")
     suspend fun lyrics(@Path("id") id: String): LyricsResponse
+
+    @GET("api/lyric-offsets")
+    suspend fun lyricOffsets(): LyricOffsetsResponse
+
+    @PUT("api/track/{id}/lyric-offset")
+    suspend fun saveLyricOffset(
+        @Path("id") id: String,
+        @Body body: LyricOffsetBody,
+    ): LyricOffsetBody
 
     @GET("api/reco/similar/{trackId}")
     suspend fun similar(@Path("trackId") trackId: String): SimilarResponse

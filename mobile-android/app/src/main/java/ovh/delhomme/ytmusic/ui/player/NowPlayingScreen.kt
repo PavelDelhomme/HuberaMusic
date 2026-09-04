@@ -2883,6 +2883,7 @@ private fun InlineSyncedLyrics(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var text by remember(track.id) { mutableStateOf<String?>(null) }
     var timed by remember(track.id) { mutableStateOf<List<TimedLyricLine>>(emptyList()) }
     var lyricsSource by remember(track.id) { mutableStateOf<String?>(null) }
@@ -2925,6 +2926,11 @@ private fun InlineSyncedLyrics(
         }
         runCatching { container.api.lyrics(track.id) }
             .onSuccess {
+                val learned = it.userOffsetMs ?: 0L
+                if (learned != 0L && syncPrefs.getLong(track.id, 0L) == 0L) {
+                    userOffsetMs = learned.coerceIn(-15_000L, 15_000L)
+                    syncPrefs.edit().putLong(track.id, userOffsetMs).apply()
+                }
                 text = it.lyrics
                 lyricsSource = it.source
                 val apiTimed = it.timed.orEmpty()
@@ -2993,6 +2999,14 @@ private fun InlineSyncedLyrics(
         val clamped = next.coerceIn(-15_000L, 15_000L)
         userOffsetMs = clamped
         syncPrefs.edit().putLong(track.id, clamped).apply()
+        scope.launch {
+            runCatching {
+                container.api.saveLyricOffset(
+                    track.id,
+                    ovh.delhomme.ytmusic.data.LyricOffsetBody(offsetMs = clamped),
+                )
+            }
+        }
     }
 
     fun nudgeOffset(delta: Long) {

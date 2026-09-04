@@ -69,13 +69,13 @@ class YtMusicApp : Application(), ImageLoaderFactory {
             .crossfade(true)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.10)
+                    .maxSizePercent(0.18)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("coil-covers"))
-                    .maxSizeBytes(48L * 1024L * 1024L)
+                    .maxSizeBytes(96L * 1024L * 1024L)
                     .build()
             }
             .respectCacheHeaders(false)

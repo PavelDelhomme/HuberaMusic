@@ -39,12 +39,57 @@ export function getLyricUserOffsetMs(trackId: string | undefined | null): number
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingPush: { trackId: string; offsetMs: number } | null = null;
+
+function schedulePush(trackId: string, offsetMs: number) {
+  pendingPush = { trackId, offsetMs };
+  if (pushTimer != null) window.clearTimeout(pushTimer);
+  pushTimer = window.setTimeout(() => {
+    const job = pendingPush;
+    pendingPush = null;
+    pushTimer = null;
+    if (!job) return;
+    void import('../../api')
+      .then((m) => m.api.saveLyricOffset(job.trackId, job.offsetMs))
+      .catch(() => undefined);
+  }, 450);
+}
+
 export function setLyricUserOffsetMs(trackId: string, offsetMs: number) {
   const map = readMap();
   const clamped = Math.max(-15_000, Math.min(15_000, Math.round(offsetMs)));
   if (clamped === 0) delete map[trackId];
   else map[trackId] = clamped;
   writeMap(map);
+  schedulePush(trackId, clamped);
+}
+
+/** Fusionne les offsets appris sur le compte (serveur = source si local à 0). */
+export function mergeLyricOffsetsFromServer(offsets: Record<string, number> | null | undefined) {
+  if (!offsets || typeof offsets !== 'object') return;
+  const map = readMap();
+  let changed = false;
+  for (const [id, raw] of Object.entries(offsets)) {
+    const v = typeof raw === 'number' && Number.isFinite(raw) ? Math.round(raw) : 0;
+    if (!id || v === 0) continue;
+    if (map[id] == null || map[id] === 0) {
+      map[id] = Math.max(-15_000, Math.min(15_000, v));
+      changed = true;
+    }
+  }
+  if (changed) writeMap(map);
+}
+
+export function applyServerOffsetIfUnset(trackId: string, offsetMs: number | null | undefined): number {
+  const local = getLyricUserOffsetMs(trackId);
+  if (local !== 0) return local;
+  const v = typeof offsetMs === 'number' && Number.isFinite(offsetMs) ? Math.round(offsetMs) : 0;
+  if (v === 0) return 0;
+  const map = readMap();
+  map[trackId] = Math.max(-15_000, Math.min(15_000, v));
+  writeMap(map);
+  return map[trackId];
 }
 
 /** Lignes chantées seulement — ignore [Verse], (x2), Intro… */
