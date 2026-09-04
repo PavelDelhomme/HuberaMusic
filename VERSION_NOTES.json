@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-04",
   "versions": [
     {
+      "version": "1.3.142",
+      "date": "2026-09-04",
+      "title": "Plus de place pour la suite de la file",
+      "notes": [
+        "Le bouton retour replie d’abord la file d’attente dépliée, et ne ferme le lecteur qu’ensuite",
+        "La barre de progression et les temps occupent moitié moins de hauteur, sans perdre en facilité de prise",
+        "La pochette est légèrement moins haute : les titres à suivre sont visibles sans déplier la file"
+      ]
+    },
+    {
       "version": "1.3.141",
       "date": "2026-09-03",
       "title": "Notifications et appels sans casser l’écoute",

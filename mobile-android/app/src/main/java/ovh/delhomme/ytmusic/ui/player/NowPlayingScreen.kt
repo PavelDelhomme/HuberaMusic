@@ -574,6 +574,9 @@ fun NowPlayingScreen(
         if (!SessionMediaMode.video) videoFullscreen = false
     }
 
+    // File dépliée : le retour la replie d'abord, il ferme le lecteur au coup suivant.
+    BackHandler(enabled = queueInteractive) { collapseQueue() }
+
     BackHandler(enabled = videoFullscreen) { videoFullscreen = false }
 
     LaunchedEffect(ui.queueIndex, ui.queue.size, sheetVisible) {
@@ -834,7 +837,9 @@ fun NowPlayingScreen(
                 Column(Modifier.fillMaxSize()) {
                 Column(
                     Modifier
-                        .weight(if (landscapeLayout) 1f else 0.86f)
+                        // Portrait : un peu moins pour la pochette, un peu plus pour
+                        // l'aperçu de la file — c'est là qu'on lit ce qui vient ensuite.
+                        .weight(if (landscapeLayout) 1f else 0.80f)
                         .fillMaxWidth()
                         .clipToBounds()
                         .graphicsLayer {
@@ -1502,7 +1507,7 @@ fun NowPlayingScreen(
                         onQueueDrag = ::onQueueDrag,
                         onQueueDragEnd = { settleQueue(it) },
                         modifier = Modifier
-                            .weight(0.14f)
+                            .weight(0.20f)
                             .fillMaxWidth()
                             .zIndex(1f)
                             .clipToBounds()
@@ -1566,7 +1571,7 @@ private fun NowPlayingSeekTransport(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        Spacer(Modifier.height(if (landscape) 4.dp else 4.dp))
+        Spacer(Modifier.height(2.dp))
         // Seek par position X (tap court + glissé) — pas le Slider Material3
         // qui mappe mal les taps → ratio 0 / reprise au début.
         var dragRatio by remember { mutableFloatStateOf(-1f) }
@@ -1579,7 +1584,9 @@ private fun NowPlayingSeekTransport(
         PlayerSeekBar(
             progress = shownProgress.coerceIn(0f, 1f),
             buffered = bufferedFrac,
-            touchHeight = if (landscape) 48.dp else 64.dp,
+            // Les 64 dp étaient surtout du vide autour d'un trait de 4 dp. On en
+            // rend la moitié à la file d'attente, en gardant une prise franche.
+            touchHeight = 40.dp,
             trackHeight = 4.dp,
             thumbSize = if (dragRatio >= 0f || scrub >= 0f) 16.dp else 12.dp,
             onScrub = { ratio ->
@@ -1616,7 +1623,7 @@ private fun NowPlayingSeekTransport(
                 color = PlayerMuted,
             )
         }
-        Spacer(Modifier.height(if (landscape) 4.dp else 4.dp))
+        Spacer(Modifier.height(2.dp))
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
