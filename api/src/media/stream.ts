@@ -683,8 +683,12 @@ export async function handleStream(req: Request, res: Response) {
         // Budget épuisé par les Ranges précédents : au relais sans attendre.
         if (budget < 1_000) throw new Error('budget disque épuisé');
         await withDeadline('downloadTrack', dl, budget);
+        noteMidRangeDownload(true);
       } catch (err) {
         const msg = String((err as Error).message || err);
+        // Un budget déjà consommé par les Ranges précédents ne dit rien de la
+        // santé des téléchargements : il ne doit pas peser sur le budget.
+        if (!msg.includes('budget disque épuisé')) noteMidRangeDownload(false);
         // Cooldown bot : Exo retry Mid-Range × N — 1 log / 60 s max
         if (/cooling down|bot\/rate-limit|Sign in to confirm|rate-limited/i.test(msg)) {
           const now = Date.now();
@@ -1277,7 +1281,25 @@ const downloadFailUntil = new Map<string, { until: number; msg: string }>();
 const downloadStartedAt = new Map<string, number>();
 let lastMidRangeCoolingLog = 0;
 
-const MID_RANGE_BUDGET_MS = 35_000;
+const MID_RANGE_BUDGET_MAX_MS = 35_000;
+const MID_RANGE_BUDGET_MIN_MS = 3_000;
+let midRangeBudgetMs = MID_RANGE_BUDGET_MAX_MS;
+
+/**
+ * Le budget se réduit de moitié à chaque téléchargement manqué et repart au
+ * maximum dès qu'un aboutit.
+ *
+ * Quand YouTube nous prend pour un robot, aucun téléchargement ne passe :
+ * attendre trente-cinq secondes le cache disque ne fait que couper le son,
+ * alors que le relais googlevideo répond dans la foulée. Renoncer une fois
+ * pour toutes au cache serait tout aussi mauvais — il rend les déplacements
+ * dans le morceau instantanés — d'où ce retour automatique au budget plein.
+ */
+function noteMidRangeDownload(ok: boolean) {
+  midRangeBudgetMs = ok
+    ? MID_RANGE_BUDGET_MAX_MS
+    : Math.max(MID_RANGE_BUDGET_MIN_MS, Math.floor(midRangeBudgetMs / 2));
+}
 
 /**
  * Temps qu'un Range peut encore accorder au téléchargement disque.
@@ -1292,8 +1314,8 @@ const MID_RANGE_BUDGET_MS = 35_000;
  */
 function midRangeWaitMs(videoId: string): number {
   const started = downloadStartedAt.get(videoId);
-  if (!started) return MID_RANGE_BUDGET_MS;
-  return Math.max(0, MID_RANGE_BUDGET_MS - (Date.now() - started));
+  if (!started) return midRangeBudgetMs;
+  return Math.max(0, midRangeBudgetMs - (Date.now() - started));
 }
 
 export async function downloadTrack(videoId: string): Promise<string> {
