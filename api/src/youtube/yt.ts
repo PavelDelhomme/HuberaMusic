@@ -10,7 +10,7 @@ import {
   markYoutubeProxySuccess,
   youtubeProxyAttempts,
 } from './youtubeProxy.js';
-import { estimateTimedFromPlain, looksLikeLyrics } from './lyricsTiming.js';
+import { estimateTimedFromPlain, looksLikeLyrics, snapPlainToCaptions } from './lyricsTiming.js';
 
 // youtubei.js loggue massivement des Type mismatch (WatchNext / Message) → pollue make logs
 try {
@@ -1522,12 +1522,21 @@ export async function getArtistSongs(
 }
 
 const LYRICS_CACHE_MAX = 400;
-/** bump : timed estimés + sous-titres toutes langues */
-const LYRICS_CACHE_VER = 'v11';
+/** bump : paroles Genius calées sur les sous-titres YouTube */
+const LYRICS_CACHE_VER = 'v12';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'lyrics.ovh' | 'genius' | 'estimated' | null;
+  source?:
+    | 'youtube'
+    | 'lrclib'
+    | 'lrc'
+    | 'captions'
+    | 'lyrics.ovh'
+    | 'genius'
+    | 'estimated'
+    | 'aligned'
+    | null;
   /** Décalage appliqué aux timed (ms) — positif = paroles retardées (corrige avance) */
   syncOffsetMs?: number;
 };
@@ -2030,17 +2039,14 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
     }
   }
 
-  // Fallback niche : captions YouTube (auto) si pas de timed (YTM/LRCLIB)
-  if (!timed?.length) {
+  // Sous-titres : timings réels, même si le texte ASR est sale.
+  // On les garde de côté pour y coller une feuille Genius ensuite.
+  let caps: { lyrics: string; timed: { startMs: number; text: string }[] } | null = null;
+  if (source !== 'youtube' && source !== 'lrclib') {
     try {
-      const caps = await fetchYoutubeCaptionsTimed(videoId);
-      if (caps?.timed?.length) {
-        timed = caps.timed;
-        if (!text) text = caps.lyrics;
-        source = 'captions';
-      }
+      caps = await fetchYoutubeCaptionsTimed(videoId);
     } catch {
-      /* ignore */
+      caps = null;
     }
   }
 
@@ -2080,6 +2086,24 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
     }
   }
 
+  // Feuille propre + horodatages YouTube → suivi aussi juste qu’un LRC.
+  if (
+    !timed?.length &&
+    caps?.timed?.length &&
+    looksLikeLyrics(text)
+  ) {
+    const snapped = snapPlainToCaptions(text!, caps.timed);
+    if (snapped?.length) {
+      timed = snapped;
+      source = 'aligned';
+    }
+  }
+  if (!timed?.length && caps?.timed?.length) {
+    timed = caps.timed;
+    if (!looksLikeLyrics(text)) text = caps.lyrics;
+    source = 'captions';
+  }
+
   // Texte brut sans timings : on les estime pour que le suivi avance
   // comme sur un titre qui a un LRC (Welcome to the Internet).
   if (!timed?.length && looksLikeLyrics(text)) {
@@ -2099,7 +2123,7 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
 
   // Dernier filet : timings hors durée du titre → texte seul
   // (sauf captions YT / estimation : ils couvrent volontairement toute la piste)
-  if (timed?.length && source !== 'captions' && source !== 'estimated') {
+  if (timed?.length && source !== 'captions' && source !== 'estimated' && source !== 'aligned') {
     try {
       const meta = await getTrack(videoId, { light: true }).catch(() => null);
       const dur =
