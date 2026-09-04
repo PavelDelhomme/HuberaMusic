@@ -48,6 +48,17 @@ export async function hydrateAutoplayFromPrefs() {
   }
 }
 
+/** Offsets paroles appris sur le compte → localStorage. */
+export async function hydrateLyricOffsets() {
+  try {
+    const { mergeLyricOffsetsFromServer } = await import('../lib/player/lyricSync');
+    const r = await api.lyricOffsets();
+    mergeLyricOffsetsFromServer(r.offsets);
+  } catch {
+    /* ignore */
+  }
+}
+
 type RepeatMode = 'off' | 'all' | 'one';
 
 function refreshMediaSession() {
@@ -1814,6 +1825,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         .lyrics(seedId)
         .then((r) => {
           if (get().current?.id !== seedId) return;
+          void import('../lib/player/lyricSync').then((m) => {
+            m.applyServerOffsetIfUnset(seedId, r.userOffsetMs);
+          });
           set({
             lyrics: r.lyrics || get().lyrics,
             lyricsTimed: r.timed || null,
@@ -2413,7 +2427,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set({ showLyrics: true, showQueue: false });
     if (current) {
       try {
-        const { lyrics, timed, source } = await api.lyrics(current.id);
+        const { lyrics, timed, source, userOffsetMs } = await api.lyrics(current.id);
+        const { applyServerOffsetIfUnset } = await import('../lib/player/lyricSync');
+        applyServerOffsetIfUnset(current.id, userOffsetMs);
         set({
           lyrics,
           lyricsTimed: timed || null,

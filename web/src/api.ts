@@ -720,7 +720,14 @@ export const api = {
       timed?: { startMs: number; text: string }[] | null;
       source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
       syncOffsetMs?: number;
+      userOffsetMs?: number;
     }>(`/api/track/${id}/lyrics`),
+  lyricOffsets: () => req<{ offsets: Record<string, number> }>('/api/lyric-offsets'),
+  saveLyricOffset: (id: string, offsetMs: number) =>
+    req<{ trackId: string; offsetMs: number }>(`/api/track/${id}/lyric-offset`, {
+      method: 'PUT',
+      body: JSON.stringify({ offsetMs }),
+    }),
   streamUrl: (id: string, type: 'audio' | 'video' = 'audio') =>
     req<{ url: string; expiresAt: number; mimeType: string | null; kind?: string }>(
       `/api/stream/${id}/url${type === 'video' ? '?type=video' : ''}`,
