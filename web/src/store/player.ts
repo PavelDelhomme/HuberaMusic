@@ -15,6 +15,7 @@ import {
 } from '../lib/audio/streamPrefetch';
 import { eqNeedsSameOrigin, setMeterPreferred } from '../lib/audio/equalizer';
 import { resetSilenceSkip, shouldSkipTrailingSilence } from '../lib/audio/silenceSkip';
+import { gateAudioStart } from '../lib/audio/startGate';
 import { trackDurationSeconds, formatClock } from '../lib/util/time';
 import { perfStart } from '../lib/util/perf';
 import { useSession } from './session';
@@ -1013,9 +1014,17 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
       audio.currentTime = 0;
       const p = audio.play();
       if (gen === playGeneration) {
-        usePlayer.setState({ isLoading: false, isPlaying: true, playError: null });
+        usePlayer.setState({ isLoading: true, isPlaying: true, playError: null });
       }
       await p;
+      await gateAudioStart(
+        audio,
+        () => gen === playGeneration && audio.dataset.trackId === track.id,
+        targetVol,
+      );
+      if (gen === playGeneration) {
+        usePlayer.setState({ isLoading: false, isPlaying: true, playError: null });
+      }
       if (typeof console !== 'undefined') {
         console.info(`[play] ${track.id} reuse ${(performance.now() - t0).toFixed(0)}ms`);
       }
@@ -1050,24 +1059,30 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
   const quickSrc = srcFromStandby || streamProxyUrl(track.id);
   const elEarly = usePlayer.getState().audioEl || audio;
   let earlyStarted = false;
+  let startGate: Promise<void> = Promise.resolve();
   try {
     elEarly.src = quickSrc;
     elEarly.dataset.trackId = track.id;
     elEarly.muted = false;
-    elEarly.volume = targetVol;
+    elEarly.volume = 0;
     try {
       elEarly.load();
     } catch {
       /* ignore */
     }
     if (gen === playGeneration) {
-      usePlayer.setState({ isLoading: false, isPlaying: true, playError: null });
+      usePlayer.setState({ isLoading: true, isPlaying: true, playError: null });
     }
     const earlyPlay = elEarly.play();
     earlyStarted = true;
     void earlyPlay.catch(() => {
       earlyStarted = false;
     });
+    startGate = gateAudioStart(
+      elEarly,
+      () => gen === playGeneration && elEarly.dataset.trackId === track.id,
+      targetVol,
+    );
   } catch {
     earlyStarted = false;
   }
@@ -1117,7 +1132,7 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
 
   let usedSrc = src;
   if (gen === playGeneration) {
-    usePlayer.setState({ isLoading: false, isPlaying: true, playError: null });
+    usePlayer.setState({ isLoading: true, isPlaying: true, playError: null });
   }
 
   // Déjà en lecture sur le même proxy → ne pas recharger (évite silence + 2ᵉ clic)
@@ -1201,6 +1216,23 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
     }
   }
   if (gen !== playGeneration) return;
+
+  const stillSame =
+    el.dataset.trackId === track.id &&
+    !el.paused &&
+    (usedSrc === quickSrc || el.src.includes(`/api/stream/${track.id}`));
+  if (stillSame) {
+    await startGate;
+  } else {
+    await gateAudioStart(
+      el,
+      () => gen === playGeneration && el.dataset.trackId === track.id,
+      targetVol,
+    );
+  }
+  if (gen === playGeneration) {
+    usePlayer.setState({ isLoading: false, isPlaying: true, playError: null });
+  }
 
   {
     const s = usePlayer.getState();
