@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -32,6 +33,8 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -358,8 +361,8 @@ fun YtMusicAppContent(
     var pendingUpdate by remember {
         mutableStateOf<ovh.delhomme.ytmusic.update.ApkUpdateManager.CheckResult?>(null)
     }
-    var updateInstalling by remember { mutableStateOf(false) }
     val apkUpdater = remember { container.apkUpdateManager }
+    val updateUi by apkUpdater.ui.collectAsState()
 
     LaunchedEffect(loggedIn) {
         if (loggedIn != true) return@LaunchedEffect
@@ -373,7 +376,14 @@ fun YtMusicAppContent(
         if (loggedIn != true) return@DisposableEffect onDispose { }
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
-            if (pendingUpdate?.available == true || updateInstalling) return@LifecycleEventObserver
+            if (pendingUpdate?.available == true) return@LifecycleEventObserver
+            val phase = apkUpdater.ui.value.phase
+            if (phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ||
+                phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing ||
+                phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Checking
+            ) {
+                return@LifecycleEventObserver
+            }
             if (!apkUpdater.shouldRepromptAfterInstall()) return@LifecycleEventObserver
             scope.launch {
                 val check = runCatching { apkUpdater.checkOnStartup() }.getOrNull() ?: return@launch
@@ -397,15 +407,12 @@ fun YtMusicAppContent(
     pendingUpdate?.takeIf { it.available }?.let { upd ->
         ovh.delhomme.ytmusic.update.UpdateAvailableDialog(
             versionName = upd.info?.versionName,
-            installing = updateInstalling,
+            updater = apkUpdater,
             onInstall = {
-                updateInstalling = true
                 apkUpdater.startManualUpdate()
-                pendingUpdate = null
-                updateInstalling = false
                 Toast.makeText(
                     context,
-                    "Téléchargement… suis la progression dans Compte",
+                    "Téléchargement lancé — la barre avance ici et dans Compte",
                     Toast.LENGTH_LONG,
                 ).show()
             },
@@ -453,6 +460,7 @@ fun YtMusicAppContent(
         }
         false -> LoginScreen(container = container, onLoggedIn = { loggedIn = true })
         true -> {
+            Box(Modifier.fillMaxSize()) {
             pendingApprove?.let { pending ->
                 AlertDialog(
                     onDismissRequest = { pendingApprove = null },
@@ -569,6 +577,66 @@ fun YtMusicAppContent(
                     }
                 },
             )
+            UpdateProgressBanner(
+                ui = updateUi,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .statusBarsPadding(),
+            )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpdateProgressBanner(
+    ui: ovh.delhomme.ytmusic.update.ApkUpdateManager.UiState,
+    modifier: Modifier = Modifier,
+) {
+    val phase = ui.phase
+    val visible = phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Checking ||
+        phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ||
+        phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing ||
+        phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.AwaitingConfirm
+    if (!visible) return
+    val determinate = phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ||
+        phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        shadowElevation = 4.dp,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Text(
+                ui.message.ifBlank {
+                    when (phase) {
+                        ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ->
+                            "Téléchargement… ${(ui.progress * 100).toInt()} %"
+                        ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing ->
+                            "Préparation de l’installateur…"
+                        ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Checking ->
+                            "Vérification de la version…"
+                        else -> "Mise à jour en cours…"
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Spacer(Modifier.height(8.dp))
+            if (determinate) {
+                LinearProgressIndicator(
+                    progress = { ui.progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
         }
     }
 }

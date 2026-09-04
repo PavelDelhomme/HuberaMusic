@@ -107,6 +107,10 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var stallRebindCount: Int = 0
     @Volatile private var stallLastPos: Long = -1L
     @Volatile private var stallPosFrozenSince: Long = 0L
+    /** Début de titre : rattraper l’intro si l’horloge a couru sans son. */
+    @Volatile private var introGuardId: String? = null
+    @Volatile private var introGuardWallElapsed: Long = 0L
+    @Volatile private var introGuardRewound: Boolean = false
     /**
      * Compteur d’épisodes sur LE MÊME titre : survit aux flashes READY après rebind
      * (sinon boucle rebind→READY→stall→rebind sans jamais escalate, Nothing/Blackview).
@@ -428,6 +432,38 @@ class PlaybackService : MediaSessionService() {
         stallHandler.postDelayed(r, 1_200L)
     }
 
+    private fun armIntroGuard(id: String?) {
+        if (id.isNullOrBlank()) {
+            introGuardId = null
+            return
+        }
+        introGuardId = id
+        introGuardWallElapsed = android.os.SystemClock.elapsedRealtime()
+        introGuardRewound = false
+    }
+
+    /**
+     * Si le lecteur démarre déjà à 0,5–1 s alors que ça ne fait que quelques ms
+     * (buffer trop court / AudioTrack qui avale le début), on recale à 0.
+     * Ignoré si on a repris au milieu du titre.
+     */
+    private fun catchSkippedIntro(player: Player) {
+        if (introGuardRewound) return
+        val id = player.currentMediaItem?.mediaId ?: return
+        if (id.isBlank() || id != introGuardId) return
+        val wall = android.os.SystemClock.elapsedRealtime() - introGuardWallElapsed
+        if (wall > 3_500L) {
+            introGuardId = null
+            return
+        }
+        val pos = player.currentPosition
+        if (pos > wall + 280L && pos in 280L..2_000L) {
+            introGuardRewound = true
+            AppLog.i("PlaybackService", "intro skip → 0 id=$id pos=$pos wall=$wall")
+            runCatching { player.seekTo(0L) }
+        }
+    }
+
     private fun refreshPlaybackActiveFlag(player: Player) {
         // Busy dès qu’une file tourne (play / buffer / pause mid-song) — coupe OfflineKeeper.
         Holder.playbackActive = player.mediaItemCount > 0 && (
@@ -446,6 +482,12 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onEvents(player: Player, events: Player.Events) {
+            if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                val pos = runCatching { player.currentPosition }.getOrDefault(0L)
+                val id = player.currentMediaItem?.mediaId
+                if (pos <= 200L) armIntroGuard(id) else introGuardId = null
+            }
+            if (introGuardId != null) catchSkippedIntro(player)
             if (
                 events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
                 events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) ||
@@ -1208,8 +1250,9 @@ class PlaybackService : MediaSessionService() {
             .setBufferDurationsMs(
                 /* minBufferMs */ 15_000,
                 /* maxBufferMs */ 600_000,
-                /* bufferForPlaybackMs */ 350,
-                /* bufferForPlaybackAfterRebufferMs */ 1_200,
+                // 350 ms faisait démarrer trop tôt : l’horloge avançait sans son → intro coupée.
+                /* bufferForPlaybackMs */ 1_500,
+                /* bufferForPlaybackAfterRebufferMs */ 1_500,
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .setTargetBufferBytes(24 * 1024 * 1024)

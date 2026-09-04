@@ -217,38 +217,26 @@ export function SyncedLyrics({
             <button
               type="button"
               className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Retarder d’1 s"
+              title="Retarder de 0,25 s"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 1000));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 250));
                 lastActiveRef.current = -1;
               }}
             >
-              −1 s
+              −0,25
             </button>
             <button
               type="button"
               className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Retarder de 0,75 s"
-              onClick={() => {
-                if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 750));
-                lastActiveRef.current = -1;
-              }}
-            >
-              −0,75
-            </button>
-            <button
-              type="button"
-              className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Paroles trop en avance"
+              title="Retarder de 0,20 s"
               onClick={() => {
                 if (!currentId) return;
                 setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 200));
                 lastActiveRef.current = -1;
               }}
             >
-              Trop tôt
+              −0,20
             </button>
             <span className="min-w-[3.5rem] text-center text-[11px] font-semibold tabular-nums text-yt-muted">
               {userOffsetMs === 0
@@ -257,39 +245,27 @@ export function SyncedLyrics({
             </span>
             <button
               type="button"
-              className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Paroles trop en retard"
+              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+              title="Avancer de 0,20 s"
               onClick={() => {
                 if (!currentId) return;
                 setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -200));
                 lastActiveRef.current = -1;
               }}
             >
-              Trop tard
+              +0,20
             </button>
             <button
               type="button"
               className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Avancer de 0,75 s"
+              title="Avancer de 0,25 s"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -750));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -250));
                 lastActiveRef.current = -1;
               }}
             >
-              +0,75
-            </button>
-            <button
-              type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Avancer d’1 s"
-              onClick={() => {
-                if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -1000));
-                lastActiveRef.current = -1;
-              }}
-            >
-              +1 s
+              +0,25
             </button>
             {userOffsetMs !== 0 && (
               <button
