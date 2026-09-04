@@ -89,18 +89,40 @@ object TelemetryReporter {
                 }
             }.onFailure { e ->
                 AppLog.w("telemetry", "upload failed: ${e.message}")
+                // Hors réseau, c'est la seule trace qui subsistera : on y met tout
+                // ce qui servira à comprendre, pas seulement de quoi compter.
                 runCatching {
                     val ctx = YtMusicApp.instance
                     val compact = org.json.JSONObject()
                         .put("ts", System.currentTimeMillis())
                         .put("level", level)
                         .put("kind", kind)
-                        .put("message", (message ?: "").take(240))
+                        .put("message", (message ?: "").take(8_000))
                         .put("count", 1)
                         .put("key", "$kind|${meta["trackId"]}|${meta["httpStatus"]}|$level")
-                    if (meta["trackId"] != null) compact.put("trackId", meta["trackId"].toString())
-                    if (meta["httpStatus"] is Number) compact.put("http", (meta["httpStatus"] as Number).toInt())
-                    if (meta["errorCode"] is Number) compact.put("code", (meta["errorCode"] as Number).toInt())
+                        .put("appVersion", BuildConfig.VERSION_NAME)
+                        .put("manufacturer", Build.MANUFACTURER)
+                        .put("model", Build.MODEL)
+                        .put("sdk", Build.VERSION.SDK_INT)
+                    if (!stack.isNullOrBlank()) compact.put("stack", stack.take(16_000))
+                    for (champ in listOf(
+                        "trackId", "title", "artist", "diagnosis",
+                        "positionMs", "durationMs", "streak", "network", "networkish", "local",
+                    )) {
+                        meta[champ]?.let { compact.put(champ, it) }
+                    }
+                    if (!compact.has("network") && meta["networkish"] != null) {
+                        compact.put("network", meta["networkish"])
+                    }
+                    (meta["httpStatus"] as? Number)?.let { compact.put("http", it.toInt()) }
+                    (meta["errorCode"] as? Number)?.let { compact.put("code", it.toInt()) }
+                    runCatching {
+                        compact.put(
+                            "breadcrumbs",
+                            org.json.JSONArray(AppLog.breadcrumbSnapshot().takeLast(40)),
+                        )
+                        compact.put("recentLogs", AppLog.recentLogText(12_000))
+                    }
                     TelemetryBuffer.enqueue(ctx, compact)
                 }
             }
@@ -195,10 +217,17 @@ object TelemetryReporter {
                 "artist" to artistLabel.ifBlank { null },
                 "streak" to streak,
                 "networkish" to networkish,
+                "network" to networkish,
                 "local" to local,
                 "diagnosis" to diag,
                 "serious" to serious,
                 "eofMid" to eofMid,
+                "positionMs" to runCatching {
+                    ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.currentPosition
+                }.getOrNull(),
+                "durationMs" to runCatching {
+                    ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.duration?.takeIf { it > 0 }
+                }.getOrNull(),
                 "recentLogs" to AppLog.recentLogText(12_000),
             ),
             force = level == "error",
@@ -274,21 +303,25 @@ object TelemetryReporter {
         if (TelemetryBuffer.pendingCount(ctx) <= 0) return
         val events = TelemetryBuffer.drain(ctx)
         if (events.isEmpty()) return
-        runCatching {
-            container.api.telemetryBatch(
-                mapOf(
-                    "events" to events,
-                    "digest" to true,
-                    "env" to container.apiEnvKind(),
-                    "deviceId" to container.deviceId,
-                ),
-            )
-        }.onFailure {
-            events.forEach { ev ->
-                val o = org.json.JSONObject()
-                ev.forEach { (k, v) -> if (v != null) o.put(k, v) }
-                TelemetryBuffer.enqueue(ctx, o)
-            }
+        // Envoi par tranches : une longue coupure accumule bien plus d'entrées
+        // qu'une requête ne peut en porter confortablement.
+        val echecs = mutableListOf<Map<String, Any?>>()
+        for (tranche in events.chunked(400)) {
+            runCatching {
+                container.api.telemetryBatch(
+                    mapOf(
+                        "events" to tranche,
+                        "digest" to true,
+                        "env" to container.apiEnvKind(),
+                        "deviceId" to container.deviceId,
+                    ),
+                )
+            }.onFailure { echecs += tranche }
+        }
+        echecs.forEach { ev ->
+            val o = org.json.JSONObject()
+            ev.forEach { (k, v) -> if (v != null) o.put(k, v) }
+            TelemetryBuffer.enqueue(ctx, o)
         }
     }
 }

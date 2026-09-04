@@ -798,18 +798,20 @@ app.post(
         trackId?: string;
         http?: number;
       }> = [];
-      for (const ev of raw.slice(0, 20)) {
+      // Une coupure réseau prolongée accumule bien plus de vingt erreurs, et
+      // c'est justement ce qu'on veut pouvoir lire dans le rapport.
+      for (const ev of raw.slice(0, 2_500)) {
         if (!ev || typeof ev !== 'object') continue;
         const e = ev as Record<string, unknown>;
         const level = trunc(e.level || 'error', 32);
         const kind = trunc(e.kind || 'client', 64);
-        const message = e.message ? trunc(e.message, 800) : undefined;
+        const message = e.message ? trunc(e.message, 8_000) : undefined;
         const id = insertTelemetry({
           env,
           level,
           kind,
           message,
-          stack: e.stack ? trunc(e.stack, 8_000) : undefined,
+          stack: e.stack ? trunc(e.stack, 24_000) : undefined,
           userAgent,
           userId,
           deviceId,
@@ -820,6 +822,26 @@ app.post(
             http: e.http,
             code: e.code,
             ts: e.ts,
+            firstTs: e.firstTs,
+            // Horodatage de chaque répétition : restitue le rythme d'une rafale
+            // sans stocker mille fois la même erreur.
+            times: Array.isArray(e.times) ? e.times.slice(0, 200) : undefined,
+            // Détail conservé par l'appareil pendant la coupure — c'est la
+            // matière du rapport, il ne faut surtout pas la jeter ici.
+            title: e.title,
+            artist: e.artist,
+            diagnosis: e.diagnosis,
+            positionMs: e.positionMs,
+            durationMs: e.durationMs,
+            streak: e.streak,
+            network: e.network ?? e.networkish,
+            local: e.local,
+            appVersion: e.appVersion,
+            model: e.model,
+            manufacturer: e.manufacturer,
+            sdk: e.sdk,
+            breadcrumbs: e.breadcrumbs,
+            recentLogs: e.recentLogs,
           },
         });
         digestItems.push({
