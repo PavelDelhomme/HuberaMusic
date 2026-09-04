@@ -56,7 +56,7 @@ export function SyncedLyrics({
 }: {
   text: string | null;
   timed?: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | null;
+  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
 }) {
   const audioEl = usePlayer((s) => s.audioEl);
   const isPlaying = usePlayer((s) => s.isPlaying);
@@ -438,7 +438,7 @@ export function NowPlaying({
   const [lyricsText, setLyricsText] = useState<string | null>(null);
   const [lyricsTimed, setLyricsTimed] = useState<{ startMs: number; text: string }[] | null>(null);
   const [lyricsSource, setLyricsSource] = useState<
-    'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | null
+    'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null
   >(null);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [queueVisible, setQueueVisible] = useState(QUEUE_PAGE);

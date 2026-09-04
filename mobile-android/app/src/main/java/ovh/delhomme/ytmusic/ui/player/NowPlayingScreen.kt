@@ -1768,11 +1768,7 @@ private fun PortraitQueuePreview(
         }
     }
     val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
-    LaunchedEffect(ui.queueIndex, ui.queue.size) {
-        if (ui.queue.isEmpty()) return@LaunchedEffect
-        val target = ui.queueIndex.coerceIn(0, ui.queue.lastIndex)
-        runCatching { previewList.scrollToItem(target.coerceAtLeast(0)) }
-    }
+    // L’aperçu replié montre ce qui vient — pas le titre déjà affiché au-dessus.
     // Header Mix sticky hors LazyColumn — reste visible pendant le scroll
     Column(modifier = modifier.nestedScroll(blockParentDismiss)) {
         val qh = queueHeaderLabels(ui)
@@ -1805,48 +1801,7 @@ private fun PortraitQueuePreview(
                 .weight(1f, fill = false),
             state = previewList,
         ) {
-        val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
-        if (playedBefore.isNotEmpty()) {
-            item {
-                Text(
-                    "Déjà joués",
-                    Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = PlayerMuted,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            itemsIndexed(playedBefore, key = { i, t -> "pp-${t.id}-$i" }) { index, item ->
-                QueueTrackRow(
-                    track = item,
-                    index = index,
-                    highlighted = false,
-                    onClick = { player.playAt(index) },
-                    onLongClick = { onMore?.invoke(item) },
-                    onMove = { from, to -> player.moveInQueue(from, to) },
-                    onMore = onMore?.let { { it(item) } },
-                    onMix = {
-                        scope.launch {
-                            val mix = buildRadioQueue(container.api, "track", item.id, item, mixCache = container.mixCache)
-                            if (mix.isNotEmpty()) {
-                                player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                            }
-                        }
-                    },
-                    radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
-                )
-            }
-        }
-        item {
-            Text(
-                "En cours",
-                Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.labelMedium,
-                color = PlayerMuted,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        val previewFrom = ui.queueIndex.coerceIn(0, boundary)
+        val previewFrom = (ui.queueIndex + 1).coerceIn(0, boundary)
         itemsIndexed(
             ui.queue.subList(previewFrom, boundary),
             key = { i, t -> "ip-${t.id}-${previewFrom + i}" },
