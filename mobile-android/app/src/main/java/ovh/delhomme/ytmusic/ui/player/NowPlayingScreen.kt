@@ -839,7 +839,7 @@ fun NowPlayingScreen(
                     Modifier
                         // Portrait : un peu moins pour la pochette, un peu plus pour
                         // l'aperçu de la file — c'est là qu'on lit ce qui vient ensuite.
-                        .weight(if (landscapeLayout) 1f else 0.80f)
+                        .weight(if (landscapeLayout) 1f else 0.66f)
                         .fillMaxWidth()
                         .clipToBounds()
                         .graphicsLayer {
@@ -1507,7 +1507,7 @@ fun NowPlayingScreen(
                         onQueueDrag = ::onQueueDrag,
                         onQueueDragEnd = { settleQueue(it) },
                         modifier = Modifier
-                            .weight(0.20f)
+                            .weight(0.34f)
                             .fillMaxWidth()
                             .zIndex(1f)
                             .clipToBounds()
