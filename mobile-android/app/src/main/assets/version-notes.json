@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-04",
   "versions": [
     {
+      "version": "1.3.144",
+      "date": "2026-09-04",
+      "title": "Chaque erreur a maintenant son document",
+      "notes": [
+        "Les alertes d’erreur joignent un rapport HTML et texte : chaque titre y a son chapitre, avec ce que le téléphone a vu et ce que le serveur a servi",
+        "Une salve de milliers d’erreurs identiques n’est plus réduite à une ligne « ×1973 » : le document garde le décompte, la chronologie et le détail complet",
+        "Pendant une coupure réseau, l’application conserve le détail de chaque erreur distincte au lieu d’un résumé trop court"
+      ]
+    },
+    {
       "version": "1.3.143",
       "date": "2026-09-04",
       "title": "Le titre suivant visible sans déplier la file",

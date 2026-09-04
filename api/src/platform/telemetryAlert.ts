@@ -1,5 +1,11 @@
 import { sendMail, getAppEnv, appUrl } from './mail.js';
 import { buildTextPdf } from './textPdf.js';
+import {
+  buildIncidentReport,
+  reportAttachments,
+  telemetryAroundDevice,
+  telemetryByIds,
+} from './incidentReport.js';
 import { diagnoseTelemetryEvent, formatDiagnosisText } from './telemetryDiagnose.js';
 import {
   enrichDiagnosisWithTracks,
@@ -347,6 +353,32 @@ export async function maybeAlertTelemetryError(ev: {
 </div>`.trim();
 
   const attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = [];
+  // Rapport complet systématique : le corps du mail reste lisible, le détail
+  // exploitable est dans le document — c'est lui qu'on ouvre pour comprendre.
+  try {
+    const autour = Date.now();
+    const rows = telemetryAroundDevice({
+      deviceId: ev.deviceId,
+      userId: ev.userId,
+      from: autour - 30 * 60_000,
+      to: autour + 60_000,
+      extraIds: [ev.id],
+    });
+    if (rows.length) {
+      const report = buildIncidentReport({
+        titre: `${level.toUpperCase()} · ${ev.kind} · ${diagnosis.family}`,
+        env,
+        events: rows,
+        deviceId: ev.deviceId,
+        userId: ev.userId,
+        userAgent: ev.userAgent,
+        supprimees: skipped,
+      });
+      attachments.push(...reportAttachments(report));
+    }
+  } catch (err) {
+    console.error('[telemetry-alert] rapport KO', err);
+  }
   if (heavy || !ev.stack || logsRaw.length > 2_000) {
     try {
       const pdf = buildTextPdf({
@@ -438,49 +470,95 @@ export async function maybeAlertTelemetryDigest(opts: {
   const env = opts.env || getAppEnv();
   const n = events.reduce((acc, e) => acc + (Number(e.count) || 1), 0);
 
-  const ids = events.map((e) => e.trackId).filter(Boolean) as string[];
+  const trackIds = events.map((e) => e.trackId).filter(Boolean) as string[];
   let tracks: ResolvedTrack[] = [];
   try {
     tracks = await resolveTracksForTelemetry({
-      message: ids.join(' '),
-      meta: { trackIds: ids },
-      limit: 10,
+      message: trackIds.join(' '),
+      meta: { trackIds },
+      limit: 80,
     });
   } catch {
     /* ignore */
   }
   const byId = new Map(tracks.map((t) => [t.id, t]));
 
-  const lines = events.slice(0, 20).map((e) => {
+  // Le corps liste tout ; le détail intégral part en pièce jointe.
+  const lines = events.map((e) => {
     const c = Number(e.count) > 1 ? ` ×${e.count}` : '';
     const t = e.trackId ? byId.get(e.trackId) : undefined;
     const label = t
       ? `${t.title}${t.artist ? ` — ${t.artist}` : ''} (${e.trackId})`
       : [e.trackId, e.http ? `http ${e.http}` : ''].filter(Boolean).join(' · ');
-    return `• ${e.kind}${c} — ${(e.message || '').slice(0, 120)}${label ? ` · ${label}` : ''}`;
+    const premiere = String(e.message || '').split('\n')[0];
+    return `• ${e.kind}${c} — ${premiere.slice(0, 200)}${label ? ` · ${label}` : ''}`;
   });
+
+  let attachments: Array<{ filename: string; content: Buffer; contentType?: string }> = [];
+  let reportNote = '';
+  try {
+    const eventIds = events.map((e) => e.id);
+    const bornes = telemetryByIds(eventIds);
+    const from = bornes.length ? Math.min(...bornes.map((r) => r.created_at)) - 30 * 60_000 : Date.now() - 6 * 3_600_000;
+    const to = bornes.length ? Math.max(...bornes.map((r) => r.created_at)) + 60_000 : Date.now();
+    const rows = telemetryAroundDevice({
+      deviceId: opts.deviceId,
+      userId: opts.userId,
+      from,
+      to,
+      extraIds: eventIds,
+    });
+    if (rows.length) {
+      const report = buildIncidentReport({
+        titre: `${n} occurrence${n > 1 ? 's' : ''} cumulée${n > 1 ? 's' : ''} pendant une coupure réseau`,
+        env,
+        events: rows,
+        deviceId: opts.deviceId,
+        userId: opts.userId,
+        userAgent: opts.userAgent,
+      });
+      attachments = reportAttachments(report);
+      reportNote =
+        `Document joint (HTML + texte) : ${report.occurrenceCount} occurrence${
+          report.occurrenceCount > 1 ? 's' : ''
+        } · ${report.errorCount} erreur${report.errorCount > 1 ? 's' : ''} distincte${
+          report.errorCount > 1 ? 's' : ''
+        } · ${report.trackCount} titre${report.trackCount > 1 ? 's' : ''} documenté${
+          report.trackCount > 1 ? 's' : ''
+        } côté serveur et applicatif. Ouvrir le HTML pour le détail complet.`;
+    }
+  } catch (err) {
+    console.error('[telemetry-alert] rapport digest KO', err);
+  }
+
   const subject = `[PLM ${env}] ${n} erreur${n > 1 ? 's' : ''} cumulée${n > 1 ? 's' : ''} hors-ligne`;
   const text = [
     `Digest télémétrie (appareil hors-ligne puis reconnecté).`,
     `device=${opts.deviceId || '—'} user=${opts.userId || '—'}`,
     `ua=${opts.userAgent || '—'}`,
+    reportNote ? `\n${reportNote}` : '',
     '',
     '--- titres ---',
     formatTracksText(tracks),
     '',
     ...lines,
   ].join('\n');
-  const html = `<div style="font-family:system-ui,sans-serif;max-width:640px">
+  const html = `<div style="font-family:system-ui,sans-serif;max-width:720px">
   <h2>${esc(subject)}</h2>
   <p>Événements tamponnés sur l’appareil, envoyés <strong>en un seul mail</strong> au retour réseau.</p>
   <p>device=${esc(opts.deviceId || '—')} · user=${esc(opts.userId || '—')}</p>
+  ${
+    reportNote
+      ? `<p style="background:#ecfdf5;border:1px solid #6ee7b7;padding:12px 14px;border-radius:8px"><strong>Ouvrir la pièce jointe HTML</strong> — ${esc(reportNote)}</p>`
+      : ''
+  }
   <h3>Titres concernés</h3>
   ${formatTracksHtml(tracks)}
   <ul>${lines.map((l) => `<li>${esc(l.replace(/^• /, ''))}</li>`).join('')}</ul>
 </div>`;
   try {
-    await sendMail({ to, subject, html, text });
-    console.info(`[telemetry-alert] digest sent n=${n} to=${to}`);
+    await sendMail({ to, subject, html, text, attachments });
+    console.info(`[telemetry-alert] digest sent n=${n} to=${to} report=${attachments.length > 0}`);
     return { sent: true };
   } catch (err) {
     console.error('[telemetry-alert] digest mail failed', err);

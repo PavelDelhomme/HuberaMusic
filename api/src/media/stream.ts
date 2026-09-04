@@ -28,6 +28,7 @@ import {
   safeDiskRangeBounds,
 } from './streamHeadCache.js';
 import { findReplacementId, getReplacementId, looksUnavailable } from './trackReplacement.js';
+import { noteStreamNote, noteStreamSource, watchStreamRequest } from './streamLog.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..', '..');
@@ -526,6 +527,7 @@ function tryServeRamHead(req: Request, res: Response, videoId: string): boolean 
   res.setHeader('Content-Type', head.contentType || 'audio/mp4');
   res.setHeader('Cache-Control', 'private, max-age=120');
   res.setHeader('X-PLM-Stream-Cache', 'ram');
+  noteStreamSource(res, 'cache mémoire');
   res.end(slice);
   return true;
 }
@@ -547,10 +549,12 @@ export async function handleStream(req: Request, res: Response) {
     res.status(400).json({ error: 'ID invalide' });
     return;
   }
+  watchStreamRequest(req, res, videoId);
   // Titre déjà connu comme mort : rejouer directement le remplaçant validé.
   {
     const known = getReplacementId(videoId);
     if (known) {
+      noteStreamSource(res, `remplacement → ${known}`);
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-PLM-Replaced-From', videoId);
       res.redirect(302, streamPathFor(req, known));
@@ -733,6 +737,7 @@ export async function handleStream(req: Request, res: Response) {
               res.setHeader('Content-Length', len);
               res.setHeader('Content-Type', 'audio/mp4');
               res.setHeader('X-PLM-Stream-Cache', 'disk-ram');
+              noteStreamSource(res, 'cache disque (tête en mémoire)');
               res.end(buf);
               return;
             } finally {
@@ -764,6 +769,7 @@ export async function handleStream(req: Request, res: Response) {
           res.setHeader('Content-Length', len2);
           res.setHeader('Content-Type', 'audio/mp4');
           res.setHeader('X-PLM-Stream-Cache', 'disk');
+          noteStreamSource(res, 'cache disque (plage)');
           const { createReadStream } = await import('node:fs');
           const rs = createReadStream(cached, { start: start2, end: end2 });
           rs.on('error', (err) => {
@@ -799,6 +805,7 @@ export async function handleStream(req: Request, res: Response) {
         res.setHeader('Content-Length', size);
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('X-PLM-Stream-Cache', 'disk');
+        noteStreamSource(res, 'cache disque (entier)');
         const { createReadStream } = await import('node:fs');
         const rs = createReadStream(cached);
         rs.on('error', (err) => {
@@ -880,6 +887,7 @@ export async function handleStream(req: Request, res: Response) {
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).
       if (wantsDirectRedirect(req)) {
+        noteStreamSource(res, 'redirection googlevideo');
         res.setHeader('Cache-Control', 'no-store');
         if (format.bitrate) res.setHeader('X-PLM-Audio-Bitrate', String(format.bitrate));
         res.redirect(302, format.url);
@@ -949,6 +957,7 @@ export async function handleStream(req: Request, res: Response) {
         throw new Error('upstream vide');
       }
       if (res.headersSent) return;
+      noteStreamSource(res, 'relais googlevideo');
       res.status(upstream.status);
       const ct = upstream.headers.get('content-type');
       const cr = upstream.headers.get('content-range');
@@ -1008,6 +1017,7 @@ export async function handleStream(req: Request, res: Response) {
   if (wantVideo) {
     try {
       ensureTime('ytdlpVideo');
+      noteStreamSource(res, 'yt-dlp vidéo (flux direct)');
       await withDeadline('ytdlpVideoPipe', streamViaYtDlpVideo(videoId, res));
       return;
     } catch (err) {
@@ -1026,6 +1036,7 @@ export async function handleStream(req: Request, res: Response) {
 
   // Seek mid-range : les pipes yt-dlp / Innertube partent du début (HTTP 200) → Exo rebobine.
   if (midNeedsDisk && !res.headersSent) {
+    noteStreamNote(res, 'seek demandé sans cache disque');
     res.status(503).json({
       error: 'Seek en cours de préparation',
       detail: 'Cache disque absent — téléchargement en cours ou indisponible',
@@ -1037,6 +1048,7 @@ export async function handleStream(req: Request, res: Response) {
 
   try {
     ensureTime('ytdlp');
+    noteStreamSource(res, 'yt-dlp (flux direct)');
     await withDeadline('ytdlpPipe', streamViaYtDlp(videoId, res));
     return;
   } catch (err) {
@@ -1048,6 +1060,7 @@ export async function handleStream(req: Request, res: Response) {
   }
 
   try {
+    noteStreamSource(res, 'Innertube (dernier recours)');
     await streamViaInnertube(videoId, res);
   } catch (err) {
     if (!res.headersSent) {
@@ -1074,6 +1087,7 @@ export async function handleStream(req: Request, res: Response) {
         }
       }
       const cookies = resolveYoutubeCookieHeader();
+      noteStreamNote(res, `tous les backends KO : ${detail.slice(0, 200)}`);
       res.status(502).json({
         error: 'Impossible de streamer audio',
         detail,
