@@ -3,7 +3,11 @@
  *
  *   npx tsx scripts/qa/lyrics-timing-check.mts
  */
-import { estimateTimedFromPlain, looksLikeLyrics } from '../../api/src/youtube/lyricsTiming.ts';
+import {
+  estimateTimedFromPlain,
+  looksLikeLyrics,
+  snapPlainToCaptions,
+} from '../../api/src/youtube/lyricsTiming.ts';
 
 const sample = `
 [Intro]
@@ -37,4 +41,22 @@ if (!looksLikeLyrics(sample)) {
   console.log('ÉCHEC looksLikeLyrics');
   process.exit(1);
 }
-process.exit(ok ? 0 : 1);
+
+const caps = [
+  { startMs: 12_000, text: 'Raut not dead' },
+  { startMs: 18_000, text: 'Ich bleib stehen' },
+  { startMs: 28_000, text: 'Die Nacht ist lang' },
+  { startMs: 40_000, text: 'Wir fahren weiter' },
+  { startMs: 55_000, text: 'Raut not dead' },
+];
+const snapped = snapPlainToCaptions(sample, caps);
+const snapOk = Boolean(
+  snapped &&
+    snapped.length >= 4 &&
+    snapped[0]!.startMs === 12_000 &&
+    snapped.every((l, i) => i === 0 || l.startMs >= snapped[i - 1]!.startMs),
+);
+console.log(
+  `${snapOk ? 'OK' : 'ÉCHEC'} snap ${snapped?.length ?? 0} lignes sur sous-titres`,
+);
+process.exit(ok && snapOk ? 0 : 1);

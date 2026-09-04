@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-04",
   "versions": [
     {
+      "version": "1.3.146",
+      "date": "2026-09-04",
+      "title": "Paroles plus justes, titre suivant visible",
+      "notes": [
+        "Quand YouTube a des sous-titres, les paroles propres (Genius) se calent dessus : le suivi colle au chant, plus seulement à la durée",
+        "L’aperçu de la file montre directement le titre suivant, sans répéter celui déjà affiché au-dessus"
+      ]
+    },
+    {
       "version": "1.3.145",
       "date": "2026-09-04",
       "title": "Le suivi des paroles sur tous les titres",
