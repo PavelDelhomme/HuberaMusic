@@ -75,7 +75,7 @@ export function SyncedLyrics({
 
   useEffect(() => {
     setUserOffsetMs(getLyricUserOffsetMs(currentId));
-  }, [currentId]);
+  }, [currentId, text, timed]);
 
   const lines = useMemo(() => {
     if (timed?.length) {

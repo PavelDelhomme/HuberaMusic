@@ -195,6 +195,11 @@ export function Layout() {
         if (typeof r.prefs?.autoplaySuggestions === 'boolean') {
           void import('../../store/player').then((m) => {
             void m.hydrateAutoplayFromPrefs();
+            void m.hydrateLyricOffsets();
+          });
+        } else {
+          void import('../../store/player').then((m) => {
+            void m.hydrateLyricOffsets();
           });
         }
       })

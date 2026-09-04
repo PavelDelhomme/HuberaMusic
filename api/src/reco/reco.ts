@@ -20,6 +20,7 @@ import {
 import { upsertTrack } from '../library/db.js';
 import { isWeakTitle, preferCatalogAudio } from '../youtube/mappers.js';
 import { isMusicPlayableHit } from './searchRank.js';
+import { getGlobalCard, setGlobalCard } from '../library/globalCardCache.js';
 import {
   MIX_PREVIEW,
   MIX_TARGET,
@@ -1216,18 +1217,36 @@ export async function radioForUser(
     genresCacheKey(prefs.genres || []),
   );
 
-  if (!light) {
-    const hit = getMixCache(userId, cacheKey);
-    if (hit?.tracks?.length) {
+  const sharedPreviewKey =
+    light && cat.id !== 'liked-radio' ? `radio-preview:${cat.id}` : null;
+  if (sharedPreviewKey) {
+    const shared = getGlobalCard<{
+      tracks: Track[];
+      seed?: Track | null;
+      generatedAt?: number;
+    }>(sharedPreviewKey, 6 * 60 * 60 * 1000);
+    if (shared?.tracks?.length) {
       return {
         category: cat,
-        tracks: hit.tracks.slice(0, MIX_TARGET),
-        seed: hit.seed || null,
+        tracks: shared.tracks.slice(0, MIX_PREVIEW),
+        seed: shared.seed || null,
         cached: true as const,
-        generatedAt: hit.generatedAt,
-        target: MIX_TARGET,
+        generatedAt: shared.generatedAt || Date.now(),
+        target: MIX_PREVIEW,
       };
     }
+  }
+
+  const previewHit = getMixCache(userId, cacheKey, { minTracks: light ? 4 : 50 });
+  if (previewHit?.tracks?.length) {
+    return {
+      category: cat,
+      tracks: previewHit.tracks.slice(0, light ? MIX_PREVIEW : MIX_TARGET),
+      seed: previewHit.seed || null,
+      cached: true as const,
+      generatedAt: previewHit.generatedAt,
+      target: light ? MIX_PREVIEW : MIX_TARGET,
+    };
   }
 
   let seedTrack: Track | null = null;
@@ -1327,7 +1346,7 @@ export async function radioForUser(
     targetTags,
   });
   const out = tracks.slice(0, light ? MIX_PREVIEW : MIX_TARGET);
-  if (!light && out.length) {
+  if (out.length && !light) {
     setMixCache(userId, cacheKey, {
       tracks: out,
       seed: seedTrack,
@@ -1335,6 +1354,21 @@ export async function radioForUser(
       generatedAt: Date.now(),
       target: MIX_TARGET,
     });
+  } else if (out.length && light) {
+    setMixCache(userId, cacheKey, {
+      tracks: out,
+      seed: seedTrack,
+      category: { id: cat.id, title: cat.title, query: cat.query, mode: cat.mode },
+      generatedAt: Date.now(),
+      target: MIX_PREVIEW,
+    });
+    if (sharedPreviewKey) {
+      setGlobalCard(sharedPreviewKey, {
+        tracks: out,
+        seed: seedTrack,
+        generatedAt: Date.now(),
+      });
+    }
   }
   return {
     category: cat,

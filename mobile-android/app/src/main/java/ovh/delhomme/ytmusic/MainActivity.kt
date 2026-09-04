@@ -865,6 +865,18 @@ private fun MainTabs(
         runCatching {
             player.hydrateAutoplaySuggestions(container.api.prefs().prefs.autoplaySuggestions)
         }
+        runCatching {
+            val learned = container.api.lyricOffsets().offsets
+            if (learned.isNotEmpty()) {
+                val prefs = container.sharedPrefs("plm_lyric_sync_v1")
+                val ed = prefs.edit()
+                for ((id, ms) in learned) {
+                    if (id.isBlank() || ms == 0L) continue
+                    if (prefs.getLong(id, 0L) == 0L) ed.putLong(id, ms)
+                }
+                ed.apply()
+            }
+        }
         likedIds = container.libraryRepo.library.value?.liked?.map { it.id }?.toSet()
             ?.takeIf { it.isNotEmpty() }
             ?: runCatching {

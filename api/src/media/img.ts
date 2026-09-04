@@ -11,14 +11,48 @@ if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
 const ALLOWED =
   /^(https?:\/\/)?([a-z0-9.-]+\.)?(googleusercontent\.com|ggpht\.com|ytimg\.com|youtube\.com|yt3\.ggpht\.com)\//i;
 
-/** Préfère maxres / hq720 quand dispo (pochette carrée moins « piliers »). */
-const YTIMG_SAFE = ['maxresdefault.jpg', 'hq720.jpg', 'sddefault.jpg', 'hqdefault.jpg', 'mqdefault.jpg', 'default.jpg'] as const;
+/** hq/mq d’abord : maxres/hq720 404 souvent → 8 s chacun = pochettes vides. */
+const YTIMG_FAST = [
+  'hqdefault.jpg',
+  'mqdefault.jpg',
+  'hq720.jpg',
+  'sddefault.jpg',
+  'maxresdefault.jpg',
+  'default.jpg',
+] as const;
+
+const DISK_TTL_MS = 90 * 24 * 3600 * 1000;
+const STALE_TTL_MS = 365 * 24 * 3600 * 1000;
+const MEM_MAX = 240;
+const HTTP_MAX_AGE = 30 * 24 * 3600;
+
+type ImgHit = { buf: Buffer; type: string };
+
+const mem = new Map<string, { hit: ImgHit; at: number }>();
 
 function ytimgChain(videoId: string): string[] {
-  return YTIMG_SAFE.map((f) => `https://i.ytimg.com/vi/${videoId}/${f}`);
+  return YTIMG_FAST.map((f) => `https://i.ytimg.com/vi/${videoId}/${f}`);
 }
 
-async function fetchImage(url: string): Promise<{ buf: Buffer; type: string } | null> {
+function memGet(key: string): ImgHit | null {
+  const row = mem.get(key);
+  if (!row) return null;
+  mem.delete(key);
+  mem.set(key, row);
+  return row.hit;
+}
+
+function memPut(key: string, hit: ImgHit) {
+  if (mem.has(key)) mem.delete(key);
+  mem.set(key, { hit, at: Date.now() });
+  while (mem.size > MEM_MAX) {
+    const first = mem.keys().next().value;
+    if (!first) break;
+    mem.delete(first);
+  }
+}
+
+async function fetchImage(url: string): Promise<ImgHit | null> {
   try {
     const upstream = await fetch(url, {
       headers: {
@@ -28,11 +62,10 @@ async function fetchImage(url: string): Promise<{ buf: Buffer; type: string } | 
         Referer: 'https://music.youtube.com/',
       },
       redirect: 'follow',
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!upstream.ok) return null;
     const buf = Buffer.from(await upstream.arrayBuffer());
-    // Placeholder YouTube 120×90 parfois servi en 200 — trop petit = inutile
     if (buf.length < 2000) return null;
     const type = upstream.headers.get('content-type') || 'image/jpeg';
     if (!/^image\//i.test(type) && !type.includes('octet-stream')) return null;
@@ -42,33 +75,57 @@ async function fetchImage(url: string): Promise<{ buf: Buffer; type: string } | 
   }
 }
 
-function cacheGet(key: string): { buf: Buffer; type: string } | null {
+async function fetchFirst(urls: string[]): Promise<ImgHit | null> {
+  if (!urls.length) return null;
+  const first = urls.slice(0, 2);
+  const pair = await Promise.all(first.map(fetchImage));
+  const hit = pair.find(Boolean);
+  if (hit) return hit;
+  for (const url of urls.slice(2)) {
+    const got = await fetchImage(url);
+    if (got) return got;
+  }
+  return null;
+}
+
+function diskGet(key: string): { hit: ImgHit; stale: boolean } | null {
   const file = join(CACHE_DIR, key);
   const meta = join(CACHE_DIR, `${key}.meta`);
   if (!existsSync(file) || !existsSync(meta)) return null;
   const age = Date.now() - statSync(file).mtimeMs;
-  if (age >= 7 * 24 * 3600 * 1000) return null;
-  return { buf: readFileSync(file), type: readFileSync(meta, 'utf8') || 'image/jpeg' };
+  if (age >= STALE_TTL_MS) return null;
+  try {
+    const hit = { buf: readFileSync(file), type: readFileSync(meta, 'utf8') || 'image/jpeg' };
+    return { hit, stale: age >= DISK_TTL_MS };
+  } catch {
+    return null;
+  }
 }
 
-function cachePut(key: string, buf: Buffer, type: string) {
-  writeFileSync(join(CACHE_DIR, key), buf);
-  writeFileSync(join(CACHE_DIR, `${key}.meta`), type);
+function diskPut(key: string, hit: ImgHit) {
+  try {
+    writeFileSync(join(CACHE_DIR, key), hit.buf);
+    writeFileSync(join(CACHE_DIR, `${key}.meta`), hit.type);
+  } catch {
+    /* disque plein */
+  }
 }
 
 function sendImage(res: Response, buf: Buffer, type: string, hit: string) {
   res.setHeader('Content-Type', type);
-  res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+  res.setHeader('Cache-Control', `public, max-age=${HTTP_MAX_AGE}, stale-while-revalidate=86400`);
   res.setHeader('X-YTM-Img', hit);
   res.send(buf);
 }
 
-/**
- * Proxy image :
- * - `?u=<url>` : une URL (ggpht / ytimg…)
- * - `?v=<videoId>` : chaîne ytimg fiable + fallback SVG (jamais 404 navigateur)
- * - les deux : essaie `u` puis la chaîne `v`
- */
+function refreshInBackground(cacheKey: string, candidates: string[]) {
+  void fetchFirst(candidates).then((got) => {
+    if (!got) return;
+    memPut(cacheKey, got);
+    diskPut(cacheKey, got);
+  });
+}
+
 export async function handleImageProxy(req: Request, res: Response) {
   try {
     const rawU = String(req.query.u || '');
@@ -90,7 +147,6 @@ export async function handleImageProxy(req: Request, res: Response) {
         res.status(403).json({ error: 'domaine non autorisé' });
         return;
       }
-      // Réécrit les tailles ytimg fragiles vers hqdefault
       const vi = url.match(/i\.ytimg\.com\/vi(?:_webp)?\/([^/]+)\//i);
       if (vi) {
         candidates.push(...ytimgChain(vi[1]));
@@ -110,23 +166,28 @@ export async function handleImageProxy(req: Request, res: Response) {
       return;
     }
 
-    // Cache clé = première URL + id vidéo
-    const cacheKey = createHash('sha1').update(`v2:${videoId}|${candidates.join('|')}`).digest('hex');
-    const cached = cacheGet(cacheKey);
-    if (cached) {
-      sendImage(res, cached.buf, cached.type, 'cache');
+    const cacheKey = createHash('sha1').update(`v3:${videoId}|${candidates[0] || ''}`).digest('hex');
+    const ram = memGet(cacheKey);
+    if (ram) {
+      sendImage(res, ram.buf, ram.type, 'mem');
+      return;
+    }
+    const disk = diskGet(cacheKey);
+    if (disk) {
+      memPut(cacheKey, disk.hit);
+      sendImage(res, disk.hit.buf, disk.hit.type, disk.stale ? 'stale' : 'disk');
+      if (disk.stale) refreshInBackground(cacheKey, candidates);
       return;
     }
 
-    for (const url of candidates) {
-      const got = await fetchImage(url);
-      if (!got) continue;
-      cachePut(cacheKey, got.buf, got.type);
+    const got = await fetchFirst(candidates);
+    if (got) {
+      memPut(cacheKey, got);
+      diskPut(cacheKey, got);
       sendImage(res, got.buf, got.type, 'ok');
       return;
     }
 
-    // Pas de SVG 200 « sticky » : CoverImage/Coil doivent avancer au candidat suivant
     res.setHeader('X-YTM-Img', 'miss');
     res.setHeader('Cache-Control', 'no-store');
     res.status(404).json({ error: 'image unavailable' });
