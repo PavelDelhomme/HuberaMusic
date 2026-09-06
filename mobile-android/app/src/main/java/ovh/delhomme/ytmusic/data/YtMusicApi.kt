@@ -643,6 +643,9 @@ interface YtMusicApi {
     @DELETE("api/library/mixes/{id}")
     suspend fun removeMix(@Path("id") id: String): Map<String, Any>
 
+    @GET("api/library/mixes/{id}/saved")
+    suspend fun mixSaved(@Path("id") id: String): Map<String, Any>
+
     @POST("api/library/playlists")
     suspend fun createPlaylist(@Body body: CreatePlaylistBody): PlaylistDto
 

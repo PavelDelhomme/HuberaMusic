@@ -70,6 +70,7 @@ export function HomePage() {
   const refreshPins = usePins((s) => s.refresh);
   const hasMix = useLibrary((s) => s.hasMix);
   const saveMix = useLibrary((s) => s.saveMix);
+  const removeMix = useLibrary((s) => s.removeMix);
   const openActions = useItemActions((s) => s.open);
   const seenTitles = useRef(new Set<string>());
 
@@ -255,6 +256,10 @@ export function HomePage() {
 
   const saveRadioMix = async (id: string, title: string) => {
     try {
+      if (hasMix(id)) {
+        await removeMix(id);
+        return;
+      }
       const covers = radioPreviews[id] || [];
       await saveMix({ id, title, covers, tracks: covers });
     } catch (e) {
