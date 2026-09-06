@@ -62,6 +62,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             )
         }
         refresh()
+        viewModelScope.launch {
+            container.libraryEpoch.collect { epoch ->
+                if (epoch <= 0L) return@collect
+                val ids = runCatching {
+                    container.ensureFreshToken()
+                    container.api.library(light = 1, limit = 40).mixes.map { it.id }.toSet()
+                }.getOrNull() ?: return@collect
+                _state.value = _state.value.copy(savedMixIds = ids)
+            }
+        }
     }
 
     /** Ferme le dialogue sans snooze (back / extérieur / kill app). */
@@ -343,6 +353,28 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 )
                 container.bumpLibraryEpoch()
             }
+        }
+    }
+
+    /** Retire uniquement l’entrée mix (library_mixes) — ne touche pas aux titres déjà en biblio. */
+    fun removeMix(categoryId: String) {
+        viewModelScope.launch {
+            runCatching {
+                container.ensureFreshToken()
+                container.api.removeMix(categoryId)
+                _state.value = _state.value.copy(
+                    savedMixIds = _state.value.savedMixIds - categoryId,
+                )
+                container.bumpLibraryEpoch()
+            }
+        }
+    }
+
+    fun toggleMixSaved(categoryId: String, title: String, covers: List<TrackDto>) {
+        if (_state.value.savedMixIds.contains(categoryId)) {
+            removeMix(categoryId)
+        } else {
+            saveMix(categoryId, title, covers)
         }
     }
 

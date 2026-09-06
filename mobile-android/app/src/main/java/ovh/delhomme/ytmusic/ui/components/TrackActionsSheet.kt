@@ -192,11 +192,20 @@ fun TrackActionsSheet(
                 container.api.libraryContains(track.id, albumIdHint)
             }.getOrNull() ?: return@launch
             liked = c.liked
-            songInLibrary = c.inLibrary
+            if (track.type?.equals("mix", ignoreCase = true) != true) {
+                songInLibrary = c.inLibrary
+            }
             albumInLibrary = c.albumInLibrary
             if (c.liked != (track.id in likedIds)) {
                 onLikedChanged(if (c.liked) likedIds + track.id else likedIds - track.id)
             }
+        }
+        launch {
+            if (track.type?.equals("mix", ignoreCase = true) != true) return@launch
+            val saved = runCatching {
+                container.api.mixSaved(track.id)["saved"] == true
+            }.getOrDefault(false)
+            songInLibrary = saved
         }
         launch {
             if (!track.isAlbum()) return@launch
@@ -381,6 +390,7 @@ fun TrackActionsSheet(
                         if (songInLibrary) {
                             container.api.removeMix(enriched.id)
                             songInLibrary = false
+                            container.bumpLibraryEpoch()
                             context.toastMain("Mix retiré")
                         } else {
                             container.api.saveMix(
@@ -390,6 +400,7 @@ fun TrackActionsSheet(
                                 ),
                             )
                             songInLibrary = true
+                            container.bumpLibraryEpoch()
                             context.toastMain("Mix enregistré")
                         }
                     }
