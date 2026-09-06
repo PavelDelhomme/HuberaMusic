@@ -52,13 +52,15 @@ services:
       NODE_ENV: production
       PORT: "8787"
       APP_ENV: ${APP_ENV:-production}
-      APP_URL: ${APP_URL:-https://ytmusic.delhomme.ovh}
+      APP_URL: ${APP_URL:-https://plm.delhomme.ovh}
       # Postgres (cutover) — laisser vide pour rester sur SQLite volume
       DATABASE_URL: ${DATABASE_URL:-}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-14d}
       AUTH_COOKIE_MS: ${AUTH_COOKIE_MS:-34560000000}
       COOKIE_SECURE: "1"
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-.delhomme.ovh}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://plm.delhomme.ovh,https://ytmusic.delhomme.ovh,https://pue-la-merde.delhomme.ovh}
       AUTH_PRIVATE: ${AUTH_PRIVATE:-1}
       AUTH_ALLOW_REGISTER: ${AUTH_ALLOW_REGISTER:-0}
       AUTH_ALLOW_GUEST: ${AUTH_ALLOW_GUEST:-0}
@@ -70,8 +72,8 @@ services:
       YOUTUBE_COOKIES: ${YOUTUBE_COOKIES:-}
       APK_DOWNLOAD_TOKEN: ${APK_DOWNLOAD_TOKEN:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-ytmusic.delhomme.ovh}
-      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-https://ytmusic.delhomme.ovh}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-delhomme.ovh}
+      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-https://plm.delhomme.ovh}
       WEBAUTHN_ANDROID_ORIGINS: ${WEBAUTHN_ANDROID_ORIGINS:-android:apk-key-hash:PPbFMh2hUX55lAyeJVFKY5ssRJ4-_333R2h2y_b0wR8}
       ANDROID_SHA256_FINGERPRINTS: ${ANDROID_SHA256_FINGERPRINTS:-3C:F6:C5:32:1D:A1:51:7E:79:94:0C:9E:25:51:4A:63:9B:2C:44:9E:3E:FF:7D:F7:47:68:76:CB:F6:F4:C1:1F}
       ANDROID_PACKAGE_NAMES: ${ANDROID_PACKAGE_NAMES:-ovh.delhomme.ytmusic,ovh.delhomme.ytmusic.dev}

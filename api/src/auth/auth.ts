@@ -83,12 +83,15 @@ export function sessionCookieOptions() {
     process.env.COOKIE_SECURE === '1' ||
     env === 'production' ||
     env === 'preprod';
+  // Partage session plm / ytmusic / pue-la-merde (ex. COOKIE_DOMAIN=.delhomme.ovh)
+  const domain = (process.env.COOKIE_DOMAIN || '').trim() || undefined;
   return {
     httpOnly: true,
     sameSite: 'lax' as const,
     secure,
     maxAge: COOKIE_MAX_MS,
     path: '/',
+    ...(domain ? { domain } : {}),
   };
 }
 
