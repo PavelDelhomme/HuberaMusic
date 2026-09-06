@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.162",
+      "date": "2026-09-06",
+      "title": "Paroles Genius même depuis le serveur",
+      "notes": [
+        "Quand Genius bloque le serveur (403), on passe par des proxies + recherche web pour trouver la bonne page",
+        "Meilleur matching des titres feat. / artistes multiples — plus de « paroles introuvables » alors que Genius les a",
+        "Le suivi karaoké (estimation / sync apprise) s’applique aussi sur ces paroles récupérées"
+      ]
+    },
+    {
       "version": "1.3.161",
       "date": "2026-09-06",
       "title": "Accueil plus rapide, session alias, email mémorisé",

@@ -1533,8 +1533,8 @@ export async function getArtistSongs(
 }
 
 const LYRICS_CACHE_MAX = 400;
-/** bump : ne plus décaler un LRC correct à cause d’un outro (v13) */
-const LYRICS_CACHE_VER = 'v13';
+/** bump : Genius via proxies + matching web (v14) */
+const LYRICS_CACHE_VER = 'v14';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
@@ -1661,7 +1661,17 @@ async function fetchLyricsOvh(artist: string, title: string): Promise<string | n
   const artists = [
     artist,
     artist.split(/[,&/]| feat\.? | ft\.? /i)[0]?.trim() || '',
-  ].filter((a, i, arr) => arr.indexOf(a) === i);
+  ].filter((a, i, arr) => a && arr.indexOf(a) === i);
+  {
+    const re = /(?:feat\.?|ft\.?|featuring|with|avec)\s*([^)\]]+)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(title))) {
+      for (const part of (m[1] || '').split(/[,&/]| et /i)) {
+        const s = part.replace(/\s+/g, ' ').trim();
+        if (s && !artists.includes(s)) artists.push(s);
+      }
+    }
+  }
   const ctrl = AbortSignal.timeout(4000);
   for (const a of artists) {
     for (const t of titles) {
@@ -1736,12 +1746,29 @@ async function fetchLrclibTimed(
     .replace(/\s{2,}/g, ' ')
     .trim();
   const mainArtist = artist.split(/[,&/]| feat\.? | ft\.? /i)[0]?.trim() || artist;
+  const featuredFromTitle: string[] = [];
+  {
+    const re = /(?:feat\.?|ft\.?|featuring|with|avec|x|×)\s*([^)\]]+)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(title))) {
+      for (const part of (m[1] || '').split(/[,&/]| et /i)) {
+        const s = part.replace(/\s+/g, ' ').trim();
+        if (s.length > 1 && s.length < 60) featuredFromTitle.push(s);
+      }
+    }
+  }
   const attempts: Array<[string, string, boolean]> = [
     [artist, cleanTitle || title, true],
     [artist, cleanTitle || title, false],
     [mainArtist, cleanTitle || title, true],
     [artist, title, false],
     [mainArtist, cleanTitle.replace(/,/g, ' ').replace(/\s{2,}/g, ' ').trim(), false],
+    ...featuredFromTitle.slice(0, 2).flatMap(
+      (f): Array<[string, string, boolean]> => [
+        [f, cleanTitle || title, false],
+        [`${mainArtist} ${f}`.trim(), cleanTitle || title, false],
+      ],
+    ),
   ];
   const seenAttempt = new Set<string>();
   const uniqueAttempts = attempts.filter(([a, t, d]) => {
@@ -1759,7 +1786,9 @@ async function fetchLrclibTimed(
 
   const searchQueries = [
     [artist, cleanTitle || title].filter(Boolean).join(' '),
+    [mainArtist, cleanTitle || title].filter(Boolean).join(' '),
     cleanTitle || title,
+    ...featuredFromTitle.slice(0, 2).map((f) => [f, cleanTitle || title].filter(Boolean).join(' ')),
   ]
     .map((q) => q.slice(0, 180).trim())
     .filter((q, i, arr) => q && arr.indexOf(q) === i);
