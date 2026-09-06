@@ -306,46 +306,56 @@ fun HomeScreen(
                                         Row(
                                             Modifier
                                                 .align(Alignment.BottomEnd)
-                                                .padding(4.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                .padding(end = 6.dp, bottom = 6.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
                                         ) {
-                                            IconButton(
-                                                onClick = { onMoreMix?.invoke(radio.id, radio.title, preview) },
+                                            Box(
                                                 modifier = Modifier
-                                                    .size(32.dp)
-                                                    .background(
-                                                        Color.Black.copy(alpha = 0.7f),
-                                                        RoundedCornerShape(16.dp),
-                                                    ),
+                                                    .size(30.dp)
+                                                    .clip(RoundedCornerShape(15.dp))
+                                                    .background(Color.Black.copy(alpha = 0.72f))
+                                                    .clickable {
+                                                        onMoreMix?.invoke(radio.id, radio.title, preview)
+                                                    },
+                                                contentAlignment = Alignment.Center,
                                             ) {
                                                 Icon(
                                                     Icons.Default.MoreVert,
                                                     contentDescription = "Options",
                                                     tint = Color.White,
-                                                    modifier = Modifier.size(18.dp),
+                                                    modifier = Modifier.size(16.dp),
                                                 )
                                             }
-                                            IconButton(
-                                                onClick = {
-                                                    if (!saved) {
-                                                        scope.launch {
-                                                            vm.saveMix(radio.id, radio.title, preview)
-                                                        }
-                                                    }
-                                                },
-                                                enabled = !saved,
+                                            Box(
                                                 modifier = Modifier
-                                                    .size(32.dp)
-                                                    .background(
-                                                        Color.Black.copy(alpha = 0.7f),
-                                                        RoundedCornerShape(16.dp),
-                                                    ),
+                                                    .size(30.dp)
+                                                    .clip(RoundedCornerShape(15.dp))
+                                                    .background(Color.Black.copy(alpha = 0.72f))
+                                                    .clickable {
+                                                        scope.launch {
+                                                            vm.toggleMixSaved(
+                                                                radio.id,
+                                                                radio.title,
+                                                                preview,
+                                                            )
+                                                        }
+                                                    },
+                                                contentAlignment = Alignment.Center,
                                             ) {
                                                 Icon(
                                                     if (saved) Icons.Default.LibraryAddCheck else Icons.Default.Add,
-                                                    contentDescription = if (saved) "Enregistré" else "Enregistrer",
-                                                    tint = if (saved) MaterialTheme.colorScheme.error else Color.White,
-                                                    modifier = Modifier.size(18.dp),
+                                                    contentDescription = if (saved) {
+                                                        "Retirer le mix de la bibliothèque"
+                                                    } else {
+                                                        "Enregistrer le mix"
+                                                    },
+                                                    tint = if (saved) {
+                                                        MaterialTheme.colorScheme.error
+                                                    } else {
+                                                        Color.White
+                                                    },
+                                                    modifier = Modifier.size(16.dp),
                                                 )
                                             }
                                         }

@@ -138,7 +138,7 @@ export function MixCollageCard({
           )}
         </button>
 
-        <div className="pointer-events-none absolute bottom-2 right-2 z-[2] flex gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+        <div className="pointer-events-none absolute bottom-2 right-2 z-[2] flex items-center gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
           {onMore && (
             <button
               type="button"
@@ -147,23 +147,23 @@ export function MixCollageCard({
                 stop(e);
                 onMore();
               }}
-              className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full bg-black/70 text-white shadow-lg"
+              className="pointer-events-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/70 text-white shadow-lg"
             >
-              <MoreHorizontal className="h-4 w-4" />
+              <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
           )}
           {onSave && (
             <button
               type="button"
-              title={saved ? 'Dans la bibliothèque' : 'Enregistrer le mix'}
-              disabled={busy || saved}
+              title={saved ? 'Retirer le mix de la bibliothèque' : 'Enregistrer le mix'}
+              disabled={busy}
               onClick={(e) => {
                 stop(e);
-                if (!saved) onSave();
+                onSave();
               }}
-              className="pointer-events-auto flex h-9 w-9 items-center justify-center rounded-full bg-black/70 text-white shadow-lg disabled:opacity-70"
+              className="pointer-events-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/70 text-white shadow-lg disabled:opacity-60"
             >
-              {saved ? <Library className="h-4 w-4 text-yt-red" /> : <Plus className="h-4 w-4" />}
+              {saved ? <Library className="h-3.5 w-3.5 text-yt-red" /> : <Plus className="h-3.5 w-3.5" />}
             </button>
           )}
         </div>

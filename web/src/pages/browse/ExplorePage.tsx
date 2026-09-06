@@ -32,6 +32,7 @@ export function ExplorePage() {
   const currentId = usePlayer((s) => s.current?.id);
   const hasMix = useLibrary((s) => s.hasMix);
   const saveMix = useLibrary((s) => s.saveMix);
+  const removeMix = useLibrary((s) => s.removeMix);
   const openActions = useItemActions((s) => s.open);
 
   const pullRef = useRef<{ y: number; atTop: boolean } | null>(null);
@@ -161,6 +162,10 @@ export function ExplorePage() {
                 onPlay={() => void playRadioFast(r.id, r.title)}
                 onSave={() => {
                   const covers = radioPreviews[r.id] || [];
+                  if (hasMix(r.id)) {
+                    void removeMix(r.id);
+                    return;
+                  }
                   void saveMix({ id: r.id, title: r.title, covers, tracks: covers });
                 }}
                 onMore={() => {
