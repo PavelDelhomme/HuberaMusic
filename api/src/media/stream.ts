@@ -1179,8 +1179,61 @@ type WarmJob = { id: string; userId?: string };
 const warmQueue: WarmJob[] = [];
 const warmQueued = new Set<string>();
 let warmWorkers = 0;
-const WARM_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.STREAM_WARM_CONCURRENCY || 2) || 2));
-const WARM_BATCH_CAP = Math.max(4, Math.min(24, Number(process.env.STREAM_WARM_BATCH_CAP || 8) || 8));
+const WARM_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.STREAM_WARM_CONCURRENCY || 3) || 3));
+const WARM_BATCH_CAP = Math.max(4, Math.min(32, Number(process.env.STREAM_WARM_BATCH_CAP || 12) || 12));
+
+/** File .m4a disque (basse priorité, concurrence 1) — partagée entre tous les comptes. */
+const diskWarmQueue: string[] = [];
+const diskWarmQueued = new Set<string>();
+let diskWarmBusy = false;
+
+async function runDiskWarmWorker() {
+  if (diskWarmBusy) return;
+  diskWarmBusy = true;
+  try {
+    while (diskWarmQueue.length) {
+      const id = diskWarmQueue.shift();
+      if (!id) break;
+      diskWarmQueued.delete(id);
+      try {
+        const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
+        if (isYtDlpCoolingDown()) {
+          // Remettre plus tard
+          diskWarmQueue.push(id);
+          diskWarmQueued.add(id);
+          break;
+        }
+        await downloadTrack(id);
+      } catch {
+        /* best-effort */
+      }
+      // Petite pause pour ne pas saturer CPU/réseau
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  } finally {
+    diskWarmBusy = false;
+    if (diskWarmQueue.length) void runDiskWarmWorker();
+  }
+}
+
+/** Enfile des téléchargements .m4a (cap file). */
+export function enqueueDiskWarm(ids: string[]) {
+  const cap = Math.max(20, Math.min(120, Number(process.env.TASTE_WARM_DISK_QUEUE || 60) || 60));
+  for (const id of ids) {
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
+    if (diskWarmQueued.has(id)) continue;
+    try {
+      const p = cachePath(id);
+      if (existsSync(p) && statSync(p).size > 1024 * 1024) continue;
+    } catch {
+      /* continue */
+    }
+    if (diskWarmQueue.length >= cap) break;
+    diskWarmQueued.add(id);
+    diskWarmQueue.push(id);
+  }
+  if (diskWarmQueue.length) void runDiskWarmWorker();
+}
 
 async function runWarmWorker() {
   if (warmWorkers >= WARM_CONCURRENCY) return;
@@ -1214,7 +1267,7 @@ function bumpWarmPriority(id: string) {
   }
 }
 
-function enqueueStreamWarm(ids: string[], userId?: string) {
+export function enqueueStreamWarm(ids: string[], userId?: string) {
   if (!ids.length) return;
   const [first, ...rest] = ids;
   const pushFront = (id: string) => {

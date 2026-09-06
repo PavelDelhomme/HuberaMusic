@@ -5,10 +5,10 @@
  */
 const HEAD_BYTES = Math.max(
   256 * 1024,
-  Number(process.env.STREAM_HEAD_BYTES || 768 * 1024) || 768 * 1024,
+  Number(process.env.STREAM_HEAD_BYTES || 1024 * 1024) || 1024 * 1024,
 );
-const MAX_HEADS = Math.max(4, Math.min(48, Number(process.env.STREAM_HEAD_CACHE || 16) || 16));
-const HEAD_TTL_MS = 25 * 60_000;
+const MAX_HEADS = Math.max(8, Math.min(64, Number(process.env.STREAM_HEAD_CACHE || 36) || 36));
+const HEAD_TTL_MS = 35 * 60_000;
 
 type HeadEntry = {
   buf: Buffer;

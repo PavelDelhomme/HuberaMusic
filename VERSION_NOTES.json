@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.165",
+      "date": "2026-09-06",
+      "title": "Cold start plus rapide pour tous les comptes",
+      "notes": [
+        "Dès la connexion ou l’accueil, le serveur préchauffe tes titres probables (historique, likes, biblio) en .m4a compressé",
+        "Un job en arrière-plan chauffe aussi les catalogues des autres comptes — le 1er play n’attend plus YouTube à froid",
+        "Sur le téléphone : les seeds de l’accueil se préchargent tout de suite pour un démarrage plus snappy"
+      ]
+    },
+    {
       "version": "1.3.164",
       "date": "2026-09-06",
       "title": "Préchargement plus rapide (biblio / goûts)",
