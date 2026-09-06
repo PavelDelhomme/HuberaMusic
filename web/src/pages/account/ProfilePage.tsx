@@ -3,12 +3,13 @@ import { startRegistration } from '@simplewebauthn/browser';
 import { QRCodeSVG } from 'qrcode.react';
 import { api } from '../../api';
 import { useAuth } from '../../store/auth';
-import { Fingerprint, KeyRound, QrCode, Shield, Smartphone, Sparkles, Trash2 } from 'lucide-react';
+import { Fingerprint, KeyRound, QrCode, Shield, Smartphone, Sparkles, Trash2, Camera } from 'lucide-react';
 import type { User } from '../../api';
 import { markLocalPasskeyReady } from '../../lib/auth/passkeyEnrollment';
 import { OnboardingWizard } from '../../components/auth/OnboardingWizard';
 import { PerfToggleButton } from '../../components/layout/PerfHud';
 import { VersionNotesTrigger } from '../../components/layout/VersionNotesModal';
+import { QrLoginScanner, parseDeviceLoginQr } from '../../components/auth/QrLoginScanner';
 
 function TwoFactorSection({ user, onUpdated }: { user: User; onUpdated: () => Promise<void> }) {
   const [secret, setSecret] = useState<string | null>(null);
@@ -138,6 +139,8 @@ export function ProfilePage() {
   const [editReco, setEditReco] = useState(false);
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteBusy, setInviteBusy] = useState(false);
+  const [showApproveScanner, setShowApproveScanner] = useState(false);
+  const [scanMsg, setScanMsg] = useState('');
 
   const isGuest = !user || user.isGuest || user.email.includes('@local.ytmusic');
 
@@ -335,42 +338,82 @@ export function ProfilePage() {
               <h2 className="font-display text-lg font-semibold">Connecter un autre appareil</h2>
             </div>
             <p className="mb-4 text-sm text-yt-muted">
-              Affiche un QR temporaire : l’autre appareil le scanne (caméra) et se connecte avec ton
-              compte — pratique pour téléphone ↔ PC.
+              Affiche un QR d’invite (l’autre appareil le scanne sur l’écran de login), ou scanne
+              toi-même le QR affiché sur le login de l’autre appareil.
             </p>
-            <button
-              type="button"
-              disabled={inviteBusy}
-              className="mb-4 rounded-full border border-yt-border bg-yt-elevated px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
-              onClick={() => {
-                setInviteBusy(true);
-                setErr('');
-                void api
-                  .deviceLoginInvite()
-                  .then((r) => {
-                    const claim =
-                      new URL(r.claimUrl).searchParams.get('claim') ||
-                      r.claimToken;
-                    setInviteUrl(
-                      `${window.location.origin}/login-device?claim=${encodeURIComponent(claim)}`,
-                    );
-                  })
-                  .catch((ex) => setErr(String(ex.message || ex)))
-                  .finally(() => setInviteBusy(false));
-              }}
-            >
-              {inviteBusy ? 'Génération…' : inviteUrl ? 'Régénérer le QR' : 'Afficher un QR'}
-            </button>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={inviteBusy}
+                className="rounded-full border border-yt-border bg-yt-elevated px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-60"
+                onClick={() => {
+                  setInviteBusy(true);
+                  setErr('');
+                  void api
+                    .deviceLoginInvite()
+                    .then((r) => {
+                      const claim =
+                        new URL(r.claimUrl).searchParams.get('claim') ||
+                        r.claimToken;
+                      setInviteUrl(
+                        `${window.location.origin}/login-device?claim=${encodeURIComponent(claim)}`,
+                      );
+                    })
+                    .catch((ex) => setErr(String(ex.message || ex)))
+                    .finally(() => setInviteBusy(false));
+                }}
+              >
+                {inviteBusy ? 'Génération…' : inviteUrl ? 'Régénérer le QR' : 'Afficher un QR d’invite'}
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-full border border-yt-border bg-yt-elevated px-4 py-2 text-sm hover:bg-white/10"
+                onClick={() => {
+                  setScanMsg('');
+                  setErr('');
+                  setShowApproveScanner(true);
+                }}
+              >
+                <Camera className="h-4 w-4" /> Scanner le QR du login
+              </button>
+            </div>
             {inviteUrl && (
               <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
                 <div className="rounded-2xl bg-white p-3">
                   <QRCodeSVG value={inviteUrl} size={160} level="M" />
                 </div>
                 <p className="max-w-xs text-xs text-yt-muted">
-                  Valable ~2 minutes. Sur l’autre appareil : ouvre l’appareil photo → scanne → ouvre
-                  le lien (navigateur ou app).
+                  Valable ~2 minutes. Sur l’autre appareil (login web ou app) : scanner ce QR, ou
+                  ouvrir le lien avec l’appareil photo.
                 </p>
               </div>
+            )}
+            {scanMsg && <p className="mt-3 text-sm text-emerald-400">{scanMsg}</p>}
+            {showApproveScanner && (
+              <QrLoginScanner
+                title="Autoriser un appareil"
+                hint="Cadre le QR affiché sur l’écran de connexion de l’autre appareil."
+                onClose={() => setShowApproveScanner(false)}
+                onResult={(raw) => {
+                  setShowApproveScanner(false);
+                  const parsed = parseDeviceLoginQr(raw);
+                  if (!parsed || parsed.kind !== 'approve' || !parsed.id || !parsed.code) {
+                    setErr(
+                      parsed?.kind === 'claim'
+                        ? 'Ce QR est une invite — à scanner depuis l’écran de login.'
+                        : 'QR non reconnu.',
+                    );
+                    return;
+                  }
+                  setBusy(true);
+                  setErr('');
+                  void api
+                    .deviceLoginApprove(parsed.id, parsed.code)
+                    .then(() => setScanMsg('Appareil autorisé — il peut se connecter.'))
+                    .catch((ex) => setErr(String(ex.message || ex)))
+                    .finally(() => setBusy(false));
+                }}
+              />
             )}
           </section>
         </>

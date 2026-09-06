@@ -4,13 +4,14 @@ import { QRCodeSVG } from 'qrcode.react';
 import { api, setRefreshToken, setToken } from '../../api';
 import { useAuth } from '../../store/auth';
 import { useLibrary } from '../../store/library';
-import { Fingerprint, KeyRound, QrCode } from 'lucide-react';
+import { Fingerprint, KeyRound, QrCode, Camera } from 'lucide-react';
 import {
   dismissPasskeyOffer,
   markLocalPasskeyReady,
   passkeyPlatformOk,
   wasPasskeyOfferDismissed,
 } from '../../lib/auth/passkeyEnrollment';
+import { QrLoginScanner, parseDeviceLoginQr } from './QrLoginScanner';
 
 declare global {
   interface Window {
@@ -49,10 +50,12 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
     expiresAt: number;
   } | null>(null);
   const [qrStatus, setQrStatus] = useState<'idle' | 'waiting' | 'expired'>('idle');
+  const [showClaimScanner, setShowClaimScanner] = useState(false);
   const googleBtn = useRef<HTMLDivElement>(null);
 
   const isGuest = !user || user.isGuest || user.email.includes('@local.ytmusic');
-
+  /** Afficher le QR tant qu’on n’est pas connecté avec un vrai compte. */
+  const showLoginQr = mode === 'login' && step === 'form' && isGuest;
   useEffect(() => {
     if (!open) {
       setStep('form');
@@ -60,12 +63,13 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
       setInfo('');
       setQr(null);
       setQrStatus('idle');
+      setShowClaimScanner(false);
     }
   }, [open]);
 
   // QR login : appareil à connecter poll jusqu’à approbation (téléphone déjà connecté)
   useEffect(() => {
-    if (!open || mode !== 'login' || step !== 'form' || !isGuest) return;
+    if (!open || !showLoginQr) return;
     let cancelled = false;
     let pollTimer: number | undefined;
     let refreshTimer: number | undefined;
@@ -116,7 +120,7 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
       if (pollTimer) window.clearTimeout(pollTimer);
       if (refreshTimer) window.clearTimeout(refreshTimer);
     };
-  }, [open, mode, step, isGuest, init, refresh, onClose]);
+  }, [open, showLoginQr, init, refresh, onClose]);
 
   useEffect(() => {
     if (!open || !googleEnabled || !googleClientId) return;
@@ -302,7 +306,7 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
           </button>
         )}
 
-        {mode === 'login' && isGuest && (
+        {showLoginQr && (
           <div className="mb-4 rounded-2xl border border-yt-border bg-yt-elevated/60 p-4 text-center">
             <div className="mb-2 flex items-center justify-center gap-1.5 text-sm font-medium">
               <QrCode className="h-4 w-4 text-yt-red" />
@@ -322,7 +326,50 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
                 ? 'QR expiré — un nouveau se génère…'
                 : 'Scanne avec ton téléphone déjà connecté (app ou navigateur) pour autoriser cet écran.'}
             </p>
+            <button
+              type="button"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-yt-border bg-yt-bg px-3 py-1.5 text-xs hover:bg-white/10"
+              onClick={() => {
+                setError('');
+                setShowClaimScanner(true);
+              }}
+            >
+              <Camera className="h-3.5 w-3.5" /> Scanner un QR d’invite
+            </button>
           </div>
+        )}
+
+        {showClaimScanner && (
+          <QrLoginScanner
+            title="Scanner l’invite QR"
+            hint="Cadre le QR affiché dans Compte / Profil sur l’appareil déjà connecté."
+            onClose={() => setShowClaimScanner(false)}
+            onResult={(raw) => {
+              setShowClaimScanner(false);
+              const parsed = parseDeviceLoginQr(raw);
+              if (!parsed || parsed.kind !== 'claim' || !parsed.claim) {
+                setError(
+                  parsed?.kind === 'approve'
+                    ? 'Ce QR doit être scanné depuis un compte déjà connecté (Profil → Scanner).'
+                    : 'QR non reconnu.',
+                );
+                return;
+              }
+              setBusy(true);
+              setError('');
+              void api
+                .deviceLoginClaim(parsed.claim)
+                .then(async (r) => {
+                  setToken(r.token);
+                  if (r.refreshToken) setRefreshToken(r.refreshToken);
+                  await init();
+                  await refresh();
+                  onClose();
+                })
+                .catch((e) => setError(String((e as Error).message || e)))
+                .finally(() => setBusy(false));
+            }}
+          />
         )}
 
         {mode === 'login' && !showPasskeyLogin && (

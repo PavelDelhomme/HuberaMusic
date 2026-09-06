@@ -3,11 +3,16 @@ package ovh.delhomme.ytmusic.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.BuildConfig
+import ovh.delhomme.ytmusic.DeviceLoginDeepLink
+import ovh.delhomme.ytmusic.auth.DeviceLoginQr
 import ovh.delhomme.ytmusic.auth.PasskeyAuth
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.LoginBody
@@ -29,11 +34,15 @@ data class AuthUiState(
     /** Toujours true : Bitwarden / GPM peuvent avoir une passkey sans flag local. */
     val showPasskeyLogin: Boolean = true,
     val allowRegister: Boolean = false,
+    /** URL à encoder en QR (appareil déjà connecté doit scanner). */
+    val deviceApproveUrl: String? = null,
+    val deviceQrStatus: String = "idle",
 )
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
     private val prefs = container.sharedPrefs("ytm_passkey")
     private val authPrefs = container.sharedPrefs("ytm_auth_v1")
+    private var deviceLoginJob: Job? = null
 
     private val _state = MutableStateFlow(
         AuthUiState(
@@ -56,6 +65,8 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             }
             if (container.validateSession()) {
                 _state.value = _state.value.copy(loggedIn = true)
+            } else {
+                startDeviceLoginQr()
             }
         }
     }
@@ -66,7 +77,110 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun updateTotp(v: String) { _state.value = _state.value.copy(totp = v) }
     fun toggleMode() {
         if (!_state.value.allowRegister && !_state.value.registerMode) return
-        _state.value = _state.value.copy(registerMode = !_state.value.registerMode, error = null)
+        val next = !_state.value.registerMode
+        _state.value = _state.value.copy(registerMode = next, error = null)
+        if (next) stopDeviceLoginQr() else startDeviceLoginQr()
+    }
+
+    /** QR sur l’écran login : un appareil déjà connecté scanne pour approuver. */
+    fun startDeviceLoginQr() {
+        if (_state.value.registerMode || _state.value.loggedIn || _state.value.offerPasskey) return
+        deviceLoginJob?.cancel()
+        deviceLoginJob = viewModelScope.launch {
+            while (isActive && !_state.value.registerMode && !_state.value.loggedIn) {
+                try {
+                    val s = container.api.deviceLoginStart()
+                    _state.value = _state.value.copy(
+                        deviceApproveUrl = s.approveUrl,
+                        deviceQrStatus = "waiting",
+                    )
+                    val refreshAt = (s.expiresAt - 5_000L).coerceAtLeast(System.currentTimeMillis() + 5_000L)
+                    while (isActive && System.currentTimeMillis() < refreshAt) {
+                        delay(1_500L)
+                        val r = runCatching {
+                            container.api.deviceLoginPoll(
+                                mapOf("id" to s.id, "pollSecret" to s.pollSecret),
+                            )
+                        }.getOrNull() ?: continue
+                        when (r.status) {
+                            "approved" -> {
+                                val token = r.token
+                                if (token.isNullOrBlank()) break
+                                container.tokenStore.saveSession(
+                                    token,
+                                    r.refreshToken,
+                                    r.user?.email,
+                                    r.user?.name,
+                                )
+                                r.user?.email?.let {
+                                    authPrefs.edit().putString(KEY_LAST_EMAIL, it).apply()
+                                }
+                                _state.value = _state.value.copy(
+                                    loading = false,
+                                    loggedIn = true,
+                                    deviceQrStatus = "approved",
+                                    deviceApproveUrl = null,
+                                    error = null,
+                                )
+                                return@launch
+                            }
+                            "expired" -> {
+                                _state.value = _state.value.copy(deviceQrStatus = "expired")
+                                break
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(
+                        deviceQrStatus = "idle",
+                        deviceApproveUrl = null,
+                    )
+                    delay(3_000L)
+                }
+            }
+        }
+    }
+
+    fun stopDeviceLoginQr() {
+        deviceLoginJob?.cancel()
+        deviceLoginJob = null
+        _state.value = _state.value.copy(deviceApproveUrl = null, deviceQrStatus = "idle")
+    }
+
+    /** Scan d’un QR d’invite (claim) depuis l’écran login. */
+    fun claimFromScannedQr(raw: String) {
+        when (val link = DeviceLoginQr.parse(raw)) {
+            is DeviceLoginDeepLink.Claim -> {
+                viewModelScope.launch {
+                    _state.value = _state.value.copy(loading = true, error = null)
+                    try {
+                        val r = container.api.deviceLoginClaim(mapOf("claim" to link.claim))
+                        container.tokenStore.saveSession(
+                            r.token,
+                            r.refreshToken,
+                            r.user.email,
+                            r.user.name,
+                        )
+                        authPrefs.edit().putString(KEY_LAST_EMAIL, r.user.email).apply()
+                        stopDeviceLoginQr()
+                        _state.value = _state.value.copy(loading = false, loggedIn = true)
+                    } catch (e: Exception) {
+                        _state.value = _state.value.copy(
+                            loading = false,
+                            error = e.message ?: "QR invite invalide ou expiré",
+                        )
+                    }
+                }
+            }
+            is DeviceLoginDeepLink.Approve -> {
+                _state.value = _state.value.copy(
+                    error = "Ce QR doit être scanné depuis un compte déjà connecté (Compte → Scanner).",
+                )
+            }
+            null -> {
+                _state.value = _state.value.copy(error = "QR non reconnu — attend un lien PLM de connexion.")
+            }
+        }
     }
 
     fun submit() {
@@ -107,6 +221,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                     res.user.name,
                 )
                 authPrefs.edit().putString(KEY_LAST_EMAIL, res.user.email).apply()
+                stopDeviceLoginQr()
                 val offer = shouldOfferPasskey()
                 _state.value = _state.value.copy(
                     loading = false,
@@ -134,7 +249,13 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
 
     fun dismissPasskeyOffer() {
         prefs.edit().putBoolean(KEY_DISMISSED, true).apply()
+        stopDeviceLoginQr()
         _state.value = _state.value.copy(offerPasskey = false, loggedIn = true)
+    }
+
+    override fun onCleared() {
+        stopDeviceLoginQr()
+        super.onCleared()
     }
 
     fun enrollPasskey(activityContext: android.content.Context) {
@@ -144,6 +265,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 val token = container.tokenStore.getAccess() ?: error("Session expirée")
                 PasskeyAuth(activityContext, container.httpPlain).register(token, "Android")
                 markPasskeyReady()
+                stopDeviceLoginQr()
                 _state.value = _state.value.copy(
                     loading = false,
                     offerPasskey = false,
@@ -172,6 +294,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                     tokens.name,
                 )
                 markPasskeyReady()
+                stopDeviceLoginQr()
                 _state.value = _state.value.copy(
                     loading = false,
                     loggedIn = true,
