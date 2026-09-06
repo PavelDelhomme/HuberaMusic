@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.164",
+      "date": "2026-09-06",
+      "title": "Préchargement plus rapide (biblio / goûts)",
+      "notes": [
+        "Le serveur préchauffe davantage les titres de chaque compte (historique, likes, artistes suivis) en .m4a compressé",
+        "Sur Android, la bibliothèque se précharge plus tôt et plus large (têtes audio + cache serveur) pour un démarrage moins lent",
+        "Goûts type K-Pop / anime / artistes suivis mieux anticipés avant l’écoute"
+      ]
+    },
+    {
       "version": "1.3.163",
       "date": "2026-09-06",
       "title": "Paroles Genius plus rapides",
