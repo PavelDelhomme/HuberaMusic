@@ -536,7 +536,7 @@ export function NowPlaying({
     };
   }, [open, tab, current?.id]);
 
-  // Charge l’URL vidéo seulement en mode Vidéo — resolve visual (fallback clip)
+  // Mode vidéo : son du clip ; affiche tout de suite le même ID (pas d’attente resolve).
   useEffect(() => {
     if (!open || mediaMode !== 'video' || !current?.id) {
       setVideoUrl(null);
@@ -547,7 +547,14 @@ export function NowPlaying({
     let cancelled = false;
     setVideoLoading(true);
     setVideoError(null);
-    setVideoUrl(null);
+    const tok = getToken();
+    // Instant : stream du même ID
+    setVideoUrl(
+      `/api/stream/${current.id}?type=video${
+        tok ? `&access_token=${encodeURIComponent(tok)}` : ''
+      }`,
+    );
+    setVideoLoading(false);
     const artist = artistNames(current);
     void api
       .trackVisual(current.id, {
@@ -557,25 +564,21 @@ export function NowPlaying({
       })
       .then(async (vis) => {
         if (cancelled) return;
-        if (!vis.visualId) {
-          setVideoError('Pas de clip vidéo pour ce titre');
-          return;
+        const vid = vis.visualId || current.id;
+        if (vid !== current.id) {
+          await api.streamUrl(vid, 'video').catch(() => null);
+          if (cancelled) return;
+          setVideoUrl(
+            `/api/stream/${vid}?type=video${
+              tok ? `&access_token=${encodeURIComponent(tok)}` : ''
+            }`,
+          );
+        } else {
+          await api.streamUrl(vid, 'video').catch(() => null);
         }
-        // Warm resolve sur l’ID visuel
-        await api.streamUrl(vis.visualId, 'video').catch(() => null);
-        if (cancelled) return;
-        const tok = getToken();
-        setVideoUrl(
-          `/api/stream/${vis.visualId}?type=video${
-            tok ? `&access_token=${encodeURIComponent(tok)}` : ''
-          }`,
-        );
       })
       .catch((e) => {
         if (!cancelled) setVideoError(String(e?.message || e || 'Vidéo indisponible'));
-      })
-      .finally(() => {
-        if (!cancelled) setVideoLoading(false);
       });
     return () => {
       cancelled = true;

@@ -1741,10 +1741,16 @@ app.get('/api/track/:id/visual', accountRequired, async (req, res) => {
       durationRaw != null && String(durationRaw).trim() !== ''
         ? Number(durationRaw)
         : undefined;
+    const refresh = String(req.query.refresh || '') === '1';
+    if (refresh) {
+      const { invalidateVisualCache } = await import('./media/visualResolve.js');
+      invalidateVisualCache(id);
+    }
     const resolved = await resolveVisualVideo(id, {
       title,
       artist,
       durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : undefined,
+      upgrade: !refresh,
     });
     res.json({
       ok: true,
@@ -1753,6 +1759,17 @@ app.get('/api/track/:id/visual', accountRequired, async (req, res) => {
         ? `/api/stream/${resolved.visualId}?type=video`
         : null,
     });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+app.delete('/api/track/:id/visual', accountRequired, async (req, res) => {
+  try {
+    const id = p(req.params.id);
+    const { invalidateVisualCache } = await import('./media/visualResolve.js');
+    invalidateVisualCache(id);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err) });
   }
