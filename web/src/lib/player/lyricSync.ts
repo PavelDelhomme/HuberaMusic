@@ -1,7 +1,10 @@
 /** Sync paroles : lead karaoké + offset appris (perso + crowd + segments rythme). */
 
-/** Quasi collé au son — le recalage utilisateur (appui long) affine si besoin. */
-export const LYRIC_LEAD_SEC = 0.12;
+/**
+ * Avance karaoké par défaut (~0,10 s perçue pour lire / chanter dessus).
+ * 180 ms bruts : absorbe latence UI / horloge lecteur (~50–80 ms) sans toucher la sync manuelle.
+ */
+export const LYRIC_LEAD_SEC = 0.18;
 
 /**
  * Plus de lag client LRCLIB : l’API étire / décale déjà les timed (v6).

@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.154",
+      "date": "2026-09-06",
+      "title": "Paroles un peu en avance pour chanter",
+      "notes": [
+        "Sans toucher à la sync manuelle, les paroles s’affichent ~0,10 s avant le son — plus facile de lire et chanter dessus",
+        "Sur Android, le suivi des lignes est plus fluide (rafraîchissement plus serré) pour ne pas perdre cette avance"
+      ]
+    },
+    {
       "version": "1.3.153",
       "date": "2026-09-06",
       "title": "Paroles qui apprennent le rythme (mid-song)",
