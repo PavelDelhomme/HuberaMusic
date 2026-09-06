@@ -1533,8 +1533,8 @@ export async function getArtistSongs(
 }
 
 const LYRICS_CACHE_MAX = 400;
-/** bump : paroles Genius calées sur les sous-titres YouTube */
-const LYRICS_CACHE_VER = 'v12';
+/** bump : ne plus décaler un LRC correct à cause d’un outro (v13) */
+const LYRICS_CACHE_VER = 'v13';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
@@ -1588,73 +1588,56 @@ function parseLrcBlock(raw: string): { startMs: number; text: string }[] {
 
 /**
  * Aligne un LRC studio sur la durée YouTube.
- * - Petit écart de durée → offset d’intro constant
- * - Écart relatif (0,85–1,15) → étirement linéaire (dérive de rythme / edit)
+ * - Écart relatif (0,85–1,15) → étirement linéaire (dérive / edit)
+ * - Track un peu plus long, rythme ≈ identique → offset d’intro constant
  * offset positif = retarde les lignes (corrige l’avance).
+ *
+ * Ne JAMAIS déduire un « intro » d’un trou en fin de LRC (outro) :
+ * ça retardait des titres corrects de 10–20 s (ex. APRÈS-VOUS MADAME / GIMS×Soolking).
  */
-function alignTimedToTrack(
+export function alignTimedToTrack(
   timed: { startMs: number; text: string }[],
   trackDurationSec?: number,
   sourceDurationSec?: number,
 ): { timed: { startMs: number; text: string }[]; offsetMs: number } {
   if (!timed.length) return { timed, offsetMs: 0 };
 
-  let working = timed;
-  let offsetMs = 0;
-
   if (
-    trackDurationSec &&
-    trackDurationSec >= 20 &&
-    sourceDurationSec &&
-    sourceDurationSec >= 20
+    !trackDurationSec ||
+    trackDurationSec < 20 ||
+    !sourceDurationSec ||
+    sourceDurationSec < 20
   ) {
-    const ratio = trackDurationSec / sourceDurationSec;
-    const diffSec = trackDurationSec - sourceDurationSec;
-    if (ratio >= 0.85 && ratio <= 1.15 && Math.abs(ratio - 1) >= 0.008) {
-      // Stretch : mappe le LRC studio sur la durée YT (mieux qu’un lag fixe mid-track)
-      working = timed.map((l) => ({
+    // Sans durée source fiable : garder le LRC tel quel (mieux qu’un faux décalage).
+    return { timed, offsetMs: 0 };
+  }
+
+  const ratio = trackDurationSec / sourceDurationSec;
+  const diffSec = trackDurationSec - sourceDurationSec;
+
+  if (ratio >= 0.85 && ratio <= 1.15 && Math.abs(ratio - 1) >= 0.008) {
+    return {
+      offsetMs: Math.round(diffSec * 1000),
+      timed: timed.map((l) => ({
         ...l,
         startMs: Math.max(0, Math.round(l.startMs * ratio)),
-      }));
-      offsetMs = Math.round(diffSec * 1000);
-    } else if (diffSec >= 0.35 && diffSec <= 30) {
-      offsetMs = Math.round(diffSec * 1000);
-      working = timed.map((l) => ({
-        ...l,
-        startMs: Math.max(0, Math.round(l.startMs + offsetMs)),
-      }));
-    }
+      })),
+    };
   }
 
-  // Sans durée source : estime un décalage d’intro si la plage LRC est « trop courte »
-  if (
-    offsetMs === 0 &&
-    working === timed &&
-    trackDurationSec &&
-    trackDurationSec >= 30 &&
-    timed.length >= 4
-  ) {
-    const first = timed[0]!.startMs / 1000;
-    const last = timed[timed.length - 1]!.startMs / 1000;
-    const span = last - first;
-    const tailGap = trackDurationSec - last;
-    if (first < 2.5 && span >= trackDurationSec * 0.5 && span <= trackDurationSec * 0.99) {
-      if (tailGap >= 3 && tailGap <= 35) {
-        offsetMs = Math.round(Math.min(Math.max(tailGap * 0.8, 2.5), 24) * 1000);
-      } else if (first < 1.2 && span >= trackDurationSec * 0.85) {
-        offsetMs = 2500;
-      }
-    }
-    if (offsetMs) {
-      working = timed.map((l) => ({
+  // Intro YT : même durée relative, piste un peu plus longue
+  if (diffSec >= 0.35 && diffSec <= 30 && Math.abs(ratio - 1) < 0.008) {
+    const offsetMs = Math.round(diffSec * 1000);
+    return {
+      offsetMs,
+      timed: timed.map((l) => ({
         ...l,
         startMs: Math.max(0, Math.round(l.startMs + offsetMs)),
-      }));
-    }
+      })),
+    };
   }
 
-  if (working === timed && !offsetMs) return { timed, offsetMs: 0 };
-  return { offsetMs, timed: working };
+  return { timed, offsetMs: 0 };
 }
 
 type LrclibHit = {
