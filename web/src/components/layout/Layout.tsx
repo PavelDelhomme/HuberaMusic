@@ -163,7 +163,7 @@ export function Layout() {
       const guest = !u || u.isGuest || u.email?.includes('@local.ytmusic');
       if (!guest) {
         void refresh();
-        void refreshPins();
+        void refreshPins(u?.id);
         initSession();
       }
     });
@@ -186,7 +186,7 @@ export function Layout() {
     // Connecté → jamais laisser la popup login ouverte
     setAuthOpen(false);
     void refresh();
-    void refreshPins();
+    void refreshPins(user?.id);
     initSession();
     void api
       .prefs()

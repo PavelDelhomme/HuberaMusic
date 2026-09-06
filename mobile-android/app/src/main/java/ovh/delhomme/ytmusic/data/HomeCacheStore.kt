@@ -45,6 +45,10 @@ class HomeCacheStore(context: Context) {
         }
     }
 
+    fun clear() {
+        prefs.edit().remove(KEY).apply()
+    }
+
     companion object {
         private const val KEY = "home_v2"
     }

@@ -57,6 +57,11 @@ class LibraryCacheStore(context: Context) {
         }
     }
 
+    fun clear() {
+        runCatching { if (file.exists()) file.delete() }
+        prefs.edit().remove(KEY).apply()
+    }
+
     companion object {
         private const val PREFS = "ytm_library_cache"
         private const val KEY = "lib_v1"

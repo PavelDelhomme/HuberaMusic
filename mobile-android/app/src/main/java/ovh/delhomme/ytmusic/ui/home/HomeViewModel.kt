@@ -130,7 +130,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 container.ensureFreshToken()
                 // Pins / quick access + home en parallèle
                 val pinsJob = async {
-                    runCatching { container.quickAccess.syncFromApi(container.api) }
+                    val email = container.tokenStore.getEmail()
+                    runCatching { container.quickAccess.syncFromApi(container.api, email) }
                 }
                 val homeJob = async { container.api.home() }
                 val savedJob = async {

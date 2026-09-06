@@ -13,9 +13,16 @@ import kotlinx.coroutines.flow.map
 
 private val Context.quickAccessStore by preferencesDataStore("ytmusic_quick_access")
 
-/** Pins locaux + sync serveur (`/api/pins`) pour le rayon Accueil « Accès rapide ». */
-class QuickAccessStore(private val context: Context) {
+/**
+ * Pins locaux + sync serveur (`/api/pins`) pour l’Accès rapide.
+ * Toujours liés à l’email du [TokenStore] — jamais partagés entre comptes.
+ */
+class QuickAccessStore(
+    private val context: Context,
+    private val tokenStore: TokenStore,
+) {
     private val key = stringPreferencesKey("pins_json")
+    private val boundUserKey = stringPreferencesKey("bound_user_email")
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
     private val adapter = moshi.adapter<List<TrackDto>>(
         Types.newParameterizedType(List::class.java, TrackDto::class.java),
@@ -28,11 +35,26 @@ class QuickAccessStore(private val context: Context) {
             .distinctBy { it.id }
     }
 
+    suspend fun boundUserEmail(): String? =
+        context.quickAccessStore.data.first()[boundUserKey]?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+
+    private suspend fun currentEmail(): String? =
+        tokenStore.getEmail()?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+
     suspend fun isPinned(id: String): Boolean = pins.first().any { it.id == id }
 
-    suspend fun replaceAll(tracks: List<TrackDto>) {
+    suspend fun clear() {
+        context.quickAccessStore.edit { prefs ->
+            prefs.remove(key)
+            prefs.remove(boundUserKey)
+        }
+    }
+
+    suspend fun replaceAll(tracks: List<TrackDto>, boundEmail: String? = null) {
         context.quickAccessStore.edit { prefs ->
             prefs[key] = adapter.toJson(tracks.take(48))
+            val email = (boundEmail ?: currentEmail())?.trim()?.lowercase().orEmpty()
+            if (email.isNotBlank()) prefs[boundUserKey] = email
         }
     }
 
@@ -76,20 +98,24 @@ class QuickAccessStore(private val context: Context) {
         )
 
     /**
-     * Sync bidirectionnelle :
-     * 1) lit le serveur
-     * 2) pousse les pins locaux absents du serveur
-     * 3) remplace le cache local par l’union serveur
+     * Sync stricte par utilisateur :
+     * - cache d’un autre compte → ignoré (pull serveur only)
+     * - même compte → pousse les pins locaux absents (multi-appareils)
      */
-    suspend fun syncFromApi(api: YtMusicApi) {
-        val local = pins.first()
+    suspend fun syncFromApi(api: YtMusicApi, userEmail: String? = null) {
+        val email = (userEmail ?: currentEmail())?.trim()?.lowercase().orEmpty()
+        val bound = boundUserEmail()
+        val sameUser = email.isNotBlank() && bound != null && bound == email
+
         val remote = runCatching { api.pins().pins }.getOrDefault(emptyList())
         val remoteTracks = remote.mapNotNull { pinToTrack(it) }
         val remoteIds = remoteTracks.map { it.id }.toSet()
-        val localOnly = local.filter { it.id.isNotBlank() && it.id !in remoteIds }
-        val toSync = (remoteTracks + localOnly).distinctBy { it.id }
 
-        val synced = if (toSync.isNotEmpty()) {
+        val local = if (sameUser) pins.first() else emptyList()
+        val localOnly = local.filter { it.id.isNotBlank() && it.id !in remoteIds }
+
+        val synced = if (sameUser && localOnly.isNotEmpty()) {
+            val toSync = (remoteTracks + localOnly).distinctBy { it.id }
             runCatching {
                 api.syncPins(mapOf("pins" to toSync.map { trackToPinBody(it) })).pins
             }.getOrDefault(remote)
@@ -98,13 +124,19 @@ class QuickAccessStore(private val context: Context) {
         }
 
         val tracks = synced.mapNotNull { pinToTrack(it) }
-            .ifEmpty { toSync }
             .distinctBy { it.id }
             .take(48)
-        replaceAll(tracks)
+        replaceAll(tracks, boundEmail = email.ifBlank { null })
     }
 
     suspend fun toggle(track: TrackDto, api: YtMusicApi? = null): Boolean {
+        val email = currentEmail().orEmpty()
+        if (email.isNotBlank()) {
+            val bound = boundUserEmail()
+            if (bound != null && bound != email) {
+                clear()
+            }
+        }
         var nowPinned = false
         context.quickAccessStore.edit { prefs ->
             val current = prefs[key].orEmpty().let { raw ->
@@ -123,13 +155,13 @@ class QuickAccessStore(private val context: Context) {
                 nowPinned = true
             }
             prefs[key] = adapter.toJson(current.distinctBy { it.id }.take(48))
+            if (email.isNotBlank()) prefs[boundUserKey] = email
         }
         if (api != null) {
             runCatching {
                 if (nowPinned) {
                     val pinType = track.type?.takeIf { it != "video" && it.isNotBlank() } ?: "song"
                     api.addPin(trackToPinBody(track.copy(type = pinType)))
-                    // Épingler ⇒ aussi bibliothèque (sans toggle-off si déjà présent)
                     runCatching {
                         when (pinType) {
                             "album" -> api.saveAlbum(track.copy(type = "album"))

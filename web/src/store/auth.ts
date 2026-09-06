@@ -102,6 +102,14 @@ export const useAuth = create<AuthState>((set) => ({
     setToken(null);
     setRefreshToken(null);
     set({ user: null });
+    const { clearPinsLocalCache } = await import('./pins');
+    clearPinsLocalCache();
+    try {
+      sessionStorage.removeItem('ytm_home_v1');
+      localStorage.removeItem('ytm_pins_cache_v1');
+    } catch {
+      /* ignore */
+    }
     reconnectSession();
   },
 }));
