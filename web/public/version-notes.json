@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.161",
+      "date": "2026-09-06",
+      "title": "Accueil plus rapide, session alias, email mémorisé",
+      "notes": [
+        "L’accueil ne reste plus bloqué 7+ s si YouTube Music est lent : le perso arrive d’abord, le reste se complète derrière",
+        "Basculer plm ↔ ytmusic ne déconnecte plus (même serveur, même session)",
+        "L’email de connexion est mémorisé sur le téléphone ; l’écran login rappelle PLM + ytmusic en prod"
+      ]
+    },
+    {
       "version": "1.3.160",
       "date": "2026-09-06",
       "title": "PLM + ytmusic, session auto, permissions calmes",

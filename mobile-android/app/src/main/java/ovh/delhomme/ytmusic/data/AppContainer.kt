@@ -151,6 +151,27 @@ class AppContainer(context: Context) {
     fun apiBaseOverride(): String? =
         apiPrefs.getString("base_url", null)?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
 
+    /** Même backend prod (JWT / cookies partagés) — plm ↔ ytmusic ↔ pue-la-merde. */
+    private fun sameProdBackendFamily(a: String?, b: String?): Boolean {
+        fun host(u: String?): String? {
+            val raw = u?.trim()?.trimEnd('/')?.lowercase().orEmpty()
+            if (raw.isEmpty()) return null
+            return try {
+                java.net.URI(if ("://" in raw) raw else "https://$raw").host?.lowercase()
+            } catch (_: Exception) {
+                null
+            }
+        }
+        val ha = host(a) ?: return false
+        val hb = host(b) ?: return false
+        val aliases = setOf(
+            "plm.delhomme.ovh",
+            "ytmusic.delhomme.ovh",
+            "pue-la-merde.delhomme.ovh",
+        )
+        return ha in aliases && hb in aliases
+    }
+
     /** Persiste une URL API (ex. http://192.168.1.134:8787). null = reset BuildConfig. */
     fun setApiBaseOverride(url: String?) {
         var cleaned = url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
@@ -164,15 +185,18 @@ class AppContainer(context: Context) {
             }
         }
         val prev = apiPrefs.getString("base_url", null)?.trim()?.trimEnd('/')
-        val next = cleaned
-        val changed = (prev ?: "") != (next ?: "")
+            ?: BuildConfig.API_BASE_URL.trimEnd('/').takeIf { it.isNotBlank() }
+        val next = cleaned ?: BuildConfig.API_BASE_URL.trimEnd('/').takeIf { it.isNotBlank() }
+        val changed = (prev ?: "") != (cleaned ?: "")
         apiPrefs.edit().apply {
             if (cleaned == null) remove("base_url") else putString("base_url", cleaned)
         }.apply()
-        // Changer d’API (LAN ↔ prod) invalide les JWT de l’autre instance.
-        if (changed) {
+        // Changer d’API (LAN ↔ prod) invalide les JWT — sauf alias PLM/ytmusic (même instance).
+        if (changed && !sameProdBackendFamily(prev, next)) {
             runCatching { runBlocking { tokenStore.clear() } }
-            AppLog.i("api", "base_url override → ${next ?: "(BuildConfig)"} — session cleared")
+            AppLog.i("api", "base_url override → ${cleaned ?: "(BuildConfig)"} — session cleared")
+        } else if (changed) {
+            AppLog.i("api", "base_url override → ${cleaned ?: "(BuildConfig)"} — session conservée (alias prod)")
         }
     }
 

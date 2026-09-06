@@ -33,8 +33,18 @@ data class AuthUiState(
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
     private val prefs = container.sharedPrefs("ytm_passkey")
+    private val authPrefs = container.sharedPrefs("ytm_auth_v1")
 
-    private val _state = MutableStateFlow(AuthUiState())
+    private val _state = MutableStateFlow(
+        AuthUiState(
+            email = authPrefs.getString(KEY_LAST_EMAIL, null)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: BuildConfig.DEV_EMAIL,
+            // Jamais préremplir le mdp hors build debug (évite fuite sur APK prod debug partagée).
+            password = if (BuildConfig.DEBUG) BuildConfig.DEV_PASSWORD else "",
+        ),
+    )
     val state: StateFlow<AuthUiState> = _state.asStateFlow()
 
     init {
@@ -96,12 +106,14 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                     res.user.email,
                     res.user.name,
                 )
+                authPrefs.edit().putString(KEY_LAST_EMAIL, res.user.email).apply()
                 val offer = shouldOfferPasskey()
                 _state.value = _state.value.copy(
                     loading = false,
                     needs2fa = false,
                     offerPasskey = offer,
                     loggedIn = !offer,
+                    email = res.user.email,
                 )
             } catch (e: HttpException) {
                 val body = e.response()?.errorBody()?.string().orEmpty()
@@ -193,6 +205,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     companion object {
         private const val KEY_READY = "ready"
         private const val KEY_DISMISSED = "offer_dismissed"
+        private const val KEY_LAST_EMAIL = "last_email"
 
         fun factory(container: AppContainer) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
