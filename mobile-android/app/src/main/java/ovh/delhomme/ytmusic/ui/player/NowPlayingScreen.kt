@@ -560,7 +560,8 @@ fun NowPlayingScreen(
             player.tick()
             delay(
                 when {
-                    showLyrics && ui.playing -> 120L
+                    // Tick serré : un poll à 120 ms annulait tout le lead karaoké.
+                    showLyrics && ui.playing -> 48L
                     ui.playing -> 400L
                     else -> 1_200L
                 },
@@ -2975,8 +2976,8 @@ private fun InlineSyncedLyrics(
         loading = false
     }
 
-    // Collé au son ; offset peut varier mid-song via segments appris (changements de rythme).
-    val leadMs = 120L
+    // Avance karaoké ~0,10 s perçue (180 ms − latence tick/player) ; segments mid-song en plus.
+    val leadMs = 180L
     val sourceLagMs = 0L
     val effectiveOffsetMs = lyricOffsetAtMs(userOffsetMs, segments, positionMs, durationMs)
     val syncPos = positionMs + leadMs - effectiveOffsetMs - sourceLagMs
