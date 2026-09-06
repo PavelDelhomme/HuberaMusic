@@ -178,6 +178,7 @@ import {
   listSearchHistory,
   listWeights,
   mergePins,
+  replacePins,
   recoAdminStats,
   recordListenEvent,
   removePin,
@@ -1991,14 +1992,21 @@ app.post('/api/pins', accountRequired, (req, res) => {
   res.json({ pins });
 });
 
-/** Sync multi-appareils : upsert une liste, renvoie l’union serveur. */
+/**
+ * Sync pins multi-appareils.
+ * - mode omit / "merge" : upsert (ajouts) — ne pas utiliser au pull forcé
+ * - mode "replace" : remplace toute la barre Accès rapide de ce compte
+ * Par défaut les clients font GET /api/pins (serveur = vérité au rafraîchissement).
+ */
 app.post('/api/pins/sync', accountRequired, (req, res) => {
   const raw = Array.isArray(req.body?.pins) ? req.body.pins : Array.isArray(req.body) ? req.body : [];
   const items = raw
     .map((x: unknown) => (x && typeof x === 'object' ? (x as Record<string, unknown>) : null))
     .filter(Boolean) as { kind?: string; targetId?: string; id?: string; payload?: unknown }[];
-  const result = mergePins(req.userId!, items);
-  res.json({ ok: true, ...result });
+  const mode = String(req.body?.mode || 'merge').toLowerCase();
+  const result =
+    mode === 'replace' ? replacePins(req.userId!, items) : mergePins(req.userId!, items);
+  res.json({ ok: true, mode: mode === 'replace' ? 'replace' : 'merge', ...result });
 });
 
 app.delete('/api/pins/:id', accountRequired, (req, res) => {

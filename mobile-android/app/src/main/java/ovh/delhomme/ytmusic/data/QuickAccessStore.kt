@@ -98,35 +98,40 @@ class QuickAccessStore(
         )
 
     /**
-     * Sync stricte par utilisateur :
-     * - cache d’un autre compte → ignoré (pull serveur only)
-     * - même compte → pousse les pins locaux absents (multi-appareils)
+     * Pull serveur = source de vérité (multi-appareils).
+     * Ne plus pousser le cache local en union : ça ré-annulait les pins
+     * retirés / ajoutés sur l’autre téléphone au pull-to-refresh.
+     * Les ajouts/suppressions passent déjà par addPin/removePin à l’action.
      */
     suspend fun syncFromApi(api: YtMusicApi, userEmail: String? = null) {
         val email = (userEmail ?: currentEmail())?.trim()?.lowercase().orEmpty()
         val bound = boundUserEmail()
-        val sameUser = email.isNotBlank() && bound != null && bound == email
-
-        val remote = runCatching { api.pins().pins }.getOrDefault(emptyList())
-        val remoteTracks = remote.mapNotNull { pinToTrack(it) }
-        val remoteIds = remoteTracks.map { it.id }.toSet()
-
-        val local = if (sameUser) pins.first() else emptyList()
-        val localOnly = local.filter { it.id.isNotBlank() && it.id !in remoteIds }
-
-        val synced = if (sameUser && localOnly.isNotEmpty()) {
-            val toSync = (remoteTracks + localOnly).distinctBy { it.id }
-            runCatching {
-                api.syncPins(mapOf("pins" to toSync.map { trackToPinBody(it) })).pins
-            }.getOrDefault(remote)
-        } else {
-            remote
+        if (email.isNotBlank() && bound != null && bound != email) {
+            clear()
         }
-
-        val tracks = synced.mapNotNull { pinToTrack(it) }
+        val remote = runCatching { api.pins().pins }.getOrDefault(emptyList())
+        val tracks = remote.mapNotNull { pinToTrack(it) }
             .distinctBy { it.id }
             .take(48)
         replaceAll(tracks, boundEmail = email.ifBlank { null })
+    }
+
+    /**
+     * Pousse l’état local comme vérité serveur (édition offline puis sync explicite).
+     * Rare — le flux normal est [syncFromApi] (pull).
+     */
+    suspend fun pushReplaceToApi(api: YtMusicApi) {
+        val local = pins.first()
+        val email = currentEmail().orEmpty()
+        runCatching {
+            api.syncPins(
+                mapOf(
+                    "mode" to "replace",
+                    "pins" to local.map { trackToPinBody(it) },
+                ),
+            )
+        }
+        syncFromApi(api, email.ifBlank { null })
     }
 
     suspend fun toggle(track: TrackDto, api: YtMusicApi? = null): Boolean {
@@ -161,7 +166,11 @@ class QuickAccessStore(
             runCatching {
                 if (nowPinned) {
                     val pinType = track.type?.takeIf { it != "video" && it.isNotBlank() } ?: "song"
-                    api.addPin(trackToPinBody(track.copy(type = pinType)))
+                    val resp = api.addPin(trackToPinBody(track.copy(type = pinType)))
+                    replaceAll(
+                        resp.pins.mapNotNull { pinToTrack(it) }.distinctBy { it.id }.take(48),
+                        boundEmail = email.ifBlank { null },
+                    )
                     runCatching {
                         when (pinType) {
                             "album" -> api.saveAlbum(track.copy(type = "album"))
@@ -177,7 +186,9 @@ class QuickAccessStore(
                         }
                     }
                 } else {
-                    api.removePin(track.id)
+                    val resp = api.removePin(track.id)
+                    val fromServer = resp.pins.mapNotNull { pinToTrack(it) }.distinctBy { it.id }.take(48)
+                    replaceAll(fromServer, boundEmail = email.ifBlank { null })
                 }
             }
         }
