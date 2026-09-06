@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.170",
+      "date": "2026-09-06",
+      "title": "Titres morts remplacés (K-Pop / JP / lyrics)",
+      "notes": [
+        "Quand YouTube dit « vidéo indisponible », on retrouve bien plus souvent le bon morceau (titres japonais/coréens, clips lyrics, émissions TV)",
+        "Moins de lectures bloquées sur les suggestions et la biblio"
+      ]
+    },
+    {
       "version": "1.3.169",
       "date": "2026-09-06",
       "title": "À suivre ON + MAJ Samsung fiable",
