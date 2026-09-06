@@ -117,9 +117,23 @@ export const useExplore = create<ExploreState>((set, get) => ({
       const cats = r.radios?.length
         ? r.radios
         : (await api.recoRadios().catch(() => ({ radios: [] as RadioCat[] }))).radios || [];
+
+      // Radios déjà préchargées côté API → affiche immédiatement
+      const seededShelves: RadioShelf[] = [];
+      const seededPreviews: Record<string, Track[]> = {};
+      for (const cat of cats) {
+        const items = (cat as RadioCat & { items?: Track[] }).items;
+        if (items?.length) {
+          seededShelves.push({ id: cat.id, title: `Radio · ${cat.title}`, items: items.slice(0, 12) });
+          seededPreviews[cat.id] = items.slice(0, 4);
+        }
+      }
+
       set({
         ytShelves: r.shelves || [],
         radios: cats,
+        radioShelves: seededShelves.length ? seededShelves : get().radioShelves,
+        radioPreviews: Object.keys(seededPreviews).length ? seededPreviews : get().radioPreviews,
         loading: false,
         fetchedAt: Date.now(),
       });
@@ -135,11 +149,17 @@ export const useExplore = create<ExploreState>((set, get) => ({
         return;
       }
 
-      set({ loadingRadios: true, pendingRadios: cats.map((c) => c.id) });
-      const nextShelves: RadioShelf[] = force ? [] : [...get().radioShelves];
-      const nextPreviews: Record<string, Track[]> = force ? {} : { ...get().radioPreviews };
+      // Complète les radios sans preview (reste + refresh)
+      const needFetch = cats.filter((c) => !seededPreviews[c.id]?.length);
+      set({ loadingRadios: needFetch.length > 0, pendingRadios: needFetch.map((c) => c.id) });
+      const nextShelves: RadioShelf[] = force
+        ? [...seededShelves]
+        : [...seededShelves, ...get().radioShelves.filter((s) => !seededShelves.some((x) => x.id === s.id))];
+      const nextPreviews: Record<string, Track[]> = force
+        ? { ...seededPreviews }
+        : { ...get().radioPreviews, ...seededPreviews };
 
-      for (const cat of cats) {
+      for (const cat of needFetch) {
         if (my !== loadGen) return;
         try {
           const mix = await api.recoRadio(cat.id, { preview: true });

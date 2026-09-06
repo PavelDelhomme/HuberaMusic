@@ -1569,8 +1569,29 @@ export async function homeReco(userId: string) {
 
 /** Métadonnées Explorer (rapide). Les rayons radio se chargent ensuite via radioForUser({ light }). */
 export async function exploreReco(userId: string) {
+  // Précharge les previews des premières radios (évite le waterfall client N×recoRadio)
+  const cats = RADIO_CATEGORIES.slice(0, 6);
+  const previews = await Promise.all(
+    cats.map(async (c) => {
+      try {
+        const mix = await radioForUser(userId, c.id, { light: true });
+        return {
+          id: c.id,
+          title: c.title,
+          items: (mix.tracks || []).slice(0, 8) as Track[],
+        };
+      } catch {
+        return { id: c.id, title: c.title, items: [] as Track[] };
+      }
+    }),
+  );
+  const rest = RADIO_CATEGORIES.slice(6).map((c) => ({
+    id: c.id,
+    title: c.title,
+    items: [] as Track[],
+  }));
   return {
-    radios: RADIO_CATEGORIES.map((c) => ({ id: c.id, title: c.title, items: [] as Track[] })),
+    radios: [...previews, ...rest],
     needsOnboarding: !getPrefs(userId).onboardingDone,
   };
 }

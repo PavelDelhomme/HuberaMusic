@@ -454,9 +454,23 @@ export function NowPlaying({
   const touchRef = useRef<{ x: number; y: number; atTop: boolean } | null>(null);
 
   const setMode = (mode: 'cover' | 'video') => {
+    const prev = sessionMediaMode;
     sessionMediaMode = mode;
     setMediaMode(mode);
-    usePlayer.getState().setMediaPresentation(mode);
+    const p = usePlayer.getState();
+    // Sortie vidéo → caler l’audio titre sur la position du clip regardé
+    if (prev === 'video' && mode === 'cover') {
+      const v = videoRef.current;
+      const el = p.audioEl;
+      if (v && el && Number.isFinite(v.currentTime)) {
+        try {
+          el.currentTime = v.currentTime;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    p.setMediaPresentation(mode);
   };
 
   useEffect(() => {
@@ -568,16 +582,20 @@ export function NowPlaying({
     };
   }, [open, mediaMode, current?.id, current?.title]);
 
-  // Sync image+son : vidéo muette calée sur l’audio (pause / seek inclus)
+  // Mode vidéo : son du clip ; audio titre muet mais syncé sur la timeline du clip.
+  // Mode titre : on restaure le volume audio (position déjà calée dans setMode).
   useEffect(() => {
     if (mediaMode !== 'video' || !videoRef.current || !audioEl) return;
     const v = videoRef.current;
-    v.muted = true;
+    const savedVol = audioEl.volume > 0.02 ? audioEl.volume : usePlayer.getState().volume || 0.9;
+    v.muted = false;
+    audioEl.volume = 0;
     const sync = () => {
-      if (!Number.isFinite(audioEl.currentTime)) return;
-      if (Math.abs(v.currentTime - audioEl.currentTime) > 0.25) {
+      if (!Number.isFinite(v.currentTime)) return;
+      // Clip = maître : le titre suit (timeline / paroles)
+      if (Math.abs(audioEl.currentTime - v.currentTime) > 0.85) {
         try {
-          v.currentTime = audioEl.currentTime;
+          audioEl.currentTime = v.currentTime;
         } catch {
           /* ignore seek race */
         }
@@ -591,6 +609,7 @@ export function NowPlaying({
     sync();
     const onPlay = () => void v.play().catch(() => {});
     const onPause = () => v.pause();
+    // Scrub barre titre → recentrer le clip
     const onSeek = () => {
       try {
         v.currentTime = audioEl.currentTime;
@@ -601,15 +620,16 @@ export function NowPlaying({
     audioEl.addEventListener('play', onPlay);
     audioEl.addEventListener('pause', onPause);
     audioEl.addEventListener('seeked', onSeek);
-    audioEl.addEventListener('timeupdate', sync);
     const iv = window.setInterval(sync, 250);
     return () => {
       audioEl.removeEventListener('play', onPlay);
       audioEl.removeEventListener('pause', onPause);
       audioEl.removeEventListener('seeked', onSeek);
-      audioEl.removeEventListener('timeupdate', sync);
       window.clearInterval(iv);
       v.pause();
+      v.muted = true;
+      const target = usePlayer.getState().volume > 0.02 ? usePlayer.getState().volume : savedVol;
+      audioEl.volume = target;
     };
   }, [mediaMode, audioEl, videoUrl, isPlaying]);
 
