@@ -75,6 +75,16 @@ class ApkUpdateManager(
     private var lastConfirmIntent: Intent? = null
     @Volatile
     private var lastReopenAt = 0L
+    /** true = dernière install via ACTION_VIEW (pas PackageInstaller). */
+    @Volatile
+    private var usedViewInstall = false
+    /** Empêche d’empiler 2–3 écrans « Confirmer » (OEM / retries). */
+    @Volatile
+    private var confirmUiOpened = false
+    private var lastInstallApk: File? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pendingConfirmRetry: Runnable? = null
+    private var pendingViewFallback: Runnable? = null
 
     /**
      * Clic vignette / Compte / notif : rouvre « Confirmer l’installation »
@@ -102,11 +112,28 @@ class ApkUpdateManager(
     /** Relance l’écran système de confirmation (ou réinstalle depuis le cache APK). */
     fun reopenConfirmInstall(): Boolean {
         val now = System.currentTimeMillis()
-        if (now - lastReopenAt < 700L) return false
+        if (now - lastReopenAt < 900L) return false
         lastReopenAt = now
+        // VIEW : une seule réouverture de l’installateur système (pas un 2ᵉ flux parallèle)
+        if (usedViewInstall) {
+            val apk = lastInstallApk
+            if (apk != null && apk.isFile && apk.length() > 1_000_000L) {
+                AppLog.i("apk-update", "reopen VIEW install")
+                confirmUiOpened = false
+                runCatching { installApkViaView(apk) }
+                    .onFailure { AppLog.w("apk-update", "reopen VIEW KO: ${it.message}") }
+                notifier.show(
+                    "Mise à jour PLM",
+                    "Confirme l’installation sur l’écran système",
+                    100,
+                    indeterminate = false,
+                )
+                return true
+            }
+        }
         val confirm = lastConfirmIntent
         if (confirm != null) {
-            AppLog.i("apk-update", "reopen confirm intent")
+            AppLog.i("apk-update", "reopen confirm intent (single)")
             UpdateRelaunch.launchConfirm(context, confirm)
             notifier.show(
                 "Mise à jour PLM",
@@ -126,6 +153,13 @@ class ApkUpdateManager(
         }
         AppLog.w("apk-update", "reopen confirm: pas d’intent ni d’APK cache")
         return false
+    }
+
+    private fun cancelPendingInstallRetries() {
+        pendingConfirmRetry?.let { mainHandler.removeCallbacks(it) }
+        pendingViewFallback?.let { mainHandler.removeCallbacks(it) }
+        pendingConfirmRetry = null
+        pendingViewFallback = null
     }
 
     private fun restoreUi(): UiState {
@@ -165,7 +199,11 @@ class ApkUpdateManager(
 
     /** Annule une confirmation coincée / abandonne la vignette bloquante. */
     fun dismissAwaitingConfirm(snooze: Boolean = true) {
+        cancelPendingInstallRetries()
         lastConfirmIntent = null
+        confirmUiOpened = false
+        usedViewInstall = false
+        lastInstallApk = null
         notifier.cancel()
         val remote = _ui.value.remoteCode.takeIf { it > 0 }
             ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
@@ -656,33 +694,47 @@ class ApkUpdateManager(
         }
         clearSnooze()
         UpdateRelaunch.markPending(context)
-        // OEM agressifs (Samsung One UI, Xiaomi, Oppo…) : ACTION_VIEW d’abord —
-        // PackageInstaller laisse souvent « Confirmer » derrière PLM.
+        cancelPendingInstallRetries()
+        confirmUiOpened = false
+        lastConfirmIntent = null
+        lastInstallApk = file
+        // Une seule UI d’install : VIEW sur OEM fragiles, sinon PackageInstaller.
+        // Jamais les deux à la suite (ça empile 2 feuilles système → clic perdu).
         val mfr = Build.MANUFACTURER.lowercase()
         val brand = Build.BRAND.lowercase()
         val preferView = listOf(
             "nothing", "samsung", "xiaomi", "redmi", "poco", "oppo", "oneplus",
             "realme", "vivo", "huawei", "honor", "motorola", "tecno", "infinix",
+            "blackview", "google",
         ).any { mfr.contains(it) || brand.contains(it) }
-        AppLog.i("apk-update", "launchInstall preferView=$preferView mfr=$mfr brand=$brand")
+        AppLog.i("apk-update", "launchInstall preferView=$preferView mfr=$mfr brand=$brand singleUi=1")
         val ok = if (preferView) {
             withContext(Dispatchers.Main) {
-                runCatching { installApkViaView(file) }
-                    .onFailure { AppLog.w("apk-update", "VIEW install KO: ${it.message}") }
-                    .isSuccess
+                runCatching {
+                    installApkViaView(file)
+                    usedViewInstall = true
+                    confirmUiOpened = true
+                }.onFailure {
+                    AppLog.w("apk-update", "VIEW install KO: ${it.message}")
+                }.isSuccess
             }.let { viewOk ->
                 if (viewOk) {
                     true
                 } else {
+                    usedViewInstall = false
                     runCatching { installViaPackageInstaller(file) }.getOrElse { false }
                 }
             }
         } else {
+            usedViewInstall = false
             runCatching { installViaPackageInstaller(file) }.getOrElse { err ->
-                AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
+                AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW once")
                 withContext(Dispatchers.Main) {
-                    runCatching { installApkViaView(file) }
-                        .onFailure { AppLog.w("apk-update", "VIEW fallback KO: ${it.message}") }
+                    runCatching {
+                        installApkViaView(file)
+                        usedViewInstall = true
+                        confirmUiOpened = true
+                    }.onFailure { AppLog.w("apk-update", "VIEW fallback KO: ${it.message}") }
                         .isSuccess
                 }
             }
@@ -967,37 +1019,25 @@ class ApkUpdateManager(
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 lastConfirmIntent = UpdateRelaunch.extractConfirmIntent(intent)
-                UpdateRelaunch.startConfirmIntent(ctx, intent)
-                // Relances : OEM mettent souvent l’écran derrière PLM
-                val main = android.os.Handler(android.os.Looper.getMainLooper())
-                main.postDelayed({
-                    lastConfirmIntent?.let { UpdateRelaunch.launchConfirm(ctx, it) }
-                }, 450L)
-                main.postDelayed({
-                    lastConfirmIntent?.let { UpdateRelaunch.launchConfirm(ctx, it) }
-                }, 1_200L)
-                // Si toujours pas confirmé → fallback ACTION_VIEW sur l’APK en cache
-                main.postDelayed({
-                    if (_ui.value.phase != Phase.AwaitingConfirm) return@postDelayed
-                    val code = prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
-                    val apk = if (code > 0) apkFileFor(code) else null
-                    if (apk != null && apk.isFile && apk.length() > 1_000_000L) {
-                        AppLog.w("apk-update", "confirm invisible → fallback VIEW")
-                        runCatching { installApkViaView(apk) }
-                            .onFailure { AppLog.w("apk-update", "VIEW after pending KO: ${it.message}") }
-                    }
-                }, 2_800L)
+                // Une seule ouverture — les retries empilaient 2–3 feuilles système
+                // (Samsung / Nothing / Xiaomi) et le clic « Installer » était perdu.
+                if (!confirmUiOpened) {
+                    confirmUiOpened = true
+                    UpdateRelaunch.startConfirmIntent(ctx, intent)
+                } else {
+                    AppLog.i("apk-update", "confirm déjà ouvert — ignore broadcast dupliqué")
+                }
                 publish(
                     _ui.value.copy(
                         phase = Phase.AwaitingConfirm,
-                        message = "Appuie sur la vignette « Confirmer » si l’écran système n’apparaît pas",
+                        message = "Confirme l’installation — si l’écran est derrière PLM, appuie sur la vignette",
                         available = true,
                         progress = 1f,
                     ),
                 )
                 notifier.show(
                     "Mise à jour PLM",
-                    "Appuie ici ou sur la vignette pour confirmer l’install",
+                    "Confirme l’installation (une seule fenêtre)",
                     100,
                     indeterminate = false,
                 )
