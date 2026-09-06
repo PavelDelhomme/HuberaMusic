@@ -25,8 +25,7 @@ class UpdateConfirmProxyActivity : Activity() {
             confirm.addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP,
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
             )
             runCatching { startActivity(confirm) }
                 .onFailure { AppLog.w("apk-update", "proxy confirm KO: ${it.message}") }
