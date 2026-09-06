@@ -283,6 +283,9 @@ function isAllowedOrigin(origin: string | undefined): boolean {
     [
       ...(process.env.CORS_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean),
       (process.env.APP_URL || '').replace(/\/$/, ''),
+      'https://plm.delhomme.ovh',
+      'https://ytmusic.delhomme.ovh',
+      'https://pue-la-merde.delhomme.ovh',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
       'http://localhost:8787',
@@ -292,6 +295,8 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   if (allow.has(origin)) return true;
   if (origin.startsWith('android:apk-key-hash:')) return true;
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
+  // Alias canoniques toujours OK en prod (cookies Domain=.delhomme.ovh)
+  if (/^https:\/\/(plm|ytmusic|pue-la-merde)\.delhomme\.ovh$/i.test(origin)) return true;
   if (env === 'local' || env === 'development') {
     return /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/i.test(
       origin,
