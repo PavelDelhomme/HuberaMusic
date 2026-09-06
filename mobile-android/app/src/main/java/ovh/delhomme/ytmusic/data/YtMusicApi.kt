@@ -238,11 +238,36 @@ data class LyricsResponse(
     val source: String? = null,
     val syncOffsetMs: Long? = null,
     val userOffsetMs: Long? = null,
+    val crowdOffsetMs: Long? = null,
+    val personalOffsetMs: Long? = null,
+    val segments: List<LyricSegmentDto>? = null,
+    val segmentsFromUser: Boolean? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class LyricSegmentDto(
+    val bucket: Int = 0,
+    val startRatio: Double = 0.0,
+    val endRatio: Double = 1.0,
+    val offsetMs: Long = 0L,
+    val n: Int? = null,
 )
 
 @JsonClass(generateAdapter = false)
 data class LyricOffsetBody(
     val offsetMs: Long = 0L,
+    val atMs: Long? = null,
+    val durationMs: Long? = null,
+    val source: String? = "nudge",
+)
+
+@JsonClass(generateAdapter = false)
+data class LyricOffsetSaveResponse(
+    val trackId: String? = null,
+    val offsetMs: Long = 0L,
+    val crowdOffsetMs: Long? = null,
+    val segments: List<LyricSegmentDto>? = null,
+    val segmentsFromUser: Boolean? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -577,7 +602,7 @@ interface YtMusicApi {
     suspend fun saveLyricOffset(
         @Path("id") id: String,
         @Body body: LyricOffsetBody,
-    ): LyricOffsetBody
+    ): LyricOffsetSaveResponse
 
     @GET("api/reco/similar/{trackId}")
     suspend fun similar(@Path("trackId") trackId: String): SimilarResponse

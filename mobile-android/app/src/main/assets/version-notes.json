@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.153",
+      "date": "2026-09-06",
+      "title": "Paroles qui apprennent le rythme (mid-song)",
+      "notes": [
+        "Chaque correction de sync (±0,20 / ±0,25 ou appui long) enseigne le serveur à cet endroit du titre — les changements de rythme mid-song (ex. Blessant) sont mémorisés par segments",
+        "Les réglages de tous les comptes s’agrègent : un titre déjà calé par d’autres démarre mieux syncé",
+        "Web et Android appliquent un décalage qui peut varier au fil du morceau, pas un seul offset figé"
+      ]
+    },
+    {
       "version": "1.3.152",
       "date": "2026-09-06",
       "title": "Plus jamais bloqué sur Confirmer l’installation",
