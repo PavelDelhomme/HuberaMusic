@@ -455,7 +455,7 @@ app.post('/api/auth/login', authBurst, authStrict, async (req, res) => {
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
     // Préchauffe goûts en fond (ne bloque pas le login)
-    if (result.user?.id) scheduleUserTasteWarm(result.user.id, [], { force: true, disk: 12 });
+    if (result.user?.id) scheduleUserTasteWarm(result.user.id, [], { force: true, disk: 24 });
     res.json(result);
   } catch (err) {
     const msg = String((err as Error).message || err);
@@ -476,7 +476,7 @@ app.post('/api/auth/google', authBurst, authStrict, async (req, res) => {
     const opts = sessionCookieOptions();
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
-    if (result.user?.id) scheduleUserTasteWarm(result.user.id, [], { force: true, disk: 12 });
+    if (result.user?.id) scheduleUserTasteWarm(result.user.id, [], { force: true, disk: 24 });
     res.json(result);
   } catch (err) {
     res.status(401).json({ error: String((err as Error).message || err) });

@@ -437,6 +437,14 @@ fun YtMusicAppContent(
         if (loggedIn != true) return@DisposableEffect onDispose { }
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
+            // Après Settings « apps inconnues » : relancer l’install auto
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+                context.packageManager.canRequestPackageInstalls() &&
+                ovh.delhomme.ytmusic.update.UpdateRelaunch.consumePendingAfterPermission(context)
+            ) {
+                Toast.makeText(context, "Permission OK — relance de la mise à jour…", Toast.LENGTH_SHORT).show()
+                apkUpdater.startManualUpdate()
+            }
             if (pendingUpdate?.available == true) return@LifecycleEventObserver
             val phase = apkUpdater.ui.value.phase
             if (phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ||

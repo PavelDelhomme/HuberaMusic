@@ -10,6 +10,7 @@ import ovh.delhomme.ytmusic.debug.AppLog
 object UpdateRelaunch {
     private const val PREFS = "ytm_updates"
     const val KEY_RELAUNCH = "relaunch_after_update"
+    const val KEY_PENDING_AFTER_PERMISSION = "pending_install_after_permission"
 
     fun markPending(ctx: Context) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -22,6 +23,20 @@ object UpdateRelaunch {
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(KEY_RELAUNCH, false)) return false
         prefs.edit().remove(KEY_RELAUNCH).apply()
+        return true
+    }
+
+    fun markPendingAfterPermission(ctx: Context) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_PENDING_AFTER_PERMISSION, true)
+            .apply()
+    }
+
+    fun consumePendingAfterPermission(ctx: Context): Boolean {
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_PENDING_AFTER_PERMISSION, false)) return false
+        prefs.edit().remove(KEY_PENDING_AFTER_PERMISSION).apply()
         return true
     }
 
@@ -45,14 +60,24 @@ object UpdateRelaunch {
         launchConfirm(ctx, confirm)
     }
 
+    /** Lance via Activity bridge (fiable One UI / MIUI / etc.). */
     fun launchConfirm(ctx: Context, confirm: Intent) {
         confirm.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP,
         )
-        runCatching { ctx.startActivity(confirm) }
-            .onFailure { AppLog.w("apk-update", "confirm install KO: ${it.message}") }
+        val proxy = Intent(ctx, UpdateConfirmProxyActivity::class.java).apply {
+            putExtra(UpdateConfirmProxyActivity.EXTRA_CONFIRM, confirm)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        runCatching { ctx.startActivity(proxy) }
+            .onFailure {
+                AppLog.w("apk-update", "proxy start KO: ${it.message} — direct")
+                runCatching { ctx.startActivity(confirm) }
+                    .onFailure { e2 -> AppLog.w("apk-update", "confirm install KO: ${e2.message}") }
+            }
     }
 
     /** Relance PLM après remplacement du paquet (plusieurs tentatives : OEM tuent vite). */

@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.169",
+      "date": "2026-09-06",
+      "title": "À suivre ON + MAJ Samsung fiable",
+      "notes": [
+        "La lecture automatique « À suivre » est réactivée par défaut sur tous les comptes",
+        "Mise à jour APK plus fiable sur Samsung et autres marques (écran Confirmer + relance auto après permission)",
+        "Préchargement audio plus large à la connexion pour des démarrages moins longs"
+      ]
+    },
+    {
       "version": "1.3.168",
       "date": "2026-09-06",
       "title": "Accès rapide strictement par compte",
