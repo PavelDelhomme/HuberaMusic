@@ -599,9 +599,9 @@ export type PinSyncItem = {
 };
 
 /**
- * Fusionne une liste d’épingles (upsert par kind+target_id).
- * Sert la sync multi-appareils : chaque client pousse son cache, le serveur
- * conserve l’union (pas d’écrasement total).
+ * Upsert une liste d’épingles (par target_id). N’efface rien.
+ * À utiliser pour pousser des ajouts offline ponctuels — pas pour un pull
+ * multi-appareils (sinon les suppressions de l’autre appareil sont annulées).
  */
 export function mergePins(userId: string, items: PinSyncItem[]) {
   let upserted = 0;
@@ -625,6 +625,19 @@ export function mergePins(userId: string, items: PinSyncItem[]) {
     upserted += 1;
   }
   return { pins: listPins(userId), upserted, total: listPins(userId).length };
+}
+
+/**
+ * Remplace entièrement les pins du compte (serveur = vérité pour ce push).
+ * Utilisé quand un appareil pousse son état après édition offline.
+ */
+export function replacePins(userId: string, items: PinSyncItem[]) {
+  db.prepare('DELETE FROM pins WHERE user_id = ?').run(userId);
+  if (!items.length) {
+    return { pins: [] as ReturnType<typeof listPins>, upserted: 0, total: 0, replaced: true };
+  }
+  const merged = mergePins(userId, items);
+  return { ...merged, replaced: true };
 }
 
 export function removePin(userId: string, pinId: string) {
