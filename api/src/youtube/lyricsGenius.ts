@@ -133,7 +133,8 @@ async function directFetch(
 }
 
 /**
- * Fetch Genius : direct d’abord, puis proxies HTTP (curl -x) si 403 / échec.
+ * Fetch Genius : direct d’abord, puis proxies HTTP (curl -x) en course
+ * parallèle (lots de 3) pour éviter 45 s de timeouts séquentiels.
  */
 async function geniusHttpGet(
   url: string,
@@ -145,30 +146,37 @@ async function geniusHttpGet(
     'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
     Referer: 'https://genius.com/',
   };
-  const timeoutMs = opts?.timeoutMs ?? 8000;
+  const timeoutMs = opts?.timeoutMs ?? 6000;
 
-  const direct = await directFetch(url, { headers, timeoutMs: Math.min(timeoutMs, 5000) });
+  const direct = await directFetch(url, { headers, timeoutMs: Math.min(timeoutMs, 3500) });
   if (direct.ok) return direct;
-  // 403 / 429 / network → proxies
-  if (direct.status && direct.status !== 403 && direct.status !== 429 && direct.status < 500) {
-    // 404 etc. : inutile de proxy
-    if (direct.status === 404) return direct;
-  }
+  if (direct.status === 404) return direct;
 
-  const proxies = await youtubeProxyAttempts({
-    max: opts?.maxProxies ?? 6,
-    includeDirect: false,
-    shuffle: true,
-  });
-  for (const proxy of proxies) {
-    if (!proxy) continue;
-    const r = await curlFetch(url, { proxy, headers, timeoutMs });
-    if (r.ok) {
-      markYoutubeProxySuccess(proxy);
-      return r;
-    }
-    if (r.status === 403 || r.status === 429 || r.status === 0 || r.status >= 500) {
-      markYoutubeProxyFailure(proxy);
+  const proxies = (
+    await youtubeProxyAttempts({
+      max: opts?.maxProxies ?? 4,
+      includeDirect: false,
+      shuffle: true,
+    })
+  ).filter((p): p is string => Boolean(p));
+
+  const batchSize = 3;
+  for (let i = 0; i < proxies.length; i += batchSize) {
+    const batch = proxies.slice(i, i + batchSize);
+    const results = await Promise.all(
+      batch.map(async (proxy) => {
+        const r = await curlFetch(url, { proxy, headers, timeoutMs });
+        return { proxy, r };
+      }),
+    );
+    for (const { proxy, r } of results) {
+      if (r.ok) {
+        markYoutubeProxySuccess(proxy);
+        return r;
+      }
+      if (r.status === 403 || r.status === 429 || r.status === 0 || r.status >= 500) {
+        markYoutubeProxyFailure(proxy);
+      }
     }
   }
   return direct.status ? direct : { ok: false, status: 0, text: '' };
@@ -255,7 +263,7 @@ async function searchGeniusOnce(q: string, artist: string, title: string): Promi
   if (token) {
     const res = await geniusHttpGet(
       `https://api.genius.com/search?q=${encodeURIComponent(q)}`,
-      { accept: headersAccept, timeoutMs: 7000, maxProxies: 4 },
+      { accept: headersAccept, timeoutMs: 5500, maxProxies: 3 },
     );
     if (res.ok) {
       try {
@@ -274,8 +282,8 @@ async function searchGeniusOnce(q: string, artist: string, title: string): Promi
   ]) {
     const res = await geniusHttpGet(path, {
       accept: headersAccept,
-      timeoutMs: 8000,
-      maxProxies: 5,
+      timeoutMs: 5500,
+      maxProxies: 3,
     });
     if (!res.ok) continue;
     try {
@@ -366,7 +374,7 @@ async function searchGenius(artist: string, title: string): Promise<GeniusHit | 
     .map((q) => q.slice(0, 120).trim())
     .filter((q, i, a) => q && a.indexOf(q) === i);
 
-  for (const q of queries.slice(0, 5)) {
+  for (const q of queries.slice(0, 3)) {
     const hit = await searchGeniusOnce(q, artist || main, title).catch(() => null);
     if (hit) return hit;
   }
@@ -437,8 +445,8 @@ function parseGeniusHtml(html: string): string | null {
 async function scrapeGeniusPage(url: string): Promise<string | null> {
   const res = await geniusHttpGet(url, {
     accept: 'text/html,application/xhtml+xml',
-    timeoutMs: 12_000,
-    maxProxies: 6,
+    timeoutMs: 8000,
+    maxProxies: 4,
   });
   if (!res.ok) return null;
   return parseGeniusHtml(res.text);
@@ -460,17 +468,21 @@ export async function fetchGeniusLyrics(
   title: string,
 ): Promise<{ lyrics: string; url: string } | null> {
   if (!title.trim()) return null;
+  // Budget global : ne pas bloquer getLyrics / le lecteur
+  const deadline = Date.now() + 12_000;
   const hit = (await searchGenius(artist, title).catch(() => null)) || null;
+  if (Date.now() > deadline) return null;
   const urls = [
     hit?.url,
     guessGeniusUrl(artist, title),
     guessGeniusUrl(mainArtist(artist), title),
     ...artistsFromTitle(title)
-      .slice(0, 2)
+      .slice(0, 1)
       .map((f) => guessGeniusUrl(f, title)),
   ].filter((u, i, arr): u is string => Boolean(u) && arr.indexOf(u) === i);
 
   for (const url of urls) {
+    if (Date.now() > deadline) break;
     const lyrics = await scrapeGeniusPage(url).catch(() => null);
     if (lyrics) return { lyrics, url };
   }
