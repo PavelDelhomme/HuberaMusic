@@ -32,11 +32,25 @@ class LibraryHeadPrefetcher(
         started = true
         scope.launch(Dispatchers.IO) {
             delay(START_DELAY_MS)
+            // Premier passage agressif : chauffe formats API (évite 50–60 s à froid)
+            runCatching { warmFormatsBurst() }
             while (true) {
                 runCatching { tick(reason = "periodic") }
                 delay(INTERVAL_MS)
             }
         }
+    }
+
+    /** POST /api/stream/warm pour les 1ers titres biblio (petits comptes inclus). */
+    private suspend fun warmFormatsBurst() {
+        if (!NetworkMonitor.isOnline()) return
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return
+        val ids = libraryIds().take(24)
+        if (ids.isEmpty()) return
+        AppLog.i("LibHeads", "format burst ${ids.size}")
+        StreamPrefetcher.warmTracks(base, ids)
+        StreamPrefetcher.prefetchLibraryHeads(base, ids, limit = 8)
     }
 
     /** Viewport biblio / pins — priorité haute pour les prochains ticks. */
@@ -145,10 +159,10 @@ class LibraryHeadPrefetcher(
     }
 
     companion object {
-        /** Démarre plus tôt après login pour que la biblio soit déjà chaude. */
-        private const val START_DELAY_MS = 12_000L
-        private const val INTERVAL_MS = 90_000L
-        private const val BATCH = 10
+        /** Démarre vite après login — biblio froide = 50–60 s au 1er titre (compte Hélène). */
+        private const val START_DELAY_MS = 2_500L
+        private const val INTERVAL_MS = 60_000L
+        private const val BATCH = 12
         private const val KEY_CURSOR = "cursor"
         private const val KEY_LAST = "last_tick"
     }

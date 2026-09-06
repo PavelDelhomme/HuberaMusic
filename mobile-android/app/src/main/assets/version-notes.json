@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.175",
+      "date": "2026-09-06",
+      "title": "Lignes titre + lecture biblio plus rapide",
+      "notes": [
+        "Clic sur une ligne de titre (biblio, album, recherche…) lance bien la lecture — l’artiste ne vole plus le toucher (accès artiste via ⋮)",
+        "Liste album : même présentation claire que la bibliothèque (cover + titre lisible)",
+        "Préchargement plus tôt à la connexion pour éviter les démarrages très longs sur une biblio froide"
+      ]
+    },
+    {
       "version": "1.3.174",
       "date": "2026-09-06",
       "title": "MAJ Samsung sans pluie de popups",

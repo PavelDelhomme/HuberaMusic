@@ -59,11 +59,13 @@ private val SeekRed = Color(0xFFFF0033)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+@Suppress("UNUSED_PARAMETER")
 fun TrackRow(
     track: TrackDto,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onMore: (() -> Unit)? = null,
+    /** Conservé pour compat appelants — artiste non cliquable sur la ligne (⋮ seulement). */
     onOpenArtist: ((id: String?, name: String) -> Unit)? = null,
     subtitle: String? = null,
     trailing: String? = null,
@@ -168,10 +170,8 @@ fun TrackRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                onOpenArtist != null -> ArtistLinksText(
-                    track = track,
-                    onOpenArtist = onOpenArtist,
-                )
+                // Artiste affiché en texte seul : le clic sur la ligne lance le titre
+                // (accès artiste via ⋮). Évite de « voler » le toucher sur Samsung/Xiaomi.
                 else -> Text(
                     track.artistLine(),
                     maxLines = 1,
