@@ -66,6 +66,8 @@ fun SyncedVideoSurface(
     /** true = entendre le flux vidéo ; false = image muette calée sur le titre */
     useClipAudio: Boolean = true,
     onClipPositionMs: ((Long) -> Unit)? = null,
+    /** Erreur Exo (format / 404) → le parent peut basculer d’ID. */
+    onPlaybackError: ((String) -> Unit)? = null,
     onToggleFullscreen: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -76,6 +78,7 @@ fun SyncedVideoSurface(
     val latestPlaying by rememberUpdatedState(playing)
     val latestUseClip by rememberUpdatedState(useClipAudio)
     val latestOnClipPos by rememberUpdatedState(onClipPositionMs)
+    val latestOnError by rememberUpdatedState(onPlaybackError)
 
     val exo = remember {
         val factory = PlayerCache.videoDataSourceFactory(context)
@@ -122,6 +125,7 @@ fun SyncedVideoSurface(
             override fun onPlayerError(e: PlaybackException) {
                 val msg = e.message ?: "Vidéo indisponible"
                 error = msg
+                latestOnError?.invoke(msg)
                 if (ovh.delhomme.ytmusic.BuildConfig.DEBUG) {
                     Log.e(TAG, "video error code=${e.errorCode} $msg url=${streamUrl.take(120)}", e)
                 }
