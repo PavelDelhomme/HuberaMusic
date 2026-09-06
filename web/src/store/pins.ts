@@ -136,15 +136,11 @@ export const usePins = create<PinsState>((set, get) => ({
       return;
     }
     const bound = readBoundUserId();
-    const sameUser = bound === userId;
+    const sameUser = !bound || bound === userId;
     try {
-      // Ne pousser le cache local que s’il appartient clairement à ce compte
-      if (sameUser) {
-        const cached = readPinsCache(userId);
-        if (cached.length) {
-          await api.syncPins(cached.map(pinSyncPayload)).catch(() => null);
-        }
-      }
+      // Pull only — serveur = vérité multi-appareils.
+      // Ne plus syncPins(cache) avant le GET : ça réécrivait les pins
+      // retirés sur l’autre appareil / navigateur.
       const r = await api.pins();
       const pins = dedupePinRows((r.pins || []) as PinRow[]);
       writePinsCache(userId, pins);

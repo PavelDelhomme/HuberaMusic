@@ -614,11 +614,14 @@ export const api = {
   addPin: (payload: Record<string, unknown>) =>
     req<{ pins: any[] }>('/api/pins', { method: 'POST', body: JSON.stringify(payload) }),
   /** Upsert multi-appareils — union serveur, pas d’écrasement. */
-  syncPins: (pins: Record<string, unknown>[]) =>
-    req<{ ok: boolean; pins: any[]; upserted?: number; total?: number }>('/api/pins/sync', {
-      method: 'POST',
-      body: JSON.stringify({ pins }),
-    }),
+  syncPins: (pins: Record<string, unknown>[], mode: 'merge' | 'replace' = 'merge') =>
+    req<{ ok: boolean; pins: any[]; upserted?: number; total?: number; mode?: string }>(
+      '/api/pins/sync',
+      {
+        method: 'POST',
+        body: JSON.stringify({ pins, mode }),
+      },
+    ),
   removePin: (id: string) => req<{ pins: any[] }>(`/api/pins/${id}`, { method: 'DELETE' }),
   publishSessionState: (state: Record<string, unknown>) =>
     req<{ devices: any[]; activePlayerId: string | null; state: any }>('/api/session/state', {

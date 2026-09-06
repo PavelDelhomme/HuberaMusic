@@ -133,6 +133,22 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     val email = container.tokenStore.getEmail()
                     runCatching { container.quickAccess.syncFromApi(container.api, email) }
                 }
+                // Compte multi-appareils : biblio + prefs (« À suivre ») aussi au pull
+                val accountJob = if (fromUser) {
+                    async {
+                        runCatching { container.libraryRepo.refresh(force = true) }
+                        runCatching {
+                            val on = container.api.prefs().prefs.autoplaySuggestions
+                            container.sharedPrefs("ytm_player")
+                                .edit()
+                                .putBoolean("autoplay_suggestions", on)
+                                .apply()
+                            ovh.delhomme.ytmusic.player.PlaybackService.Holder.autoplaySuggestions = on
+                        }
+                    }
+                } else {
+                    null
+                }
                 val homeJob = async { container.api.home() }
                 val savedJob = async {
                     val fromRepo = container.libraryRepo.library.value?.mixes?.map { it.id }?.toSet()
@@ -142,6 +158,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     }.getOrDefault(emptySet())
                 }
                 pinsJob.await()
+                accountJob?.await()
                 val home = homeJob.await()
                 val savedMixes = savedJob.await()
                 // Seed mosaïques depuis MixCache pendant que /home vient d’arriver

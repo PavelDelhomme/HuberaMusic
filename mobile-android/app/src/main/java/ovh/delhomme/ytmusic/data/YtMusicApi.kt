@@ -799,7 +799,7 @@ interface YtMusicApi {
     @POST("api/pins")
     suspend fun addPin(@Body body: Map<String, @JvmSuppressWildcards Any?>): PinsResponse
 
-    /** Upsert multi-appareils — union serveur. */
+    /** Upsert ou replace multi-appareils — body: { pins, mode?: "merge"|"replace" }. */
     @POST("api/pins/sync")
     suspend fun syncPins(@Body body: Map<String, @JvmSuppressWildcards Any?>): PinsResponse
 
