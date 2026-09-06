@@ -83,6 +83,11 @@ import {
   libraryMembership,
 } from './library/library.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed } from './media/stream.js';
+import {
+  scheduleUserTasteWarm,
+  startGlobalTasteWarmScheduler,
+  runGlobalTasteWarmOnce,
+} from './media/tasteWarmScheduler.js';
 import { libraryHealthStatus, startLibraryHealthScan } from './media/libraryHealth.js';
 import { streamHeadStats } from './media/streamHeadCache.js';
 import { youtubeProxyStats } from './youtube/youtubeProxy.js';
@@ -449,6 +454,8 @@ app.post('/api/auth/login', authBurst, authStrict, async (req, res) => {
     const opts = sessionCookieOptions();
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
+    // Préchauffe goûts en fond (ne bloque pas le login)
+    if (result.user?.id) scheduleUserTasteWarm(result.user.id, [], { force: true, disk: 12 });
     res.json(result);
   } catch (err) {
     const msg = String((err as Error).message || err);
@@ -469,6 +476,7 @@ app.post('/api/auth/google', authBurst, authStrict, async (req, res) => {
     const opts = sessionCookieOptions();
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
+    if (result.user?.id) scheduleUserTasteWarm(result.user.id, [], { force: true, disk: 12 });
     res.json(result);
   } catch (err) {
     res.status(401).json({ error: String((err as Error).message || err) });
@@ -498,6 +506,7 @@ app.post('/api/auth/refresh', authBurst, async (req, res) => {
     const opts = sessionCookieOptions();
     res.cookie('ytm_token', token, opts);
     res.cookie('ytm_refresh', rotated.token, { ...opts, httpOnly: true });
+    scheduleUserTasteWarm(user.id, [], { disk: 8 });
     res.json({ user: publicUser(user), token, refreshToken: rotated.token });
   } catch (err) {
     res.status(401).json({ error: String((err as Error).message || err) });
@@ -1133,6 +1142,7 @@ app.post('/api/auth/device-login/claim', async (req, res) => {
     const opts = sessionCookieOptions();
     res.cookie('ytm_token', session.token, opts);
     res.cookie('ytm_refresh', session.refreshToken, { ...opts, httpOnly: true });
+    scheduleUserTasteWarm(user.id, [], { force: true, disk: 12 });
     res.json(session);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -1324,6 +1334,12 @@ app.get('/api/admin/warm-candidates', requireAdmin, (req, res) => {
     count: candidates.length,
     candidates,
   });
+});
+
+/** Déclenche un cycle de warm global (fond) — tous les comptes. */
+app.post('/api/admin/taste-warm', requireAdmin, async (_req, res) => {
+  const result = await runGlobalTasteWarmOnce();
+  res.json({ ok: true, ...result });
 });
 
 app.post('/api/admin/apk/ticket', requireAdmin, (req, res) => {
@@ -1603,6 +1619,18 @@ app.get('/api/home', accountRequired, async (req, res) => {
       .map((t) => t.id)
       .filter((id) => /^[a-zA-Z0-9_-]{11}$/.test(id))
       .slice(0, 24);
+
+    // Cold-start tous comptes : history/likes + seeds + premiers titres des shelves
+    const shelfIds: string[] = [];
+    for (const sh of shelves) {
+      for (const it of (sh as { items?: { id?: string }[] }).items || []) {
+        const id = String(it?.id || '');
+        if (/^[a-zA-Z0-9_-]{11}$/.test(id)) shelfIds.push(id);
+        if (shelfIds.length >= 20) break;
+      }
+      if (shelfIds.length >= 20) break;
+    }
+    scheduleUserTasteWarm(userId, [...seeds, ...shelfIds], { disk: 10 });
 
     res.json({
       shelves,
@@ -2331,12 +2359,14 @@ app.get('/api/library', accountRequired, async (req, res) => {
       const lim = Math.max(10, Math.min(40, Number(req.query.limit) || 12));
       res.json(getLibraryLight(req.userId!, lim));
       scheduleLibraryRepair(req.userId!);
+      scheduleUserTasteWarm(req.userId!, [], { disk: 8 });
       return;
     }
     // Réponse immédiate — repair méta / albums en fond (E4 : ne plus bloquer 2–3 s)
     const library = getFullLibrary(req.userId!);
     res.json(library);
     scheduleLibraryRepair(req.userId!);
+    scheduleUserTasteWarm(req.userId!, [], { disk: 8 });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2874,4 +2904,5 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`PLM LAN → http://0.0.0.0:${PORT} (toutes interfaces)`);
   console.log(`PLM WS  → ws://localhost:${PORT}/ws`);
   startLibraryHealthScan();
+  startGlobalTasteWarmScheduler();
 });
