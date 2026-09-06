@@ -568,11 +568,10 @@ fun CollectionDetailScreen(
                                 ) ?: onPlay(tracks, index)
                             },
                             onMore = { onMore(track, null) },
-                            // Artiste déjà dans le hero — lignes plus denses (durée conservée)
-                            subtitle = "",
+                            // Même densité / cover que Bibliothèque (plus lisible)
                             indexLabel = "${index + 1}",
-                            compact = true,
-                            showCover = false,
+                            compact = false,
+                            showCover = true,
                         )
                     }
                 }

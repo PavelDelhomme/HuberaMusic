@@ -4,7 +4,6 @@ import { usePlayer } from '../../store/player';
 import { Heart, MoreHorizontal, Pin, Play, Radio } from 'lucide-react';
 import { useLibrary } from '../../store/library';
 import { useEffect, useRef, useState } from 'react';
-import { ArtistLinks } from './ArtistLinks';
 import { CoverImage } from './CoverImage';
 import { formatTrackDuration } from '../../lib/util/time';
 import { useItemActions } from '../../store/itemActions';
@@ -194,19 +193,31 @@ export function TrackRow({
         )}
       </div>
 
-      <div className="min-w-0 flex-1 text-left">
-        <button type="button" onClick={open} className="w-full text-left">
-          <div
-            className={`truncate text-[13px] font-medium leading-snug sm:text-sm ${
-              active ? 'text-yt-red' : 'text-white'
-            }`}
-            title={track.title}
-          >
-            {track.title}
-          </div>
-        </button>
+      <div
+        className="min-w-0 flex-1 cursor-pointer text-left"
+        onClick={open}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            open();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <div
+          className={`truncate text-[13px] font-medium leading-snug sm:text-sm ${
+            active ? 'text-yt-red' : 'text-white'
+          }`}
+          title={track.title}
+        >
+          {track.title}
+        </div>
         <div className="truncate text-xs text-yt-muted">
-          <ArtistLinks track={enriched} />
+          {(enriched.artists || [])
+            .map((a) => a?.name?.trim())
+            .filter(Boolean)
+            .join(', ') || '—'}
           {showAlbum && albumName ? (
             <>
               {' · '}
