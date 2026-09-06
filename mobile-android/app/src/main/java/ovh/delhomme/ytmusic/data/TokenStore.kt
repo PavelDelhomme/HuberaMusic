@@ -28,6 +28,9 @@ class TokenStore(private val context: Context) {
     /** Lecture synchrone cache (OkHttp interceptor) — sans bloquer DataStore. */
     fun peekAccess(): String? = cachedAccess
 
+    suspend fun getEmail(): String? =
+        context.dataStore.data.first()[emailKey]?.trim()?.takeIf { it.isNotBlank() }
+
     suspend fun getAccess(): String? {
         val v = context.dataStore.data.first()[accessKey]
         cachedAccess = v

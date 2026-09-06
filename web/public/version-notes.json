@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.168",
+      "date": "2026-09-06",
+      "title": "Accès rapide strictement par compte",
+      "notes": [
+        "Les titres épinglés à l’Accès rapide restent liés à ton compte uniquement — plus de mélange entre comptes sur le même téléphone ou navigateur",
+        "À la déconnexion, le cache Accès rapide / accueil / biblio local est vidé pour le prochain login"
+      ]
+    },
+    {
       "version": "1.3.167",
       "date": "2026-09-06",
       "title": "Mix Accueil : retirer et boutons plus clairs",

@@ -542,6 +542,10 @@ fun AccountScreen(
                             runCatching {
                                 container.api.logout(RefreshBody(container.tokenStore.getRefresh()))
                             }
+                            runCatching { container.quickAccess.clear() }
+                            runCatching { container.mixCache.clearAll() }
+                            runCatching { container.homeCache.clear() }
+                            runCatching { container.libraryCache.clear() }
                             container.tokenStore.clear()
                             onLoggedOut()
                         }
