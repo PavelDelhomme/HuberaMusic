@@ -111,6 +111,8 @@ import ovh.delhomme.ytmusic.ui.prefs.RecoPrefsScreen
 import ovh.delhomme.ytmusic.ui.search.SearchScreen
 import ovh.delhomme.ytmusic.ui.theme.YtMusicTheme
 import ovh.delhomme.ytmusic.ui.util.isLandscape
+import ovh.delhomme.ytmusic.update.UpdateProgressBanner
+import ovh.delhomme.ytmusic.update.showsUpdateBanner
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 
@@ -259,6 +261,8 @@ fun YtMusicAppContent(
             ctrl.onClearLocal = { container.localPlayback.clear() }
         }
     }
+    val apkUpdater = remember { container.apkUpdateManager }
+    val updateUi by apkUpdater.ui.collectAsState()
     DisposableEffect(player) {
         player.connect()
         onDispose {
@@ -295,6 +299,16 @@ fun YtMusicAppContent(
             val openPlayer = intent.getBooleanExtra(MainActivity.EXTRA_OPEN_PLAYER, false)
             val openLyrics = intent.getBooleanExtra(MainActivity.EXTRA_OPEN_LYRICS, false)
             val openAddPl = intent.getBooleanExtra(MainActivity.EXTRA_OPEN_ADD_PLAYLIST, false)
+            val openUpdateConfirm = intent.getBooleanExtra(
+                ovh.delhomme.ytmusic.update.UpdateProgressNotifier.EXTRA_OPEN_UPDATE_CONFIRM,
+                false,
+            )
+            if (openUpdateConfirm) {
+                apkUpdater.onBannerAction()
+                intent.removeExtra(
+                    ovh.delhomme.ytmusic.update.UpdateProgressNotifier.EXTRA_OPEN_UPDATE_CONFIRM,
+                )
+            }
             if (openPlayer || openLyrics || openAddPl) {
                 val ui = player.state.value
                 if (ui.track != null || ui.queueSize > 0) {
@@ -315,6 +329,17 @@ fun YtMusicAppContent(
 
     LaunchedEffect(Unit) {
         handleDeviceLoginUri(activity?.intent?.data)
+        val intent = activity?.intent
+        if (intent?.getBooleanExtra(
+                ovh.delhomme.ytmusic.update.UpdateProgressNotifier.EXTRA_OPEN_UPDATE_CONFIRM,
+                false,
+            ) == true
+        ) {
+            apkUpdater.onBannerAction()
+            intent.removeExtra(
+                ovh.delhomme.ytmusic.update.UpdateProgressNotifier.EXTRA_OPEN_UPDATE_CONFIRM,
+            )
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -361,8 +386,6 @@ fun YtMusicAppContent(
     var pendingUpdate by remember {
         mutableStateOf<ovh.delhomme.ytmusic.update.ApkUpdateManager.CheckResult?>(null)
     }
-    val apkUpdater = remember { container.apkUpdateManager }
-    val updateUi by apkUpdater.ui.collectAsState()
 
     LaunchedEffect(loggedIn) {
         if (loggedIn != true) return@LaunchedEffect
@@ -516,6 +539,25 @@ fun YtMusicAppContent(
                 onPendingOpenAddPlaylistConsumed = { pendingOpenAddPlaylist = false },
                 pendingAppLink = pendingAppLink,
                 onAppLinkConsumed = { pendingAppLink = null },
+                updateUi = updateUi,
+                onUpdateBannerClick = {
+                    val ok = apkUpdater.onBannerAction()
+                    if (ok && apkUpdater.ui.value.phase ==
+                        ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.AwaitingConfirm
+                    ) {
+                        Toast.makeText(
+                            context,
+                            "Confirme l’installation sur l’écran système",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    } else if (!ok && updateUi.showsUpdateBanner()) {
+                        Toast.makeText(
+                            context,
+                            updateUi.message.ifBlank { "Mise à jour en cours…" },
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
                 onOpenPlayer = {
                     val ui = player.state.value
                     if (ui.track != null || ui.queueSize > 0) {
@@ -577,65 +619,6 @@ fun YtMusicAppContent(
                     }
                 },
             )
-            UpdateProgressBanner(
-                ui = updateUi,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .statusBarsPadding(),
-            )
-            }
-        }
-    }
-}
-
-@Composable
-private fun UpdateProgressBanner(
-    ui: ovh.delhomme.ytmusic.update.ApkUpdateManager.UiState,
-    modifier: Modifier = Modifier,
-) {
-    val phase = ui.phase
-    val visible = phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Checking ||
-        phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ||
-        phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing ||
-        phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.AwaitingConfirm
-    if (!visible) return
-    val determinate = phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ||
-        phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing
-    Surface(
-        modifier = modifier,
-        color = MaterialTheme.colorScheme.primaryContainer,
-        shadowElevation = 4.dp,
-    ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-        ) {
-            Text(
-                ui.message.ifBlank {
-                    when (phase) {
-                        ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ->
-                            "Téléchargement… ${(ui.progress * 100).toInt()} %"
-                        ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing ->
-                            "Préparation de l’installateur…"
-                        ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Checking ->
-                            "Vérification de la version…"
-                        else -> "Mise à jour en cours…"
-                    }
-                },
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-            Spacer(Modifier.height(8.dp))
-            if (determinate) {
-                LinearProgressIndicator(
-                    progress = { ui.progress.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
         }
     }
@@ -653,6 +636,9 @@ private fun MainTabs(
     onPendingOpenAddPlaylistConsumed: () -> Unit = {},
     pendingAppLink: Uri? = null,
     onAppLinkConsumed: () -> Unit = {},
+    updateUi: ovh.delhomme.ytmusic.update.ApkUpdateManager.UiState =
+        ovh.delhomme.ytmusic.update.ApkUpdateManager.UiState(),
+    onUpdateBannerClick: () -> Unit = {},
     onOpenPlayer: () -> Unit,
     onClosePlayer: () -> Unit,
     onPlayTracks: (List<TrackDto>, Int) -> Unit,
@@ -1335,6 +1321,13 @@ private fun MainTabs(
         bottomBar = {
             if (showBottomChrome) {
                 Column(Modifier.navigationBarsPadding()) {
+                    if (updateUi.showsUpdateBanner()) {
+                        UpdateProgressBanner(
+                            ui = updateUi,
+                            onClick = onUpdateBannerClick,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     if (showMiniPlayer) {
                     playerUi.track?.let { track ->
                         val effectiveDuration = playerUi.durationMs.takeIf { it > 0L }
@@ -1768,6 +1761,18 @@ private fun MainTabs(
                 openLyricsToken = openLyricsToken,
                 sheetVisible = playerExpanded,
             )
+            // Vignette MAJ aussi sur le lecteur plein écran (sinon invisible)
+            if (playerExpanded && updateUi.showsUpdateBanner()) {
+                UpdateProgressBanner(
+                    ui = updateUi,
+                    onClick = onUpdateBannerClick,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .zIndex(12f),
+                )
+            }
         }
     }
 

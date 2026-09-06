@@ -25,14 +25,32 @@ object UpdateRelaunch {
         return true
     }
 
-    fun startConfirmIntent(ctx: Context, intent: Intent) {
+    fun extractConfirmIntent(intent: Intent): Intent? {
         val confirm = if (Build.VERSION.SDK_INT >= 33) {
             intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(Intent.EXTRA_INTENT)
-        } ?: return
-        confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        } ?: return null
+        confirm.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP,
+        )
+        return confirm
+    }
+
+    fun startConfirmIntent(ctx: Context, intent: Intent) {
+        val confirm = extractConfirmIntent(intent) ?: return
+        launchConfirm(ctx, confirm)
+    }
+
+    fun launchConfirm(ctx: Context, confirm: Intent) {
+        confirm.addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP,
+        )
         runCatching { ctx.startActivity(confirm) }
             .onFailure { AppLog.w("apk-update", "confirm install KO: ${it.message}") }
     }
