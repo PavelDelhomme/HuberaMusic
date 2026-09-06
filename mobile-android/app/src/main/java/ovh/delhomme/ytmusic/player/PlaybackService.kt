@@ -640,10 +640,21 @@ class PlaybackService : MediaSessionService() {
                 ensureCurrentItemMetadata()
                 invalidateMediaNotification()
             }
-            // 35–45 s avant la fin : fenêtre exclusive +1 (pas de far-heads / offline).
+            // 8–45 s avant la fin : warm +1 (durée Exo ou fallback méta catalogue)
             if (player.isPlaying && player.playbackState == Player.STATE_READY) {
-                val d = player.duration
+                val dExo = player.duration
                 val posNow = player.currentPosition
+                val dMeta =
+                    Holder.queue
+                        .getOrNull(player.currentMediaItemIndex)
+                        ?.durationMsOrNull()
+                        ?.takeIf { it > 0L }
+                val d =
+                    when {
+                        dExo > 0L && dExo != C.TIME_UNSET -> dExo
+                        dMeta != null -> dMeta
+                        else -> C.TIME_UNSET
+                    }
                 if (d > 0L && d != C.TIME_UNSET) {
                     val rem = d - posNow
                     if (rem in 8_000L..45_000L) {

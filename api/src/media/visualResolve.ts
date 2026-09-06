@@ -1,9 +1,11 @@
 /**
  * Résout un ID vidéo « visuel » pour le mode multimédia :
  * même trackId si un progressif vidéo existe, sinon recherche clip titre+artiste.
+ * Index SQLite `visual_cache` (persistant) + cache RAM.
  */
 import { getTrack, getVideoFormat, search } from '../youtube/yt.js';
-import type { Track } from '../youtube/mappers.js';
+import type { Track } from '../youtube/types.js';
+import { getVisualCache, putVisualCache } from './visualCache.js';
 
 export type VisualResolve = {
   audioId: string;
@@ -15,7 +17,7 @@ export type VisualResolve = {
 
 const cache = new Map<string, { at: number; value: VisualResolve }>();
 const TTL_MS = 60 * 60 * 1000;
-const PROBE_MS = 15_000;
+const PROBE_MS = 8_000;
 
 function normalize(s: string): string {
   return s
@@ -83,6 +85,17 @@ async function probeVideo(id: string): Promise<boolean> {
   }
 }
 
+function remember(value: VisualResolve) {
+  cache.set(value.audioId, { at: Date.now(), value });
+  putVisualCache({
+    audioId: value.audioId,
+    visualId: value.visualId,
+    source: value.source,
+    title: value.title,
+    artist: value.artist,
+  });
+}
+
 export async function resolveVisualVideo(
   audioId: string,
   hints?: { title?: string; artist?: string; durationSeconds?: number | null },
@@ -94,6 +107,19 @@ export async function resolveVisualVideo(
 
   const hit = cache.get(id);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
+
+  const persisted = getVisualCache(id);
+  if (persisted?.visual_id) {
+    const value: VisualResolve = {
+      audioId: id,
+      visualId: persisted.visual_id,
+      source: (persisted.source as VisualResolve['source']) || 'same',
+      title: persisted.title || hints?.title || undefined,
+      artist: persisted.artist || hints?.artist || undefined,
+    };
+    cache.set(id, { at: Date.now(), value });
+    return value;
+  }
 
   let title = (hints?.title || '').trim();
   let artist = (hints?.artist || '').trim();
@@ -118,12 +144,10 @@ export async function resolveVisualVideo(
       title: title || undefined,
       artist: artist || undefined,
     };
-    cache.set(id, { at: Date.now(), value });
+    remember(value);
     return value;
   }
 
-  // Probe format KO (souvent timeout OAuth) — tente quand même le même ID :
-  // le stream ?type=video a un fallback yt-dlp.
   const sameFallback: VisualResolve = {
     audioId: id,
     visualId: id,
@@ -134,7 +158,7 @@ export async function resolveVisualVideo(
 
   const q = [title, artist].filter(Boolean).join(' ').trim();
   if (!q) {
-    cache.set(id, { at: Date.now(), value: sameFallback });
+    remember(sameFallback);
     return sameFallback;
   }
 
@@ -149,20 +173,22 @@ export async function resolveVisualVideo(
       .sort((a, b) => b.s - a.s)
       .slice(0, 5);
 
-    for (const { t } of ranked) {
-      if (await probeVideo(t.id)) {
-        const value: VisualResolve = {
-          audioId: id,
-          visualId: t.id,
-          source: 'search',
-          title: t.title || title || undefined,
-          artist: artistLine(t) || artist || undefined,
-        };
-        cache.set(id, { at: Date.now(), value });
-        return value;
-      }
+    // Probe top candidats en parallèle (max 3)
+    const top = ranked.slice(0, 3);
+    const probes = await Promise.all(top.map(({ t }) => probeVideo(t.id)));
+    const okIdx = probes.findIndex(Boolean);
+    if (okIdx >= 0) {
+      const t = top[okIdx]!.t;
+      const value: VisualResolve = {
+        audioId: id,
+        visualId: t.id,
+        source: 'search',
+        title: t.title || title || undefined,
+        artist: artistLine(t) || artist || undefined,
+      };
+      remember(value);
+      return value;
     }
-    // Probe KO — meilleur candidat search, sinon même ID
     if (ranked[0]) {
       const t = ranked[0].t;
       const value: VisualResolve = {
@@ -172,14 +198,13 @@ export async function resolveVisualVideo(
         title: t.title || title || undefined,
         artist: artistLine(t) || artist || undefined,
       };
-      cache.set(id, { at: Date.now(), value });
+      remember(value);
       return value;
     }
   } catch (err) {
     console.warn('[visual-resolve] search failed', id, err);
   }
 
-  // Pas de meilleur clip : même ID (stream vidéo tentera yt-dlp)
-  cache.set(id, { at: Date.now(), value: sameFallback });
+  remember(sameFallback);
   return sameFallback;
 }

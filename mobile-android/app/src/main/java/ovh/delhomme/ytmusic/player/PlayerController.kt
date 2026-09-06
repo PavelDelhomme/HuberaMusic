@@ -461,8 +461,26 @@ class PlayerController(
 
     fun toggle() {
         healAfterBackground()
-        connect()
         val p = player() ?: PlaybackService.Holder.player
+        // Force-stop / restore : file UI OK mais Exo vide → toujours re-préparer
+        val exoEmpty =
+            p == null ||
+                p.mediaItemCount == 0 ||
+                p.playbackState == Player.STATE_IDLE
+        if (exoEmpty && _state.value.queue.isNotEmpty()) {
+            if (p != null && p.isPlaying) {
+                userWantsPlaying = false
+                pendingAutoplay = false
+                p.pause()
+                StreamPrefetcher.cancelIdle()
+                syncFrom(p)
+                return
+            }
+            if (!startPlaybackFromUiState()) {
+                _state.value = _state.value.copy(playing = false)
+            }
+            return
+        }
         if (p == null) {
             if (!startPlaybackFromUiState()) {
                 _state.value = _state.value.copy(playing = false)
@@ -637,10 +655,18 @@ class PlayerController(
     var onClearLocal: (() -> Unit)? = null
 
     fun playResume() {
+        healAfterBackground()
         userWantsPlaying = true
         pendingAutoplay = true
-        connect()
         val p = player() ?: PlaybackService.Holder.player
+        val exoEmpty =
+            p == null ||
+                p.mediaItemCount == 0 ||
+                p.playbackState == Player.STATE_IDLE
+        if (exoEmpty && _state.value.queue.isNotEmpty()) {
+            startPlaybackFromUiState()
+            return
+        }
         if (p == null) {
             startPlaybackFromUiState()
             return
@@ -650,11 +676,36 @@ class PlayerController(
     }
 
     fun skipNext() {
-        connect()
+        healAfterBackground()
         val p = player() ?: PlaybackService.Holder.player
+        val saved = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
+        val exoEmpty =
+            p == null ||
+                p.mediaItemCount == 0 ||
+                p.playbackState == Player.STATE_IDLE
+        // E22 : après force-stop, jamais « Suggestions… » — re-préparer depuis Holder.queue
+        if (exoEmpty && saved.isNotEmpty()) {
+            userWantsPlaying = true
+            pendingAutoplay = true
+            val cur = PlaybackService.Holder.index
+                .coerceIn(0, saved.lastIndex)
+                .let { i -> if (_state.value.queueIndex in saved.indices) _state.value.queueIndex else i }
+            val next = if (saved.size > 1) (cur + 1) % saved.size else cur
+            pending = saved to next
+            pendingSeekMs = 0L
+            PlaybackService.Holder.queue = saved
+            PlaybackService.Holder.index = next
+            ensureServiceAndConnect()
+            val exo = player() ?: PlaybackService.Holder.player
+            if (exo != null) {
+                pending = null
+                playNow(exo, saved, next, autoplay = true)
+                syncFrom(exo)
+            }
+            return
+        }
         if (p == null) {
             if (!startPlaybackFromUiState()) return
-            // Bind async : on avance d’un cran dans pending pour le flush
             val q = pending?.first ?: _state.value.queue
             if (q.size > 1) {
                 val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
@@ -663,18 +714,6 @@ class PlayerController(
                 pendingSeekMs = 0L
                 PlaybackService.Holder.index = next
             }
-            return
-        }
-        val saved = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
-        val idleOrEmpty =
-            p.mediaItemCount == 0 ||
-                p.playbackState == Player.STATE_IDLE
-        if (idleOrEmpty && saved.size > 1) {
-            val cur = PlaybackService.Holder.index.coerceIn(0, saved.lastIndex)
-            val next = if (saved.size > 1) (cur + 1) % saved.size else cur
-            userWantsPlaying = true
-            pendingAutoplay = true
-            playNow(p, saved, next, autoplay = true)
             return
         }
         val nextIdx = when {

@@ -141,6 +141,7 @@ import ovh.delhomme.ytmusic.data.RecoFeedbackBody
 import ovh.delhomme.ytmusic.data.TimedLyricLine
 import ovh.delhomme.ytmusic.data.TrackDto
 import android.content.SharedPreferences
+import ovh.delhomme.ytmusic.data.VisualIdCache
 import ovh.delhomme.ytmusic.data.buildRadioQueue
 import ovh.delhomme.ytmusic.data.fetchAutoplayTracksFast
 import ovh.delhomme.ytmusic.data.fetchAutoplayTracksFull
@@ -297,28 +298,87 @@ fun NowPlayingScreen(
     // Pré-chauffe + resolve clip visuel (fallback titre+artiste si ATV sans vidéo)
     var visualVideoUrl by remember { mutableStateOf<String?>(null) }
     var visualVideoError by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(ui.track?.id, SessionMediaMode.video, sheetVisible) {
-        val track = ui.track
-        visualVideoUrl = null
-        visualVideoError = null
-        if (!sheetVisible || track == null || !SessionMediaMode.video) return@LaunchedEffect
+    // Resolve + warm clip dès le titre courant (même hors mode vidéo) → ouverture instantanée
+    LaunchedEffect(ui.track?.id) {
+        val track = ui.track ?: return@LaunchedEffect
+        val cached = VisualIdCache.get(context, track.id)
+        if (cached != null && SessionMediaMode.video) {
+            visualVideoUrl = container.videoStreamUrl(cached)
+        }
         runCatching {
             container.ensureFreshToken()
-            val vis = container.api.trackVisual(
-                track.id,
-                title = track.title,
-                artist = track.artistLine().takeIf { it != "Artiste" },
-                durationSeconds = track.durationSeconds,
-            )
-            val vid = vis.visualId?.takeIf { it.isNotBlank() }
+            val vid = cached ?: run {
+                val vis = container.api.trackVisual(
+                    track.id,
+                    title = track.title,
+                    artist = track.artistLine().takeIf { it != "Artiste" },
+                    durationSeconds = track.durationSeconds,
+                )
+                vis.visualId?.takeIf { it.isNotBlank() }?.also {
+                    VisualIdCache.put(context, track.id, it)
+                }
+            } ?: return@runCatching
+            runCatching { container.api.streamResolveUrl(vid, "video") }
+            // Warm Range léger hors UI
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val url = container.videoStreamUrl(vid)
+                    val req = okhttp3.Request.Builder()
+                        .url(url)
+                        .header("Range", "bytes=0-65535")
+                        .header("X-YTM-Client", "android")
+                        .get()
+                        .build()
+                    container.httpPlain.newCall(req).execute().close()
+                }
+            }
+            if (SessionMediaMode.video) {
+                visualVideoUrl = container.videoStreamUrl(vid)
+                visualVideoError = null
+            }
+        }
+    }
+
+    LaunchedEffect(ui.track?.id, SessionMediaMode.video, sheetVisible) {
+        val track = ui.track
+        if (!sheetVisible || track == null || !SessionMediaMode.video) {
+            if (!SessionMediaMode.video) {
+                // garde l’URL en cache mémoire pour re-toggle rapide
+            } else {
+                visualVideoUrl = null
+                visualVideoError = null
+            }
+            return@LaunchedEffect
+        }
+        val cached = VisualIdCache.get(context, track.id)
+        if (cached != null) {
+            visualVideoUrl = container.videoStreamUrl(cached)
+            visualVideoError = null
+        }
+        runCatching {
+            container.ensureFreshToken()
+            val vid = cached ?: run {
+                val vis = container.api.trackVisual(
+                    track.id,
+                    title = track.title,
+                    artist = track.artistLine().takeIf { it != "Artiste" },
+                    durationSeconds = track.durationSeconds,
+                )
+                vis.visualId?.takeIf { it.isNotBlank() }?.also {
+                    VisualIdCache.put(context, track.id, it)
+                }
+            }
             if (vid == null) {
                 visualVideoError = "Pas de clip vidéo"
                 return@runCatching
             }
             runCatching { container.api.streamResolveUrl(vid, "video") }
             visualVideoUrl = container.videoStreamUrl(vid)
+            visualVideoError = null
         }.onFailure {
-            visualVideoError = it.message ?: "Vidéo indisponible"
+            if (visualVideoUrl == null) {
+                visualVideoError = it.message ?: "Vidéo indisponible"
+            }
         }
     }
     // Prefetch clip du titre suivant (mode vidéo) pour enchaîner sans blanc
