@@ -30,7 +30,7 @@ class AppContainer(context: Context) {
     fun sharedPrefs(name: String) =
         appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
     val tokenStore = TokenStore(appContext)
-    val quickAccess = QuickAccessStore(appContext)
+    val quickAccess = QuickAccessStore(appContext, tokenStore)
     val homeCache = HomeCacheStore(appContext)
     val mixCache = MixCacheStore(appContext)
     val libraryCache = LibraryCacheStore(appContext)

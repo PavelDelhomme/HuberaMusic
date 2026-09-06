@@ -6,6 +6,7 @@ import { HomeShelfSkeleton } from '../../components/media/HomeShelfSkeleton';
 import { usePlayer } from '../../store/player';
 import { usePins } from '../../store/pins';
 import { useLibrary } from '../../store/library';
+import { useAuth } from '../../store/auth';
 import { useItemActions } from '../../store/itemActions';
 import { Pin, Play, Radio } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -68,6 +69,7 @@ export function HomePage() {
   const pinCount = usePins((s) => s.pins.length);
   const pinRows = usePins((s) => s.pins);
   const refreshPins = usePins((s) => s.refresh);
+  const userId = useAuth((s) => s.user?.id);
   const hasMix = useLibrary((s) => s.hasMix);
   const saveMix = useLibrary((s) => s.saveMix);
   const removeMix = useLibrary((s) => s.removeMix);
@@ -94,8 +96,8 @@ export function HomePage() {
   const cacheBoot = useRef(false);
 
   useEffect(() => {
-    void refreshPins();
-  }, [refreshPins]);
+    void refreshPins(userId);
+  }, [refreshPins, userId]);
 
   // Cache-first : affiche immédiatement le dernier home, puis rafraîchit
   useEffect(() => {
