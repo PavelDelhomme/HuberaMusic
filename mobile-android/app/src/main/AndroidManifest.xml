@@ -122,6 +122,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".update.UpdateConfirmProxyActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <service
             android:name=".player.PlaybackService"
             android:exported="true"

@@ -638,13 +638,14 @@ class ApkUpdateManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
+            UpdateRelaunch.markPendingAfterPermission(context)
             withContext(Dispatchers.Main) {
                 val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
                     .setData(Uri.parse("package:${context.packageName}"))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
             }
-            return "Autorise l’installation pour PLM, puis réessaie"
+            return "Autorise l’installation pour PLM, puis reviens — on relance auto"
         }
         withContext(Dispatchers.Main) {
             runCatching {
@@ -655,27 +656,35 @@ class ApkUpdateManager(
         }
         clearSnooze()
         UpdateRelaunch.markPending(context)
-        // Nothing OS : PackageInstaller laisse souvent l’écran « Confirmer »
-        // inaccessible derrière PLM. ACTION_VIEW est plus fiable là-bas.
-        val preferView = Build.MANUFACTURER.equals("Nothing", ignoreCase = true) ||
-            Build.BRAND.equals("Nothing", ignoreCase = true)
+        // OEM agressifs (Samsung One UI, Xiaomi, Oppo…) : ACTION_VIEW d’abord —
+        // PackageInstaller laisse souvent « Confirmer » derrière PLM.
+        val mfr = Build.MANUFACTURER.lowercase()
+        val brand = Build.BRAND.lowercase()
+        val preferView = listOf(
+            "nothing", "samsung", "xiaomi", "redmi", "poco", "oppo", "oneplus",
+            "realme", "vivo", "huawei", "honor", "motorola", "tecno", "infinix",
+        ).any { mfr.contains(it) || brand.contains(it) }
+        AppLog.i("apk-update", "launchInstall preferView=$preferView mfr=$mfr brand=$brand")
         val ok = if (preferView) {
             withContext(Dispatchers.Main) {
                 runCatching { installApkViaView(file) }
                     .onFailure { AppLog.w("apk-update", "VIEW install KO: ${it.message}") }
                     .isSuccess
-            }.also { success ->
-                if (!success) {
-                    runCatching { installViaPackageInstaller(file) }.getOrElse { false }
-                } else {
+            }.let { viewOk ->
+                if (viewOk) {
                     true
+                } else {
+                    runCatching { installViaPackageInstaller(file) }.getOrElse { false }
                 }
             }
         } else {
             runCatching { installViaPackageInstaller(file) }.getOrElse { err ->
                 AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
-                withContext(Dispatchers.Main) { installApkViaView(file) }
-                true
+                withContext(Dispatchers.Main) {
+                    runCatching { installApkViaView(file) }
+                        .onFailure { AppLog.w("apk-update", "VIEW fallback KO: ${it.message}") }
+                        .isSuccess
+                }
             }
         }
         return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur"
@@ -959,11 +968,25 @@ class ApkUpdateManager(
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 lastConfirmIntent = UpdateRelaunch.extractConfirmIntent(intent)
                 UpdateRelaunch.startConfirmIntent(ctx, intent)
-                // Relance une 2ᵉ fois après un court délai : Nothing / OxygenOS
-                // mettent souvent l’écran derrière PLM au premier startActivity.
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                // Relances : OEM mettent souvent l’écran derrière PLM
+                val main = android.os.Handler(android.os.Looper.getMainLooper())
+                main.postDelayed({
                     lastConfirmIntent?.let { UpdateRelaunch.launchConfirm(ctx, it) }
                 }, 450L)
+                main.postDelayed({
+                    lastConfirmIntent?.let { UpdateRelaunch.launchConfirm(ctx, it) }
+                }, 1_200L)
+                // Si toujours pas confirmé → fallback ACTION_VIEW sur l’APK en cache
+                main.postDelayed({
+                    if (_ui.value.phase != Phase.AwaitingConfirm) return@postDelayed
+                    val code = prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
+                    val apk = if (code > 0) apkFileFor(code) else null
+                    if (apk != null && apk.isFile && apk.length() > 1_000_000L) {
+                        AppLog.w("apk-update", "confirm invisible → fallback VIEW")
+                        runCatching { installApkViaView(apk) }
+                            .onFailure { AppLog.w("apk-update", "VIEW after pending KO: ${it.message}") }
+                    }
+                }, 2_800L)
                 publish(
                     _ui.value.copy(
                         phase = Phase.AwaitingConfirm,
