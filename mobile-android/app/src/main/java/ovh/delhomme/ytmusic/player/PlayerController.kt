@@ -78,6 +78,8 @@ class PlayerController(
     private var pending: Pair<List<TrackDto>, Int>? = null
     private var pendingSeekMs: Long = 0L
     private var pendingAutoplay: Boolean = true
+    /** Mode vidéo : mute le flux titre pendant que le clip porte le son. */
+    @Volatile private var musicDucked: Boolean = false
     /** Intent utilisateur play/pause — empêche un flush pending de re-pauser après un 1er play. */
     @Volatile private var userWantsPlaying: Boolean? = null
 
@@ -565,6 +567,22 @@ class PlayerController(
         player()?.pause() ?: PlaybackService.Holder.player?.pause()
         StreamPrefetcher.cancelIdle()
         flushPersist()
+    }
+
+    /**
+     * Coupe / restaure le volume du flux **titre** (pas le volume système).
+     * Utilisé en mode Vidéo : le son vient du clip, la timeline titre reste alignée.
+     */
+    fun setMusicDucked(ducked: Boolean) {
+        musicDucked = ducked
+        applyMusicVolume()
+    }
+
+    fun isMusicDucked(): Boolean = musicDucked
+
+    private fun applyMusicVolume() {
+        val p = player() ?: PlaybackService.Holder.player ?: return
+        p.volume = if (musicDucked || SessionMediaMode.video) 0f else PLAYBACK_VOLUME
     }
 
     /**
@@ -1687,7 +1705,7 @@ class PlayerController(
             }
         }
         // Ne jamais toucher au volume STREAM_MUSIC système : garder celui déjà réglé.
-        player.volume = PLAYBACK_VOLUME
+        player.volume = if (musicDucked || SessionMediaMode.video) 0f else PLAYBACK_VOLUME
         val playingSame =
             autoplay &&
                 player.isPlaying &&
