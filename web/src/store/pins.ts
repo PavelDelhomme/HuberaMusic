@@ -92,24 +92,6 @@ type PinsState = {
   clearLocal: () => void;
 };
 
-function pinSyncPayload(p: PinRow) {
-  const payload =
-    p.payload && typeof p.payload === 'object'
-      ? (p.payload as Record<string, unknown>)
-      : {};
-  return {
-    kind: p.kind || String(payload.type || 'song'),
-    targetId: p.targetId || String(payload.id || p.id || ''),
-    id: p.targetId || String(payload.id || p.id || ''),
-    payload: {
-      ...payload,
-      id: String(payload.id || p.targetId || p.id || ''),
-      type: String(payload.type || p.kind || 'song'),
-      title: String(payload.title || payload.name || p.targetId || ''),
-    },
-  };
-}
-
 function currentUserId(): string {
   const u = useAuth.getState().user;
   if (!u || u.isGuest || u.email?.includes('@local.ytmusic')) return '';
