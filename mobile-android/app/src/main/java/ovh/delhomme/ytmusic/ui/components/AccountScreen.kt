@@ -38,6 +38,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -244,10 +245,10 @@ fun AccountScreen(
                                         if (ok) {
                                             "Ouvre l’écran Confirmer l’installation"
                                         } else {
-                                            "Relance l’installateur…"
+                                            "Écran système perdu — appuie long ici pour annuler"
                                         },
                                     )
-                                    if (!ok) updater.startManualUpdate()
+                                    if (!ok) updater.dismissAwaitingConfirm(snooze = false)
                                 }
                                 ApkUpdateManager.Phase.Checking,
                                 ApkUpdateManager.Phase.Downloading,
@@ -278,6 +279,17 @@ fun AccountScreen(
                                     .fillMaxWidth()
                                     .padding(horizontal = 16.dp, vertical = 4.dp),
                             )
+                        }
+                        if (phase == ApkUpdateManager.Phase.AwaitingConfirm) {
+                            TextButton(
+                                onClick = {
+                                    updater.dismissAwaitingConfirm(snooze = true)
+                                    context.toastMain("Mise à jour reportée")
+                                },
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            ) {
+                                Text("Plus tard — masquer la confirmation")
+                            }
                         }
                     }
                 }
