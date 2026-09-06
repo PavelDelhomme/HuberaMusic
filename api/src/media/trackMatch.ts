@@ -10,8 +10,12 @@ export function normalize(s: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/\(.*?\)|\[.*?\]/g, ' ')
-    .replace(/\b(official|video|lyrics|audio|mv|clip|hd|4k|remaster(ed)?)\b/gi, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(
+      /\b(official|video|lyrics?|letra|audio|mv|clip|hd|4k|remaster(ed)?|show!?\s*music\s*core|music\s*bank)\b/gi,
+      ' ',
+    )
+    // Garder lettres Unicode (JP/KR/Cyrillique…) — l’ancien [^a-z0-9] vidait les titres CJK.
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -145,16 +149,31 @@ export function scoreCandidate(
   if (!tScore) return 0;
   let score = tScore;
 
-  // Sans correspondance d'artiste on refuse : c'est le garde-fou principal.
-  if (!na || !ca) return 0;
-  if (ca === na) score += 40;
-  else if (ca.includes(na) || na.includes(ca)) score += 30;
-  else if (titleNamesArtist(ct, na)) score += 28;
-  else {
+  // Artiste manquant côté candidat (souvent une « vidéo » YT) : accepter si le
+  // titre porte le nom, ou si le titre matche très fort.
+  if (!na) {
+    return tScore >= 44 ? tScore + 10 : 0;
+  }
+  if (!ca) {
+    if (titleNamesArtist(ct, na)) score += 28;
+    else if (tScore >= 44) score += 18;
+    else return 0;
+  } else if (ca === na) {
+    score += 40;
+  } else if (ca.includes(na) || na.includes(ca)) {
+    score += 30;
+  } else if (titleNamesArtist(ct, na)) {
+    score += 28;
+  } else {
     const want = new Set(na.split(' ').filter((w) => w.length > 2));
     const got = ca.split(' ').filter((w) => w.length > 2);
-    if (!got.some((w) => want.has(w))) return 0;
-    score += 16;
+    // Aussi comparer sur caractères CJK / monosyllabes (longueur 1–2)
+    const wantCjk = new Set(na.split(' ').filter((w) => w.length >= 1 && /[^\u0000-\u007f]/.test(w)));
+    const gotCjk = ca.split(' ').filter((w) => w.length >= 1 && /[^\u0000-\u007f]/.test(w));
+    const hitLatin = got.some((w) => want.has(w));
+    const hitCjk = gotCjk.some((w) => wantCjk.has(w));
+    if (!hitLatin && !hitCjk) return 0;
+    score += hitCjk && !hitLatin ? 28 : 16;
   }
 
   if (durationSec && cand.durationSeconds && cand.durationSeconds > 0) {
