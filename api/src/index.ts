@@ -1530,15 +1530,27 @@ app.get('/api/home', accountRequired, async (req, res) => {
     const localPl = listPlaylists(userId, { includeTracks: false });
 
     // reco perso + home YT + similar en parallèle (gros gain cold start)
+    // YT home : budget borné — si lent, on sert le perso tout de suite (suite via /home/more).
     const similarPromise =
       top[0] && /^[a-zA-Z0-9_-]{11}$/.test(top[0].id)
         ? similarForUser(userId, top[0].id, top[0], { full: false }).catch(() => null)
         : Promise.resolve(null);
 
-    const [reco, ytHome, sim] = await Promise.all([homeReco(userId), getHome(), similarPromise]);
+    const ytHomePromise = Promise.race([
+      getHome().catch(() => [] as Awaited<ReturnType<typeof getHome>>),
+      new Promise<Awaited<ReturnType<typeof getHome>>>((resolve) =>
+        setTimeout(() => resolve([]), 4_000),
+      ),
+    ]);
+
+    const [reco, ytHome, sim] = await Promise.all([homeReco(userId), ytHomePromise, similarPromise]);
 
     // Préchauffe async des mixes catégorie (ne bloque pas la réponse home)
     warmCategoryMixes(userId, 3);
+    // Si le budget YT a sauté, relance en fond pour le cache suivant
+    if (!ytHome.length) {
+      void getHome().catch(() => undefined);
+    }
 
     const personal: Awaited<ReturnType<typeof getHome>> = [
       ...(reco.shelves as Awaited<ReturnType<typeof getHome>>),
