@@ -17,6 +17,7 @@ import ovh.delhomme.ytmusic.data.NetworkMonitor
 import ovh.delhomme.ytmusic.data.RadioCategoryDto
 import ovh.delhomme.ytmusic.data.ShelfDto
 import ovh.delhomme.ytmusic.data.TrackDto
+import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.update.ApkUpdateManager
 
 data class HomeUiState(
@@ -154,6 +155,26 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     page = 0,
                     radioPreviews = mergedPreviews,
                 )
+
+                // Cold-start client : chauffe seeds + premiers titres des shelves
+                launch {
+                    val ids = buildList {
+                        addAll(home.seeds.orEmpty())
+                        home.shelves.orEmpty().forEach { shelf ->
+                            shelf.items.orEmpty().take(6).forEach { item ->
+                                val id = item.id
+                                if (id.length == 11) add(id)
+                            }
+                        }
+                    }.distinct().filter { it.length == 11 }.take(24)
+                    if (ids.isNotEmpty()) {
+                        val base = container.resolvedApiBase()
+                        if (base.isNotBlank()) {
+                            StreamPrefetcher.warmTracks(base, ids)
+                            StreamPrefetcher.prefetchLibraryHeads(base, ids, limit = 10)
+                        }
+                    }
+                }
 
                 // Spoken + MAJ en parallèle des previews
                 launch {
