@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.159",
+      "date": "2026-09-06",
+      "title": "PLM prod reconnecté (session partagée)",
+      "notes": [
+        "L’accueil prod exige bien un compte — la session web fonctionne à nouveau sur plm.delhomme.ovh",
+        "Les cookies de connexion sont partagés entre plm, ytmusic et pue-la-merde (plus de « déconnecté » en changeant d’URL)",
+        "Passkeys alignées sur le domaine delhomme.ovh ; API Android pointe vers PLM",
+        "Mot de passe admin resynchronisé côté serveur (SEED) pour éviter les Identifiants invalides"
+      ]
+    },
+    {
       "version": "1.3.158",
       "date": "2026-09-06",
       "title": "Mode vidéo qui s’ouvre vraiment",

@@ -44,10 +44,15 @@ export function publicRpId(): string {
   } catch {
     /* ignore */
   }
-  return 'ytmusic.delhomme.ovh';
+  return 'delhomme.ovh';
 }
 
 export function getOrigin(reqHost?: string, proto?: string) {
+  // Préférer l’hôte de la requête (plm vs ytmusic) pour que les passkeys matchent la page.
+  if (reqHost && !/^\d+\.\d+\.\d+\.\d+$/.test(reqHost.split(':')[0] || '')) {
+    const p = proto || 'https';
+    return `${p}://${reqHost}`;
+  }
   if (process.env.WEBAUTHN_ORIGIN) return process.env.WEBAUTHN_ORIGIN;
   const host = reqHost || 'localhost:5173';
   const p = proto || 'http';
