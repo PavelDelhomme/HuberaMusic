@@ -232,6 +232,8 @@ fun NowPlayingScreen(
     val queueProgress = remember { Animatable(0f) }
     var showLyrics by remember { mutableStateOf(false) }
     var videoFullscreen by remember { mutableStateOf(false) }
+    /** Dernière position du clip (maître en mode vidéo) pour resync du titre à la sortie. */
+    var lastClipPosMs by remember { mutableLongStateOf(0L) }
     var showEqualizer by remember { mutableStateOf(false) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     var showSaveQueue by remember { mutableStateOf(false) }
@@ -570,12 +572,20 @@ fun NowPlayingScreen(
     }
 
     LaunchedEffect(ui.track?.id) {
+        lastClipPosMs = 0L
         dragOffset = 0f
         mediaSlideX = 0f
     }
 
     LaunchedEffect(SessionMediaMode.video) {
-        if (!SessionMediaMode.video) videoFullscreen = false
+        player.setMusicDucked(SessionMediaMode.video)
+        if (!SessionMediaMode.video) {
+            videoFullscreen = false
+            if (lastClipPosMs > 0L) {
+                player.seek(lastClipPosMs)
+                lastClipPosMs = 0L
+            }
+        }
     }
 
     // File dépliée : le retour la replie d'abord, il ferme le lecteur au coup suivant.
@@ -739,7 +749,13 @@ fun NowPlayingScreen(
                         Spacer(Modifier.weight(1f))
                         MediaModeSwitch(
                             video = SessionMediaMode.video,
-                            onChange = { SessionMediaMode.video = it },
+                            onChange = { next ->
+                                if (!next && SessionMediaMode.video && lastClipPosMs > 0L) {
+                                    player.seek(lastClipPosMs)
+                                }
+                                SessionMediaMode.video = next
+                                player.setMusicDucked(next)
+                            },
                         )
                         Spacer(Modifier.weight(1f))
                         NowPlayingChrome.topBarActions.forEach { slot ->
@@ -923,6 +939,14 @@ fun NowPlayingScreen(
                                             positionMs = ui.positionMs,
                                             playing = ui.playing,
                                             active = sheetVisible && SessionMediaMode.video,
+                                            useClipAudio = true,
+                                            onClipPositionMs = { pos ->
+                                                lastClipPosMs = pos
+                                                // Titre muet suit le clip (timeline / paroles / notif)
+                                                if (kotlin.math.abs(ui.positionMs - pos) > 850L) {
+                                                    player.seek(pos)
+                                                }
+                                            },
                                             fullscreen = false,
                                             onToggleFullscreen = { videoFullscreen = true },
                                             modifier = Modifier
@@ -1534,6 +1558,13 @@ fun NowPlayingScreen(
                     playing = ui.playing,
                     active = sheetVisible,
                     fullscreen = true,
+                    useClipAudio = true,
+                    onClipPositionMs = { pos ->
+                        lastClipPosMs = pos
+                        if (kotlin.math.abs(ui.positionMs - pos) > 850L) {
+                            player.seek(pos)
+                        }
+                    },
                     onToggleFullscreen = { videoFullscreen = false },
                     modifier = Modifier.fillMaxSize(),
                 )

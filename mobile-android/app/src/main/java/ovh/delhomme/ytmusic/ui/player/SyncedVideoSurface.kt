@@ -41,6 +41,7 @@ import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import ovh.delhomme.ytmusic.player.PlayerCache
+import kotlin.math.abs
 
 /** Mode média session (reset au kill process, pas persisté). */
 object SessionMediaMode {
@@ -48,8 +49,11 @@ object SessionMediaMode {
 }
 
 /**
- * Surface vidéo muette synchronisée sur la position audio principale.
- * L’audio vient toujours du service (piste en cours) — jamais la piste audio du clip.
+ * Surface vidéo synchronisée avec le lecteur principal.
+ *
+ * En mode clip (`useClipAudio`) : le **son vient du clip** ; la position du clip
+ * est maître (callback) et un seek externe (barre) recentre le clip.
+ * Sinon : overlay muet calé sur l’audio titre (legacy).
  */
 @OptIn(UnstableApi::class)
 @Composable
@@ -59,6 +63,9 @@ fun SyncedVideoSurface(
     playing: Boolean,
     active: Boolean = true,
     fullscreen: Boolean = false,
+    /** true = entendre le flux vidéo ; false = image muette calée sur le titre */
+    useClipAudio: Boolean = true,
+    onClipPositionMs: ((Long) -> Unit)? = null,
     onToggleFullscreen: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -67,6 +74,8 @@ fun SyncedVideoSurface(
     var ready by remember(streamUrl) { mutableStateOf(false) }
     val latestPos by rememberUpdatedState(positionMs)
     val latestPlaying by rememberUpdatedState(playing)
+    val latestUseClip by rememberUpdatedState(useClipAudio)
+    val latestOnClipPos by rememberUpdatedState(onClipPositionMs)
 
     val exo = remember {
         val factory = PlayerCache.videoDataSourceFactory(context)
@@ -74,7 +83,7 @@ fun SyncedVideoSurface(
             .setMediaSourceFactory(DefaultMediaSourceFactory(factory))
             .build()
             .apply {
-                volume = 0f
+                volume = if (useClipAudio) 1f else 0f
                 playWhenReady = false
                 repeatMode = Player.REPEAT_MODE_OFF
             }
@@ -82,6 +91,7 @@ fun SyncedVideoSurface(
 
     DisposableEffect(Unit) {
         onDispose {
+            exo.volume = 0f
             exo.stop()
             exo.clearMediaItems()
             exo.release()
@@ -91,7 +101,7 @@ fun SyncedVideoSurface(
     DisposableEffect(streamUrl) {
         error = null
         ready = false
-        exo.volume = 0f
+        exo.volume = if (latestUseClip) 1f else 0f
         val item = MediaItem.Builder()
             .setUri(streamUrl)
             .setMediaId("video:${streamUrl.hashCode()}")
@@ -104,7 +114,7 @@ fun SyncedVideoSurface(
                     ready = true
                     runCatching { exo.seekTo(latestPos.coerceAtLeast(0L)) }
                     if (ovh.delhomme.ytmusic.BuildConfig.DEBUG) {
-                        Log.i(TAG, "video ready url=${streamUrl.take(80)}")
+                        Log.i(TAG, "video ready clipAudio=$latestUseClip url=${streamUrl.take(80)}")
                     }
                 }
             }
@@ -121,22 +131,40 @@ fun SyncedVideoSurface(
         onDispose {
             exo.removeListener(listener)
             exo.pause()
+            exo.volume = 0f
         }
     }
 
-    LaunchedEffect(streamUrl, active) {
+    LaunchedEffect(useClipAudio, active) {
+        exo.volume = when {
+            !active -> 0f
+            useClipAudio -> 1f
+            else -> 0f
+        }
+    }
+
+    LaunchedEffect(streamUrl, active, useClipAudio) {
         if (!active) {
             exo.pause()
+            exo.volume = 0f
             return@LaunchedEffect
         }
         while (isActive) {
             val target = latestPos.coerceAtLeast(0L)
             when (exo.playbackState) {
                 Player.STATE_READY -> {
-                    val drift = kotlin.math.abs(exo.currentPosition - target)
-                    // Seek rare : évite les micro-coupures / crash buffer
-                    if (drift > 850L) {
-                        runCatching { exo.seekTo(target) }
+                    val clipPos = exo.currentPosition.coerceAtLeast(0L)
+                    if (latestUseClip) {
+                        latestOnClipPos?.invoke(clipPos)
+                        // Seek externe (scrub barre titre) → recentrer le clip
+                        if (abs(target - clipPos) > 2_000L) {
+                            runCatching { exo.seekTo(target) }
+                        }
+                    } else {
+                        val drift = abs(clipPos - target)
+                        if (drift > 850L) {
+                            runCatching { exo.seekTo(target) }
+                        }
                     }
                     when {
                         !latestPlaying && exo.isPlaying -> exo.pause()
