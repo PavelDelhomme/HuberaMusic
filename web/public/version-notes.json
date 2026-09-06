@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.173",
+      "date": "2026-09-06",
+      "title": "MAJ : une seule popup d’installation",
+      "notes": [
+        "Plus de double fenêtre système à la mise à jour (Nothing, Samsung, Xiaomi…)",
+        "Un seul écran Confirmer / Installer — le clic n’est plus perdu derrière une 2ᵉ feuille"
+      ]
+    },
+    {
       "version": "1.3.172",
       "date": "2026-09-06",
       "title": "Sync multi-appareils Accès rapide & compte",
