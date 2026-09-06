@@ -389,6 +389,7 @@ fun YtMusicAppContent(
 
     LaunchedEffect(loggedIn) {
         if (loggedIn != true) return@LaunchedEffect
+        apkUpdater.reconcileAfterBoot()
         val check = runCatching { apkUpdater.checkOnStartup() }.getOrNull() ?: return@LaunchedEffect
         if (check.available) pendingUpdate = check
     }
@@ -427,7 +428,7 @@ fun YtMusicAppContent(
         }
     }
 
-    pendingUpdate?.takeIf { it.available }?.let { upd ->
+    pendingUpdate?.takeIf { it.available && loggedIn == true }?.let { upd ->
         ovh.delhomme.ytmusic.update.UpdateAvailableDialog(
             versionName = upd.info?.versionName,
             updater = apkUpdater,
@@ -541,14 +542,19 @@ fun YtMusicAppContent(
                 onAppLinkConsumed = { pendingAppLink = null },
                 updateUi = updateUi,
                 onUpdateBannerClick = {
+                    val phaseBefore = apkUpdater.ui.value.phase
                     val ok = apkUpdater.onBannerAction()
-                    if (ok && apkUpdater.ui.value.phase ==
+                    if (phaseBefore ==
                         ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.AwaitingConfirm
                     ) {
                         Toast.makeText(
                             context,
-                            "Confirme l’installation sur l’écran système",
-                            Toast.LENGTH_SHORT,
+                            if (ok) {
+                                "Regarde l’écran Confirmer (derrière PLM parfois)"
+                            } else {
+                                "Écran système introuvable — appuie Plus tard ou réessaie dans Compte"
+                            },
+                            Toast.LENGTH_LONG,
                         ).show()
                     } else if (!ok && updateUi.showsUpdateBanner()) {
                         Toast.makeText(
@@ -557,6 +563,10 @@ fun YtMusicAppContent(
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
+                },
+                onUpdateBannerDismiss = {
+                    apkUpdater.dismissAwaitingConfirm(snooze = true)
+                    Toast.makeText(context, "Mise à jour reportée", Toast.LENGTH_SHORT).show()
                 },
                 onOpenPlayer = {
                     val ui = player.state.value
@@ -639,6 +649,7 @@ private fun MainTabs(
     updateUi: ovh.delhomme.ytmusic.update.ApkUpdateManager.UiState =
         ovh.delhomme.ytmusic.update.ApkUpdateManager.UiState(),
     onUpdateBannerClick: () -> Unit = {},
+    onUpdateBannerDismiss: () -> Unit = {},
     onOpenPlayer: () -> Unit,
     onClosePlayer: () -> Unit,
     onPlayTracks: (List<TrackDto>, Int) -> Unit,
@@ -1325,6 +1336,7 @@ private fun MainTabs(
                         UpdateProgressBanner(
                             ui = updateUi,
                             onClick = onUpdateBannerClick,
+                            onDismiss = onUpdateBannerDismiss,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -1766,6 +1778,7 @@ private fun MainTabs(
                 UpdateProgressBanner(
                     ui = updateUi,
                     onClick = onUpdateBannerClick,
+                    onDismiss = onUpdateBannerDismiss,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
