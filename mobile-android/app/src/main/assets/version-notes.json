@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.157",
+      "date": "2026-09-06",
+      "title": "Vidéo plus rapide, Play après kill, Téléchargements",
+      "notes": [
+        "Les clips vidéo sont indexés côté serveur (et en cache téléphone) : le mode Vidéo s’ouvre beaucoup plus vite la 2ᵉ fois",
+        "Après un arrêt forcé de l’app, Play / Suivant relancent bien le titre au lieu de rester muet",
+        "Nouvel écran Téléchargements (Compte / Accueil) : progression, retry, suppression, Tout lire",
+        "Reco : similarité par « empreintes » de style (tags + énergie) pour des suggestions plus cohérentes"
+      ]
+    },
+    {
       "version": "1.3.156",
       "date": "2026-09-06",
       "title": "Mode vidéo avec le son du clip",
