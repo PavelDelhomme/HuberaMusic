@@ -39,9 +39,9 @@ class UpdateProgressNotifier(private val context: Context) {
                 .putExtra(EXTRA_OPEN_UPDATE_CONFIRM, true),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val awaiting = text.contains("confirm", ignoreCase = true) ||
-            text.contains("Confirmer", ignoreCase = true) ||
-            text.contains("écran système", ignoreCase = true)
+        val awaiting = text.contains("écran d’installation", ignoreCase = true) ||
+            text.contains("Rouvrir", ignoreCase = true) ||
+            text.contains("Valide l’installation", ignoreCase = true)
         val b = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_play)
             .setContentTitle(title)
@@ -50,17 +50,12 @@ class UpdateProgressNotifier(private val context: Context) {
             .setOngoing(!awaiting)
             .setOnlyAlertOnce(true)
             .setAutoCancel(awaiting)
-            .setCategory(
-                if (awaiting) NotificationCompat.CATEGORY_ALARM
-                else NotificationCompat.CATEGORY_PROGRESS,
-            )
-            .setPriority(
-                if (awaiting) NotificationCompat.PRIORITY_HIGH
-                else NotificationCompat.PRIORITY_DEFAULT,
-            )
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        // Pas d’action « Confirmer » auto ni DEFAULT_ALL : ça empilait une 2ᵉ interaction
+        // pendant que la feuille PackageInstaller était déjà ouverte.
         if (awaiting) {
-            b.addAction(0, "Confirmer", open)
-            b.setDefaults(NotificationCompat.DEFAULT_ALL)
+            b.addAction(0, "Rouvrir", open)
         }
         when {
             indeterminate -> b.setProgress(100, 0, true)

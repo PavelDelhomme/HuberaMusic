@@ -71,13 +71,13 @@ object UpdateRelaunch {
             putExtra(UpdateConfirmProxyActivity.EXTRA_CONFIRM, confirm)
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP,
             )
         }
+        // Un seul chemin : proxy Activity (pas de fallback direct immédiat qui double sur OEM)
         runCatching { ctx.startActivity(proxy) }
-            .onFailure {
-                AppLog.w("apk-update", "proxy start KO: ${it.message} — direct")
+            .onFailure { e ->
+                AppLog.w("apk-update", "proxy start KO: ${e.message} — direct once")
                 runCatching { ctx.startActivity(confirm) }
                     .onFailure { e2 -> AppLog.w("apk-update", "confirm install KO: ${e2.message}") }
             }
