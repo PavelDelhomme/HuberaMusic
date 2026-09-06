@@ -1,11 +1,11 @@
 /**
- * Résout un ID vidéo « visuel » pour le mode multimédia :
- * même trackId si un progressif vidéo existe, sinon recherche clip titre+artiste.
- * Index SQLite `visual_cache` (persistant) + cache RAM.
+ * Résout un ID vidéo « visuel » pour le mode multimédia.
+ * RAPIDE : pas de probe getVideoFormat (bloquait 10–60 s) — le stream ?type=video
+ * résout le format à la lecture. Index SQLite + RAM pour skip search.
  */
-import { getTrack, getVideoFormat, search } from '../youtube/yt.js';
+import { getTrack, search } from '../youtube/yt.js';
 import type { Track } from '../youtube/types.js';
-import { getVisualCache, putVisualCache } from './visualCache.js';
+import { getVisualCache, putVisualCache, deleteVisualCache } from './visualCache.js';
 
 export type VisualResolve = {
   audioId: string;
@@ -16,8 +16,8 @@ export type VisualResolve = {
 };
 
 const cache = new Map<string, { at: number; value: VisualResolve }>();
-const TTL_MS = 60 * 60 * 1000;
-const PROBE_MS = 8_000;
+const TTL_MS = 6 * 60 * 60 * 1000; // RAM 6 h
+const searchInflight = new Map<string, Promise<VisualResolve>>();
 
 function normalize(s: string): string {
   return s
@@ -73,18 +73,6 @@ function scoreCandidate(
   return score;
 }
 
-async function probeVideo(id: string): Promise<boolean> {
-  try {
-    await Promise.race([
-      getVideoFormat(id),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), PROBE_MS)),
-    ]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function remember(value: VisualResolve) {
   cache.set(value.audioId, { at: Date.now(), value });
   putVisualCache({
@@ -96,9 +84,83 @@ function remember(value: VisualResolve) {
   });
 }
 
+function sameResolve(
+  id: string,
+  title?: string,
+  artist?: string,
+): VisualResolve {
+  return {
+    audioId: id,
+    visualId: id,
+    source: 'same',
+    title: title || undefined,
+    artist: artist || undefined,
+  };
+}
+
+/** Recherche clip en fond — n’bloque pas la 1ʳᵉ réponse. */
+async function searchBetterClip(
+  id: string,
+  title: string,
+  artist: string,
+  durationSec: number | null,
+): Promise<VisualResolve> {
+  const existing = searchInflight.get(id);
+  if (existing) return existing;
+  const job = (async (): Promise<VisualResolve> => {
+    const fallback = sameResolve(id, title, artist);
+    const q = [title, artist].filter(Boolean).join(' ').trim();
+    if (!q) {
+      remember(fallback);
+      return fallback;
+    }
+    try {
+      const buckets = await search(q, 'video');
+      const pool = [...(buckets.videos || []), ...(buckets.songs || [])].filter(
+        (t) => t?.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id),
+      );
+      const ranked = pool
+        .map((t) => ({ t, s: scoreCandidate(t, title, artist, durationSec) }))
+        .filter((x) => x.s >= 45)
+        .sort((a, b) => b.s - a.s);
+      const best = ranked[0]?.t;
+      // Préférer un autre ID seulement s’il score clairement mieux qu’un simple match
+      if (best && best.id !== id && (ranked[0]?.s ?? 0) >= 70) {
+        const value: VisualResolve = {
+          audioId: id,
+          visualId: best.id,
+          source: 'search',
+          title: best.title || title || undefined,
+          artist: artistLine(best) || artist || undefined,
+        };
+        remember(value);
+        return value;
+      }
+    } catch (err) {
+      console.warn('[visual-resolve] search failed', id, err);
+    }
+    remember(fallback);
+    return fallback;
+  })().finally(() => {
+    searchInflight.delete(id);
+  });
+  searchInflight.set(id, job);
+  return job;
+}
+
+/**
+ * Résolution synchrone rapide : cache → sinon même ID immédiat.
+ * Option `upgrade=1` : lance une recherche clip en arrière-plan (ne bloque pas).
+ */
 export async function resolveVisualVideo(
   audioId: string,
-  hints?: { title?: string; artist?: string; durationSeconds?: number | null },
+  hints?: {
+    title?: string;
+    artist?: string;
+    durationSeconds?: number | null;
+    /** Si true, lance search en fond pour améliorer le cache (réponse toujours rapide). */
+    upgrade?: boolean;
+  },
 ): Promise<VisualResolve> {
   const id = String(audioId || '').trim();
   if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) {
@@ -127,84 +189,33 @@ export async function resolveVisualVideo(
 
   if (!title) {
     try {
-      const { track } = await getTrack(id);
+      const { track } = await Promise.race([
+        getTrack(id),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('meta timeout')), 2500)),
+      ]);
       title = track.title || '';
       artist = artistLine(track);
       durationSec = track.durationSeconds ?? null;
     } catch {
-      /* oembed/search only */
+      /* keep empty */
     }
   }
 
-  if (await probeVideo(id)) {
-    const value: VisualResolve = {
-      audioId: id,
-      visualId: id,
-      source: 'same',
-      title: title || undefined,
-      artist: artist || undefined,
-    };
-    remember(value);
-    return value;
+  // Réponse immédiate : même ID (le player streamera ?type=video)
+  const fast = sameResolve(id, title, artist);
+  remember(fast);
+
+  if (hints?.upgrade !== false && title) {
+    void searchBetterClip(id, title, artist, durationSec).catch(() => {});
   }
 
-  const sameFallback: VisualResolve = {
-    audioId: id,
-    visualId: id,
-    source: 'same',
-    title: title || undefined,
-    artist: artist || undefined,
-  };
+  return fast;
+}
 
-  const q = [title, artist].filter(Boolean).join(' ').trim();
-  if (!q) {
-    remember(sameFallback);
-    return sameFallback;
-  }
-
-  try {
-    const buckets = await search(q, 'video');
-    const pool = [...(buckets.videos || []), ...(buckets.songs || [])].filter(
-      (t) => t?.id && t.id !== id && /^[a-zA-Z0-9_-]{11}$/.test(t.id),
-    );
-    const ranked = pool
-      .map((t) => ({ t, s: scoreCandidate(t, title, artist, durationSec) }))
-      .filter((x) => x.s >= 40)
-      .sort((a, b) => b.s - a.s)
-      .slice(0, 5);
-
-    // Probe top candidats en parallèle (max 3)
-    const top = ranked.slice(0, 3);
-    const probes = await Promise.all(top.map(({ t }) => probeVideo(t.id)));
-    const okIdx = probes.findIndex(Boolean);
-    if (okIdx >= 0) {
-      const t = top[okIdx]!.t;
-      const value: VisualResolve = {
-        audioId: id,
-        visualId: t.id,
-        source: 'search',
-        title: t.title || title || undefined,
-        artist: artistLine(t) || artist || undefined,
-      };
-      remember(value);
-      return value;
-    }
-    if (ranked[0]) {
-      const t = ranked[0].t;
-      const value: VisualResolve = {
-        audioId: id,
-        visualId: t.id,
-        source: 'search',
-        title: t.title || title || undefined,
-        artist: artistLine(t) || artist || undefined,
-      };
-      remember(value);
-      return value;
-    }
-  } catch (err) {
-    console.warn('[visual-resolve] search failed', id, err);
-  }
-
-  remember(sameFallback);
-  return sameFallback;
+/** Force refresh cache (après erreur de lecture côté client). */
+export function invalidateVisualCache(audioId: string) {
+  const id = String(audioId || '').trim();
+  if (!id) return;
+  cache.delete(id);
+  deleteVisualCache(id);
 }

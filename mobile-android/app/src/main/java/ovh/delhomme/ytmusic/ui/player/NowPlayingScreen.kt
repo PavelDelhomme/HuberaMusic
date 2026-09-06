@@ -295,119 +295,62 @@ fun NowPlayingScreen(
         CoverPrefetcher.warm(t.coverUrl(360))
     }
 
-    // Pré-chauffe + resolve clip visuel (fallback titre+artiste si ATV sans vidéo)
+    // Pré-chauffe + resolve clip visuel
     var visualVideoUrl by remember { mutableStateOf<String?>(null) }
     var visualVideoError by remember { mutableStateOf<String?>(null) }
-    // Resolve + warm clip dès le titre courant (même hors mode vidéo) → ouverture instantanée
-    LaunchedEffect(ui.track?.id) {
-        val track = ui.track ?: return@LaunchedEffect
-        val cached = VisualIdCache.get(context, track.id)
-        if (cached != null && SessionMediaMode.video) {
-            visualVideoUrl = container.videoStreamUrl(cached)
-        }
-        runCatching {
-            container.ensureFreshToken()
-            val vid = cached ?: run {
-                val vis = container.api.trackVisual(
-                    track.id,
-                    title = track.title,
-                    artist = track.artistLine().takeIf { it != "Artiste" },
-                    durationSeconds = track.durationSeconds,
-                )
-                vis.visualId?.takeIf { it.isNotBlank() }?.also {
-                    VisualIdCache.put(context, track.id, it)
-                }
-            } ?: return@runCatching
-            runCatching { container.api.streamResolveUrl(vid, "video") }
-            // Warm Range léger hors UI
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    val url = container.videoStreamUrl(vid)
-                    val req = okhttp3.Request.Builder()
-                        .url(url)
-                        .header("Range", "bytes=0-65535")
-                        .header("X-YTM-Client", "android")
-                        .get()
-                        .build()
-                    container.httpPlain.newCall(req).execute().close()
-                }
-            }
-            if (SessionMediaMode.video) {
-                visualVideoUrl = container.videoStreamUrl(vid)
-                visualVideoError = null
-            }
-        }
-    }
+    var visualIdUsed by remember { mutableStateOf<String?>(null) }
 
+    // Mode Vidéo : URL immédiate (même ID) — ne JAMAIS attendre le resolve réseau
     LaunchedEffect(ui.track?.id, SessionMediaMode.video, sheetVisible) {
         val track = ui.track
         if (!sheetVisible || track == null || !SessionMediaMode.video) {
             if (!SessionMediaMode.video) {
-                // garde l’URL en cache mémoire pour re-toggle rapide
+                // garde l’URL pour re-toggle
             } else {
                 visualVideoUrl = null
                 visualVideoError = null
+                visualIdUsed = null
             }
             return@LaunchedEffect
         }
-        val cached = VisualIdCache.get(context, track.id)
-        if (cached != null) {
-            visualVideoUrl = container.videoStreamUrl(cached)
-            visualVideoError = null
-        }
+        visualVideoError = null
+        // Toujours démarrer sur le même ID (instantané) — le cache ne sert qu’en upgrade
+        visualIdUsed = track.id
+        visualVideoUrl = container.videoStreamUrl(track.id)
         runCatching {
             container.ensureFreshToken()
-            val vid = cached ?: run {
-                val vis = container.api.trackVisual(
-                    track.id,
-                    title = track.title,
-                    artist = track.artistLine().takeIf { it != "Artiste" },
-                    durationSeconds = track.durationSeconds,
-                )
-                vis.visualId?.takeIf { it.isNotBlank() }?.also {
-                    VisualIdCache.put(context, track.id, it)
-                }
+            val cached = VisualIdCache.get(context, track.id)
+            val vis = container.api.trackVisual(
+                track.id,
+                title = track.title,
+                artist = track.artistLine().takeIf { it != "Artiste" },
+                durationSeconds = track.durationSeconds,
+            )
+            val vid = vis.visualId?.takeIf { it.isNotBlank() }
+                ?: cached
+                ?: track.id
+            if (vid != track.id) {
+                VisualIdCache.put(context, track.id, vid)
             }
-            if (vid == null) {
-                visualVideoError = "Pas de clip vidéo"
-                return@runCatching
+            if (vid != visualIdUsed && SessionMediaMode.video) {
+                visualIdUsed = vid
+                visualVideoUrl = container.videoStreamUrl(vid)
             }
             runCatching { container.api.streamResolveUrl(vid, "video") }
-            visualVideoUrl = container.videoStreamUrl(vid)
-            visualVideoError = null
         }.onFailure {
-            if (visualVideoUrl == null) {
-                visualVideoError = it.message ?: "Vidéo indisponible"
+            if (ovh.delhomme.ytmusic.BuildConfig.DEBUG) {
+                AppLog.w("YTMVideo", "visual upgrade failed: ${it.message}")
             }
         }
     }
-    // Prefetch clip du titre suivant (mode vidéo) pour enchaîner sans blanc
+
+    // Prefetch clip du titre suivant (mode vidéo uniquement, léger)
     LaunchedEffect(ui.track?.id, ui.queueIndex, SessionMediaMode.video, ui.queue.size) {
         if (!SessionMediaMode.video) return@LaunchedEffect
         val next = ui.queue.getOrNull(ui.queueIndex + 1) ?: return@LaunchedEffect
         runCatching {
-            container.ensureFreshToken()
-            val vis = container.api.trackVisual(
-                next.id,
-                title = next.title,
-                artist = next.artistLine().takeIf { it != "Artiste" },
-                durationSeconds = next.durationSeconds,
-            )
-            val vid = vis.visualId?.takeIf { it.isNotBlank() } ?: return@runCatching
-            runCatching { container.api.streamResolveUrl(vid, "video") }
-            // Tête HTTP légère pour chauffer le CDN / proxy
-            runCatching {
-                val url = container.videoStreamUrl(vid)
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val req = okhttp3.Request.Builder()
-                        .url(url)
-                        .header("Range", "bytes=0-65535")
-                        .header("X-YTM-Client", "android")
-                        .get()
-                        .build()
-                    container.httpPlain.newCall(req).execute().close()
-                }
-            }
+            val cached = VisualIdCache.get(context, next.id) ?: next.id
+            runCatching { container.api.streamResolveUrl(cached, "video") }
         }
     }
 
@@ -1002,9 +945,20 @@ fun NowPlayingScreen(
                                             useClipAudio = true,
                                             onClipPositionMs = { pos ->
                                                 lastClipPosMs = pos
-                                                // Titre muet suit le clip (timeline / paroles / notif)
                                                 if (kotlin.math.abs(ui.positionMs - pos) > 850L) {
                                                     player.seek(pos)
+                                                }
+                                            },
+                                            onPlaybackError = {
+                                                val tid = track.id
+                                                val used = visualIdUsed
+                                                VisualIdCache.put(context, tid, tid)
+                                                if (used != null && used != tid) {
+                                                    visualIdUsed = tid
+                                                    visualVideoUrl = container.videoStreamUrl(tid)
+                                                    visualVideoError = null
+                                                } else {
+                                                    visualVideoError = "Clip indisponible"
                                                 }
                                             },
                                             fullscreen = false,
@@ -1623,6 +1577,14 @@ fun NowPlayingScreen(
                         lastClipPosMs = pos
                         if (kotlin.math.abs(ui.positionMs - pos) > 850L) {
                             player.seek(pos)
+                        }
+                    },
+                    onPlaybackError = {
+                        val tid = track.id
+                        VisualIdCache.put(context, tid, tid)
+                        if (visualIdUsed != tid) {
+                            visualIdUsed = tid
+                            visualVideoUrl = container.videoStreamUrl(tid)
                         }
                     },
                     onToggleFullscreen = { videoFullscreen = false },

@@ -41,6 +41,12 @@ export function getVisualCache(audioId: string): VisualCacheRow | null {
   return row;
 }
 
+export function deleteVisualCache(audioId: string) {
+  const id = String(audioId || '').trim();
+  if (!id) return;
+  db.prepare(`DELETE FROM visual_cache WHERE audio_id = ?`).run(id);
+}
+
 export function putVisualCache(input: {
   audioId: string;
   visualId: string | null;
@@ -50,6 +56,10 @@ export function putVisualCache(input: {
 }) {
   const id = String(input.audioId || '').trim();
   if (!id) return;
+  if (!input.visualId) {
+    deleteVisualCache(id);
+    return;
+  }
   db.prepare(
     `INSERT INTO visual_cache (audio_id, visual_id, source, title, artist, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)

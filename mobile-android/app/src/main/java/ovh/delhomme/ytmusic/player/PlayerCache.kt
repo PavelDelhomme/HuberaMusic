@@ -135,7 +135,21 @@ object PlayerCache {
 
     fun videoDataSourceFactory(context: Context): DefaultDataSource.Factory {
         val appCtx = context.applicationContext
-        return DefaultDataSource.Factory(appCtx, httpFactory(appCtx))
+        val token = runCatching {
+            ovh.delhomme.ytmusic.YtMusicApp.instance.container.tokenStore.peekAccess()
+        }.getOrNull()
+        val props = mutableMapOf("X-YTM-Client" to "android")
+        if (!token.isNullOrBlank()) {
+            props["Authorization"] = "Bearer $token"
+        }
+        // Timeouts plus serrés que l’audio : échec → fallback ID plus vite
+        val http = DefaultHttpDataSource.Factory()
+            .setUserAgent("PLM-Android")
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(8_000)
+            .setReadTimeoutMs(45_000)
+            .setDefaultRequestProperties(props)
+        return DefaultDataSource.Factory(appCtx, http)
     }
 
     fun cancelPrefetch(preservePinned: Boolean = false) {

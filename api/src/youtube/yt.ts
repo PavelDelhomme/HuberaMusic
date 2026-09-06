@@ -2754,8 +2754,8 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
         : await getYT();
       if (!yt) return null;
       const clients = signed
-        ? (['TV', 'MWEB', 'WEB', 'ANDROID'] as const)
-        : (['ANDROID_VR', 'TV', 'IOS', 'WEB_EMBEDDED', 'ANDROID'] as const);
+        ? (['TV', 'ANDROID', 'WEB'] as const)
+        : (['ANDROID', 'TV', 'WEB_EMBEDDED'] as const);
       let lastErr: unknown;
       for (const client of clients) {
         try {
@@ -2766,7 +2766,7 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
               client,
             } as any),
             new Promise<never>((_, rej) =>
-              setTimeout(() => rej(new Error(`innertube video ${client} timeout`)), signed ? 20_000 : 10_000),
+              setTimeout(() => rej(new Error(`innertube video ${client} timeout`)), signed ? 8_000 : 5_000),
             ),
           ]);
           const url = format.url || (await format.decipher(yt.session.player));
