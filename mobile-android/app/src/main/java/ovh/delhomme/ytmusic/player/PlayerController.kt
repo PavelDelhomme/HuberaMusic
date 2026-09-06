@@ -1616,7 +1616,8 @@ class PlayerController(
             sourceId = sourceId ?: if (sourceKind == "radio") seed.id else null,
             sourceKind = sourceKind,
         )
-        setAutoplaySuggestions(playable.size < 12)
+        // Ne pas désactiver « À suivre » en DB pour les mixes longs (≥12) :
+        // ça écrasait la préf compte de tous les utilisateurs.
     }
 
     /** Ajoute des titres après la file sans remplacer le courant (top-up radio progressif). */

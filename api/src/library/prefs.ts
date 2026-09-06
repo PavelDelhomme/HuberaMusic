@@ -121,6 +121,26 @@ function ensurePlayerPrefsColumns() {
 }
 ensurePlayerPrefsColumns();
 
+/** One-shot : réactive « À suivre » pour tous les comptes (choix explicite OFF possible ensuite). */
+function forceAutoplayOnAllUsersOnce() {
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS schema_flags (
+      key TEXT PRIMARY KEY,
+      at INTEGER NOT NULL
+    )`);
+    const done = db.prepare(`SELECT 1 AS ok FROM schema_flags WHERE key = ?`).get('autoplay_force_on_v168');
+    if (done) return;
+    db.prepare(`UPDATE user_prefs SET autoplay_suggestions = 1`).run();
+    db.prepare(`INSERT OR REPLACE INTO schema_flags(key, at) VALUES (?, ?)`).run(
+      'autoplay_force_on_v168',
+      Date.now(),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+forceAutoplayOnAllUsersOnce();
+
 export type Prefs = {
   genres: string[];
   moods: string[];
