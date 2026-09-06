@@ -105,7 +105,7 @@ import {
   issueApkTicket,
   latestLiveApkTicket,
 } from './platform/apkTickets.js';
-import { listAdminUsers } from './platform/adminUsers.js';
+import { listAdminUsers, listWarmCandidates } from './platform/adminUsers.js';
 import { loadRuntimeSettings, saveRuntimeSettings, publicMaintenanceStatus } from './platform/runtimeSettings.js';
 import {
   deployAdminHints,
@@ -1312,6 +1312,17 @@ app.get('/api/admin/users', requireAdmin, (_req, res) => {
   res.json({
     users,
     missingGoogle: users.filter((u) => !u.ytmLinked).length,
+  });
+});
+
+/** Candidats warm cache .m4a pour tous les comptes (history/likes/library). */
+app.get('/api/admin/warm-candidates', requireAdmin, (req, res) => {
+  const maxPerUser = Number(req.query.maxPerUser || 60);
+  const maxTotal = Number(req.query.maxTotal || 500);
+  const candidates = listWarmCandidates({ maxPerUser, maxTotal });
+  res.json({
+    count: candidates.length,
+    candidates,
   });
 });
 

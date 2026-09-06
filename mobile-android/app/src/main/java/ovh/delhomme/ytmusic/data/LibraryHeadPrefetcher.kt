@@ -145,9 +145,10 @@ class LibraryHeadPrefetcher(
     }
 
     companion object {
-        private const val START_DELAY_MS = 45_000L
-        private const val INTERVAL_MS = 2 * 60_000L
-        private const val BATCH = 6
+        /** Démarre plus tôt après login pour que la biblio soit déjà chaude. */
+        private const val START_DELAY_MS = 12_000L
+        private const val INTERVAL_MS = 90_000L
+        private const val BATCH = 10
         private const val KEY_CURSOR = "cursor"
         private const val KEY_LAST = "last_tick"
     }
