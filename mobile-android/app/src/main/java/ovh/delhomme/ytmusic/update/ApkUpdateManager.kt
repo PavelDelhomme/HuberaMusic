@@ -131,20 +131,105 @@ class ApkUpdateManager(
     private fun restoreUi(): UiState {
         val phaseName = prefs.getString(KEY_UI_PHASE, null)
         val phase = runCatching { Phase.valueOf(phaseName ?: "") }.getOrDefault(Phase.Idle)
-        // Ne pas restaurer Downloading/Checking (job mort) → Idle avec message
+        val remoteCode = prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
+        // Après une MAJ réussie (ADB / install) ou process mort : ne jamais
+        // restaurer AwaitingConfirm — l’intent système est mort et la vignette
+        // bloquait Accueil / Compte (Nothing).
         val safe = when (phase) {
             Phase.Downloading, Phase.Checking, Phase.Installing -> Phase.Idle
+            Phase.AwaitingConfirm -> {
+                when {
+                    remoteCode > 0 && remoteCode <= BuildConfig.VERSION_CODE -> Phase.UpToDate
+                    else -> Phase.Available
+                }
+            }
             else -> phase
+        }
+        val message = when (safe) {
+            Phase.UpToDate -> "À jour — ${BuildConfig.VERSION_NAME}"
+            Phase.Available ->
+                prefs.getString(KEY_UI_MESSAGE, "")?.takeIf { it.isNotBlank() }
+                    ?: "Nouvelle version prête — appuie pour installer"
+            else -> prefs.getString(KEY_UI_MESSAGE, "") ?: ""
         }
         return UiState(
             phase = safe,
             progress = 0f,
-            message = prefs.getString(KEY_UI_MESSAGE, "") ?: "",
+            message = message,
             remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
-            remoteCode = prefs.getInt(KEY_LAST_REMOTE_CODE, 0),
-            available = safe == Phase.Available || safe == Phase.AwaitingConfirm ||
-                (safe == Phase.Error && prefs.getInt(KEY_LAST_REMOTE_CODE, 0) > BuildConfig.VERSION_CODE),
+            remoteCode = remoteCode,
+            available = safe == Phase.Available ||
+                (safe == Phase.Error && remoteCode > BuildConfig.VERSION_CODE),
         )
+    }
+
+    /** Annule une confirmation coincée / abandonne la vignette bloquante. */
+    fun dismissAwaitingConfirm(snooze: Boolean = true) {
+        lastConfirmIntent = null
+        notifier.cancel()
+        val remote = _ui.value.remoteCode.takeIf { it > 0 }
+            ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
+        if (snooze && remote > BuildConfig.VERSION_CODE) {
+            snooze(SnoozeOption.LATER_TODAY, remote)
+        }
+        publish(
+            UiState(
+                phase = if (remote > 0 && remote <= BuildConfig.VERSION_CODE) {
+                    Phase.UpToDate
+                } else {
+                    Phase.Idle
+                },
+                message = if (remote > 0 && remote <= BuildConfig.VERSION_CODE) {
+                    "À jour — ${BuildConfig.VERSION_NAME}"
+                } else {
+                    "Installation reportée — tu pourras réessayer dans Compte"
+                },
+                remoteName = _ui.value.remoteName,
+                remoteCode = remote,
+                available = false,
+            ),
+        )
+        AppLog.i("apk-update", "dismissAwaitingConfirm remote=$remote")
+    }
+
+    /**
+     * Au démarrage : si on est déjà à jour, nettoie toute phase Confirmer
+     * fantôme (cas Nothing après ADB / install partielle).
+     */
+    fun reconcileAfterBoot() {
+        val remote = prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
+        val phase = _ui.value.phase
+        if (remote > 0 && remote <= BuildConfig.VERSION_CODE) {
+            if (phase == Phase.AwaitingConfirm || phase == Phase.Available ||
+                phase == Phase.Error || phase == Phase.Installing
+            ) {
+                lastConfirmIntent = null
+                notifier.cancel()
+                publish(
+                    UiState(
+                        phase = Phase.UpToDate,
+                        message = "À jour — ${BuildConfig.VERSION_NAME}",
+                        remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
+                        remoteCode = remote,
+                        available = false,
+                    ),
+                )
+            }
+            return
+        }
+        // Intent perdu après kill → ne pas rester bloqué sur Confirmer
+        if (phase == Phase.AwaitingConfirm && lastConfirmIntent == null) {
+            val pending = if (remote > BuildConfig.VERSION_CODE) apkFileFor(remote) else null
+            if (pending == null || !pending.isFile || pending.length() < 1_000_000L) {
+                publish(
+                    _ui.value.copy(
+                        phase = Phase.Available,
+                        message = "Mise à jour prête — appuie pour télécharger",
+                        available = true,
+                    ),
+                )
+            }
+        }
     }
 
     private fun publish(state: UiState) {
@@ -570,10 +655,28 @@ class ApkUpdateManager(
         }
         clearSnooze()
         UpdateRelaunch.markPending(context)
-        val ok = runCatching { installViaPackageInstaller(file) }.getOrElse { err ->
-            AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
-            withContext(Dispatchers.Main) { installApkViaView(file) }
-            true
+        // Nothing OS : PackageInstaller laisse souvent l’écran « Confirmer »
+        // inaccessible derrière PLM. ACTION_VIEW est plus fiable là-bas.
+        val preferView = Build.MANUFACTURER.equals("Nothing", ignoreCase = true) ||
+            Build.BRAND.equals("Nothing", ignoreCase = true)
+        val ok = if (preferView) {
+            withContext(Dispatchers.Main) {
+                runCatching { installApkViaView(file) }
+                    .onFailure { AppLog.w("apk-update", "VIEW install KO: ${it.message}") }
+                    .isSuccess
+            }.also { success ->
+                if (!success) {
+                    runCatching { installViaPackageInstaller(file) }.getOrElse { false }
+                } else {
+                    true
+                }
+            }
+        } else {
+            runCatching { installViaPackageInstaller(file) }.getOrElse { err ->
+                AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW")
+                withContext(Dispatchers.Main) { installApkViaView(file) }
+                true
+            }
         }
         return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur"
     }

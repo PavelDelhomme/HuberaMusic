@@ -12,6 +12,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,7 +22,8 @@ import androidx.compose.ui.unit.dp
 /**
  * Vignette au-dessus du mini-lecteur : progression + bouton pour
  * rouvrir l’écran système « Confirmer l’installation » (Nothing le
- * cache souvent derrière PLM).
+ * cache souvent derrière PLM). Toujours un « Plus tard » pour ne
+ * jamais rester bloqué.
  */
 fun ApkUpdateManager.UiState.showsUpdateBanner(): Boolean {
     return when (phase) {
@@ -40,6 +42,7 @@ fun UpdateProgressBanner(
     ui: ApkUpdateManager.UiState,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onDismiss: (() -> Unit)? = null,
 ) {
     if (!ui.showsUpdateBanner()) return
     val phase = ui.phase
@@ -62,19 +65,21 @@ fun UpdateProgressBanner(
         else -> null
     }
     Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
+        modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.primaryContainer,
         shadowElevation = 6.dp,
     ) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .clickable(onClick = onClick),
+                ) {
                     Text(
                         title,
                         style = MaterialTheme.typography.bodyMedium,
@@ -92,16 +97,27 @@ fun UpdateProgressBanner(
                     }
                 }
                 if (cta != null) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        cta,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    TextButton(onClick = onClick) {
+                        Text(
+                            cta,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+                if (onDismiss != null &&
+                    (awaiting || phase == ApkUpdateManager.Phase.Error)
+                ) {
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(onClick = onDismiss) {
+                        Text(
+                            "Plus tard",
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f),
+                        )
+                    }
                 }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             if (determinate) {
                 LinearProgressIndicator(
                     progress = { ui.progress.coerceIn(0f, 1f) },
