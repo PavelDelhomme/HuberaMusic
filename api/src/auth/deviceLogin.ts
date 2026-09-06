@@ -52,7 +52,7 @@ function publicBase(): string {
     process.env.PUBLIC_APP_URL,
     process.env.PROD_APP_URL,
     process.env.APP_URL,
-    'https://ytmusic.delhomme.ovh',
+    'https://plm.delhomme.ovh',
   ]
     .map((x) => String(x || '').trim().replace(/\/$/, ''))
     .filter(Boolean);
@@ -60,7 +60,27 @@ function publicBase(): string {
   for (const c of candidates) {
     if (!isPrivateOrLocalUrl(c)) return c;
   }
-  return 'https://ytmusic.delhomme.ovh';
+  return 'https://plm.delhomme.ovh';
+}
+
+/** Origin de la requête si c’est un alias public connu — sinon canon PLM. */
+function resolvePublicOrigin(publicOrigin?: string): string {
+  const raw = String(publicOrigin || '').trim().replace(/\/$/, '')
+  if (raw && !isPrivateOrLocalUrl(raw)) {
+    try {
+      const h = new URL(raw).hostname.toLowerCase()
+      if (
+        h === 'plm.delhomme.ovh' ||
+        h === 'ytmusic.delhomme.ovh' ||
+        h === 'pue-la-merde.delhomme.ovh'
+      ) {
+        return raw
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return publicBase()
 }
 
 export function startDeviceLogin(publicOrigin?: string): {
@@ -84,10 +104,7 @@ export function startDeviceLogin(publicOrigin?: string): {
     createdAt: now,
     expiresAt,
   });
-  const base =
-    publicOrigin && !isPrivateOrLocalUrl(publicOrigin)
-      ? publicOrigin.replace(/\/$/, '')
-      : publicBase();
+  const base = resolvePublicOrigin(publicOrigin);
   const approveUrl = `${base}/login-device?id=${encodeURIComponent(id)}&code=${encodeURIComponent(code)}`;
   return { id, code, pollSecret, expiresAt, approveUrl };
 }
@@ -173,10 +190,7 @@ export function inviteDeviceLogin(
     createdAt: now,
     expiresAt,
   });
-  const base =
-    publicOrigin && !isPrivateOrLocalUrl(publicOrigin)
-      ? publicOrigin.replace(/\/$/, '')
-      : publicBase();
+  const base = resolvePublicOrigin(publicOrigin);
   const claimUrl = `${base}/login-device?claim=${encodeURIComponent(id)}.${encodeURIComponent(pollSecret)}`;
   return { id, claimToken: `${id}.${pollSecret}`, expiresAt, claimUrl };
 }

@@ -119,19 +119,21 @@ import androidx.navigation.navArgument
 class MainActivity : ComponentActivity() {
     private val notifPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { /* ignore */ }
+    ) { granted ->
+        // Mémoriser le choix (accordé ou refusé) pour ne pas re-spammer à chaque MAJ / cold start.
+        getSharedPreferences(PREFS_PERMS, MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_NOTIF_PROMPTED, true)
+            .putBoolean(KEY_NOTIF_GRANTED, granted)
+            .apply()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Splash → thème app après le premier frame
         setTheme(R.style.Theme_PLM)
         enableEdgeToEdge()
-        if (Build.VERSION.SDK_INT >= 33) {
-            val ok = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-            if (ok != PackageManager.PERMISSION_GRANTED) {
-                notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
+        maybeRequestNotificationPermission()
         val app = application as YtMusicApp
         setContent {
             YtMusicTheme {
@@ -148,6 +150,29 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
     }
 
+    /**
+     * Notifs : une seule invite système par installation.
+     * Les MAJ `adb install -r` / Play conservent la permission Android — on ne re-demande pas
+     * juste parce que l’app a redémarré. `pm clear` / désinstall resetent tout (normal).
+     */
+    private fun maybeRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val granted =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        val prefs = getSharedPreferences(PREFS_PERMS, MODE_PRIVATE)
+        if (granted) {
+            prefs.edit()
+                .putBoolean(KEY_NOTIF_PROMPTED, true)
+                .putBoolean(KEY_NOTIF_GRANTED, true)
+                .apply()
+            return
+        }
+        if (prefs.getBoolean(KEY_NOTIF_PROMPTED, false)) return
+        prefs.edit().putBoolean(KEY_NOTIF_PROMPTED, true).apply()
+        notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     companion object {
         const val EXTRA_OPEN_PLAYER = "ovh.delhomme.ytmusic.OPEN_PLAYER"
         /** Depuis notif média : ouvrir paroles du titre en cours. */
@@ -159,13 +184,25 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_REFRESH_TOKEN = "ytm_refresh_token"
         const val EXTRA_USER_EMAIL = "ytm_user_email"
 
+        private const val PREFS_PERMS = "plm_permissions_v1"
+        private const val KEY_NOTIF_PROMPTED = "notif_prompted"
+        private const val KEY_NOTIF_GRANTED = "notif_granted"
+
+        private val LOGIN_DEVICE_HOSTS = setOf(
+            "plm.delhomme.ovh",
+            "ytmusic.delhomme.ovh",
+            "pue-la-merde.delhomme.ovh",
+        )
+
         fun parseDeviceLogin(uri: Uri?): DeviceLoginDeepLink? {
             if (uri == null) return null
+            val host = uri.host?.lowercase().orEmpty()
             val isHttps =
                 (uri.scheme == "https" || uri.scheme == "http") &&
-                    uri.host?.contains("ytmusic") == true &&
+                    host in LOGIN_DEVICE_HOSTS &&
                     (uri.path?.startsWith("/login-device") == true)
-            val isCustom = uri.scheme == "ytmusic" && uri.host == "login-device"
+            val isCustom =
+                (uri.scheme == "ytmusic" || uri.scheme == "plm") && uri.host == "login-device"
             if (!isHttps && !isCustom) return null
             val claim = uri.getQueryParameter("claim")?.trim().orEmpty()
             if (claim.isNotEmpty()) return DeviceLoginDeepLink.Claim(claim)
