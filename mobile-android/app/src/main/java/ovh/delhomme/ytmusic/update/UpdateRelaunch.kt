@@ -60,17 +60,20 @@ object UpdateRelaunch {
         launchConfirm(ctx, confirm)
     }
 
-    /** Lance via Activity bridge (fiable One UI / MIUI / etc.). */
+    /** Lance via Activity bridge — une seule fois (pas de double startActivity). */
     fun launchConfirm(ctx: Context, confirm: Intent) {
         confirm.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP,
+                Intent.FLAG_ACTIVITY_SINGLE_TOP,
         )
         val proxy = Intent(ctx, UpdateConfirmProxyActivity::class.java).apply {
             putExtra(UpdateConfirmProxyActivity.EXTRA_CONFIRM, confirm)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP,
+            )
         }
         runCatching { ctx.startActivity(proxy) }
             .onFailure {

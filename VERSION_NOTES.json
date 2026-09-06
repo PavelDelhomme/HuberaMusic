@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.171",
+      "date": "2026-09-06",
+      "title": "MAJ APK : une seule fenêtre Confirmer",
+      "notes": [
+        "La mise à jour n’ouvre plus deux écrans système empilés (Nothing, Samsung, Xiaomi et autres)",
+        "Tu peux à nouveau cliquer Installer / Confirmer sans perdre le toucher derrière une 2ᵉ feuille"
+      ]
+    },
+    {
       "version": "1.3.170",
       "date": "2026-09-06",
       "title": "Titres morts remplacés (K-Pop / JP / lyrics)",
