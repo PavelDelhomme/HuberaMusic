@@ -1827,6 +1827,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
           if (get().current?.id !== seedId) return;
           void import('../lib/player/lyricSync').then((m) => {
             m.applyServerOffsetIfUnset(seedId, r.userOffsetMs);
+            m.applyServerSegments(seedId, r.segments);
           });
           set({
             lyrics: r.lyrics || get().lyrics,
@@ -2427,9 +2428,10 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set({ showLyrics: true, showQueue: false });
     if (current) {
       try {
-        const { lyrics, timed, source, userOffsetMs } = await api.lyrics(current.id);
-        const { applyServerOffsetIfUnset } = await import('../lib/player/lyricSync');
+        const { lyrics, timed, source, userOffsetMs, segments } = await api.lyrics(current.id);
+        const { applyServerOffsetIfUnset, applyServerSegments } = await import('../lib/player/lyricSync');
         applyServerOffsetIfUnset(current.id, userOffsetMs);
+        applyServerSegments(current.id, segments);
         set({
           lyrics,
           lyricsTimed: timed || null,

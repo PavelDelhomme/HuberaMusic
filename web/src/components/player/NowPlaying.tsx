@@ -13,6 +13,7 @@ import {
   getLyricUserOffsetMs,
   nudgeLyricUserOffsetMs,
   setLyricUserOffsetMs,
+  lyricOffsetSecAt,
   estimateTimedFromPlain,
 } from '../../lib/player/lyricSync';
 
@@ -100,12 +101,11 @@ export function SyncedLyrics({
   }, [text, timed, duration]);
 
   const leadSec = LYRIC_LEAD_SEC;
-  const offsetSec = userOffsetMs / 1000;
   // LRCLIB / LRC brut : souvent en avance sur le flux YT → lag de base
   const sourceLagSec =
     lyricsSource === 'lrclib' || lyricsSource === 'lrc' ? LRCLIB_BASE_LAG_SEC : 0;
 
-  // Horloge = audio réel ; ne re-render que si l’index actif change
+  // Horloge = audio réel ; offset peut varier mid-song (segments appris)
   useEffect(() => {
     if (!lines.length) return;
     let raf = 0;
@@ -114,6 +114,8 @@ export function SyncedLyrics({
       if (cancelled) return;
       const el = usePlayer.getState().audioEl;
       if (el && Number.isFinite(el.currentTime)) {
+        const dur = duration > 0 ? duration : el.duration;
+        const offsetSec = lyricOffsetSecAt(currentId, el.currentTime, dur);
         const t = el.currentTime + leadSec - offsetSec - sourceLagSec;
         let idx = -1;
         for (let i = 0; i < lines.length; i++) {
@@ -150,19 +152,31 @@ export function SyncedLyrics({
       el?.removeEventListener('seeked', onSeeked);
       el?.removeEventListener('timeupdate', onSeeked);
     };
-  }, [lines, isPlaying, audioEl, leadSec, offsetSec, sourceLagSec]);
+  }, [lines, isPlaying, audioEl, leadSec, sourceLagSec, currentId, duration, userOffsetMs]);
+
+  const activeOffsetSec = lyricOffsetSecAt(
+    currentId,
+    clock,
+    duration > 0 ? duration : null,
+  );
 
   const activeIdx = useMemo(() => {
     if (!lines.length) return -1;
-    const t = clock + leadSec - offsetSec - sourceLagSec;
+    const t = clock + leadSec - activeOffsetSec - sourceLagSec;
     let idx = -1;
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].t <= t) idx = i;
       else break;
     }
     return idx;
-  }, [lines, clock, leadSec, offsetSec, sourceLagSec]);
+  }, [lines, clock, leadSec, activeOffsetSec, sourceLagSec]);
 
+  const syncOpts = () => {
+    const el = usePlayer.getState().audioEl;
+    const atMs = el && Number.isFinite(el.currentTime) ? Math.round(el.currentTime * 1000) : Math.round(clock * 1000);
+    const durationMs = duration > 0 ? Math.round(duration * 1000) : undefined;
+    return { atMs, durationMs };
+  };
   useEffect(() => {
     const lineEl = activeRef.current;
     if (!lineEl || activeIdx < 0) return;
@@ -220,7 +234,7 @@ export function SyncedLyrics({
               title="Retarder de 0,25 s"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 250));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 250, syncOpts()));
                 lastActiveRef.current = -1;
               }}
             >
@@ -232,16 +246,16 @@ export function SyncedLyrics({
               title="Retarder de 0,20 s"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 200));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 200, syncOpts()));
                 lastActiveRef.current = -1;
               }}
             >
               −0,20
             </button>
             <span className="min-w-[3.5rem] text-center text-[11px] font-semibold tabular-nums text-yt-muted">
-              {userOffsetMs === 0
+              {Math.abs(activeOffsetSec) < 0.01
                 ? 'sync'
-                : `${userOffsetMs > 0 ? '+' : ''}${(userOffsetMs / 1000).toFixed(2)} s`}
+                : `${activeOffsetSec > 0 ? '+' : ''}${activeOffsetSec.toFixed(2)} s`}
             </span>
             <button
               type="button"
@@ -249,7 +263,7 @@ export function SyncedLyrics({
               title="Avancer de 0,20 s"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -200));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -200, syncOpts()));
                 lastActiveRef.current = -1;
               }}
             >
@@ -261,7 +275,7 @@ export function SyncedLyrics({
               title="Avancer de 0,25 s"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -250));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -250, syncOpts()));
                 lastActiveRef.current = -1;
               }}
             >
@@ -273,7 +287,8 @@ export function SyncedLyrics({
                 className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
                 onClick={() => {
                   if (!currentId) return;
-                  setLyricUserOffsetMs(currentId, 0);
+                  setLyricUserOffsetMs(currentId, 0, { ...syncOpts(), source: 'reset' });
+                  setUserOffsetMs(0);
                   setUserOffsetMs(0);
                   lastActiveRef.current = -1;
                 }}
@@ -313,7 +328,11 @@ export function SyncedLyrics({
                 const nextMs = Math.round(
                   (now + leadSec - sourceLagSec - line.t) * 1000,
                 );
-                setLyricUserOffsetMs(currentId, nextMs);
+                setLyricUserOffsetMs(currentId, nextMs, {
+                  atMs: Math.round(now * 1000),
+                  durationMs: duration > 0 ? Math.round(duration * 1000) : undefined,
+                  source: 'calibrate',
+                });
                 setUserOffsetMs(getLyricUserOffsetMs(currentId));
                 lastActiveRef.current = -1;
               }}
@@ -326,7 +345,11 @@ export function SyncedLyrics({
                   const nextMs = Math.round(
                     (now + leadSec - sourceLagSec - line.t) * 1000,
                   );
-                  setLyricUserOffsetMs(currentId, nextMs);
+                  setLyricUserOffsetMs(currentId, nextMs, {
+                    atMs: Math.round(now * 1000),
+                    durationMs: duration > 0 ? Math.round(duration * 1000) : undefined,
+                    source: 'calibrate',
+                  });
                   setUserOffsetMs(getLyricUserOffsetMs(currentId));
                   lastActiveRef.current = -1;
                   target.dataset.calibrated = '1';
