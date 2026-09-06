@@ -270,10 +270,11 @@ Perplexity a raison : **ExoPlayer 2004 = HTTP 502 du backend**, pas un codec.
 ### E22 — Force-stop : file restaurée, Play / Suivant sans audio
 | | |
 |--|--|
-| **Status** | `open` |
+| **Status** | `fixed` (code) — `1.3.157` · re-prépare Exo depuis `Holder.queue` si vide / IDLE |
 | **Surfaces** | Android |
 | **Symptôme** | Kill forcé → rouvrir : mini-lecteur + file **OK** (`LocalPlaybackStore`). Clic **Play** : le titre courant **ne part pas**. **Suivant** non plus, alors que les titres suivants sont bien ceux d’avant. |
 | **Piste** | Restore `autoplay=false` sans MediaItems Exo ; `Holder.queue` vs UI ; skip retombe sur « chargement de suggestion ». Lié E15 (là la file était vidée ; ici la file reste, l’audio non). |
+| **Fix** | `toggle` / `playResume` / `skipNext` : si Exo vide → `ensureServiceAndConnect` + `playNow` (jamais `fillThenSkipFromEnd` sur file restaurée). |
 | **STATUS** | **B4.23** |
 | **Tests** | **R18** / **R24** · DEV D13 · PROD P13 — **Samsung** |
 

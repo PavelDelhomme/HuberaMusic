@@ -1479,10 +1479,8 @@ private fun MainTabs(
                     onOpenArtist = ::openArtist,
                     onOpenAccount = { nav.navigate("account") },
                     onOpenDownloads = {
-                        LibraryFilter.pendingSelect = LibraryFilter.Downloads
-                        nav.navigate(Tab.Library.route) {
+                        nav.navigate("downloads") {
                             launchSingleTop = true
-                            restoreState = true
                         }
                     },
                     onMoreMix = { id, title, covers ->
@@ -1526,13 +1524,19 @@ private fun MainTabs(
                     onOpenYtmImport = { nav.navigate("ytm_import") },
                     onOpenHistory = { nav.navigate("history") },
                     onOpenDownloads = {
-                        LibraryFilter.pendingSelect = LibraryFilter.Downloads
-                        nav.navigate(Tab.Library.route) {
-                            popUpTo("account") { inclusive = true }
+                        nav.navigate("downloads") {
                             launchSingleTop = true
                         }
                     },
                     onLoggedOut = onLoggedOut,
+                )
+            }
+            composable("downloads") {
+                ovh.delhomme.ytmusic.ui.downloads.DownloadsScreen(
+                    container = container,
+                    onBack = { nav.popBackStack() },
+                    onPlay = onPlayTracks,
+                    onOpenDetail = ::openDetail,
                 )
             }
             composable("help_limits") {

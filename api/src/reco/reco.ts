@@ -20,6 +20,7 @@ import {
 import { upsertTrack } from '../library/db.js';
 import { isWeakTitle, preferCatalogAudio } from '../youtube/mappers.js';
 import { isMusicPlayableHit } from './searchRank.js';
+import { scoreContentEmbedding } from './trackFeatures.js';
 import { getGlobalCard, setGlobalCard } from '../library/globalCardCache.js';
 import {
   MIX_PREVIEW,
@@ -548,7 +549,20 @@ export async function hybridRank(opts: {
       return true;
     })
     .map((track) => {
-      const s1 = scoreContent(track, seed, prefs.genres, uniqueTargetTags);
+      const s1Tags = scoreContent(track, seed, prefs.genres, uniqueTargetTags);
+      // Phase 2 MVP : mélange cosine embeddings tags+énergie (persisté)
+      const emb = seed
+        ? scoreContentEmbedding(
+            track,
+            seed,
+            styleTags(track),
+            energyProxy(track),
+            seedTags,
+            energyProxy(seed),
+          )
+        : null;
+      const s1 =
+        emb != null ? Math.min(1, s1Tags * 0.55 + emb * 0.45) : s1Tags;
       const s2 = scoreSeq(track, seed);
       const s3 = scoreCtx(track, prefs.moments, hour, weekend);
       const s4 = scoreBandit(track.id, listenCounts, prefs.discoveryBias);
