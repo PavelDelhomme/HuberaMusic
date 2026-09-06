@@ -74,9 +74,16 @@ function saveReplacement(
   score: number,
 ) {
   // Garde-fou anti-boucle : jamais A → B si B → A est déjà enregistré.
+  // Si l’ancien mapping inverse existe, on le retire (souvent un faux positif).
   if (getReplacementId(replacementId) === deadId) {
-    console.warn(`[replacement] boucle évitée ${deadId} ↔ ${replacementId}`);
-    return;
+    try {
+      ensureTrackReplacementSchema();
+      db.prepare('DELETE FROM track_id_replacements WHERE dead_id = ?').run(replacementId);
+      console.warn(`[replacement] mapping inverse retiré ${replacementId} → ${deadId}`);
+    } catch {
+      console.warn(`[replacement] boucle évitée ${deadId} ↔ ${replacementId}`);
+      return;
+    }
   }
   try {
     ensureTrackReplacementSchema();
@@ -141,6 +148,24 @@ async function metaFor(
       durationSec = durationSec ?? track.durationSeconds ?? null;
     } catch {
       /* rien de plus à tenter */
+    }
+  }
+
+  // Chaînes lyrics / TV : l’« artiste » est souvent le compte upload, pas l’interprète.
+  // « ROSALÍA - Despecha (Letra) » → artiste ROSALÍA, titre Despecha.
+  const channelish =
+    !artist ||
+    /mundial|lyrics?|letra|topic|vevo|music\s*core|mbc|kpop|official|records?/i.test(artist);
+  if (title && channelish) {
+    const m = title.match(/^(.{2,60}?)\s*[-–—:]\s*(.+)$/u);
+    if (m) {
+      const left = m[1]!.trim();
+      const right = m[2]!.trim();
+      // « Artist - Song » le plus fréquent
+      if (left.length <= 40 && right.length >= 2) {
+        artist = left;
+        title = right.replace(/\b(letra|lyrics?|official\s*video)\b/gi, ' ').replace(/\s+/g, ' ').trim() || right;
+      }
     }
   }
   return { title, artist, durationSec };
