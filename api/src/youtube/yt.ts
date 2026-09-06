@@ -1533,8 +1533,8 @@ export async function getArtistSongs(
 }
 
 const LYRICS_CACHE_MAX = 400;
-/** bump : Genius via proxies + matching web (v14) */
-const LYRICS_CACHE_VER = 'v14';
+/** bump : Genius proxies race + source conservée (v15) */
+const LYRICS_CACHE_VER = 'v15';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
@@ -2046,9 +2046,12 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
       needCaps ? fetchYoutubeCaptionsTimed(videoId).catch(() => null) : null,
       needPlain ? fetchLyricsOvh(artist, title).catch(() => null) : null,
       needPlain
-        ? import('./lyricsGenius.js')
-            .then((m) => m.fetchGeniusLyrics(artist, title))
-            .catch(() => null)
+        ? Promise.race([
+            import('./lyricsGenius.js')
+              .then((m) => m.fetchGeniusLyrics(artist, title))
+              .catch(() => null),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 13_000)),
+          ])
         : null,
     ]);
     if (ext) {
@@ -2100,11 +2103,14 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
 
   // Texte brut sans timings : on les estime pour que le suivi avance
   // comme sur un titre qui a un LRC (Welcome to the Internet).
+  // On conserve la source d’origine (genius / lyrics.ovh) — estimated = timings seulement.
   if (!timed?.length && looksLikeLyrics(text)) {
     const estimated = estimateTimedFromPlain(text!, durationSec);
     if (estimated.length >= 4) {
       timed = estimated;
-      source = 'estimated';
+      if (source !== 'genius' && source !== 'lyrics.ovh' && source !== 'youtube') {
+        source = 'estimated';
+      }
     }
   }
 
