@@ -38,11 +38,17 @@ fun UpdateAvailableDialog(
         ui.phase == ApkUpdateManager.Phase.Installing
     val showProgress = busy || ui.phase == ApkUpdateManager.Phase.AwaitingConfirm
 
+    // Dès que le DL / install démarre : fermer le modal pour ne pas bloquer
+    // Compte / Accueil (Nothing / Samsung — dialogue opaque au-dessus de tout).
     LaunchedEffect(ui.phase) {
-        if (ui.phase == ApkUpdateManager.Phase.AwaitingConfirm ||
-            ui.phase == ApkUpdateManager.Phase.Done
-        ) {
-            onSoftDismiss()
+        when (ui.phase) {
+            ApkUpdateManager.Phase.Checking,
+            ApkUpdateManager.Phase.Downloading,
+            ApkUpdateManager.Phase.Installing,
+            ApkUpdateManager.Phase.AwaitingConfirm,
+            ApkUpdateManager.Phase.Done,
+            -> onSoftDismiss()
+            else -> Unit
         }
     }
 

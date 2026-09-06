@@ -72,7 +72,10 @@ function upsertHit(
          WHEN search_canonical_hits.source = 'seed' AND excluded.source = 'click' THEN 'seed'
          ELSE excluded.source
        END,
-       score = GREATEST(search_canonical_hits.score, excluded.score),
+       score = CASE
+         WHEN search_canonical_hits.score > excluded.score THEN search_canonical_hits.score
+         ELSE excluded.score
+       END,
        updated_at = excluded.updated_at`,
   ).run(queryFold, videoId, title, artist, source, score, now);
 }

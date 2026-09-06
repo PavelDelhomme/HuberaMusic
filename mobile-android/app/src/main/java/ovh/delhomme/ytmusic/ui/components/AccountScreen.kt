@@ -237,12 +237,29 @@ fun AccountScreen(
                         subtitle = subtitle,
                         titleColor = if (highlight) accentRed else Color.Unspecified,
                         onClick = {
-                            if (busy) {
-                                context.toastMain(subtitle.ifBlank { "Mise à jour en cours…" })
-                                return@AccountRow
+                            when (phase) {
+                                ApkUpdateManager.Phase.AwaitingConfirm -> {
+                                    val ok = updater.reopenConfirmInstall()
+                                    context.toastMain(
+                                        if (ok) {
+                                            "Ouvre l’écran Confirmer l’installation"
+                                        } else {
+                                            "Relance l’installateur…"
+                                        },
+                                    )
+                                    if (!ok) updater.startManualUpdate()
+                                }
+                                ApkUpdateManager.Phase.Checking,
+                                ApkUpdateManager.Phase.Downloading,
+                                ApkUpdateManager.Phase.Installing,
+                                -> {
+                                    context.toastMain(subtitle.ifBlank { "Mise à jour en cours…" })
+                                }
+                                else -> {
+                                    context.toastMain("Mise à jour… la barre avance sous le lecteur")
+                                    updater.startManualUpdate()
+                                }
                             }
-                            context.toastMain("Mise à jour… la barre avance ci-dessous")
-                            updater.startManualUpdate()
                         },
                     )
                     if (busy || phase == ApkUpdateManager.Phase.AwaitingConfirm) {

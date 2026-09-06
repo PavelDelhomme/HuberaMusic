@@ -95,6 +95,7 @@ export function InstallPage() {
           <p className="mb-4 text-sm text-yt-muted">
             Sur Xiaomi / Redmi / POCO (MIUI) : le menu ⋮ « Installer l’application » du navigateur
             crée souvent un <em>raccourci web</em>. Utilise uniquement le bouton ci-dessous.
+            Compatible <strong className="text-white">Android 8.0</strong> et plus.
           </p>
           <button
             type="button"
