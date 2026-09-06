@@ -21,12 +21,10 @@ class UpdateProgressNotifier(private val context: Context) {
             NotificationChannel(
                 CHANNEL_ID,
                 "Mises à jour PLM",
-                NotificationManager.IMPORTANCE_LOW,
+                NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                setShowBadge(false)
-                setSound(null, null)
-                enableVibration(false)
-                description = "Téléchargement et installation de l’application"
+                setShowBadge(true)
+                description = "Téléchargement et confirmation d’installation"
             },
         )
     }
@@ -36,18 +34,34 @@ class UpdateProgressNotifier(private val context: Context) {
         val open = PendingIntent.getActivity(
             context,
             0,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(EXTRA_OPEN_UPDATE_CONFIRM, true),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val awaiting = text.contains("confirm", ignoreCase = true) ||
+            text.contains("Confirmer", ignoreCase = true) ||
+            text.contains("écran système", ignoreCase = true)
         val b = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_play)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(open)
-            .setOngoing(true)
+            .setOngoing(!awaiting)
             .setOnlyAlertOnce(true)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setAutoCancel(awaiting)
+            .setCategory(
+                if (awaiting) NotificationCompat.CATEGORY_ALARM
+                else NotificationCompat.CATEGORY_PROGRESS,
+            )
+            .setPriority(
+                if (awaiting) NotificationCompat.PRIORITY_HIGH
+                else NotificationCompat.PRIORITY_DEFAULT,
+            )
+        if (awaiting) {
+            b.addAction(0, "Confirmer", open)
+            b.setDefaults(NotificationCompat.DEFAULT_ALL)
+        }
         when {
             indeterminate -> b.setProgress(100, 0, true)
             progress != null -> b.setProgress(100, progress.coerceIn(0, 100), false)
@@ -83,5 +97,6 @@ class UpdateProgressNotifier(private val context: Context) {
     companion object {
         private const val CHANNEL_ID = "plm_apk_update"
         private const val NOTIF_ID = 41001
+        const val EXTRA_OPEN_UPDATE_CONFIRM = "plm_open_update_confirm"
     }
 }

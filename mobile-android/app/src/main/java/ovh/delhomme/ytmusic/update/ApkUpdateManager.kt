@@ -71,6 +71,63 @@ class ApkUpdateManager(
     private val _ui = MutableStateFlow(restoreUi())
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
+    @Volatile
+    private var lastConfirmIntent: Intent? = null
+    @Volatile
+    private var lastReopenAt = 0L
+
+    /**
+     * Clic vignette / Compte / notif : rouvre « Confirmer l’installation »
+     * (Nothing le met souvent derrière PLM) ou relance le flux selon la phase.
+     */
+    fun onBannerAction(): Boolean {
+        return when (_ui.value.phase) {
+            Phase.AwaitingConfirm -> reopenConfirmInstall()
+            Phase.Error, Phase.Available -> {
+                startManualUpdate()
+                true
+            }
+            Phase.Idle -> {
+                if (_ui.value.available) {
+                    startManualUpdate()
+                    true
+                } else {
+                    false
+                }
+            }
+            else -> false
+        }
+    }
+
+    /** Relance l’écran système de confirmation (ou réinstalle depuis le cache APK). */
+    fun reopenConfirmInstall(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastReopenAt < 700L) return false
+        lastReopenAt = now
+        val confirm = lastConfirmIntent
+        if (confirm != null) {
+            AppLog.i("apk-update", "reopen confirm intent")
+            UpdateRelaunch.launchConfirm(context, confirm)
+            notifier.show(
+                "Mise à jour PLM",
+                "Confirme l’installation sur l’écran système",
+                100,
+                indeterminate = false,
+            )
+            return true
+        }
+        val remote = _ui.value.remoteCode.takeIf { it > BuildConfig.VERSION_CODE }
+            ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
+        val pending = if (remote > BuildConfig.VERSION_CODE) apkFileFor(remote) else null
+        if (pending != null && pending.isFile && pending.length() > 1_000_000L) {
+            AppLog.i("apk-update", "reopen via cached apk v$remote")
+            startManualUpdate()
+            return true
+        }
+        AppLog.w("apk-update", "reopen confirm: pas d’intent ni d’APK cache")
+        return false
+    }
+
     private fun restoreUi(): UiState {
         val phaseName = prefs.getString(KEY_UI_PHASE, null)
         val phase = runCatching { Phase.valueOf(phaseName ?: "") }.getOrDefault(Phase.Idle)
@@ -797,18 +854,24 @@ class ApkUpdateManager(
         AppLog.i("apk-update", "install status=$status")
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                lastConfirmIntent = UpdateRelaunch.extractConfirmIntent(intent)
                 UpdateRelaunch.startConfirmIntent(ctx, intent)
+                // Relance une 2ᵉ fois après un court délai : Nothing / OxygenOS
+                // mettent souvent l’écran derrière PLM au premier startActivity.
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    lastConfirmIntent?.let { UpdateRelaunch.launchConfirm(ctx, it) }
+                }, 450L)
                 publish(
                     _ui.value.copy(
                         phase = Phase.AwaitingConfirm,
-                        message = "Confirme l’installation — PLM se relancera toute seule",
+                        message = "Appuie sur la vignette « Confirmer » si l’écran système n’apparaît pas",
                         available = true,
                         progress = 1f,
                     ),
                 )
                 notifier.show(
                     "Mise à jour PLM",
-                    "Confirme l’installation sur l’écran système",
+                    "Appuie ici ou sur la vignette pour confirmer l’install",
                     100,
                     indeterminate = false,
                 )
