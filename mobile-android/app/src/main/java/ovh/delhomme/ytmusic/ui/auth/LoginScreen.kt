@@ -1,5 +1,6 @@
 package ovh.delhomme.ytmusic.ui.auth
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -7,9 +8,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -31,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -38,6 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ovh.delhomme.ytmusic.auth.DeviceLoginQr
 import ovh.delhomme.ytmusic.data.AppContainer
 
 @Composable
@@ -48,11 +55,24 @@ fun LoginScreen(
 ) {
     val state by vm.state.collectAsState()
     var passwordVisible by remember { mutableStateOf(false) }
+    var showScanner by remember { mutableStateOf(false) }
     val context = LocalContext.current
     LaunchedEffect(state.loggedIn) {
         if (state.loggedIn) onLoggedIn()
     }
     if (state.loggedIn) return
+
+    if (showScanner) {
+        QrScannerScreen(
+            title = "Scanner l’invite QR",
+            onCancel = { showScanner = false },
+            onResult = { raw ->
+                showScanner = false
+                vm.claimFromScannedQr(raw)
+            },
+        )
+        return
+    }
 
     if (state.offerPasskey) {
         AlertDialog(
@@ -96,6 +116,7 @@ fun LoginScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -129,7 +150,50 @@ fun LoginScreen(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(modifier = Modifier.height(28.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+
+        if (!state.registerMode) {
+            Text(
+                "Connexion rapide (QR)",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            val approveUrl = state.deviceApproveUrl
+            if (!approveUrl.isNullOrBlank()) {
+                val bmp = remember(approveUrl) { DeviceLoginQr.bitmap(approveUrl, 512) }
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = "QR de connexion",
+                    modifier = Modifier.size(180.dp),
+                )
+            } else {
+                CircularProgressIndicator(modifier = Modifier.size(36.dp))
+            }
+            Text(
+                when (state.deviceQrStatus) {
+                    "expired" -> "QR expiré — nouveau en cours…"
+                    else -> "Scanne avec un appareil déjà connecté (app ou site)."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+            )
+            OutlinedButton(
+                onClick = { showScanner = true },
+                enabled = !state.loading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                Text("  Scanner un QR d’invite")
+            }
+            Text(
+                "Ou scanne le QR affiché dans Compte sur ton autre appareil.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+            )
+        }
 
         if (state.registerMode) {
             OutlinedTextField(
@@ -240,7 +304,7 @@ fun LoginScreen(
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            "Email / 2FA / Passkey natif (Credential Manager).",
+            "Email / 2FA / Passkey / QR appareil.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

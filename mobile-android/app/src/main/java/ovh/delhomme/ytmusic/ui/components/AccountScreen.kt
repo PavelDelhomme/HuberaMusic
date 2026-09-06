@@ -2,6 +2,7 @@ package ovh.delhomme.ytmusic.ui.components
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -24,10 +25,13 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -36,6 +40,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -62,10 +68,13 @@ import androidx.lifecycle.repeatOnLifecycle
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.BuildConfig
+import ovh.delhomme.ytmusic.DeviceLoginDeepLink
+import ovh.delhomme.ytmusic.auth.DeviceLoginQr
 import ovh.delhomme.ytmusic.auth.PasskeyAuth
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.RefreshBody
 import ovh.delhomme.ytmusic.data.UserDto
+import ovh.delhomme.ytmusic.ui.auth.QrScannerScreen
 import ovh.delhomme.ytmusic.update.ApkUpdateManager
 import ovh.delhomme.ytmusic.ui.util.toastMain
 
@@ -92,6 +101,9 @@ fun AccountScreen(
     var passkeyInfo by remember { mutableStateOf<String?>(null) }
     var showEqualizer by remember { mutableStateOf(false) }
     var showVersionNotes by remember { mutableStateOf(false) }
+    var showQrScanner by remember { mutableStateOf(false) }
+    var inviteClaimUrl by remember { mutableStateOf<String?>(null) }
+    var inviteBusy by remember { mutableStateOf(false) }
     var ytmLinked by remember {
         mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
     }
@@ -100,6 +112,40 @@ fun AccountScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     BackHandler(onBack = onBack)
+
+    if (showQrScanner) {
+        QrScannerScreen(
+            title = "Autoriser un appareil",
+            onCancel = { showQrScanner = false },
+            onResult = { raw ->
+                showQrScanner = false
+                when (val link = DeviceLoginQr.parse(raw)) {
+                    is DeviceLoginDeepLink.Approve -> {
+                        scope.launch {
+                            runCatching {
+                                container.ensureFreshToken()
+                                container.api.deviceLoginApprove(
+                                    mapOf("id" to link.id, "code" to link.code),
+                                )
+                                context.toastMain("Appareil autorisé")
+                            }.onFailure {
+                                Toast.makeText(
+                                    context,
+                                    it.message ?: "Échec autorisation",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        }
+                    }
+                    is DeviceLoginDeepLink.Claim -> {
+                        context.toastMain("Ce QR est une invite — scanne-le depuis l’écran de login")
+                    }
+                    null -> context.toastMain("QR non reconnu")
+                }
+            },
+        )
+        return
+    }
 
     LaunchedEffect(Unit) {
         user = runCatching {
@@ -380,6 +426,77 @@ fun AccountScreen(
                         }
                     },
                 )
+            }
+            item {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        "Connecter un autre appareil",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Affiche un QR d’invite (à scanner sur l’écran login) ou scanne le QR du login de l’autre appareil.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                inviteBusy = true
+                                runCatching {
+                                    container.ensureFreshToken()
+                                    val r = container.api.deviceLoginInvite()
+                                    inviteClaimUrl = r.claimUrl
+                                }.onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        it.message ?: "Échec invite",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                                inviteBusy = false
+                            }
+                        },
+                        enabled = !inviteBusy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.QrCode, contentDescription = null)
+                        Text(
+                            if (inviteClaimUrl != null) "  Régénérer le QR d’invite"
+                            else "  Afficher un QR d’invite",
+                        )
+                    }
+                    inviteClaimUrl?.let { url ->
+                        val bmp = remember(url) { DeviceLoginQr.bitmap(url, 512) }
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "QR invite",
+                            modifier = Modifier
+                                .padding(top = 12.dp)
+                                .size(168.dp)
+                                .align(Alignment.CenterHorizontally),
+                        )
+                        Text(
+                            "Valable ~2 min — à scanner depuis l’écran de connexion de l’autre appareil.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = { showQrScanner = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                        Text("  Scanner le QR du login")
+                    }
+                }
             }
             item {
                 AccountRow(

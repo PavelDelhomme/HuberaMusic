@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.166",
+      "date": "2026-09-06",
+      "title": "Connexion QR entre appareils",
+      "notes": [
+        "Sur le login (web ou app) : un QR à faire scanner par un appareil déjà connecté pour s’authentifier sans mot de passe",
+        "Depuis Compte / Profil connecté : affiche un QR d’invite ou scanne le QR du login de l’autre appareil",
+        "Scanner intégré dans l’app Android et sur le site (caméra) — liens temporaires ~2 min"
+      ]
+    },
+    {
       "version": "1.3.165",
       "date": "2026-09-06",
       "title": "Cold start plus rapide pour tous les comptes",
