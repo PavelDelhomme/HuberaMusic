@@ -337,6 +337,26 @@ fun AccountScreen(
                                 Text("Plus tard — masquer la confirmation")
                             }
                         }
+                        if (phase == ApkUpdateManager.Phase.Error ||
+                            phase == ApkUpdateManager.Phase.Available ||
+                            (phase == ApkUpdateManager.Phase.Idle && updateUi.available)
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            android.content.Intent(
+                                                android.content.Intent.ACTION_VIEW,
+                                                android.net.Uri.parse("https://plm.delhomme.ovh/install"),
+                                            ),
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            ) {
+                                Text("Installer via navigateur (1 fenêtre)")
+                            }
+                        }
                     }
                 }
             }

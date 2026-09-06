@@ -437,22 +437,26 @@ fun YtMusicAppContent(
         if (loggedIn != true) return@DisposableEffect onDispose { }
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event != Lifecycle.Event.ON_RESUME) return@LifecycleEventObserver
-            // Après Settings « apps inconnues » : relancer l’install auto
+            val phase = apkUpdater.ui.value.phase
+            // Pendant DL / install / feuille système : NE RIEN relancer
+            // (Samsung ON_RESUME à chaque popup → 10–25 sessions sinon).
+            if (phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ||
+                phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing ||
+                phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Checking ||
+                phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.AwaitingConfirm
+            ) {
+                return@LifecycleEventObserver
+            }
+            // Après Settings « apps inconnues » : relancer l’install auto (une fois)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
                 context.packageManager.canRequestPackageInstalls() &&
                 ovh.delhomme.ytmusic.update.UpdateRelaunch.consumePendingAfterPermission(context)
             ) {
                 Toast.makeText(context, "Permission OK — relance de la mise à jour…", Toast.LENGTH_SHORT).show()
                 apkUpdater.startManualUpdate()
-            }
-            if (pendingUpdate?.available == true) return@LifecycleEventObserver
-            val phase = apkUpdater.ui.value.phase
-            if (phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Downloading ||
-                phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Installing ||
-                phase == ovh.delhomme.ytmusic.update.ApkUpdateManager.Phase.Checking
-            ) {
                 return@LifecycleEventObserver
             }
+            if (pendingUpdate?.available == true) return@LifecycleEventObserver
             if (!apkUpdater.shouldRepromptAfterInstall()) return@LifecycleEventObserver
             scope.launch {
                 val check = runCatching { apkUpdater.checkOnStartup() }.getOrNull() ?: return@launch

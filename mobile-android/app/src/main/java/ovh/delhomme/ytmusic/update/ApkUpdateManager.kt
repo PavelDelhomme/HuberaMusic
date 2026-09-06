@@ -941,11 +941,28 @@ class ApkUpdateManager(
         launchInstall(out, remote)
     }
 
-    /** Session PackageInstaller (plus fiable que ACTION_VIEW sur Nothing / Android 14+). */
+    /** Session PackageInstaller — MAJ du même paquet sans empiler de feuilles Samsung. */
     private fun installViaPackageInstaller(file: File): Boolean {
         val installer = context.packageManager.packageInstaller
+        // One UI / MIUI : d’anciennes sessions actives → plusieurs PENDING_USER_ACTION
+        for (info in installer.mySessions) {
+            runCatching {
+                AppLog.i("apk-update", "abandon session stale id=${info.sessionId}")
+                installer.abandonSession(info.sessionId)
+            }
+        }
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(context.packageName)
+        // API 31+ : MAJ du même package signé → pas (ou peu) de feuille Confirmer.
+        // C’est la seule voie fiable pour Samsung et pour les téléphones des amis.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                AppLog.i("apk-update", "USER_ACTION_NOT_REQUIRED (silent update)")
+            }.onFailure {
+                AppLog.w("apk-update", "setRequireUserAction KO: ${it.message}")
+            }
+        }
         // API 34+ : évite le kill immédiat → on peut relancer PLM après SUCCESS
         if (Build.VERSION.SDK_INT >= 34) {
             runCatching { params.setDontKillApp(true) }
@@ -986,13 +1003,13 @@ class ApkUpdateManager(
                 _ui.value.copy(
                     phase = Phase.Installing,
                     progress = 1f,
-                    message = "Ouverture de l’écran d’installation…",
+                    message = "Installation en cours…",
                     available = true,
                 ),
             )
             notifier.show(
                 "Mise à jour PLM",
-                "Ouverture de l’écran d’installation…",
+                "Installation en cours…",
                 100,
                 indeterminate = true,
             )
@@ -1009,6 +1026,13 @@ class ApkUpdateManager(
             session.commit(pi.intentSender)
         }
         return true
+    }
+
+    private fun abandonAllSessions() {
+        val installer = context.packageManager.packageInstaller
+        for (info in installer.mySessions) {
+            runCatching { installer.abandonSession(info.sessionId) }
+        }
     }
 
     /** Appelé depuis [UpdateInstallReceiver] (manifeste — survit au kill du process). */
@@ -1053,7 +1077,20 @@ class ApkUpdateManager(
                 )
                 UpdateRelaunch.relaunch(ctx.applicationContext)
             }
-            PackageInstaller.STATUS_FAILURE_ABORTED,
+            PackageInstaller.STATUS_FAILURE_ABORTED -> {
+                // Annulation feuille système : NE PAS re-prompt au prochain ON_RESUME
+                // (sinon Samsung empile 10–25 sessions d’install).
+                notifier.cancel()
+                resetConfirmGate()
+                abandonAllSessions()
+                publish(
+                    _ui.value.copy(
+                        phase = Phase.Error,
+                        message = "Installation annulée — réessaie ou ouvre plm.delhomme.ovh/install",
+                        available = true,
+                    ),
+                )
+            }
             PackageInstaller.STATUS_FAILURE,
             PackageInstaller.STATUS_FAILURE_BLOCKED,
             PackageInstaller.STATUS_FAILURE_CONFLICT,
@@ -1063,11 +1100,12 @@ class ApkUpdateManager(
             -> {
                 notifier.cancel()
                 resetConfirmGate()
+                abandonAllSessions()
                 markInstallCancelled()
                 publish(
                     _ui.value.copy(
                         phase = Phase.Error,
-                        message = "Installation annulée ou échouée — appuie pour réessayer",
+                        message = "Installation échouée — appuie pour réessayer ou /install",
                         available = true,
                     ),
                 )

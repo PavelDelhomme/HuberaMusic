@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-06",
   "versions": [
     {
+      "version": "1.3.174",
+      "date": "2026-09-06",
+      "title": "MAJ Samsung sans pluie de popups",
+      "notes": [
+        "Mise à jour plus silencieuse (surtout Samsung) : plus d’empilement de fenêtres d’installation",
+        "Si ça bloque encore : bouton « Via navigateur » ou ouvre plm.delhomme.ovh/install — une seule feuille système",
+        "Les prochaines MAJ du même téléphone s’installent sans rejouer le bug des anciennes versions"
+      ]
+    },
+    {
       "version": "1.3.173",
       "date": "2026-09-06",
       "title": "MAJ : une seule popup d’installation",
