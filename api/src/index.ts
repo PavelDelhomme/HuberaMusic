@@ -195,8 +195,8 @@ import {
 } from './reco/reco.js';
 import { MIX_TARGET } from './library/mixCache.js';
 import {
-  getLyricOffset,
   listLyricOffsets,
+  resolveLyricSync,
   saveLyricOffset,
 } from './library/lyricOffsets.js';
 import { sendBatteryOptimizationMail } from './platform/batteryReport.js';
@@ -2066,10 +2066,18 @@ app.get('/api/track/:id/related', accountRequired, async (req, res) => {
 
 app.get('/api/track/:id/lyrics', accountRequired, async (req, res) => {
   try {
-    const lyrics = await getLyrics(p(req.params.id));
+    const trackId = p(req.params.id);
+    const lyrics = await getLyrics(trackId);
+    const profile = resolveLyricSync(req.userId!, trackId);
     res.json({
       ...lyrics,
-      userOffsetMs: getLyricOffset(req.userId!, p(req.params.id)),
+      userOffsetMs: profile.userOffsetMs !== 0
+        ? profile.userOffsetMs
+        : profile.crowdOffsetMs,
+      crowdOffsetMs: profile.crowdOffsetMs,
+      personalOffsetMs: profile.userOffsetMs,
+      segments: profile.segments,
+      segmentsFromUser: profile.segmentsFromUser,
     });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -2081,12 +2089,26 @@ app.get('/api/lyric-offsets', accountRequired, (req, res) => {
 });
 
 app.put('/api/track/:id/lyric-offset', accountRequired, (req, res) => {
-  const offsetMs = saveLyricOffset(
-    req.userId!,
-    p(req.params.id),
-    Number(req.body?.offsetMs ?? req.body?.offset_ms ?? 0),
-  );
-  res.json({ trackId: p(req.params.id), offsetMs });
+  const trackId = p(req.params.id);
+  const body = req.body || {};
+  const saved = saveLyricOffset(req.userId!, trackId, {
+    offsetMs: Number(body.offsetMs ?? body.offset_ms ?? 0),
+    atMs: body.atMs != null ? Number(body.atMs) : body.at_ms != null ? Number(body.at_ms) : null,
+    durationMs:
+      body.durationMs != null
+        ? Number(body.durationMs)
+        : body.duration_ms != null
+          ? Number(body.duration_ms)
+          : null,
+    source: typeof body.source === 'string' ? body.source : 'nudge',
+  });
+  res.json({
+    trackId,
+    offsetMs: saved.offsetMs,
+    crowdOffsetMs: saved.profile.crowdOffsetMs,
+    segments: saved.profile.segments,
+    segmentsFromUser: saved.profile.segmentsFromUser,
+  });
 });
 
 app.get('/api/artist/:id', accountRequired, async (req, res) => {

@@ -721,12 +721,41 @@ export const api = {
       source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
       syncOffsetMs?: number;
       userOffsetMs?: number;
+      crowdOffsetMs?: number;
+      personalOffsetMs?: number;
+      segments?: {
+        bucket: number;
+        startRatio: number;
+        endRatio: number;
+        offsetMs: number;
+      }[];
+      segmentsFromUser?: boolean;
     }>(`/api/track/${id}/lyrics`),
   lyricOffsets: () => req<{ offsets: Record<string, number> }>('/api/lyric-offsets'),
-  saveLyricOffset: (id: string, offsetMs: number) =>
-    req<{ trackId: string; offsetMs: number }>(`/api/track/${id}/lyric-offset`, {
+  saveLyricOffset: (
+    id: string,
+    offsetMs: number,
+    opts?: { atMs?: number; durationMs?: number; source?: string },
+  ) =>
+    req<{
+      trackId: string;
+      offsetMs: number;
+      crowdOffsetMs?: number;
+      segments?: {
+        bucket: number;
+        startRatio: number;
+        endRatio: number;
+        offsetMs: number;
+      }[];
+      segmentsFromUser?: boolean;
+    }>(`/api/track/${id}/lyric-offset`, {
       method: 'PUT',
-      body: JSON.stringify({ offsetMs }),
+      body: JSON.stringify({
+        offsetMs,
+        atMs: opts?.atMs,
+        durationMs: opts?.durationMs,
+        source: opts?.source || 'nudge',
+      }),
     }),
   streamUrl: (id: string, type: 'audio' | 'video' = 'audio') =>
     req<{ url: string; expiresAt: number; mimeType: string | null; kind?: string }>(

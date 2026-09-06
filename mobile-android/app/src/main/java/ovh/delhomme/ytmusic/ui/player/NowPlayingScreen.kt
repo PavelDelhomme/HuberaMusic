@@ -135,10 +135,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.CreatePlaylistBody
+import ovh.delhomme.ytmusic.data.LyricSegmentDto
 import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.RecoFeedbackBody
 import ovh.delhomme.ytmusic.data.TimedLyricLine
 import ovh.delhomme.ytmusic.data.TrackDto
+import android.content.SharedPreferences
 import ovh.delhomme.ytmusic.data.buildRadioQueue
 import ovh.delhomme.ytmusic.data.fetchAutoplayTracksFast
 import ovh.delhomme.ytmusic.data.fetchAutoplayTracksFull
@@ -156,6 +158,7 @@ import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.icons.MixIcon
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 private enum class NowPlayingDragAxis { None, Horizontal, Vertical }
 
@@ -2889,13 +2892,18 @@ private fun InlineSyncedLyrics(
     var lyricsSource by remember(track.id) { mutableStateOf<String?>(null) }
     var loading by remember(track.id) { mutableStateOf(true) }
     val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v1") }
+    val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v1") }
     var userOffsetMs by remember(track.id) {
         mutableLongStateOf(syncPrefs.getLong(track.id, 0L))
+    }
+    var segments by remember(track.id) {
+        mutableStateOf(loadLyricSegments(segPrefs, track.id))
     }
 
     LaunchedEffect(track.id) {
         loading = true
         userOffsetMs = syncPrefs.getLong(track.id, 0L)
+        segments = loadLyricSegments(segPrefs, track.id)
         val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v5")
         val cachedText = lyricsCache.getString("t_${track.id}", null)
         val cachedTimed = lyricsCache.getString("l_${track.id}", null)
@@ -2931,6 +2939,12 @@ private fun InlineSyncedLyrics(
                     userOffsetMs = learned.coerceIn(-15_000L, 15_000L)
                     syncPrefs.edit().putLong(track.id, userOffsetMs).apply()
                 }
+                it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
+                    if (segments.size < 2) {
+                        segments = segs
+                        saveLyricSegments(segPrefs, track.id, segs)
+                    }
+                }
                 text = it.lyrics
                 lyricsSource = it.source
                 val apiTimed = it.timed.orEmpty()
@@ -2961,10 +2975,11 @@ private fun InlineSyncedLyrics(
         loading = false
     }
 
-    // Collé au son ; l’API aligne déjà LRCLIB (stretch/offset). Affiner via appui long.
+    // Collé au son ; offset peut varier mid-song via segments appris (changements de rythme).
     val leadMs = 120L
     val sourceLagMs = 0L
-    val syncPos = positionMs + leadMs - userOffsetMs - sourceLagMs
+    val effectiveOffsetMs = lyricOffsetAtMs(userOffsetMs, segments, positionMs, durationMs)
+    val syncPos = positionMs + leadMs - effectiveOffsetMs - sourceLagMs
     // Ne PAS forcer l’index 0 avant la 1ʳᵉ ligne (sinon « désync » totale en intro)
     val active = if (timed.isEmpty()) -1
     else timed.indexOfLast { it.startMsLong() <= syncPos }
@@ -2995,30 +3010,39 @@ private fun InlineSyncedLyrics(
         }
     }
 
-    fun persistOffset(next: Long) {
+    fun persistOffset(next: Long, source: String = "nudge") {
         val clamped = next.coerceIn(-15_000L, 15_000L)
         userOffsetMs = clamped
         syncPrefs.edit().putLong(track.id, clamped).apply()
         scope.launch {
             runCatching {
-                container.api.saveLyricOffset(
+                val resp = container.api.saveLyricOffset(
                     track.id,
-                    ovh.delhomme.ytmusic.data.LyricOffsetBody(offsetMs = clamped),
+                    ovh.delhomme.ytmusic.data.LyricOffsetBody(
+                        offsetMs = clamped,
+                        atMs = positionMs.coerceAtLeast(0L),
+                        durationMs = durationMs.takeIf { it > 0L },
+                        source = source,
+                    ),
                 )
+                resp.segments?.takeIf { it.size >= 2 }?.let { segs ->
+                    segments = segs
+                    saveLyricSegments(segPrefs, track.id, segs)
+                }
             }
         }
     }
 
     fun nudgeOffset(delta: Long) {
-        persistOffset(userOffsetMs + delta)
+        persistOffset(userOffsetMs + delta, source = "nudge")
     }
 
     /** Appui long sur une ligne = « c’est celle qui est chantée maintenant ». */
     fun calibrateToLine(lineStartMs: Long) {
-        persistOffset(positionMs + leadMs - sourceLagMs - lineStartMs)
+        persistOffset(positionMs + leadMs - sourceLagMs - lineStartMs, source = "calibrate")
         Toast.makeText(
             context,
-            "Sync calé sur cette ligne",
+            "Sync calé ici — le rythme mid-song s’apprend",
             Toast.LENGTH_SHORT,
         ).show()
     }
@@ -3046,8 +3070,8 @@ private fun InlineSyncedLyrics(
                     Text("−0,20", style = MaterialTheme.typography.labelSmall)
                 }
                 Text(
-                    if (userOffsetMs == 0L) "sync" else String.format("%+.2f s", userOffsetMs / 1000.0),
-                    color = if (userOffsetMs == 0L) PlayerMuted else SeekRed,
+                    if (effectiveOffsetMs == 0L) "sync" else String.format("%+.2f s", effectiveOffsetMs / 1000.0),
+                    color = if (effectiveOffsetMs == 0L) PlayerMuted else SeekRed,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
@@ -3176,6 +3200,60 @@ private fun InlineSyncedLyrics(
  * Si l’API / LRC envoie des secondes dans `startMs` (plage &lt; 600), convertir en ms.
  * Aligné sur le heuristique web NowPlaying.
  */
+private fun lyricOffsetAtMs(
+    baseOffsetMs: Long,
+    segments: List<LyricSegmentDto>,
+    atMs: Long,
+    durationMs: Long,
+): Long {
+    if (segments.size < 2 || durationMs <= 0L) return baseOffsetMs
+    val r = (atMs.toDouble() / durationMs.toDouble()).coerceIn(0.0, 1.0)
+    val pts = segments
+        .map { s ->
+            ((s.startRatio + s.endRatio) / 2.0) to s.offsetMs.toDouble()
+        }
+        .sortedBy { it.first }
+    if (pts.isEmpty()) return baseOffsetMs
+    if (r <= pts.first().first) return pts.first().second.roundToLong()
+    if (r >= pts.last().first) return pts.last().second.roundToLong()
+    for (i in 0 until pts.lastIndex) {
+        val a = pts[i]
+        val b = pts[i + 1]
+        if (r >= a.first && r <= b.first) {
+            val t = (r - a.first) / (b.first - a.first).coerceAtLeast(1e-6)
+            return (a.second + (b.second - a.second) * t).roundToLong()
+        }
+    }
+    return baseOffsetMs
+}
+
+private fun loadLyricSegments(prefs: SharedPreferences, trackId: String): List<LyricSegmentDto> {
+    val raw = prefs.getString("seg_$trackId", null) ?: return emptyList()
+    return runCatching {
+        raw.lineSequence().mapNotNull { line ->
+            val p = line.split('|')
+            if (p.size < 4) return@mapNotNull null
+            LyricSegmentDto(
+                bucket = p[0].toIntOrNull() ?: return@mapNotNull null,
+                startRatio = p[1].toDoubleOrNull() ?: return@mapNotNull null,
+                endRatio = p[2].toDoubleOrNull() ?: return@mapNotNull null,
+                offsetMs = p[3].toLongOrNull() ?: return@mapNotNull null,
+            )
+        }.toList()
+    }.getOrDefault(emptyList())
+}
+
+private fun saveLyricSegments(
+    prefs: SharedPreferences,
+    trackId: String,
+    segments: List<LyricSegmentDto>,
+) {
+    val encoded = segments.joinToString("\n") { s ->
+        "${s.bucket}|${s.startRatio}|${s.endRatio}|${s.offsetMs}"
+    }
+    prefs.edit().putString("seg_$trackId", encoded).apply()
+}
+
 private fun normalizeTimedLines(
     lines: List<TimedLyricLine>,
     durationMs: Long,
