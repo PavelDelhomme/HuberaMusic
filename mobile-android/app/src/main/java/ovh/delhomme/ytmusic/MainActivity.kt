@@ -1468,9 +1468,8 @@ private fun MainTabs(
                                 player.stopAndClear()
                             },
                             onSeek = { ratio ->
-                                val dur = playerUi.durationMs
-                                if (dur > 0) player.seek((ratio * dur).toLong())
-                            },
+                player.seekRatio(ratio)
+            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(MaterialTheme.colorScheme.surfaceVariant),
@@ -1532,6 +1531,11 @@ private fun MainTabs(
                             launchSingleTop = true
                         }
                     },
+                    onOpenQuickAccess = {
+                        nav.navigate("quick_access") {
+                            launchSingleTop = true
+                        }
+                    },
                     onMoreMix = { id, title, covers ->
                         menuTrack = TrackDto(
                             id = id,
@@ -1585,6 +1589,15 @@ private fun MainTabs(
                     container = container,
                     onBack = { nav.popBackStack() },
                     onPlay = onPlayTracks,
+                    onOpenDetail = ::openDetail,
+                )
+            }
+            composable("quick_access") {
+                ovh.delhomme.ytmusic.ui.quickaccess.QuickAccessScreen(
+                    container = container,
+                    onBack = { nav.popBackStack() },
+                    onPlay = onPlayTracks,
+                    onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenDetail = ::openDetail,
                 )
             }

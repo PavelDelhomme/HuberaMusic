@@ -137,6 +137,36 @@ class PlaybackService : MediaSessionService() {
         stallSessionAnchorPos = -1L
     }
 
+    @Volatile private var lastForesightMs: Long = 0L
+
+    /**
+     * Détecte une marge buffer qui fond **avant** STATE_BUFFERING :
+     * coupe le prefetch concurrent et warm le titre courant.
+     */
+    private fun foresightBufferGuard(exo: Player) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastForesightMs < 1_800L) return
+        val pos = exo.currentPosition.coerceAtLeast(0L)
+        val buf = bufferedPositionSafe(exo)
+        val ahead = buf - pos
+        if (ahead < 0L || ahead > 14_000L) return
+        if (pos < 3_000L) return // début de piste : buffer encore en construction
+        lastForesightMs = now
+        val id = exo.currentMediaItem?.mediaId.orEmpty()
+        AppLog.i(
+            "PlaybackService",
+            "foresight buffer-low ahead=${ahead}ms id=$id → quiet+warm",
+        )
+        StreamPrefetcher.quietPrefetch(8_000L)
+        if (id.length == 11) {
+            val base = resolvedApiBase()
+            if (base.isNotBlank()) {
+                StreamPrefetcher.warmTrackFormatOnly(base, id)
+                StreamPrefetcher.requestServerDiskCache(base, id)
+            }
+        }
+    }
+
     private fun streakToastDue(): Boolean {
         val now = android.os.SystemClock.elapsedRealtime()
         return now - lastStallRecoverToastMs > 12_000L
@@ -524,6 +554,11 @@ class PlaybackService : MediaSessionService() {
                         if (d > 0L && d != C.TIME_UNSET) {
                             lastPlayingDurationMs = d
                         }
+                    }
+                    // Avant stall : si la marge buffer fond, coupe le prefetch concurrent
+                    // et force un warm du titre courant (évite coupe audible).
+                    if (player.isPlaying && player.playbackState == Player.STATE_READY) {
+                        foresightBufferGuard(player)
                     }
                 }
             }
@@ -1935,7 +1970,15 @@ class PlaybackService : MediaSessionService() {
     ) {
         val prevId = snapPrevId.trim()
         val pos = snapPrevPos.coerceAtLeast(0L)
-        if (prevId.isBlank() || earlyEndRetries >= 2) return
+        if (prevId.isBlank() || earlyEndRetries >= 2) {
+            if (earlyEndRetries >= 2 && prevId.isNotBlank()) {
+                AppLog.w("PlaybackService", "early_end give-up → next id=$prevId")
+                earlyEndRetries = 0
+                recoveringTrackId = ""
+                Holder.onSkipAtEnd?.invoke()
+            }
+            return
+        }
         // Race seek (pos≈0 du nouveau titre). Un vrai mid-track à 8–15 s doit être repris.
         if (pos < 8_000L) {
             AppLog.d(

@@ -802,7 +802,7 @@ fun NowPlayingScreen(
                             progressHint = qp,
                             positionMs = ui.positionMs,
                             durationMs = ui.durationMs,
-                            onSeek = { player.seek(it) },
+                            onSeekRatio = { player.seekRatio(it) },
                             onCollapse = { collapseQueue() },
                             onToggle = player::toggle,
                             onSkipPrev = {
@@ -1133,10 +1133,9 @@ fun NowPlayingScreen(
                                             var dlDone by remember(track.id) { mutableStateOf(false) }
                                             LaunchedEffect(track.id, offlineRev, dlProgress) {
                                                 if (dlProgress == null) {
-                                                    dlDone = container.offlineStore.has(track.id) ||
-                                                        runCatching {
-                                                            container.api.library().downloaded.contains(track.id)
-                                                        }.getOrDefault(false)
+                                                    // Uniquement le fichier local — pas library.downloaded (serveur)
+                                                    // sinon l’icône reste « fait » après suppression.
+                                                    dlDone = container.offlineStore.has(track.id)
                                                 }
                                             }
                                             Row(
@@ -1144,7 +1143,18 @@ fun NowPlayingScreen(
                                                     .clip(RoundedCornerShape(20.dp))
                                                     .background(PlayerFg.copy(alpha = 0.08f))
                                                     .clickable {
-                        if (dlDone) return@clickable
+                        if (dlDone) {
+                            dlDone = false
+                            Toast.makeText(context, "Supprimé de l'appareil", Toast.LENGTH_SHORT).show()
+                            scope.launch {
+                                runCatching {
+                                    container.downloadManager.cancel(track.id)
+                                    container.offlineStore.remove(track.id)
+                                }
+                                container.bumpLibraryEpoch()
+                            }
+                            return@clickable
+                        }
                         if (dlProgress != null) {
                             container.downloadManager.cancel(track.id)
                             Toast.makeText(context, "Téléchargement annulé", Toast.LENGTH_SHORT).show()
@@ -1627,7 +1637,15 @@ private fun NowPlayingSeekTransport(
     onPrevTap: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
+    Column(modifier = modifier
+        .fillMaxWidth()
+        .zIndex(24f)
+        .clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = {},
+        ),
+    ) {
         Spacer(Modifier.height(2.dp))
         // Seek par position X (tap court + glissé) — pas le Slider Material3
         // qui mappe mal les taps → ratio 0 / reprise au début.
@@ -1651,8 +1669,8 @@ private fun NowPlayingSeekTransport(
                 onScrub(ratio)
             },
             onSeekCommit = { ratio ->
-                if (ratio >= 0f && duration > 1f) {
-                    player.seek((ratio * duration).toLong().coerceAtLeast(0L))
+                if (ratio >= 0f) {
+                    player.seekRatio(ratio)
                 }
                 dragRatio = -1f
                 onScrub(-1f)
@@ -2022,7 +2040,7 @@ private fun QueueExpandedHeader(
     progressHint: Float,
     positionMs: Long,
     durationMs: Long,
-    onSeek: (Long) -> Unit,
+    onSeekRatio: (Float) -> Unit,
     onCollapse: () -> Unit,
     onToggle: () -> Unit,
     onSkipPrev: () -> Unit,
@@ -2132,10 +2150,12 @@ private fun QueueExpandedHeader(
         }
         Spacer(Modifier.height(4.dp))
         var dragRatio by remember(track.id) { mutableFloatStateOf(-1f) }
+        val realDur = durationMs.coerceAtLeast(0L)
         val shown = when {
             dragRatio >= 0f -> dragRatio
             scrub >= 0f -> scrub
-            else -> (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f)
+            realDur > 0L -> (pos.toFloat() / realDur.toFloat()).coerceIn(0f, 1f)
+            else -> 0f
         }
         PlayerSeekBar(
             progress = shown,
@@ -2148,7 +2168,7 @@ private fun QueueExpandedHeader(
                 scrub = ratio
             },
             onSeekCommit = { ratio ->
-                if (ratio >= 0f && dur > 0L) onSeek((ratio * dur).toLong().coerceAtLeast(0L))
+                if (ratio >= 0f) onSeekRatio(ratio)
                 dragRatio = -1f
                 scrub = -1f
             },
@@ -2161,15 +2181,15 @@ private fun QueueExpandedHeader(
             Text(
                 formatMs(
                     when {
-                        dragRatio >= 0f -> (dragRatio * dur).toLong()
-                        scrub >= 0f -> (scrub * dur).toLong()
+                        dragRatio >= 0f && realDur > 0L -> (dragRatio * realDur).toLong()
+                        scrub >= 0f && realDur > 0L -> (scrub * realDur).toLong()
                         else -> pos
                     },
                 ),
                 style = MaterialTheme.typography.labelSmall,
                 color = PlayerMuted,
             )
-            Text(formatMs(dur), style = MaterialTheme.typography.labelSmall, color = PlayerMuted)
+            Text(formatMs(realDur), style = MaterialTheme.typography.labelSmall, color = PlayerMuted)
         }
         Spacer(Modifier.height(2.dp))
         Row(
@@ -2987,36 +3007,51 @@ private fun InlineSyncedLyrics(
             return@LaunchedEffect
         }
         runCatching { container.api.lyrics(track.id) }
-            .onSuccess {
-                val learned = it.userOffsetMs ?: 0L
-                if (learned != 0L && syncPrefs.getLong(track.id, 0L) == 0L) {
-                    userOffsetMs = learned.coerceIn(-15_000L, 15_000L)
-                    syncPrefs.edit().putLong(track.id, userOffsetMs).apply()
-                }
-                it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
-                    if (segments.size < 2) {
-                        segments = segs
-                        saveLyricSegments(segPrefs, track.id, segs)
+            .onSuccess { first ->
+                fun applyLyrics(it: ovh.delhomme.ytmusic.data.LyricsResponse) {
+                    val learned = it.userOffsetMs ?: 0L
+                    if (learned != 0L && syncPrefs.getLong(track.id, 0L) == 0L) {
+                        userOffsetMs = learned.coerceIn(-15_000L, 15_000L)
+                        syncPrefs.edit().putLong(track.id, userOffsetMs).apply()
+                    }
+                    it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
+                        if (segments.size < 2) {
+                            segments = segs
+                            saveLyricSegments(segPrefs, track.id, segs)
+                        }
+                    }
+                    text = it.lyrics
+                    lyricsSource = it.source
+                    val apiTimed = it.timed.orEmpty()
+                    val raw = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
+                    timed = normalizeTimedLines(raw, durationMs.coerceAtLeast(0L))
+                    if (timed.isEmpty() && !it.lyrics.isNullOrBlank()) {
+                        timed = estimateTimedFromPlain(it.lyrics, durationMs.coerceAtLeast(0L))
+                        if (timed.isNotEmpty()) lyricsSource = "estimated"
+                    }
+                    runCatching {
+                        val ed = lyricsCache.edit()
+                        if (!it.lyrics.isNullOrBlank()) {
+                            ed.putString("t_${track.id}", it.lyrics)
+                                .putString("s_${track.id}", lyricsSource ?: it.source)
+                                .putString(
+                                    "l_${track.id}",
+                                    timed.joinToString("\n") { l -> "${l.startMsLong()}|${l.text}" },
+                                )
+                        } else {
+                            ed.remove("t_${track.id}").remove("s_${track.id}").remove("l_${track.id}")
+                        }
+                        ed.apply()
                     }
                 }
-                text = it.lyrics
-                lyricsSource = it.source
-                val apiTimed = it.timed.orEmpty()
-                val raw = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
-                timed = normalizeTimedLines(raw, durationMs.coerceAtLeast(0L))
-                if (timed.isEmpty()) {
-                    timed = estimateTimedFromPlain(it.lyrics, durationMs.coerceAtLeast(0L))
-                    if (timed.isNotEmpty()) lyricsSource = "estimated"
-                }
-                runCatching {
-                    lyricsCache.edit()
-                        .putString("t_${track.id}", it.lyrics)
-                        .putString("s_${track.id}", lyricsSource ?: it.source)
-                        .putString(
-                            "l_${track.id}",
-                            timed.joinToString("\n") { l -> "${l.startMsLong()}|${l.text}" },
-                        )
-                        .apply()
+                applyLyrics(first)
+                // Auto-fallback : 2ᵉ passe API si vide (TTL cache null court côté serveur)
+                if (first.lyrics.isNullOrBlank()) {
+                    delay(500)
+                    runCatching { container.api.lyrics(track.id) }
+                        .getOrNull()
+                        ?.takeIf { !it.lyrics.isNullOrBlank() }
+                        ?.let { applyLyrics(it) }
                 }
             }
             .onFailure {
@@ -3651,7 +3686,10 @@ private fun PlayerSeekBar(
 
     fun ratioFromX(x: Float): Float {
         val w = barWidthPx.coerceAtLeast(1f)
-        return (x / w).coerceIn(0f, 1f)
+        // Inset demi-pouce pour que les extrémités restent atteignables sans clamp brutal.
+        val inset = (thumbPx / 2f).coerceAtMost(w / 4f)
+        val usable = (w - 2f * inset).coerceAtLeast(1f)
+        return ((x - inset) / usable).coerceIn(0f, 1f)
     }
 
     Box(
@@ -3664,6 +3702,7 @@ private fun PlayerSeekBar(
                 awaitPointerEventScope {
                     while (true) {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
                         var lastRatio = ratioFromX(down.position.x)
                         onScrub(lastRatio)
                         var pointer = down
@@ -3672,7 +3711,7 @@ private fun PlayerSeekBar(
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             lastRatio = ratioFromX(change.position.x)
                             onScrub(lastRatio)
-                            if (change.position != change.previousPosition) change.consume()
+                            change.consume()
                             pointer = change
                         }
                         onSeekCommit(lastRatio)

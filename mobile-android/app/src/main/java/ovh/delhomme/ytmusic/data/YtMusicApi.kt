@@ -49,6 +49,16 @@ data class LibraryResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class ShuffleHeadsResponse(
+    val ids: List<String> = emptyList(),
+    val slot: Long? = null,
+    val expiresAt: Long? = null,
+    val slotMs: Long? = null,
+    val headN: Int? = null,
+    val poolSize: Int? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class LikeResponse(val liked: Boolean, val library: LibraryResponse? = null)
 
 @JsonClass(generateAdapter = false)
@@ -613,6 +623,11 @@ interface YtMusicApi {
         @Query("limit") limit: Int? = null,
     ): LibraryResponse
 
+    @GET("api/library/shuffle-heads")
+    suspend fun shuffleHeads(
+        @Query("warm") warm: Int? = 1,
+    ): ShuffleHeadsResponse
+
     @POST("api/library/like")
     suspend fun like(@Body track: TrackDto): LikeResponse
 
@@ -802,6 +817,10 @@ interface YtMusicApi {
     /** Upsert ou replace multi-appareils — body: { pins, mode?: "merge"|"replace" }. */
     @POST("api/pins/sync")
     suspend fun syncPins(@Body body: Map<String, @JvmSuppressWildcards Any?>): PinsResponse
+
+    /** Réordonne les pins (ids = target_id gauche → droite). */
+    @PUT("api/pins/reorder")
+    suspend fun reorderPins(@Body body: Map<String, @JvmSuppressWildcards Any?>): PinsResponse
 
     @DELETE("api/pins/{id}")
     suspend fun removePin(@Path("id") id: String): PinsResponse

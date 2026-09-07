@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -108,7 +109,6 @@ fun CollectionDetailScreen(
     val scope = rememberCoroutineScope()
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
     val pinIds = remember(pins) { pins.map { it.id }.toHashSet() }
-    val collectionPinned = id in pinIds
     var loading by remember { mutableStateOf(true) }
     var radioBusy by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf(seed?.title ?: "") }
@@ -130,6 +130,42 @@ fun CollectionDetailScreen(
     var offlineProgress by remember { mutableStateOf<Float?>(null) }
     var offlineDone by remember { mutableStateOf(false) }
     val dlProgressMap by container.downloadManager.progress.collectAsState()
+
+    val pinCandidateIds = remember(id, cover?.id) {
+        listOfNotNull(id, cover?.id?.takeIf { it.isNotBlank() }).distinct()
+    }
+    val collectionPinned = remember(pinIds, pinCandidateIds) {
+        pinCandidateIds.any { it in pinIds }
+    }
+
+    suspend fun toggleCollectionPin() {
+        val pinType = when (kind) {
+            DetailKind.Mix -> "mix"
+            DetailKind.Playlist -> "playlist"
+            DetailKind.Album -> "album"
+            DetailKind.Artist -> "artist"
+        }
+        val pinTrack = (cover ?: TrackDto(
+            id = id,
+            title = title,
+            type = pinType,
+            artists = listOf(ArtistRef(artistLine, artistId)),
+        )).copy(
+            id = id,
+            type = pinType,
+            title = title.ifBlank { cover?.title ?: title },
+        )
+        val nowPinned = container.quickAccess.toggleMatching(
+            preferred = pinTrack,
+            alternateIds = pinCandidateIds,
+            api = container.api,
+        )
+        Toast.makeText(
+            context,
+            if (nowPinned) "Ajouté à l'accès rapide" else "Retiré de l'accès rapide",
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
 
     // Progress live album / playlist (agrège titres locaux + en cours)
     LaunchedEffect(kind, id, tracks, dlProgressMap, offlineDone) {
@@ -454,18 +490,7 @@ fun CollectionDetailScreen(
                             radioBusy = radioBusy,
                             onBack = onBack,
                             onTogglePin = {
-                                scope.launch {
-                                    val pinTrack = cover ?: TrackDto(
-                                        id = id,
-                                        title = title,
-                                        type = "album",
-                                        artists = listOf(ArtistRef(artistLine, artistId)),
-                                    )
-                                    container.quickAccess.toggle(
-                                        pinTrack.copy(id = id, type = "album", title = title),
-                                        container.api,
-                                    )
-                                }
+                                scope.launch { toggleCollectionPin() }
                             },
                             onArtistClick = {
                                 val aid = artistId
@@ -644,19 +669,7 @@ fun CollectionDetailScreen(
                                                 .padding(6.dp),
                                             size = 28.dp,
                                             onClick = {
-                                                scope.launch {
-                                                    val pinTrack = it.copy(
-                                                        id = id,
-                                                        type = when (kind) {
-                                                            DetailKind.Mix -> "mix"
-                                                            DetailKind.Playlist -> "playlist"
-                                                            DetailKind.Album -> "album"
-                                                            DetailKind.Artist -> "artist"
-                                                        },
-                                                        title = title.ifBlank { it.title },
-                                                    )
-                                                    container.quickAccess.toggle(pinTrack, container.api)
-                                                }
+                                                scope.launch { toggleCollectionPin() }
                                             },
                                         )
                                     }
@@ -751,7 +764,26 @@ fun CollectionDetailScreen(
                                         downloaded = offlineDone,
                                         onDownload = {
                                             val playable = tracks.filter { it.isPlayable() }
-                                            if (offlineDone || playable.isEmpty()) return@PlaylistHeroActions
+                                            if (playable.isEmpty()) return@PlaylistHeroActions
+                                            if (offlineDone) {
+                                                scope.launch {
+                                                    playable.forEach { t ->
+                                                        runCatching {
+                                                            container.downloadManager.cancel(t.id)
+                                                            container.offlineStore.remove(t.id)
+                                                        }
+                                                    }
+                                                    offlineDone = false
+                                                    offlineProgress = null
+                                                    container.bumpLibraryEpoch()
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Supprimé de l'appareil",
+                                                        Toast.LENGTH_SHORT,
+                                                    ).show()
+                                                }
+                                                return@PlaylistHeroActions
+                                            }
                                             if (downloading) {
                                                 val n = container.downloadManager.cancelMany(playable.map { it.id })
                                                 offlineProgress = null
@@ -816,9 +848,23 @@ fun CollectionDetailScreen(
             downloaded = offlineDone,
             onDownload = {
                 val playable = tracks.filter { it.isPlayable() }
-                if (offlineDone || playable.isEmpty()) {
-                    if (playable.isEmpty()) {
-                        Toast.makeText(context, "Aucun titre à télécharger", Toast.LENGTH_SHORT).show()
+                if (playable.isEmpty()) {
+                    Toast.makeText(context, "Aucun titre à télécharger", Toast.LENGTH_SHORT).show()
+                    return@AlbumOverflowSheet
+                }
+                if (offlineDone) {
+                    showAlbumMenu = false
+                    scope.launch {
+                        playable.forEach { t ->
+                            runCatching {
+                                container.downloadManager.cancel(t.id)
+                                container.offlineStore.remove(t.id)
+                            }
+                        }
+                        offlineDone = false
+                        offlineProgress = null
+                        container.bumpLibraryEpoch()
+                        Toast.makeText(context, "Supprimé de l'appareil", Toast.LENGTH_SHORT).show()
                     }
                     return@AlbumOverflowSheet
                 }
@@ -874,21 +920,9 @@ fun CollectionDetailScreen(
             },
             onQuickAccess = {
                 showAlbumMenu = false
-                scope.launch {
-                    val pinTrack = cover ?: TrackDto(
-                        id = id,
-                        title = title,
-                        type = "album",
-                        artists = listOf(ArtistRef(artistLine, artistId)),
-                    )
-                    val pinned = container.quickAccess.toggle(pinTrack, container.api)
-                    Toast.makeText(
-                        context,
-                        if (pinned) "Ajouté à l'accès rapide" else "Retiré de l'accès rapide",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
+                scope.launch { toggleCollectionPin() }
             },
+            collectionPinned = collectionPinned,
         )
     }
 
@@ -1013,16 +1047,9 @@ fun CollectionDetailScreen(
             },
             onQuickAccess = {
                 showPlaylistMenu = false
-                scope.launch {
-                    val pinTrack = cover ?: TrackDto(id = id, title = title, type = "playlist")
-                    val pinned = container.quickAccess.toggle(pinTrack, container.api)
-                    Toast.makeText(
-                        context,
-                        if (pinned) "Ajouté à l'accès rapide" else "Retiré de l'accès rapide",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }
+                scope.launch { toggleCollectionPin() }
             },
+            collectionPinned = collectionPinned,
         )
     }
 
@@ -1136,10 +1163,7 @@ private fun PlaylistHeroActions(
                 modifier = Modifier
                     .size(56.dp)
                     .clip(CircleShape)
-                    .clickable(
-                        enabled = !downloaded,
-                        onClick = onDownload,
-                    ),
+                    .clickable(onClick = onDownload),
                 contentAlignment = Alignment.Center,
             ) {
                 DownloadStatusIcon(
@@ -1179,6 +1203,7 @@ private fun PlaylistOverflowSheet(
     onRename: () -> Unit,
     onDelete: () -> Unit,
     onQuickAccess: () -> Unit,
+    collectionPinned: Boolean = false,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -1229,7 +1254,11 @@ private fun PlaylistOverflowSheet(
             if (canRadio) {
                 AlbumMenuRow(MixIcon, "Démarrer un mix", onStartMix)
             }
-            AlbumMenuRow(Icons.Outlined.PushPin, "Ajouter à l'accès rapide", onQuickAccess)
+            AlbumMenuRow(
+                if (collectionPinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
+                if (collectionPinned) "Retirer de l'accès rapide" else "Ajouter à l'accès rapide",
+                onQuickAccess,
+            )
             if (canRename) {
                 AlbumMenuRow(Icons.Default.Edit, "Renommer", onRename)
             }
@@ -1342,6 +1371,19 @@ private fun AlbumHeroHeader(
                 enabled = !radioBusy,
                 tint = Color(0xFFFF0033),
             )
+            if (onTogglePin != null) {
+                RoundIconAction(
+                    icon = if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
+                    label = if (pinned) "Épinglé" else "Épingler",
+                    hint = if (pinned) {
+                        "Retirer de l'accès rapide"
+                    } else {
+                        "Ajouter à l'accès rapide"
+                    },
+                    onClick = onTogglePin,
+                    tint = if (pinned) Color(0xFFFF0033) else MaterialTheme.colorScheme.onSurface,
+                )
+            }
             RoundIconAction(
                 icon = Icons.Default.MoreVert,
                 label = "Plus",
@@ -1507,6 +1549,7 @@ private fun AlbumOverflowSheet(
     onAddToPlaylist: () -> Unit,
     onOpenArtist: () -> Unit,
     onQuickAccess: () -> Unit,
+    collectionPinned: Boolean = false,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -1527,7 +1570,7 @@ private fun AlbumOverflowSheet(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = !downloaded, onClick = onDownload)
+                    .clickable(onClick = onDownload)
                     .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1540,7 +1583,7 @@ private fun AlbumOverflowSheet(
                 Spacer(Modifier.width(16.dp))
                 Text(
                     when {
-                        downloaded -> "Album téléchargé"
+                        downloaded -> "Supprimer de l'appareil"
                         downloadProgress != null ->
                             "Annuler (${(downloadProgress * 100).toInt()} %)"
                         else -> "Télécharger l'album"
@@ -1552,7 +1595,11 @@ private fun AlbumOverflowSheet(
             AlbumMenuRow(Icons.Default.QueueMusic, "Ajouter à la file d'attente", onAddToQueue)
             AlbumMenuRow(Icons.Default.PlaylistAdd, "Enregistrer dans une playlist", onAddToPlaylist)
             AlbumMenuRow(Icons.Default.Person, "Accéder à la page de l'artiste", onOpenArtist)
-            AlbumMenuRow(Icons.Outlined.PushPin, "Ajouter à l'accès rapide", onQuickAccess)
+            AlbumMenuRow(
+                if (collectionPinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
+                if (collectionPinned) "Retirer de l'accès rapide" else "Ajouter à l'accès rapide",
+                onQuickAccess,
+            )
         }
     }
 }

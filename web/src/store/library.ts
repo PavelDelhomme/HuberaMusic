@@ -274,12 +274,50 @@ export const useLibrary = create<LibraryState>((set, get) => ({
   hasMix: (id) => get().mixes.some((m) => m.id === id),
   isPlaylistLiked: (id) => get().likedPlaylists.some((p) => p.id === id),
   saveMix: async (mix) => {
-    const r = await api.saveMix(mix);
-    if (r.library) get().applyLibrary(r.library);
-    return r.saved;
+    const prev = get().mixes || [];
+    const optimistic = {
+      id: mix.id,
+      title: mix.title,
+      type: 'mix' as const,
+      thumbnails: mix.covers?.[0]?.thumbnails || mix.tracks?.[0]?.thumbnails,
+    } as Track;
+    set((s) => {
+      const mixes = [...prev.filter((m) => m.id !== mix.id), optimistic];
+      const next = mergeLibrary({ ...s, mixes });
+      writeLibraryCache(next);
+      return { mixes, loaded: true, error: null };
+    });
+    try {
+      const r = await api.saveMix(mix);
+      if (r.library) get().applyLibrary(r.library);
+      return r.saved;
+    } catch (e) {
+      set((s) => {
+        const next = mergeLibrary({ ...s, mixes: prev });
+        writeLibraryCache(next);
+        return { mixes: prev };
+      });
+      throw e;
+    }
   },
   removeMix: async (id) => {
-    const r = await api.removeMix(id);
-    get().applyLibrary(r.library);
+    const prev = get().mixes || [];
+    set((s) => {
+      const mixes = prev.filter((m) => m.id !== id);
+      const next = mergeLibrary({ ...s, mixes });
+      writeLibraryCache(next);
+      return { mixes };
+    });
+    try {
+      const r = await api.removeMix(id);
+      get().applyLibrary(r.library);
+    } catch (e) {
+      set((s) => {
+        const next = mergeLibrary({ ...s, mixes: prev });
+        writeLibraryCache(next);
+        return { mixes: prev };
+      });
+      throw e;
+    }
   },
 }));

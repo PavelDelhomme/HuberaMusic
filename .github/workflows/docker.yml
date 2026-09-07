@@ -4,6 +4,11 @@ on:
   push:
     branches: [prod, dev]
   workflow_dispatch:
+    inputs:
+      tag_preprod:
+        description: 'Aussi pusher le tag :preprod (depuis la branche courante)'
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -38,6 +43,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/prod' }}
             type=raw,value=prod,enable=${{ github.ref == 'refs/heads/prod' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=raw,value=preprod,enable=${{ github.event_name == 'workflow_dispatch' && inputs.tag_preprod }}
             type=sha,prefix=
             type=ref,event=branch
 
@@ -60,7 +66,6 @@ jobs:
             BUILD_REF=${{ github.ref_name }}
             APP_VERSION=${{ steps.ver.outputs.value }}
 
-      # Portainer CE pull sans login : package GHCR en public (repo public ≠ package public)
       - name: Ensure GHCR package is public
         if: github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/dev'
         env:

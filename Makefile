@@ -80,8 +80,11 @@ help: ## Affiche cette aide colorée
 install: ## Installe les dépendances (workspaces api + web)
 	cd $(ROOT) && npm install
 
-seed-users: ## Crée/maj comptes SEED_* (SEED_PASSWORD dans .env)
+seed-users: ## Crée/maj comptes SEED_* (+ SECONDARY / SEED_PASSWORD_SECONDARY)
 	cd $(ROOT) && node scripts/dev/seed-users.mjs
+
+clone-user-data: ## Clone biblio/pins/YTM FROM_EMAIL → TO_EMAIL (one-shot)
+	cd $(ROOT) && node scripts/admin/clone-user-data.mjs
 
 test-verify-email: ## Teste validation email (API locale)
 	cd $(ROOT) && node scripts/test/test-verify-email.mjs

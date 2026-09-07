@@ -1,5 +1,6 @@
 package ovh.delhomme.ytmusic.ui.home
 
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,10 +29,12 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.LibraryAddCheck
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Reorder
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -40,13 +43,16 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,7 +63,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -87,6 +95,7 @@ fun HomeScreen(
     onOpenArtist: ((String?, String) -> Unit)? = null,
     onOpenAccount: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
+    onOpenQuickAccess: () -> Unit = {},
     onMoreMix: ((id: String, title: String, covers: List<TrackDto>) -> Unit)? = null,
     vm: HomeViewModel = viewModel(factory = HomeViewModel.factory(container)),
 ) {
@@ -212,6 +221,7 @@ fun HomeScreen(
                                 container.quickAccess.toggle(track, container.api)
                             }
                         },
+                        onOpenAll = onOpenQuickAccess,
                     )
                 }
 
@@ -555,9 +565,11 @@ private fun QuickAccessHomeCard(
     onMore: (TrackDto) -> Unit,
     onPlayNamed: (List<TrackDto>, Int, String) -> Unit,
     onUnpin: (TrackDto) -> Unit,
+    onOpenAll: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var shuffleBusy by remember { mutableStateOf(false) }
+    var showReorder by remember { mutableStateOf(false) }
     val pages = remember(pins) { buildQuickAccessPages(pins) }
     val pagerState = rememberPagerState(pageCount = { pages.size.coerceAtLeast(1) })
 
@@ -586,8 +598,27 @@ private fun QuickAccessHomeCard(
                 "Accès rapide",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onOpenAll),
             )
+            if (pins.isNotEmpty()) {
+                TextButton(onClick = onOpenAll) {
+                    Text("Tout voir")
+                }
+            }
+            if (pins.size > 1) {
+                IconButton(
+                    onClick = { showReorder = true },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Reorder,
+                        contentDescription = "Réordonner",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
         if (pins.isEmpty()) {
@@ -686,6 +717,106 @@ private fun QuickAccessHomeCard(
                                 .clickable {
                                     scope.launch { pagerState.animateScrollToPage(i) }
                                 },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showReorder) {
+        QuickAccessReorderSheet(
+            pins = pins,
+            onDismiss = { showReorder = false },
+            onMove = { from, to ->
+                scope.launch {
+                    container.quickAccess.move(from, to, container.api)
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QuickAccessReorderSheet(
+    pins: List<TrackDto>,
+    onDismiss: () -> Unit,
+    onMove: (from: Int, to: Int) -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val density = LocalDensity.current
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Text(
+            "Réordonner l'accès rapide",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        )
+        Text(
+            "Premier épinglé à gauche · glisse la poignée pour changer",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        )
+        LazyColumn(
+            contentPadding = PaddingValues(bottom = 32.dp, top = 8.dp),
+        ) {
+            itemsIndexed(pins, key = { _, t -> t.id }) { index, track ->
+                var dragAccum by remember(track.id) { mutableFloatStateOf(0f) }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.DragHandle,
+                        contentDescription = "Déplacer",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .padding(6.dp)
+                            .pointerInput(index, pins.size) {
+                                detectDragGestures(
+                                    onDragEnd = { dragAccum = 0f },
+                                    onDragCancel = { dragAccum = 0f },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragAccum += amount.y
+                                        val threshold = with(density) { 40.dp.toPx() }
+                                        when {
+                                            dragAccum > threshold && index < pins.lastIndex -> {
+                                                onMove(index, index + 1)
+                                                dragAccum = 0f
+                                            }
+                                            dragAccum < -threshold && index > 0 -> {
+                                                onMove(index, index - 1)
+                                                dragAccum = 0f
+                                            }
+                                        }
+                                    },
+                                )
+                            },
+                    )
+                    MediaCover(track, 44.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            track.title,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            track.artistLine().ifBlank { track.type ?: "Épinglé" },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }

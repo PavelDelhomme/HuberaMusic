@@ -514,13 +514,23 @@ export function NowPlaying({
     let cancelled = false;
     setLyricsLoading(true);
     // Ne pas vider tout de suite → évite flash « indisponible »
+    const apply = (r: Awaited<ReturnType<typeof api.lyrics>>) => {
+      setLyricsText(r.lyrics || null);
+      setLyricsTimed(r.timed || null);
+      setLyricsSource(r.source ?? null);
+    };
     void api
       .lyrics(current.id)
-      .then((r) => {
+      .then(async (r) => {
         if (cancelled) return;
-        setLyricsText(r.lyrics || null);
-        setLyricsTimed(r.timed || null);
-        setLyricsSource(r.source ?? null);
+        apply(r);
+        // Auto-fallback : 2ᵉ passe si vide (cache null TTL court côté API)
+        if (!r.lyrics) {
+          await new Promise((res) => setTimeout(res, 500));
+          if (cancelled) return;
+          const retry = await api.lyrics(current.id).catch(() => null);
+          if (retry?.lyrics) apply(retry);
+        }
       })
       .catch(() => {
         if (cancelled) return;

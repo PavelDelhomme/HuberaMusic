@@ -78,6 +78,11 @@ class PlayerController(
     private var pending: Pair<List<TrackDto>, Int>? = null
     private var pendingSeekMs: Long = 0L
     private var pendingAutoplay: Boolean = true
+    /**
+     * Seek demandé (ratio 0–1) avant que la durée Exo/métadonnées soit connue.
+     * Appliqué dès que [resolveDurationMs] ≥ 1 s (évite le « retour au début » au clic).
+     */
+    @Volatile private var pendingSeekRatio: Float? = null
     /** Mode vidéo : mute le flux titre pendant que le clip porte le son. */
     @Volatile private var musicDucked: Boolean = false
     /** Intent utilisateur play/pause — empêche un flush pending de re-pauser après un 1er play. */
@@ -106,11 +111,16 @@ class PlayerController(
     private var sourceKind: String? = null
     private val playerPrefs = context.getSharedPreferences("ytm_player", Context.MODE_PRIVATE)
     private var autoplaySuggestions: Boolean = loadAutoplaySuggestionsPref()
+    private var playbackSpeed: Float =
+        playerPrefs.getFloat("playback_speed", 1f).coerceIn(0.5f, 2f)
 
     init {
         PlaybackService.Holder.onServiceStopped = { healAfterBackground() }
         PlaybackService.Holder.autoplaySuggestions = autoplaySuggestions
-        _state.value = _state.value.copy(autoplaySuggestions = autoplaySuggestions)
+        _state.value = _state.value.copy(
+            autoplaySuggestions = autoplaySuggestions,
+            playbackSpeed = playbackSpeed,
+        )
     }
 
     private val scope = CoroutineScope(
@@ -973,8 +983,57 @@ class PlayerController(
         }
     }
 
+    /** Meilleure durée connue (Exo > état UI > métadonnées piste), ou 0. */
+    fun resolveDurationMs(): Long {
+        val p = player() ?: PlaybackService.Holder.player
+        val exo = p?.duration?.takeIf {
+            it > 0L && it != androidx.media3.common.C.TIME_UNSET
+        }
+        if (exo != null) return exo
+        _state.value.durationMs.takeIf { it >= 1_000L }?.let { return it }
+        return _state.value.track?.durationMsOrNull()?.takeIf { it >= 1_000L } ?: 0L
+    }
+
+    /**
+     * Seek par fraction de barre (0–1). Fonctionne même si le flux n’est pas
+     * entièrement bufferisé ; si la durée n’est pas encore connue, mémorise le
+     * ratio et l’applique dès qu’elle arrive (plus de snap vers 0).
+     */
+    fun seekRatio(ratio: Float) {
+        val r = ratio.coerceIn(0f, 1f)
+        val dur = resolveDurationMs()
+        if (dur >= 1_000L) {
+            pendingSeekRatio = null
+            seek((r * dur).toLong())
+            return
+        }
+        pendingSeekRatio = r
+        // Optimistic UI : garde le curseur là où l’utilisateur a cliqué
+        val estimate = _state.value.track?.durationMsOrNull()?.takeIf { it >= 1_000L }
+        if (estimate != null) {
+            val target = (r * estimate).toLong()
+            _state.value = _state.value.copy(positionMs = target, durationMs = estimate)
+            val p = player() ?: PlaybackService.Holder.player
+            if (p != null && p.mediaItemCount > 0) {
+                runCatching { p.seekTo(target) }
+            }
+        } else {
+            // Pas de durée : affiche quand même un progrès relatif (durée fantôme 1 min)
+            val ghost = 60_000L
+            _state.value = _state.value.copy(
+                positionMs = (r * ghost).toLong(),
+                durationMs = _state.value.durationMs.coerceAtLeast(ghost),
+            )
+        }
+    }
+
     fun seek(ms: Long) {
-        val target = ms.coerceAtLeast(0L)
+        val durKnown = resolveDurationMs()
+        val target = if (durKnown >= 1_000L) {
+            ms.coerceIn(0L, durKnown)
+        } else {
+            ms.coerceAtLeast(0L)
+        }
         val trackId = _state.value.track?.id
             ?: player()?.currentMediaItem?.mediaId
             ?: PlaybackService.Holder.queue.getOrNull(_state.value.queueIndex)?.id
@@ -987,6 +1046,8 @@ class PlayerController(
             )
             return
         }
+        // Clic volontaire tout au début : OK. Seek parasite ~0 depuis scrub mal mappé : ignorer
+        // seulement si ms était déjà 0 et qu’on n’a pas de pending ratio (handled elsewhere).
         if (target > 45_000L && !trackId.isNullOrBlank()) {
             runCatching {
                 StreamPrefetcher.requestServerDiskCache(
@@ -998,6 +1059,7 @@ class PlayerController(
         val p = player() ?: PlaybackService.Holder.player
         if (p != null) {
             // Seek in-place — ne pas prepare/rebind (sinon retour au début sur mid-range)
+            // Accepte les positions non encore bufferisées (Exo bufferise à la cible).
             p.seekTo(target)
             if (!p.playWhenReady && userWantsPlaying == true) {
                 p.playWhenReady = true
@@ -1012,7 +1074,7 @@ class PlayerController(
         val p = player() ?: PlaybackService.Holder.player
         val cur = p?.currentPosition?.takeIf { it >= 0L } ?: _state.value.positionMs
         val dur = when {
-            p != null && p.duration > 0L -> p.duration
+            p != null && p.duration > 0L && p.duration != androidx.media3.common.C.TIME_UNSET -> p.duration
             _state.value.durationMs > 0L -> _state.value.durationMs
             else -> Long.MAX_VALUE / 4
         }
@@ -1282,11 +1344,9 @@ class PlayerController(
         }
     }
 
-    private var playbackSpeed: Float = 1f
-
     companion object {
-        /** Vitesses proposées dans le menu lecteur (×0.75 … ×1.50 + extrêmes). */
-        val PLAYBACK_SPEEDS = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+        /** Vitesses proposées dans le menu lecteur. */
+        val PLAYBACK_SPEEDS = floatArrayOf(0.5f, 0.6f, 0.7f, 0.75f, 0.8f, 1f, 1.25f, 1.5f, 1.75f, 2f)
     }
 
     /** Cycle rapide : 1 → 0.75 → 1.25 → 1.5 → 1 */
@@ -1298,6 +1358,7 @@ class PlayerController(
 
     fun setPlaybackSpeed(speed: Float) {
         playbackSpeed = speed.coerceIn(0.5f, 2f)
+        playerPrefs.edit().putFloat("playback_speed", playbackSpeed).apply()
         player()?.let { p ->
             runCatching { p.setPlaybackSpeed(playbackSpeed) }
             syncFrom(p)
@@ -1686,6 +1747,7 @@ class PlayerController(
         autoplay: Boolean = true,
         startPositionMs: Long = 0L,
     ) {
+        pendingSeekRatio = null
         val playable = tracks.filter { it.isPlayable() }
         if (playable.isEmpty()) return
         // Fenêtre autour de l’index : évite OOM / TransactionTooLarge sur grosses bibliothèques.
@@ -1948,11 +2010,20 @@ class PlayerController(
             player.playWhenReady &&
                 player.playbackState == Player.STATE_BUFFERING
         noteBuffering(buffering, track?.id)
+        // Seek demandé avant durée connue → appliquer dès qu’on a une vraie durée
+        val pendingRatio = pendingSeekRatio
+        var positionMs = player.currentPosition.coerceAtLeast(0)
+        if (pendingRatio != null && durationMs >= 1_000L) {
+            pendingSeekRatio = null
+            val target = (pendingRatio.coerceIn(0f, 1f) * durationMs).toLong()
+            runCatching { player.seekTo(target) }
+            positionMs = target
+        }
         _state.value = PlayerUiState(
             track = track,
             playing = player.isPlaying,
             buffering = buffering,
-            positionMs = player.currentPosition.coerceAtLeast(0),
+            positionMs = positionMs,
             durationMs = durationMs,
             bufferedMs = player.bufferedPosition.coerceAtLeast(0),
             queueSize = queue.size,

@@ -223,6 +223,21 @@ export function PlayerBar({
     return () => el.removeEventListener('wheel', onWheel);
   }, [setVolume]);
 
+  // Seek cliqué avant que la durée soit connue → appliquer dès qu’elle arrive
+  useEffect(() => {
+    const w = window as unknown as { __ytmPendingSeekRatio?: number };
+    const ratio = w.__ytmPendingSeekRatio;
+    if (typeof ratio !== 'number' || !Number.isFinite(ratio)) return;
+    const audioDur =
+      audioEl && Number.isFinite(audioEl.duration) && (audioEl.duration || 0) > 0
+        ? Number(audioEl.duration)
+        : 0;
+    const dur = duration > 0 ? duration : audioDur;
+    if (!(dur > 0)) return;
+    seek(ratio * dur);
+    delete w.__ytmPendingSeekRatio;
+  }, [duration, audioEl, seek]);
+
   useEffect(() => {
     if (!sleepOpen) return;
     const onDoc = (e: MouseEvent) => {
@@ -271,12 +286,24 @@ export function PlayerBar({
     effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayProgress / effectiveDuration) * 100)) : 0;
 
   const seekFromClientX = (el: HTMLElement, clientX: number) => {
-    const dur = effectiveDuration > 0 ? effectiveDuration : Number(audioEl?.duration) || 0;
-    if (!(dur > 0)) return;
+    const audioDur =
+      audioEl && Number.isFinite(audioEl.duration) && (audioEl.duration || 0) > 0
+        ? Number(audioEl.duration)
+        : 0;
+    const dur = effectiveDuration > 0 ? effectiveDuration : audioDur;
+    if (!(dur > 0)) {
+      // Durée pas encore connue : mémorise le ratio, appliqué au prochain tick durée
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      (window as unknown as { __ytmPendingSeekRatio?: number }).__ytmPendingSeekRatio = ratio;
+      return;
+    }
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0) return;
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
     seek(ratio * dur);
+    delete (window as unknown as { __ytmPendingSeekRatio?: number }).__ytmPendingSeekRatio;
   };
 
   const onSeekPointer = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -727,7 +754,7 @@ export function PlayerBar({
                 <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-yt-muted">
                   Vitesse
                 </p>
-                {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((sp) => (
+                {[0.5, 0.6, 0.7, 0.75, 0.8, 1, 1.25, 1.5, 1.75, 2].map((sp) => (
                   <button
                     key={sp}
                     type="button"

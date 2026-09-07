@@ -2122,9 +2122,26 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
       const last = timed[timed.length - 1]!.startMs / 1000;
       if (last > dur * 1.4 || last < dur * 0.35) {
         timed = null;
-        source = null;
+        // Garder la source texte si paroles brutes encore valides
+        if (!looksLikeLyrics(text)) source = null;
         syncOffsetMs = 0;
       }
+    }
+  }
+
+  // Auto-retry Genius / web si toujours vide (ex. titres FR indépendants)
+  if (!looksLikeLyrics(text) && title) {
+    const retry = await Promise.race([
+      import('./lyricsGenius.js')
+        .then((m) => m.fetchGeniusLyrics(artist || '', title))
+        .catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 16_000)),
+    ]);
+    if (retry?.lyrics && looksLikeLyrics(retry.lyrics)) {
+      text = retry.lyrics;
+      source = 'genius';
+      const estimated = estimateTimedFromPlain(text, durationSec);
+      if (estimated.length >= 4) timed = estimated;
     }
   }
 

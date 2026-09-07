@@ -1,0 +1,11 @@
+# Gitleaks — règles locales (CI utilise aussi gitleaks-action)
+title = "PLM"
+[allowlist]
+  description = "Fichiers d’exemple / docs sans secrets réels"
+  paths = [
+    '''\.env\.example$''',
+    '''\.env\.production\.example$''',
+    '''deploy/stack\.env\.example$''',
+    '''deploy/stack\.env\.preprod\.example$''',
+    '''docs/.*''',
+  ]
