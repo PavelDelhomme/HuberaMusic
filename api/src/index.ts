@@ -94,6 +94,7 @@ import { youtubeProxyStats } from './youtube/youtubeProxy.js';
 import { resolveVisualVideo } from './media/visualResolve.js';
 import { importByKind, importByQueryOrUrl } from './media/import.js';
 import { handleOfflineStatus, startOfflineCollection } from './library/offline.js';
+import { getShuffleHeads, invalidateShuffleHeads } from './library/shuffleHeads.js';
 import { handleImageProxy } from './media/img.js';
 import {
   deployInfo,
@@ -1633,6 +1634,12 @@ app.get('/api/home', accountRequired, async (req, res) => {
       if (shelfIds.length >= 20) break;
     }
     scheduleUserTasteWarm(userId, [...seeds, ...shelfIds], { disk: 10 });
+    // Rotation têtes aléatoire biblio (warm ~100 ids du créneau courant)
+    try {
+      getShuffleHeads(userId, { warm: true });
+    } catch {
+      /* ignore */
+    }
 
     res.json({
       shelves,
@@ -2368,6 +2375,30 @@ app.get('/api/library/contains', accountRequired, (req, res) => {
     const trackId = String(req.query.trackId || '').trim();
     const albumId = String(req.query.albumId || '').trim();
     res.json(libraryMembership(req.userId!, trackId || undefined, albumId || undefined));
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+/**
+ * Têtes Aléatoire biblio (~100 ids) — rotation ~30 min / compte.
+ * Warm serveur lancé en fond ; client Android = warm léger de ce batch seulement.
+ */
+app.get('/api/library/shuffle-heads', accountRequired, (req, res) => {
+  try {
+    const warm = String(req.query.warm || '1') !== '0';
+    const result = getShuffleHeads(req.userId!, { warm });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post('/api/library/shuffle-heads/refresh', accountRequired, (req, res) => {
+  try {
+    invalidateShuffleHeads(req.userId!);
+    const result = getShuffleHeads(req.userId!, { warm: true });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

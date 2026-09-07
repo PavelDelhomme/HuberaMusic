@@ -9,8 +9,8 @@ import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 
 /**
- * Aléatoire avec anti-répétition (évite de rejouer les ~400 derniers ids).
- * Ne réutilise plus une tête en cache qui figeait les mêmes 12 titres.
+ * Aléatoire avec anti-répétition + tête serveur (~100 ids rotatifs ~30 min).
+ * Ne réutilise plus une tête locale qui figeait les mêmes 12 titres.
  */
 suspend fun playLibraryShuffled(
     container: AppContainer,
@@ -22,10 +22,15 @@ suspend fun playLibraryShuffled(
     if (playable.isEmpty()) return
     val ctx = YtMusicApp.instance
     val recent = ShuffleHeadStore.loadRecentPlayed(ctx, max = 400).toHashSet()
+    val serverHead = container.libraryHeadPrefetcher.cachedShuffleHeadIds()
     val shuffled = withContext(Dispatchers.Default) {
         val fresh = playable.filter { it.id !in recent }
         val pool = if (fresh.size >= (playable.size / 4).coerceAtLeast(24)) fresh else playable
-        pool.shuffled()
+        if (serverHead.isNotEmpty()) {
+            ShuffleHeadStore.applyHead(pool, serverHead)
+        } else {
+            pool.shuffled()
+        }
     }
     val base = container.resolvedApiBase()
     onPlay(shuffled, 0)
@@ -36,7 +41,6 @@ suspend fun playLibraryShuffled(
                 StreamPrefetcher.warmTrackFormatOnly(base, shuffled.first().id)
                 StreamPrefetcher.warmFormatsLight(base, shuffled.drop(1).take(4).map { it.id }, limit = 4)
             }
-            // Tête suivante = vrai reshuffle (pas la même tête 45 min)
             val nextHead = shuffled.drop(1).take(12).map { it.id }
             val fp = ShuffleHeadStore.fingerprint(playable)
             val cacheKey = ShuffleHeadStore.keyFor(sourceKey, fp)
@@ -45,6 +49,8 @@ suspend fun playLibraryShuffled(
                 StreamPrefetcher.warmFormatsLight(base, nextHead.take(6), limit = 6)
                 StreamPrefetcher.warmHeads3s(base, nextHead.take(4), limit = 4)
             }
+            // Refresh tête serveur en fond (prochain créneau)
+            container.libraryHeadPrefetcher.requestSoon("after-shuffle")
         }
     }
 }

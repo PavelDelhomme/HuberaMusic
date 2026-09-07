@@ -848,6 +848,16 @@ export const api = {
       body: JSON.stringify(entity),
     }),
   library: () => req<LibraryData>('/api/library'),
+  /** Têtes Aléatoire biblio (~100) — rotation serveur ~30 min. */
+  shuffleHeads: (warm = true) =>
+    req<{
+      ids: string[];
+      slot: number;
+      expiresAt: number;
+      slotMs: number;
+      headN: number;
+      poolSize: number;
+    }>(`/api/library/shuffle-heads?warm=${warm ? 1 : 0}`),
   like: (track: Track) =>
     req<{ liked: boolean; library: LibraryData }>('/api/library/like', {
       method: 'POST',

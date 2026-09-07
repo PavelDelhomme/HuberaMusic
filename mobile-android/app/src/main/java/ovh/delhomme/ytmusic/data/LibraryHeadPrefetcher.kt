@@ -34,11 +34,55 @@ class LibraryHeadPrefetcher(
             delay(START_DELAY_MS)
             // Premier passage agressif : chauffe formats API (évite 50–60 s à froid)
             runCatching { warmFormatsBurst() }
+            runCatching { warmServerShuffleHeads(force = true) }
             while (true) {
                 runCatching { tick(reason = "periodic") }
+                runCatching { warmServerShuffleHeads(force = false) }
                 delay(INTERVAL_MS)
             }
         }
+    }
+
+    /**
+     * Tire le batch serveur (~100 têtes rotatives) et warm léger côté Android.
+     * Refresh quand le créneau expire (~30 min, plusieurs dizaines×/jour).
+     */
+    private suspend fun warmServerShuffleHeads(force: Boolean) {
+        if (!NetworkMonitor.isOnline()) return
+        if (StreamPrefetcher.isStreamDown()) return
+        val now = System.currentTimeMillis()
+        val expires = prefs.getLong(KEY_SHUFFLE_EXPIRES, 0L)
+        if (!force && expires > now + 60_000L) return
+        if (!force && now - prefs.getLong(KEY_SHUFFLE_FETCH, 0L) < 5 * 60_000L) return
+        runCatching { container.ensureFreshToken() }
+        val r = runCatching { container.api.shuffleHeads(warm = 1) }.getOrNull() ?: return
+        val ids = r.ids.filter { it.length == 11 }.distinct()
+        if (ids.isEmpty()) return
+        prefs.edit()
+            .putString(KEY_SHUFFLE_IDS, ids.joinToString(","))
+            .putLong(KEY_SHUFFLE_EXPIRES, r.expiresAt ?: (now + 30 * 60_000L))
+            .putLong(KEY_SHUFFLE_FETCH, now)
+            .apply()
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return
+        // Client léger : 8 formats + 4 têtes 3s — le gros warm est serveur
+        StreamPrefetcher.warmFormatsLight(base, ids.take(8), limit = 8)
+        if (!StreamPrefetcher.isQuiet() && !PlaybackService.Holder.isPlaybackActiveSafe()) {
+            StreamPrefetcher.warmHeads3s(base, ids.take(4), limit = 4)
+        }
+        AppLog.i(
+            "LibHeads",
+            "shuffle-heads n=${ids.size} slot=${r.slot} expires=${r.expiresAt} pool=${r.poolSize}",
+        )
+    }
+
+    /** Ids serveur pour amorcer Aléatoire (null si créneau périmé / vide). */
+    fun cachedShuffleHeadIds(): List<String> {
+        val now = System.currentTimeMillis()
+        val expires = prefs.getLong(KEY_SHUFFLE_EXPIRES, 0L)
+        if (expires > 0L && expires < now) return emptyList()
+        val raw = prefs.getString(KEY_SHUFFLE_IDS, null) ?: return emptyList()
+        return raw.split(',').map { it.trim() }.filter { it.length == 11 }
     }
 
     /** POST /api/stream/warm pour les 1ers titres biblio (petits comptes inclus). */
@@ -72,6 +116,7 @@ class LibraryHeadPrefetcher(
         scope.launch(Dispatchers.IO) {
             delay(3_000L)
             runCatching { tick(reason) }
+            runCatching { warmServerShuffleHeads(force = reason.contains("shuffle")) }
         }
     }
 
@@ -165,5 +210,8 @@ class LibraryHeadPrefetcher(
         private const val BATCH = 12
         private const val KEY_CURSOR = "cursor"
         private const val KEY_LAST = "last_tick"
+        private const val KEY_SHUFFLE_IDS = "shuffle_head_ids"
+        private const val KEY_SHUFFLE_EXPIRES = "shuffle_head_expires"
+        private const val KEY_SHUFFLE_FETCH = "shuffle_head_fetch"
     }
 }
