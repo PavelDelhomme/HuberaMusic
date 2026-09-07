@@ -764,7 +764,26 @@ fun CollectionDetailScreen(
                                         downloaded = offlineDone,
                                         onDownload = {
                                             val playable = tracks.filter { it.isPlayable() }
-                                            if (offlineDone || playable.isEmpty()) return@PlaylistHeroActions
+                                            if (playable.isEmpty()) return@PlaylistHeroActions
+                                            if (offlineDone) {
+                                                scope.launch {
+                                                    playable.forEach { t ->
+                                                        runCatching {
+                                                            container.downloadManager.cancel(t.id)
+                                                            container.offlineStore.remove(t.id)
+                                                        }
+                                                    }
+                                                    offlineDone = false
+                                                    offlineProgress = null
+                                                    container.bumpLibraryEpoch()
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Supprimé de l'appareil",
+                                                        Toast.LENGTH_SHORT,
+                                                    ).show()
+                                                }
+                                                return@PlaylistHeroActions
+                                            }
                                             if (downloading) {
                                                 val n = container.downloadManager.cancelMany(playable.map { it.id })
                                                 offlineProgress = null
@@ -829,9 +848,23 @@ fun CollectionDetailScreen(
             downloaded = offlineDone,
             onDownload = {
                 val playable = tracks.filter { it.isPlayable() }
-                if (offlineDone || playable.isEmpty()) {
-                    if (playable.isEmpty()) {
-                        Toast.makeText(context, "Aucun titre à télécharger", Toast.LENGTH_SHORT).show()
+                if (playable.isEmpty()) {
+                    Toast.makeText(context, "Aucun titre à télécharger", Toast.LENGTH_SHORT).show()
+                    return@AlbumOverflowSheet
+                }
+                if (offlineDone) {
+                    showAlbumMenu = false
+                    scope.launch {
+                        playable.forEach { t ->
+                            runCatching {
+                                container.downloadManager.cancel(t.id)
+                                container.offlineStore.remove(t.id)
+                            }
+                        }
+                        offlineDone = false
+                        offlineProgress = null
+                        container.bumpLibraryEpoch()
+                        Toast.makeText(context, "Supprimé de l'appareil", Toast.LENGTH_SHORT).show()
                     }
                     return@AlbumOverflowSheet
                 }
@@ -1130,10 +1163,7 @@ private fun PlaylistHeroActions(
                 modifier = Modifier
                     .size(56.dp)
                     .clip(CircleShape)
-                    .clickable(
-                        enabled = !downloaded,
-                        onClick = onDownload,
-                    ),
+                    .clickable(onClick = onDownload),
                 contentAlignment = Alignment.Center,
             ) {
                 DownloadStatusIcon(
@@ -1540,7 +1570,7 @@ private fun AlbumOverflowSheet(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = !downloaded, onClick = onDownload)
+                    .clickable(onClick = onDownload)
                     .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1553,7 +1583,7 @@ private fun AlbumOverflowSheet(
                 Spacer(Modifier.width(16.dp))
                 Text(
                     when {
-                        downloaded -> "Album téléchargé"
+                        downloaded -> "Supprimer de l'appareil"
                         downloadProgress != null ->
                             "Annuler (${(downloadProgress * 100).toInt()} %)"
                         else -> "Télécharger l'album"

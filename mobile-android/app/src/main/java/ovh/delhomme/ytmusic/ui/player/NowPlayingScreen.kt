@@ -1133,10 +1133,9 @@ fun NowPlayingScreen(
                                             var dlDone by remember(track.id) { mutableStateOf(false) }
                                             LaunchedEffect(track.id, offlineRev, dlProgress) {
                                                 if (dlProgress == null) {
-                                                    dlDone = container.offlineStore.has(track.id) ||
-                                                        runCatching {
-                                                            container.api.library().downloaded.contains(track.id)
-                                                        }.getOrDefault(false)
+                                                    // Uniquement le fichier local — pas library.downloaded (serveur)
+                                                    // sinon l’icône reste « fait » après suppression.
+                                                    dlDone = container.offlineStore.has(track.id)
                                                 }
                                             }
                                             Row(
@@ -1144,7 +1143,18 @@ fun NowPlayingScreen(
                                                     .clip(RoundedCornerShape(20.dp))
                                                     .background(PlayerFg.copy(alpha = 0.08f))
                                                     .clickable {
-                        if (dlDone) return@clickable
+                        if (dlDone) {
+                            dlDone = false
+                            Toast.makeText(context, "Supprimé de l'appareil", Toast.LENGTH_SHORT).show()
+                            scope.launch {
+                                runCatching {
+                                    container.downloadManager.cancel(track.id)
+                                    container.offlineStore.remove(track.id)
+                                }
+                                container.bumpLibraryEpoch()
+                            }
+                            return@clickable
+                        }
                         if (dlProgress != null) {
                             container.downloadManager.cancel(track.id)
                             Toast.makeText(context, "Téléchargement annulé", Toast.LENGTH_SHORT).show()

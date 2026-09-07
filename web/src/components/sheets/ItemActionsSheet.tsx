@@ -95,6 +95,7 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const dlProgressGlobal = useDownloads((s) => (item ? s.progress[item.id] : undefined));
   const dlDoneGlobal = useDownloads((s) => (item ? Boolean(s.done[item.id]) : false));
   const startDownload = useDownloads((s) => s.start);
+  const removeDownload = useDownloads((s) => s.remove);
   const refreshDownloads = useDownloads((s) => s.refreshDone);
   const sourceKind = usePlayer((s) => s.sourceKind);
   const sourceId = usePlayer((s) => s.sourceId);
@@ -141,9 +142,9 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
     }
     void refreshPins();
     void listCachedIds()
-      .then((ids) => setOnDevice(ids.includes(item.id) || downloaded.includes(item.id) || dlDoneGlobal))
-      .catch(() => setOnDevice(downloaded.includes(item.id) || dlDoneGlobal));
-  }, [item?.id, downloaded, loaded, refresh, refreshPins, playlists, dlDoneGlobal]);
+      .then((ids) => setOnDevice(ids.includes(item.id) || dlDoneGlobal))
+      .catch(() => setOnDevice(dlDoneGlobal));
+  }, [item?.id, loaded, refresh, refreshPins, playlists, dlDoneGlobal]);
 
   useEffect(() => {
     if (!item) return;
@@ -537,12 +538,23 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
                     ? `Téléchargement ${Math.round(dlProgress * 100)} %`
                     : 'Télécharger'
               }
+              sub={
+                onDevice || dlDoneGlobal
+                  ? 'Appuyer pour supprimer de cet appareil'
+                  : undefined
+              }
               disabled={busy || dlProgress != null}
               onClick={() => {
-                if (onDevice || dlDoneGlobal || dlProgress != null) return;
+                if (dlProgress != null) return;
                 void (async () => {
                   setBusy(true);
                   try {
+                    if (onDevice || dlDoneGlobal) {
+                      await removeDownload(item.id);
+                      setOnDevice(false);
+                      setPlaylistMsg('Supprimé de cet appareil');
+                      return;
+                    }
                     await startDownload(item);
                     setOnDevice(true);
                     setPlaylistMsg('Téléchargé sur cet appareil');

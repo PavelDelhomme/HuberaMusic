@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-07",
   "versions": [
     {
+      "version": "1.3.179",
+      "date": "2026-09-07",
+      "title": "Téléchargé : clic = supprimer",
+      "notes": [
+        "Icône téléchargement déjà faite (lecteur, menu ⋮ web, album/playlist) : un nouveau clic retire le fichier de l’appareil",
+        "Plus de faux « Sur l’appareil » basé uniquement sur la liste serveur — seul le cache local compte"
+      ]
+    },
+    {
       "version": "1.3.178",
       "date": "2026-09-07",
       "title": "Aléatoire biblio préchauffé + reco goûts",
