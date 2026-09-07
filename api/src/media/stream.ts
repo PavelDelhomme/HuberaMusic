@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, openSync, readSync, closeSync, unlinkSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
@@ -122,6 +122,40 @@ function ensureCache() {
 export function cachePath(videoId: string) {
   ensureCache();
   return join(CACHE_DIR, `${videoId}.m4a`);
+}
+
+/** ftyp brand « dash » = segments adaptatifs — Exo / offline mobile les refuse. */
+function isDashBrandFile(path: string): boolean {
+  try {
+    if (!existsSync(path) || statSync(path).size < 16) return false;
+    const fd = openSync(path, 'r');
+    try {
+      const buf = Buffer.alloc(64);
+      const n = readSync(fd, buf, 0, 64, 0);
+      const slice = buf.subarray(0, n);
+      const idx = slice.indexOf(Buffer.from('ftyp'));
+      if (idx < 0 || idx + 8 > slice.length) return false;
+      const brand = slice.subarray(idx + 4, idx + 8).toString('ascii');
+      return brand.toLowerCase() === 'dash';
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** Supprime un .m4a DASH du cache disque pour forcer un re-download progressif. */
+function purgeDashCache(videoId: string): boolean {
+  const p = cachePath(videoId);
+  if (!isDashBrandFile(p)) return false;
+  try {
+    unlinkSync(p);
+    console.warn(`[stream] purge DASH cache ${videoId}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Base URL de l’API maison (env ou fichier volume).
@@ -564,10 +598,69 @@ export async function handleStream(req: Request, res: Response) {
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
+  const wantOffline =
+    String(req.query.offline || '') === '1' ||
+    String(req.headers['x-ytm-offline'] || '') === '1';
   const retryN = streamRetryN(req);
   if (retryN > 0 && !wantVideo) {
     invalidateAudioFormat(videoId);
     invalidateStreamHead(videoId);
+  }
+  // Téléchargement hors-ligne explicite : attendre le .m4a progressif disque (yt-dlp 140)
+  // plutôt que le flux DASH Innertube (ftyp=dash) que le mobile refuse.
+  if (wantOffline && !wantVideo) {
+    purgeDashCache(videoId);
+    const cached = cachePath(videoId);
+    const waitMs = 75_000;
+    try {
+      await Promise.race([
+        downloadTrack(videoId, { progressiveOnly: true }).then(() => true),
+        new Promise<boolean>((r) => setTimeout(() => r(false), waitMs)),
+      ]);
+    } catch {
+      /* fallback pipeline ci-dessous */
+    }
+    try {
+      if (existsSync(cached) && statSync(cached).size > 256 * 1024 && !isDashBrandFile(cached)) {
+        const size = statSync(cached).size;
+        const rangeHdr = req.headers.range ? String(req.headers.range) : '';
+        if (rangeHdr) {
+          const m = /bytes=(\d+)-(\d*)/.exec(rangeHdr);
+          if (m) {
+            const start = Number(m[1]);
+            const end = m[2] ? Number(m[2]) : size - 1;
+            if (Number.isFinite(start) && start >= 0 && start < size) {
+              const end2 = Math.min(end, size - 1);
+              const { createReadStream } = await import('node:fs');
+              res.status(206);
+              res.setHeader('Content-Range', `bytes ${start}-${end2}/${size}`);
+              res.setHeader('Accept-Ranges', 'bytes');
+              res.setHeader('Content-Length', end2 - start + 1);
+              res.setHeader('Content-Type', 'audio/mp4');
+              res.setHeader('Cache-Control', 'private, max-age=3600');
+              res.setHeader('X-PLM-Stream-Cache', 'disk-offline');
+              noteStreamSource(res, 'disque offline');
+              createReadStream(cached, { start, end: end2 }).pipe(res);
+              return;
+            }
+          }
+        }
+        const { createReadStream } = await import('node:fs');
+        res.status(200);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Content-Length', size);
+        res.setHeader('Content-Type', 'audio/mp4');
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.setHeader('X-PLM-Stream-Cache', 'disk-offline');
+        noteStreamSource(res, 'disque offline');
+        createReadStream(cached).pipe(res);
+        return;
+      }
+    } catch (e) {
+      console.warn('[stream] offline disk serve KO:', String((e as Error)?.message || e).slice(0, 120));
+    }
+    // Pas encore de disque : force yt-dlp URL (140) plutôt qu’Innertube DASH.
+    invalidateAudioFormat(videoId);
   }
   // ExoPlayer / Media3 ouvre souvent SANS Range ou avec `bytes=0-` (illimité).
   // NE JAMAIS tronquer à 1 MiB pour Android : une coupure mid-mdat → EOFException
@@ -642,7 +735,10 @@ export async function handleStream(req: Request, res: Response) {
   // Tête audio : 16 s était trop court dès que la résolution passait par yt-dlp
   // (30–90 s à froid) → 502 systématique sur les titres pas encore en cache.
   // Vidéo : resolve + fetch GV souvent plus lent (yt-dlp -g / pipe)
-  const deadlineAt = Date.now() + (wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 35_000);
+  // Offline : budget large pour downloadTrack / yt-dlp 140.
+  const deadlineAt =
+    Date.now() +
+    (wantOffline ? 95_000 : wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 35_000);
   const ensureTime = (label: string) => {
     if (Date.now() >= deadlineAt) throw new Error(`stream deadline (${label})`);
   };
@@ -875,14 +971,16 @@ export async function handleStream(req: Request, res: Response) {
     ensureTime('format');
     let format = wantVideo
       ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
-      : await withDeadline(
-          'getAudioFormat',
-          getAudioFormat(videoId, {
-            userId: (req as any).userId,
-            forceFresh: retryN > 0,
-            retryN,
-          }),
-        );
+      : wantOffline
+        ? await withDeadline('getAudioFormatOffline', getAudioFormatViaYtDlpOnly(videoId))
+        : await withDeadline(
+            'getAudioFormat',
+            getAudioFormat(videoId, {
+              userId: (req as any).userId,
+              forceFresh: retryN > 0,
+              retryN,
+            }),
+          );
     if (format.url) {
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).
@@ -1385,10 +1483,15 @@ function midRangeWaitMs(videoId: string): number {
   return Math.max(0, midRangeBudgetMs - (Date.now() - started));
 }
 
-export async function downloadTrack(videoId: string): Promise<string> {
+export async function downloadTrack(
+  videoId: string,
+  opts?: { progressiveOnly?: boolean },
+): Promise<string> {
   ensureCache();
   const out = cachePath(videoId);
-  if (existsSync(out) && statSync(out).size > 0) return out;
+  if (opts?.progressiveOnly) purgeDashCache(videoId);
+  else if (isDashBrandFile(out)) purgeDashCache(videoId);
+  if (existsSync(out) && statSync(out).size > 0 && !isDashBrandFile(out)) return out;
 
   const blocked = downloadFailUntil.get(videoId);
   if (blocked && Date.now() < blocked.until) {
@@ -1396,10 +1499,9 @@ export async function downloadTrack(videoId: string): Promise<string> {
   }
   if (existsSync(out)) {
     const size = statSync(out).size;
-    if (size > 0) return out;
-    // Fichier 0 octet (yt-dlp interrompu) → ne pas bloquer les retries
+    if (size > 0 && !isDashBrandFile(out)) return out;
+    // Fichier 0 octet ou DASH → ne pas bloquer les retries
     try {
-      const { unlinkSync } = await import('node:fs');
       unlinkSync(out);
     } catch {
       /* ignore */
@@ -1409,14 +1511,26 @@ export async function downloadTrack(videoId: string): Promise<string> {
   if (pending) return pending;
 
   const job = (async (): Promise<string> => {
-    if (existsSync(out) && statSync(out).size > 0) return out;
+    if (existsSync(out) && statSync(out).size > 0 && !isDashBrandFile(out)) return out;
 
-    // 1) Innertube d’abord — pas de ffmpeg, pas de spam stderr yt-dlp
-    try {
-      await downloadTrackViaInnertube(videoId, out);
-      if (existsSync(out) && statSync(out).size > 0) return out;
-    } catch {
-      /* fallback yt-dlp */
+    // 1) Innertube — sauf si progressiveOnly (DASH fréquent → refuse hors-ligne)
+    if (!opts?.progressiveOnly) {
+      try {
+        await downloadTrackViaInnertube(videoId, out);
+        if (existsSync(out) && statSync(out).size > 0) {
+          if (isDashBrandFile(out)) {
+            try {
+              unlinkSync(out);
+            } catch {
+              /* ignore */
+            }
+          } else {
+            return out;
+          }
+        }
+      } catch {
+        /* fallback yt-dlp */
+      }
     }
 
     if (!existsSync(YTDLP)) {

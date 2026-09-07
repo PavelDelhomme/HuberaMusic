@@ -1126,17 +1126,27 @@ fun NowPlayingScreen(
                                         PlayerChromeAction.AddToPlaylist -> SecondaryChip(
                                             Icons.Default.PlaylistAdd, slot.label, PlayerFg, showLabel = true,
                                         ) { onOpenAddToPlaylist?.invoke(track) }
-                                        PlayerChromeAction.Download -> {
+                                            PlayerChromeAction.Download -> {
                                             val dlMap by container.downloadManager.progress.collectAsState()
                                             val offlineRev by container.offlineStore.revision.collectAsState()
+                                            val dlErrors by container.downloadManager.errors.collectAsState()
                                             val dlProgress = dlMap[track.id]
                                             var dlDone by remember(track.id) { mutableStateOf(false) }
                                             LaunchedEffect(track.id, offlineRev, dlProgress) {
-                                                if (dlProgress == null) {
-                                                    // Uniquement le fichier local — pas library.downloaded (serveur)
-                                                    // sinon l’icône reste « fait » après suppression.
-                                                    dlDone = container.offlineStore.has(track.id)
+                                                when {
+                                                    dlProgress != null && dlProgress >= 0.99f -> dlDone = true
+                                                    dlProgress == null ->
+                                                        dlDone = container.offlineStore.has(track.id)
                                                 }
+                                            }
+                                            LaunchedEffect(track.id, dlErrors[track.id]) {
+                                                val err = container.downloadManager.consumeError(track.id)
+                                                    ?: return@LaunchedEffect
+                                                Toast.makeText(
+                                                    context,
+                                                    err.take(80).ifBlank { "Échec téléchargement" },
+                                                    Toast.LENGTH_SHORT,
+                                                ).show()
                                             }
                                             Row(
                                                 modifier = Modifier
@@ -1166,6 +1176,12 @@ fun NowPlayingScreen(
                             Toast.makeText(context, "Déjà sur l'appareil", Toast.LENGTH_SHORT).show()
                         } else if (started) {
                             Toast.makeText(context, "Téléchargement…", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Impossible de démarrer le téléchargement",
+                                Toast.LENGTH_SHORT,
+                            ).show()
                         }
                     }
                                                     .padding(horizontal = 10.dp, vertical = 8.dp),

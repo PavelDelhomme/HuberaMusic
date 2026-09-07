@@ -60,12 +60,18 @@ class LocalOfflineStore(
         .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
         .retryOnConnectionFailure(true)
         .addInterceptor { chain ->
-            val req = chain.request().newBuilder()
+            val token = runCatching {
+                ovh.delhomme.ytmusic.YtMusicApp.instance.container.tokenStore.peekAccess()
+            }.getOrNull()
+            val b = chain.request().newBuilder()
                 .header("User-Agent", "PLM-Android")
                 .header("X-YTM-Client", "android")
+                .header("X-YTM-Offline", "1")
                 .header("Accept", "*/*")
-                .build()
-            chain.proceed(req)
+            if (!token.isNullOrBlank()) {
+                b.header("Authorization", "Bearer $token")
+            }
+            chain.proceed(b.build())
         }
         .build()
 
@@ -162,19 +168,29 @@ class LocalOfflineStore(
                 return@withContext Result.failure(lastError ?: Exception("stream down"))
             }
             val forceSequential = attempt > 0
-            val result = downloadOnce(track, streamUrl, onProgress, attempt, forceSequential)
+            // Retry DASH : force bust cache format côté API (?retry=N déjà dans l’URL appelant).
+            val url = if (attempt == 0) {
+                streamUrl
+            } else if (streamUrl.contains("retry=")) {
+                streamUrl.replace(Regex("retry=\\d+"), "retry=$attempt")
+            } else {
+                val sep = if (streamUrl.contains('?')) "&" else "?"
+                "$streamUrl${sep}retry=$attempt&offline=1"
+            }
+            val result = downloadOnce(track, url, onProgress, attempt, forceSequential)
             if (result.isSuccess) return@withContext result
             lastError = result.exceptionOrNull()
             val msg = lastError?.message.orEmpty()
             AppLog.w("offline", "DL retry ${attempt + 1} ${track.id}: $msg")
-            // DASH / format invalide : inutile de retenter 3× (spam logs + saturation).
+            // DASH / ftyp : retenter avec autre format (retry query) — pas abandon immédiat.
             if (
                 msg.contains("DASH", ignoreCase = true) ||
                 msg.contains("pas de ftyp", ignoreCase = true) ||
                 msg.contains("Conteneur", ignoreCase = true)
             ) {
                 partFile(track.id).delete()
-                return@withContext Result.failure(lastError ?: Exception(msg))
+                kotlinx.coroutines.delay(800L * (attempt + 1))
+                return@repeat
             }
             val infra =
                 msg.contains("HTTP 502") ||
@@ -185,7 +201,6 @@ class LocalOfflineStore(
                     lastError is java.net.SocketTimeoutException ||
                     lastError is java.net.UnknownHostException
             if (infra) {
-                // 3 min : laisse l’API / YouTube respirer ; OfflineKeeper/DownloadManager stoppent.
                 ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(180_000L)
                 partFile(track.id).delete()
                 return@withContext Result.failure(lastError ?: Exception("stream infra"))
@@ -451,9 +466,9 @@ class LocalOfflineStore(
                         buf[i + 3] == 'p'.code.toByte()
                     ) {
                         val brand = String(buf, i + 4, 4, Charsets.US_ASCII)
-                        return@use brand.equals("dash", ignoreCase = true) ||
-                            brand.equals("iso5", ignoreCase = true) ||
-                            brand.equals("iso6", ignoreCase = true)
+                        // Seulement le brand « dash » (segments adaptatifs).
+                        // iso5/iso6 : souvent OK hors-ligne si probeDecodable passe.
+                        return@use brand.equals("dash", ignoreCase = true)
                     }
                 }
                 false
