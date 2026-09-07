@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Track } from '../api';
-import { downloadAndCache, listCachedIds } from '../lib/offline/offlineCache';
+import { downloadAndCache, listCachedIds, removeCached } from '../lib/offline/offlineCache';
 
 type DownloadsState = {
   /** 0–1 pendant un DL ; absent = idle */
@@ -9,6 +9,8 @@ type DownloadsState = {
   errors: Record<string, string>;
   refreshDone: () => Promise<void>;
   start: (track: Track) => Promise<void>;
+  /** Supprime le cache local (toggle « Sur l'appareil »). */
+  remove: (trackId: string) => Promise<void>;
   progressOf: (id: string) => number | null;
 };
 
@@ -60,5 +62,19 @@ export const useDownloads = create<DownloadsState>((set, get) => ({
       });
       throw e;
     }
+  },
+
+  remove: async (trackId) => {
+    if (!trackId) return;
+    await removeCached(trackId);
+    set((s) => {
+      const progress = { ...s.progress };
+      const done = { ...s.done };
+      const errors = { ...s.errors };
+      delete progress[trackId];
+      delete done[trackId];
+      delete errors[trackId];
+      return { progress, done, errors };
+    });
   },
 }));
