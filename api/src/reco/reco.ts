@@ -794,6 +794,24 @@ export async function similarForUser(
     /* ignore */
   }
 
+  // Prefs onboarding (genres / ambiances) → candidats « même goût »
+  try {
+    const prefs = getPrefs(userId);
+    const boostQ = [
+      ...prefs.genres.slice(0, 3).map((g) => `${g} mix`),
+      ...prefs.moods.slice(0, 2).map((m) => `${m} playlist`),
+    ];
+    for (const q of boostQ) {
+      const res = await search(q, 'song');
+      const extra = [...(res.songs || [])].filter(
+        (t) => t?.id && t.id !== trackId && isMusicPlayableHit(t),
+      );
+      pool = [...pool, ...extra.slice(0, 8)];
+    }
+  } catch {
+    /* ignore */
+  }
+
   if (full) {
     const hopSeeds = dedupeTracks([seed, ...radio, ...related, ...fromLibrary]).slice(0, 12);
     pool = await expandPoolMultiSeed(hopSeeds, pool, trackId, 12);
@@ -1508,6 +1526,30 @@ export async function homeReco(userId: string) {
             mode: 'radio',
           });
           if (items.length) extras.push({ title: `Pour toi · ${g}`, items: items.slice(0, 16), order: slot });
+        } catch {
+          /* ignore */
+        }
+      })(),
+    );
+  }
+
+  for (const m of (prefs.moods || []).slice(0, 2)) {
+    const mood = String(m || '').trim();
+    if (!mood) continue;
+    const slot = order++;
+    jobs.push(
+      (async () => {
+        try {
+          const res = await search(`${mood} playlist`, 'song');
+          const items = await hybridRank({
+            userId,
+            candidates: [...(res.songs || []), ...(res.videos || [])],
+            mode: 'radio',
+            targetTags: prefGenresToTags([mood]),
+          });
+          if (items.length) {
+            extras.push({ title: `Ambiance · ${mood}`, items: items.slice(0, 14), order: slot });
+          }
         } catch {
           /* ignore */
         }

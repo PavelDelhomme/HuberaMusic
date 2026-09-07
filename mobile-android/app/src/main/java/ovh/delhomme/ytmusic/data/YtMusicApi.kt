@@ -49,6 +49,16 @@ data class LibraryResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class ShuffleHeadsResponse(
+    val ids: List<String> = emptyList(),
+    val slot: Long? = null,
+    val expiresAt: Long? = null,
+    val slotMs: Long? = null,
+    val headN: Int? = null,
+    val poolSize: Int? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class LikeResponse(val liked: Boolean, val library: LibraryResponse? = null)
 
 @JsonClass(generateAdapter = false)
@@ -612,6 +622,11 @@ interface YtMusicApi {
         @Query("light") light: Int? = null,
         @Query("limit") limit: Int? = null,
     ): LibraryResponse
+
+    @GET("api/library/shuffle-heads")
+    suspend fun shuffleHeads(
+        @Query("warm") warm: Int? = 1,
+    ): ShuffleHeadsResponse
 
     @POST("api/library/like")
     suspend fun like(@Body track: TrackDto): LikeResponse

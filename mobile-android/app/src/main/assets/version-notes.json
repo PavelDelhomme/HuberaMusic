@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-07",
   "versions": [
     {
+      "version": "1.3.178",
+      "date": "2026-09-07",
+      "title": "Aléatoire biblio préchauffé + reco goûts",
+      "notes": [
+        "Aléatoire : le serveur prépare ~100 démarrages de titres qui changent régulièrement (~toutes les 30 min) pour ne pas toujours entendre la même chose",
+        "Le téléphone ne tire que ce lot (warm léger) — le gros du travail reste côté serveur",
+        "Accueil / similaires : plus de poids aux genres et ambiances que tu as choisis"
+      ]
+    },
+    {
       "version": "1.3.177",
       "date": "2026-09-07",
       "title": "Accès rapide : désépingler partout",
