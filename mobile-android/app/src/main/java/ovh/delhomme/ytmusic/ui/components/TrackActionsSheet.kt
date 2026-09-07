@@ -122,7 +122,8 @@ fun TrackActionsSheet(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // false = ouverture immédiate (partial) — true attendait la pleine hauteur = latence perçue
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val maxSheetBody = (LocalConfiguration.current.screenHeightDp * 0.72f).dp
     var enriched by remember(track.id) { mutableStateOf(track) }
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
@@ -130,12 +131,27 @@ fun TrackActionsSheet(
     var showSleep by remember { mutableStateOf(false) }
     var downloaded by remember { mutableStateOf(false) }
     var wasDownloading by remember { mutableStateOf(false) }
-    var albumInLibrary by remember { mutableStateOf(false) }
-    var songInLibrary by remember { mutableStateOf(false) }
+    // Seed immédiat depuis le cache biblio local (pas d’attente réseau pour peindre le menu)
+    val localLib = container.libraryRepo.library.value
+    var albumInLibrary by remember(track.id) {
+        val albumId = track.album?.id ?: track.id.takeIf { track.isAlbum() }
+        mutableStateOf(albumId != null && localLib?.albums?.any { it.id == albumId } == true)
+    }
+    var songInLibrary by remember(track.id) {
+        mutableStateOf(
+            localLib?.songs?.any { it.id == track.id } == true ||
+                (track.type?.equals("mix", ignoreCase = true) == true &&
+                    localLib?.mixes?.any { it.id == track.id } == true),
+        )
+    }
     var albumTracks by remember(track.id) { mutableStateOf<List<TrackDto>>(emptyList()) }
     var albumAllLiked by remember(track.id) { mutableStateOf(false) }
     var playlistContainedIds by remember(track.id) { mutableStateOf<Set<String>>(emptySet()) }
-    var liked by remember(track.id) { mutableStateOf(track.id in likedIds) }
+    var liked by remember(track.id) {
+        mutableStateOf(
+            track.id in likedIds || localLib?.liked?.any { it.id == track.id } == true,
+        )
+    }
     var receiveRemoteSync by remember { mutableStateOf(container.receiveRemoteSync()) }
     val playerUi by player.state.collectAsState()
     val dlProgressMap by container.downloadManager.progress.collectAsState()
@@ -177,12 +193,18 @@ fun TrackActionsSheet(
 
     LaunchedEffect(track.id) {
         enriched = track
-        liked = track.id in likedIds
-        songInLibrary = track.id in likedIds
-        albumInLibrary = false
-        downloaded = container.offlineStore.has(track.id)
+        val lib = container.libraryRepo.library.value
         val albumIdHint = track.album?.id ?: track.id.takeIf { track.isAlbum() }
-        // Membership d’abord (SQL) — ne pas attendre track() / library()
+        liked = track.id in likedIds || lib?.liked?.any { it.id == track.id } == true
+        songInLibrary = when {
+            track.type?.equals("mix", ignoreCase = true) == true ->
+                lib?.mixes?.any { it.id == track.id } == true
+            else -> lib?.songs?.any { it.id == track.id } == true
+        }
+        albumInLibrary = albumIdHint != null && lib?.albums?.any { it.id == albumIdHint } == true
+        downloaded = container.offlineStore.has(track.id)
+
+        // Membership SQL (rapide) — ne bloque pas l’UI
         launch {
             playlistContainedIds = runCatching {
                 container.api.playlistsContaining(track.id).playlistIds.toSet()
@@ -215,21 +237,21 @@ fun TrackActionsSheet(
             albumTracks = tracks
             albumAllLiked = tracks.isNotEmpty() && tracks.all { it.id in likedIds }
         }
+        // Enrichissement méta : seulement si artists/cover/album manquent (évite getTrack Innertube)
         launch {
+            if (!trackNeedsMetaEnrichment(track)) return@launch
             runCatching {
-                container.ensureFreshToken()
-                if (track.isPlayable()) {
-                    runCatching { container.api.track(track.id).track }.getOrNull()?.let { meta ->
-                        enriched = track.copy(
-                            artists = when {
-                                !meta.artists.isNullOrEmpty() -> meta.artists
-                                else -> track.artists
-                            },
-                            album = meta.album ?: track.album,
-                            thumbnails = track.thumbnails?.takeIf { it.isNotEmpty() } ?: meta.thumbnails,
-                            duration = track.duration ?: meta.duration,
-                        )
-                    }
+                if (!track.isPlayable()) return@runCatching
+                runCatching { container.api.track(track.id).track }.getOrNull()?.let { meta ->
+                    enriched = track.copy(
+                        artists = when {
+                            !meta.artists.isNullOrEmpty() -> meta.artists
+                            else -> track.artists
+                        },
+                        album = meta.album ?: track.album,
+                        thumbnails = track.thumbnails?.takeIf { it.isNotEmpty() } ?: meta.thumbnails,
+                        duration = track.duration ?: meta.duration,
+                    )
                 }
             }
         }
@@ -1441,4 +1463,15 @@ fun AddToPlaylistSheet(
             },
         )
     }
+}
+
+/** true si getTrack / Innertube apporterait encore artistes ou cover manquants. */
+private fun trackNeedsMetaEnrichment(track: TrackDto): Boolean {
+    if (!track.isPlayable()) return false
+    val artists = track.artists.orEmpty().mapNotNull { it.name?.trim()?.takeIf { n -> n.isNotEmpty() } }
+    val hasArtist = artists.any { !it.equals("Artiste", true) && !it.equals("Unknown", true) && !it.equals("Inconnu", true) }
+    val hasThumb = !track.thumbnails.isNullOrEmpty()
+    // Déjà assez riche pour le menu ⋮ — pas d’appel réseau bloquant
+    if (hasArtist && hasThumb) return false
+    return true
 }
