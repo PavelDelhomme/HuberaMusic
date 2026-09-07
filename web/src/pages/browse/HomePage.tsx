@@ -8,7 +8,7 @@ import { usePins } from '../../store/pins';
 import { useLibrary } from '../../store/library';
 import { useAuth } from '../../store/auth';
 import { useItemActions } from '../../store/itemActions';
-import { Pin, Play, Radio } from 'lucide-react';
+import { Pin, Play, Radio, GripVertical, ChevronUp, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { warmFormats } from '../../lib/audio/streamPrefetch';
 import { perfStart } from '../../lib/util/perf';
@@ -69,6 +69,8 @@ export function HomePage() {
   const pinCount = usePins((s) => s.pins.length);
   const pinRows = usePins((s) => s.pins);
   const refreshPins = usePins((s) => s.refresh);
+  const reorderPins = usePins((s) => s.reorderPins);
+  const [pinReorder, setPinReorder] = useState(false);
   const userId = useAuth((s) => s.user?.id);
   const hasMix = useLibrary((s) => s.hasMix);
   const saveMix = useLibrary((s) => s.saveMix);
@@ -345,8 +347,66 @@ export function HomePage() {
           <div className="mb-3 flex items-center gap-2">
             <Pin className="h-4 w-4 text-yt-muted" />
             <h2 className="font-display text-lg font-semibold">Accès rapide</h2>
+            {quickAccessItems.length > 1 && (
+              <button
+                type="button"
+                className="ml-auto rounded-full bg-white/8 px-3 py-1 text-xs text-yt-muted hover:bg-white/12 hover:text-white"
+                onClick={() => setPinReorder((v) => !v)}
+              >
+                {pinReorder ? 'Terminé' : 'Réordonner'}
+              </button>
+            )}
           </div>
-          <ShelfRow title="" items={quickAccessItems} />
+          {pinReorder ? (
+            <ul className="space-y-1 rounded-xl border border-yt-border bg-yt-elevated/60 p-2">
+              <li className="px-2 pb-1 text-xs text-yt-muted">
+                Premier épinglé en haut / à gauche · flèches pour déplacer
+              </li>
+              {quickAccessItems.map((item, index) => (
+                <li
+                  key={item.id}
+                  className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/5"
+                >
+                  <GripVertical className="h-4 w-4 shrink-0 text-yt-muted" />
+                  <span className="min-w-0 flex-1 truncate text-sm">{item.title}</span>
+                  <button
+                    type="button"
+                    className="rounded p-1 text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-30"
+                    disabled={index === 0}
+                    aria-label="Monter"
+                    onClick={() => {
+                      if (index === 0) return;
+                      const ids = quickAccessItems.map((t) => t.id);
+                      const tmp = ids[index]!;
+                      ids[index] = ids[index - 1]!;
+                      ids[index - 1] = tmp;
+                      void reorderPins(ids);
+                    }}
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded p-1 text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-30"
+                    disabled={index >= quickAccessItems.length - 1}
+                    aria-label="Descendre"
+                    onClick={() => {
+                      if (index >= quickAccessItems.length - 1) return;
+                      const ids = quickAccessItems.map((t) => t.id);
+                      const tmp = ids[index]!;
+                      ids[index] = ids[index + 1]!;
+                      ids[index + 1] = tmp;
+                      void reorderPins(ids);
+                    }}
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <ShelfRow title="" items={quickAccessItems} />
+          )}
         </section>
       )}
 

@@ -622,6 +622,11 @@ export const api = {
         body: JSON.stringify({ pins, mode }),
       },
     ),
+  reorderPins: (ids: string[]) =>
+    req<{ pins: any[] }>('/api/pins/reorder', {
+      method: 'PUT',
+      body: JSON.stringify({ ids }),
+    }),
   removePin: (id: string) => req<{ pins: any[] }>(`/api/pins/${id}`, { method: 'DELETE' }),
   publishSessionState: (state: Record<string, unknown>) =>
     req<{ devices: any[]; activePlayerId: string | null; state: any }>('/api/session/state', {

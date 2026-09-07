@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SyncDisabled
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -384,14 +385,16 @@ fun TrackActionsSheet(
                 if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                 if (songInLibrary) "Retirer de la bibliothèque" else "Enregistrer le mix",
             ) {
+                val removing = songInLibrary
+                songInLibrary = !removing
+                container.bumpLibraryEpoch()
+                context.toastMain(if (removing) "Mix retiré" else "Mix enregistré")
+                onDismiss()
                 scope.launch {
                     runCatching {
                         container.ensureFreshToken()
-                        if (songInLibrary) {
+                        if (removing) {
                             container.api.removeMix(enriched.id)
-                            songInLibrary = false
-                            container.bumpLibraryEpoch()
-                            context.toastMain("Mix retiré")
                         } else {
                             container.api.saveMix(
                                 mapOf(
@@ -399,12 +402,13 @@ fun TrackActionsSheet(
                                     "title" to enriched.title,
                                 ),
                             )
-                            songInLibrary = true
-                            container.bumpLibraryEpoch()
-                            context.toastMain("Mix enregistré")
                         }
+                        container.bumpLibraryEpoch()
+                    }.onFailure {
+                        songInLibrary = removing
+                        container.bumpLibraryEpoch()
+                        context.toastMain(it.message ?: "Échec sync mix")
                     }
-                    onDismiss()
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
@@ -466,71 +470,140 @@ fun TrackActionsSheet(
         }
 
         if (enriched.isPlayable()) {
-            // Bibliothèque + téléchargement (juste après navigation)
-            SheetAction(
-                if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
-                if (songInLibrary) "Dans la bibliothèque" else "Enregistrer dans la bibliothèque",
+            // ① Bibliothèque | Télécharger | Accès rapide
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                val next = !songInLibrary
-                songInLibrary = next
-                container.appScope().launch {
-                    runCatching {
-                        container.ensureFreshToken()
-                        val r = container.api.toggleLibrarySong(enriched)
-                        songInLibrary = r.saved
-                        container.bumpLibraryEpoch()
-                        context.toastMain(if (r.saved) "Dans la bibliothèque" else "Retiré de la bibliothèque")
-                    }.onFailure { e ->
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        songInLibrary = !next
-                        context.toastMain(e.apiMessage().ifBlank { "Impossible de modifier la bibliothèque" })
+                QuickAction(
+                    if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
+                    if (songInLibrary) "Bibliothèque" else "Bibliothèque",
+                ) {
+                    val next = !songInLibrary
+                    songInLibrary = next
+                    container.appScope().launch {
+                        runCatching {
+                            container.ensureFreshToken()
+                            val r = container.api.toggleLibrarySong(enriched)
+                            songInLibrary = r.saved
+                            container.bumpLibraryEpoch()
+                            context.toastMain(if (r.saved) "Dans la bibliothèque" else "Retiré de la bibliothèque")
+                        }.onFailure { e ->
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            songInLibrary = !next
+                            context.toastMain(e.apiMessage().ifBlank { "Impossible de modifier la bibliothèque" })
+                        }
                     }
                 }
-            }
-            SheetAction(
-                leading = {
-                    DownloadStatusIcon(
-                        downloaded = downloaded,
-                        progress = downloadProgress,
-                        size = 26.dp,
-                        accent = Color(0xFFFF0033),
-                    )
-                },
-                label = when {
-                    downloaded -> "Supprimer de l'appareil"
-                    downloadProgress != null -> "Annuler le téléchargement (${(downloadProgress!! * 100).toInt()} %)"
-                    else -> "Télécharger"
-                },
-                enabled = true,
-            ) {
-                if (downloaded) {
-                    scope.launch {
-                        runCatching {
-                            container.downloadManager.cancel(enriched.id)
-                            container.offlineStore.remove(enriched.id)
-                        }
+                QuickAction(
+                    if (downloaded) Icons.Default.DownloadDone else Icons.Default.Download,
+                    when {
+                        downloaded -> "Sur l'appareil"
+                        downloadProgress != null -> "${(downloadProgress!! * 100).toInt()} %"
+                        else -> "Télécharger"
+                    },
+                ) {
+                    if (downloaded) {
+                        // UI immédiate ; IO + sync en arrière-plan
                         downloaded = false
-                        container.bumpLibraryEpoch()
                         context.toastMain("Supprimé de l'appareil")
                         onDismiss()
+                        scope.launch {
+                            runCatching {
+                                container.downloadManager.cancel(enriched.id)
+                                container.offlineStore.remove(enriched.id)
+                            }
+                            container.bumpLibraryEpoch()
+                        }
+                        return@QuickAction
                     }
-                    return@SheetAction
+                    if (downloadProgress != null) {
+                        container.downloadManager.cancel(enriched.id)
+                        context.toastMain("Téléchargement annulé — partiel supprimé")
+                        return@QuickAction
+                    }
+                    val started = container.downloadManager.enqueue(enriched)
+                    if (!started && container.offlineStore.has(enriched.id)) {
+                        downloaded = true
+                        context.toastMain("Déjà sur l'appareil (lisible hors-ligne)")
+                    } else if (started) {
+                        context.toastMain("Téléchargement… tu peux fermer ce menu")
+                    }
                 }
-                if (downloadProgress != null) {
-                    container.downloadManager.cancel(enriched.id)
-                    context.toastMain("Téléchargement annulé — partiel supprimé")
-                    return@SheetAction
-                }
-                val started = container.downloadManager.enqueue(enriched)
-                if (!started && container.offlineStore.has(enriched.id)) {
-                    downloaded = true
-                    context.toastMain("Déjà sur l'appareil (lisible hors-ligne)")
-                } else if (started) {
-                    context.toastMain("Téléchargement… tu peux fermer ce menu")
+                QuickAction(
+                    if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
+                    if (pinned) "Retirer accès rapide" else "Accès rapide",
+                ) {
+                    scope.launch {
+                        pinned = container.quickAccess.toggle(enriched, container.api)
+                        context.toastMain(if (pinned) "Épinglé" else "Retiré de l'accès rapide")
+                        onDismiss()
+                    }
                 }
             }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
 
-            // Radios — hard-start + top-up progressif (évite soft-enqueue / file à 1 titre)
+            // ② File d'attente | Enregistrer l'album | (espace)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                if (inQueue && !isCurrent) {
+                    QuickAction(Icons.Default.RemoveFromQueue, "Retirer de la file") {
+                        player.removeFromQueue(queueIndex)
+                        context.toastMain("Retiré de la file")
+                        onDismiss()
+                    }
+                } else {
+                    QuickAction(Icons.Default.QueueMusic, "File d'attente") {
+                        player.addToQueue(enriched)
+                        context.toastMain("Ajouté à la file")
+                        onDismiss()
+                    }
+                }
+                val albumIdQuick = enriched.album?.id
+                if (albumIdQuick != null) {
+                    QuickAction(
+                        if (albumInLibrary) Icons.Default.CheckCircle else Icons.Default.Album,
+                        if (albumInLibrary) "Album enregistré" else "Enregistrer l'album",
+                    ) {
+                        scope.launch {
+                            runCatching {
+                                if (albumInLibrary) {
+                                    container.api.removeAlbum(albumIdQuick)
+                                    albumInLibrary = false
+                                    context.toastMain("Album retiré")
+                                } else {
+                                    container.api.saveAlbum(
+                                        TrackDto(
+                                            id = albumIdQuick,
+                                            title = enriched.album?.name ?: enriched.title,
+                                            artists = enriched.artists,
+                                            thumbnails = enriched.thumbnails,
+                                            type = "album",
+                                        ),
+                                    )
+                                    albumInLibrary = true
+                                    context.toastMain("Album enregistré")
+                                }
+                            }.onFailure {
+                                context.toastMain(it.message ?: "Échec")
+                            }
+                            onDismiss()
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.width(118.dp))
+                }
+                Spacer(Modifier.width(118.dp))
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+
+            // Radios — en bas de la zone « lecture » (après pin / file / album)
             SheetAction(
                 Icons.Default.Radio,
                 "En rapport",
@@ -562,7 +635,6 @@ fun TrackActionsSheet(
                         }
                         player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
                         context.toastMain("Mix démarré · ${mix.size} titres")
-                        // Top-up en arrière-plan
                         val more = buildRadioQueueContinuation(
                             container.api, enriched.id, mix.map { it.id }.toSet(),
                             mixCache = container.mixCache,
@@ -648,54 +720,6 @@ fun TrackActionsSheet(
                 }
             }
 
-            // File d'attente
-            if (inQueue && !isCurrent) {
-                SheetAction(Icons.Default.RemoveFromQueue, "Supprimer de la file d'attente") {
-                    player.removeFromQueue(queueIndex)
-                    context.toastMain("Retiré de la file")
-                    onDismiss()
-                }
-            } else {
-                SheetAction(Icons.Default.QueueMusic, "Ajouter à la file d'attente") {
-                    player.addToQueue(enriched)
-                    context.toastMain("Ajouté à la file")
-                    onDismiss()
-                }
-            }
-
-            enriched.album?.id?.let { albumId ->
-                SheetAction(
-                    if (albumInLibrary) Icons.Default.CheckCircle else Icons.Default.Album,
-                    if (albumInLibrary) "Album dans la bibliothèque" else "Enregistrer l'album",
-                    enriched.album?.name,
-                ) {
-                    scope.launch {
-                        runCatching {
-                            if (albumInLibrary) {
-                                container.api.removeAlbum(albumId)
-                                albumInLibrary = false
-                                context.toastMain("Album retiré")
-                            } else {
-                                container.api.saveAlbum(
-                                    TrackDto(
-                                        id = albumId,
-                                        title = enriched.album?.name ?: enriched.title,
-                                        artists = enriched.artists,
-                                        thumbnails = enriched.thumbnails,
-                                        type = "album",
-                                    ),
-                                )
-                                albumInLibrary = true
-                                context.toastMain("Album enregistré")
-                            }
-                        }.onFailure {
-                            context.toastMain(it.message ?: "Échec")
-                        }
-                        onDismiss()
-                    }
-                }
-            }
-
             SheetAction(Icons.Default.ThumbDown, "Je n'aime pas", "Signale au moteur de reco et passe au suivant") {
                 scope.launch {
                     runCatching {
@@ -718,7 +742,7 @@ fun TrackActionsSheet(
             SheetAction(
                 Icons.Default.BugReport,
                 "Signaler un problème",
-                "Envoie les logs récents à l’équipe (comme une erreur auto)",
+                "Télémétrie + alerte mail admin (logs récents)",
             ) {
                 scope.launch {
                     runCatching {
@@ -742,12 +766,41 @@ fun TrackActionsSheet(
                             ),
                             force = true,
                         )
-                        context.toastMain("Rapport envoyé")
+                        context.toastMain("Rapport envoyé (télémétrie + mail admin)")
                     }.onFailure {
                         context.toastMain(it.message ?: "Échec envoi")
                     }
                     onDismiss()
                 }
+            }
+            SheetAction(
+                Icons.Default.Email,
+                "Envoyer aussi par mail",
+                "Ouvre ton app mail avec un résumé du titre",
+            ) {
+                val artist = enriched.artistLine().takeIf { it != "Artiste" }.orEmpty()
+                val body = buildString {
+                    appendLine("Signalement PLM")
+                    appendLine("id=${enriched.id}")
+                    appendLine("${enriched.title}${if (artist.isNotBlank()) " — $artist" else ""}")
+                    appendLine()
+                    appendLine("--- logs récents ---")
+                    append(ovh.delhomme.ytmusic.debug.AppLog.recentLogText(12_000))
+                }
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(
+                        android.content.Intent.EXTRA_SUBJECT,
+                        "PLM — ${enriched.title}",
+                    )
+                    putExtra(android.content.Intent.EXTRA_TEXT, body)
+                }
+                runCatching {
+                    context.startActivity(android.content.Intent.createChooser(intent, "Envoyer le rapport"))
+                }.onFailure {
+                    context.toastMain(it.message ?: "Aucune app mail")
+                }
+                onDismiss()
             }
 
             if (onCast != null) {
@@ -772,80 +825,106 @@ fun TrackActionsSheet(
                 onDismiss()
             }
         } else if (enriched.isAlbum()) {
-            SheetAction(Icons.Default.PlayArrow, "Écouter l’album") {
-                scope.launch {
-                    val tracks = albumTracks.ifEmpty {
-                        runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
-                            .filter { it.isPlayable() }
-                    }
-                    if (tracks.isEmpty()) {
-                        context.toastMain("Aucun titre jouable")
-                    } else {
-                        player.play(tracks, 0, title = enriched.title, sourceId = enriched.id, sourceKind = "album")
-                    }
-                    onDismiss()
-                }
-            }
-            SheetAction(
-                if (albumInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
-                if (albumInLibrary) "Dans la bibliothèque" else "Ajouter l’album à la bibliothèque",
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
-                scope.launch {
-                    runCatching {
-                        if (albumInLibrary) {
-                            container.api.removeAlbum(enriched.id)
-                            albumInLibrary = false
-                        } else {
-                            container.api.saveAlbum(enriched.copy(type = "album"))
-                            albumInLibrary = true
-                        }
-                        container.bumpLibraryEpoch()
-                        context.toastMain("Bibliothèque mise à jour")
-                    }.onFailure {
-                        context.toastMain(it.message ?: "Échec")
-                    }
-                    onDismiss()
-                }
-            }
-            SheetAction(
-                if (albumAllLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                if (albumAllLiked) "Titres déjà en J’aime" else "Ajouter tous les titres aux J’aime",
-            ) {
-                scope.launch {
-                    val tracks = albumTracks.ifEmpty {
-                        runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
-                            .filter { it.isPlayable() }
-                    }
-                    var n = 0
-                    var ids = likedIds
-                    for (t in tracks) {
-                        if (t.id in ids) continue
-                        runCatching { container.api.like(t) }.onSuccess {
-                            n++
-                            ids = ids + t.id
-                        }
-                    }
-                    onLikedChanged(ids)
-                    albumAllLiked = true
-                    context.toastMain(if (n > 0) "$n titres ajoutés aux J’aime" else "Déjà en J’aime")
-                    onDismiss()
-                }
-            }
-            SheetAction(Icons.Default.Download, "Télécharger l’album") {
-                val tracks = albumTracks.ifEmpty { emptyList() }
-                if (tracks.isEmpty()) {
+                QuickAction(Icons.Default.PlayArrow, "Écouter") {
                     scope.launch {
-                        val fetched = runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
-                            .filter { it.isPlayable() }
-                        container.downloadManager.enqueueMany(fetched)
-                        context.toastMain("Téléchargement de ${fetched.size} titres…")
+                        val tracks = albumTracks.ifEmpty {
+                            runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
+                                .filter { it.isPlayable() }
+                        }
+                        if (tracks.isEmpty()) {
+                            context.toastMain("Aucun titre jouable")
+                        } else {
+                            player.play(tracks, 0, title = enriched.title, sourceId = enriched.id, sourceKind = "album")
+                        }
                         onDismiss()
                     }
-                } else {
-                    container.downloadManager.enqueueMany(tracks)
-                    context.toastMain("Téléchargement de ${tracks.size} titres…")
-                    onDismiss()
                 }
+                QuickAction(
+                    if (albumInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
+                    if (albumInLibrary) "Bibliothèque" else "Bibliothèque",
+                ) {
+                    scope.launch {
+                        runCatching {
+                            if (albumInLibrary) {
+                                container.api.removeAlbum(enriched.id)
+                                albumInLibrary = false
+                            } else {
+                                container.api.saveAlbum(enriched.copy(type = "album"))
+                                albumInLibrary = true
+                            }
+                            container.bumpLibraryEpoch()
+                            context.toastMain("Bibliothèque mise à jour")
+                        }.onFailure {
+                            context.toastMain(it.message ?: "Échec")
+                        }
+                        onDismiss()
+                    }
+                }
+                QuickAction(Icons.Default.Download, "Télécharger") {
+                    val tracks = albumTracks.ifEmpty { emptyList() }
+                    if (tracks.isEmpty()) {
+                        scope.launch {
+                            val fetched = runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
+                                .filter { it.isPlayable() }
+                            container.downloadManager.enqueueMany(fetched)
+                            context.toastMain("Téléchargement de ${fetched.size} titres…")
+                            onDismiss()
+                        }
+                    } else {
+                        container.downloadManager.enqueueMany(tracks)
+                        context.toastMain("Téléchargement de ${tracks.size} titres…")
+                        onDismiss()
+                    }
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                QuickAction(
+                    if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
+                    if (pinned) "Retirer accès rapide" else "Accès rapide",
+                ) {
+                    scope.launch {
+                        pinned = container.quickAccess.toggle(enriched, container.api)
+                        context.toastMain(if (pinned) "Épinglé" else "Retiré de l'accès rapide")
+                        onDismiss()
+                    }
+                }
+                QuickAction(
+                    if (albumAllLiked) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    if (albumAllLiked) "Déjà en J’aime" else "Tous en J’aime",
+                ) {
+                    scope.launch {
+                        val tracks = albumTracks.ifEmpty {
+                            runCatching { container.api.album(enriched.id).tracks }.getOrDefault(emptyList())
+                                .filter { it.isPlayable() }
+                        }
+                        var n = 0
+                        var ids = likedIds
+                        for (t in tracks) {
+                            if (t.id in ids) continue
+                            runCatching { container.api.like(t) }.onSuccess {
+                                n++
+                                ids = ids + t.id
+                            }
+                        }
+                        onLikedChanged(ids)
+                        albumAllLiked = true
+                        context.toastMain(if (n > 0) "$n titres ajoutés aux J’aime" else "Déjà en J’aime")
+                        onDismiss()
+                    }
+                }
+                Spacer(Modifier.width(118.dp))
             }
         } else if (enriched.isPlaylist() || enriched.isArtist()) {
             SheetAction(
@@ -882,14 +961,17 @@ fun TrackActionsSheet(
             }
         }
 
-        SheetAction(
-            if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
-            if (pinned) "Retirer de l'accès rapide" else "Épingler à l'accès rapide",
-        ) {
-            scope.launch {
-                pinned = container.quickAccess.toggle(enriched, container.api)
-                context.toastMain(if (pinned) "Épinglé" else "Retiré de l'accès rapide")
-                onDismiss()
+        // Pin déjà dans la grille pour titres / albums — sinon ligne dédiée
+        if (!enriched.isPlayable() && !enriched.isAlbum()) {
+            SheetAction(
+                if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
+                if (pinned) "Retirer de l'accès rapide" else "Épingler à l'accès rapide",
+            ) {
+                scope.launch {
+                    pinned = container.quickAccess.toggle(enriched, container.api)
+                    context.toastMain(if (pinned) "Épinglé" else "Retiré de l'accès rapide")
+                    onDismiss()
+                }
             }
         }
 

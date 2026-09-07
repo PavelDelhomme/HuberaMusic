@@ -9,8 +9,8 @@ import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 
 /**
- * Aléatoire : tête en cache (démarrage instantané) + warm #0–2, refresh fond.
- * [sourceKey] ex. "lib:liked", "album:XXX", "home:pins"
+ * Aléatoire avec anti-répétition (évite de rejouer les ~400 derniers ids).
+ * Ne réutilise plus une tête en cache qui figeait les mêmes 12 titres.
  */
 suspend fun playLibraryShuffled(
     container: AppContainer,
@@ -21,27 +21,29 @@ suspend fun playLibraryShuffled(
     val playable = queue.filter { it.isPlayable() && it.id.length == 11 }
     if (playable.isEmpty()) return
     val ctx = YtMusicApp.instance
-    val fp = ShuffleHeadStore.fingerprint(playable)
-    val cacheKey = ShuffleHeadStore.keyFor(sourceKey, fp)
-    val cachedIds = ShuffleHeadStore.loadHead(ctx, cacheKey)
+    val recent = ShuffleHeadStore.loadRecentPlayed(ctx, max = 400).toHashSet()
     val shuffled = withContext(Dispatchers.Default) {
-        if (cachedIds != null) ShuffleHeadStore.applyHead(playable, cachedIds)
-        else playable.shuffled()
+        val fresh = playable.filter { it.id !in recent }
+        val pool = if (fresh.size >= (playable.size / 4).coerceAtLeast(24)) fresh else playable
+        pool.shuffled()
     }
     val base = container.resolvedApiBase()
-    // Son d’abord — warm ne bloque plus le 1er play (latence Aléatoire).
     onPlay(shuffled, 0)
+    ShuffleHeadStore.rememberPlayed(ctx, shuffled.take(1).map { it.id })
     withContext(Dispatchers.IO) {
         runCatching {
             if (base.isNotBlank()) {
                 StreamPrefetcher.warmTrackFormatOnly(base, shuffled.first().id)
                 StreamPrefetcher.warmFormatsLight(base, shuffled.drop(1).take(4).map { it.id }, limit = 4)
             }
-            val next = playable.shuffled().take(12).map { it.id }
-            ShuffleHeadStore.saveHead(ctx, cacheKey, next)
+            // Tête suivante = vrai reshuffle (pas la même tête 45 min)
+            val nextHead = shuffled.drop(1).take(12).map { it.id }
+            val fp = ShuffleHeadStore.fingerprint(playable)
+            val cacheKey = ShuffleHeadStore.keyFor(sourceKey, fp)
+            ShuffleHeadStore.saveHead(ctx, cacheKey, nextHead)
             if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
-                StreamPrefetcher.warmFormatsLight(base, next.take(6), limit = 6)
-                StreamPrefetcher.warmHeads3s(base, next.take(4), limit = 4)
+                StreamPrefetcher.warmFormatsLight(base, nextHead.take(6), limit = 6)
+                StreamPrefetcher.warmHeads3s(base, nextHead.take(4), limit = 4)
             }
         }
     }

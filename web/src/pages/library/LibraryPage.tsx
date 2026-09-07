@@ -162,6 +162,24 @@ export function LibraryPage() {
         <div>
           <p className="mb-4 text-sm text-yt-muted">
             Titres enregistrés dans ta bibliothèque (indépendant des J&apos;aime).
+            {songs.length > 0 && (
+              <>
+                {' '}
+                —{' '}
+                <span className="text-white/80">
+                  {songs.length.toLocaleString('fr-FR')} titre{songs.length > 1 ? 's' : ''}
+                  {(() => {
+                    const sec = songs.reduce(
+                      (a, t) => a + (Number(t.durationSeconds) || 0),
+                      0,
+                    );
+                    if (sec < 60) return null;
+                    const h = sec / 3600;
+                    return ` · ${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
+                  })()}
+                </span>
+              </>
+            )}
           </p>
           {songs.length === 0 ? (
             <p className="text-yt-muted">

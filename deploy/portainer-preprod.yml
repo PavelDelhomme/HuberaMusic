@@ -1,0 +1,89 @@
+# Template Portainer CE — stack PREPROD (beta)
+# Title: YTMusic Preprod
+# Domain: ytmusic-preprod.delhomme.ovh
+#
+# NPM :
+#   Domain           : ytmusic-preprod.delhomme.ovh
+#   Forward Hostname : ytmusic-preprod
+#   Forward Port     : 8787
+#   SSL + Websockets : ON
+# Volume DB séparé de la prod (ne jamais monter ytmusic_data ici).
+
+version: "3.8"
+
+services:
+  ytmusic-preprod:
+    image: ${YTMUSIC_IMAGE:-ghcr.io/paveldelhomme/ytmusic:preprod}
+    container_name: ytmusic-preprod
+    restart: unless-stopped
+    mem_limit: 2g
+    cpus: 1.5
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      APP_ENV: preprod
+      APP_URL: ${APP_URL:-https://ytmusic-preprod.delhomme.ovh}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-14d}
+      AUTH_COOKIE_MS: ${AUTH_COOKIE_MS:-34560000000}
+      COOKIE_SECURE: "1"
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-.delhomme.ovh}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://ytmusic-preprod.delhomme.ovh}
+      AUTH_PRIVATE: ${AUTH_PRIVATE:-1}
+      AUTH_ALLOW_REGISTER: ${AUTH_ALLOW_REGISTER:-0}
+      AUTH_ALLOW_GUEST: ${AUTH_ALLOW_GUEST:-0}
+      AUTH_ALLOWED_EMAILS: ${AUTH_ALLOWED_EMAILS:-dev@delhomme.ovh}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-dev@delhomme.ovh}
+      SEED_EMAIL: ${SEED_EMAIL:-dev@delhomme.ovh}
+      SEED_PASSWORD: ${SEED_PASSWORD:-}
+      AUTH_SEED_SYNC: ${AUTH_SEED_SYNC:-1}
+      YOUTUBE_COOKIES: ${YOUTUBE_COOKIES:-}
+      APK_DOWNLOAD_TOKEN: ${APK_DOWNLOAD_TOKEN:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-ytmusic-preprod.delhomme.ovh}
+      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-https://ytmusic-preprod.delhomme.ovh}
+      WEBAUTHN_ANDROID_ORIGINS: ${WEBAUTHN_ANDROID_ORIGINS:-}
+      ANDROID_SHA256_FINGERPRINTS: ${ANDROID_SHA256_FINGERPRINTS:-}
+      ANDROID_PACKAGE_NAMES: ${ANDROID_PACKAGE_NAMES:-ovh.delhomme.ytmusic.preprod,ovh.delhomme.ytmusic.dev}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-1}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-1}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
+      YTDLP_MAX_CONCURRENT: ${YTDLP_MAX_CONCURRENT:-3}
+      YTDLP_BOT_COOLDOWN_MS: ${YTDLP_BOT_COOLDOWN_MS:-300000}
+      STREAM_WARM_CONCURRENCY: ${STREAM_WARM_CONCURRENCY:-2}
+      STREAM_WARM_BATCH_CAP: ${STREAM_WARM_BATCH_CAP:-8}
+      TASTE_WARM_ENABLED: ${TASTE_WARM_ENABLED:-0}
+      STREAM_HEAD_CACHE: ${STREAM_HEAD_CACHE:-24}
+      STREAM_HEAD_BYTES: ${STREAM_HEAD_BYTES:-1048576}
+      ALLOW_STREAM_UPSTREAM: ${ALLOW_STREAM_UPSTREAM:-}
+      STREAM_UPSTREAM_FALLBACK: ${STREAM_UPSTREAM_FALLBACK:-1}
+    volumes:
+      - ytmusic_preprod_data:/app/data
+    networks:
+      - npm-network
+      - shared
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    labels:
+      # Watchtower : ne pas tirer :latest — image :preprod seulement
+      - com.centurylinklabs.watchtower.enable=true
+
+volumes:
+  ytmusic_preprod_data:
+
+networks:
+  npm-network:
+    external: true
+    name: nginx-proxy-manager_npm-network
+  shared:
+    external: true
+    name: shared-network-copy

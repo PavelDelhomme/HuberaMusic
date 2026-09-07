@@ -803,6 +803,10 @@ interface YtMusicApi {
     @POST("api/pins/sync")
     suspend fun syncPins(@Body body: Map<String, @JvmSuppressWildcards Any?>): PinsResponse
 
+    /** Réordonne les pins (ids = target_id gauche → droite). */
+    @PUT("api/pins/reorder")
+    suspend fun reorderPins(@Body body: Map<String, @JvmSuppressWildcards Any?>): PinsResponse
+
     @DELETE("api/pins/{id}")
     suspend fun removePin(@Path("id") id: String): PinsResponse
 

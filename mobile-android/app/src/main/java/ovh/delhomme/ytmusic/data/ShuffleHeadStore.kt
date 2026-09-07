@@ -63,4 +63,29 @@ object ShuffleHeadStore {
         val rest = all.filter { it.id !in seen }.shuffled()
         return head + rest
     }
+
+    private const val RECENT_KEY = "recent_played_ids"
+    private const val RECENT_MAX = 500
+
+    /** Ids joués récemment (anti-répétition shuffle biblio). */
+    fun loadRecentPlayed(ctx: Context, max: Int = 400): List<String> {
+        val raw = prefs(ctx).getString(RECENT_KEY, null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val id = arr.optString(i)
+                    if (id.length == 11) add(id)
+                }
+            }.take(max)
+        }.getOrDefault(emptyList())
+    }
+
+    fun rememberPlayed(ctx: Context, ids: List<String>) {
+        val add = ids.filter { it.length == 11 }
+        if (add.isEmpty()) return
+        val prev = loadRecentPlayed(ctx, RECENT_MAX)
+        val next = (add + prev).distinct().take(RECENT_MAX)
+        prefs(ctx).edit().putString(RECENT_KEY, JSONArray(next).toString()).apply()
+    }
 }

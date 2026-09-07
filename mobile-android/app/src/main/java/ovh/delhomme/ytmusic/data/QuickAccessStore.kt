@@ -153,7 +153,8 @@ class QuickAccessStore(
                 current.removeAt(idx)
                 nowPinned = false
             } else {
-                current.add(0, track.copy(type = when (track.type) {
+                // Premier épinglé = gauche ; le plus récent = droite (append).
+                current.add(track.copy(type = when (track.type) {
                     "video", null, "" -> "song"
                     else -> track.type
                 }))
@@ -193,5 +194,50 @@ class QuickAccessStore(
             }
         }
         return nowPinned
+    }
+
+    /**
+     * Réordonne localement puis pousse l’ordre au serveur.
+     * [orderedIds] = target ids de gauche (premier épinglé) → droite (plus récent / manuel).
+     */
+    suspend fun reorder(orderedIds: List<String>, api: YtMusicApi? = null) {
+        val email = currentEmail().orEmpty()
+        val idSet = orderedIds.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        if (idSet.isEmpty()) return
+        context.quickAccessStore.edit { prefs ->
+            val current = prefs[key].orEmpty().let { raw ->
+                if (raw.isBlank()) emptyList()
+                else runCatching { adapter.fromJson(raw).orEmpty() }.getOrDefault(emptyList())
+            }
+            val byId = current.associateBy { it.id }
+            val reordered = idSet.mapNotNull { byId[it] }.toMutableList()
+            for (t in current) {
+                if (reordered.none { it.id == t.id }) reordered.add(t)
+            }
+            prefs[key] = adapter.toJson(reordered.take(48))
+            if (email.isNotBlank()) prefs[boundUserKey] = email
+        }
+        if (api != null) {
+            runCatching {
+                val resp = api.reorderPins(mapOf("ids" to idSet))
+                replaceAll(
+                    resp.pins.mapNotNull { pinToTrack(it) }.distinctBy { it.id }.take(48),
+                    boundEmail = email.ifBlank { null },
+                )
+            }.onFailure {
+                // Fallback : replace sync si l’endpoint n’est pas encore déployé
+                runCatching { pushReplaceToApi(api) }
+            }
+        }
+    }
+
+    /** Déplace un pin d’un index à un autre puis sync. */
+    suspend fun move(fromIndex: Int, toIndex: Int, api: YtMusicApi? = null) {
+        val current = pins.first().toMutableList()
+        if (fromIndex !in current.indices) return
+        val item = current.removeAt(fromIndex)
+        val dest = toIndex.coerceIn(0, current.size)
+        current.add(dest, item)
+        reorder(current.map { it.id }, api)
     }
 }

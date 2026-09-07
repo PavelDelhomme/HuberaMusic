@@ -61,23 +61,26 @@ free_port() {
 }
 
 start_server() {
-  echo "  Démarrage API (tsx, détaché) → $LOG"
+  echo "  Démarrage API (tsx + dotenv, détaché) → $LOG"
   cd "$ROOT"
-  # Charge .env dans l’environnement process (JWT_SECRET stable → évite 401 après restart)
-  if [[ -f "$ROOT/.env" ]]; then
-    set -a
-    # shellcheck disable=SC1091
-    source "$ROOT/.env"
-    set +a
-  fi
   {
     echo ""
     echo "==== api start $(date '+%Y-%m-%d %H:%M:%S %z') ===="
   } >>"$LOG"
-  # Nouvelle session : survit à la fermeture du shell parent (Cursor / make)
-  # Évite que $! pointe seulement sur un wrapper npx tué avec le groupe.
-  setsid nohup "$ROOT/node_modules/.bin/tsx" api/src/index.ts >>"$LOG" 2>&1 </dev/null &
-  echo $! >"$PIDFILE"
+  # dotenv via node : évite `source .env` qui casse sur mots de passe avec @ / espaces
+  setsid nohup node -e "
+    require('dotenv').config({ path: '.env' });
+    const { spawn } = require('child_process');
+    const fs = require('fs');
+    const out = fs.openSync('logs/ytmusic-server.log', 'a');
+    const child = spawn('node_modules/.bin/tsx', ['api/src/index.ts'], {
+      env: process.env,
+      detached: true,
+      stdio: ['ignore', out, out],
+    });
+    fs.writeFileSync('logs/ytmusic-server.pid', String(child.pid));
+    child.unref();
+  " >/dev/null 2>&1 &
   disown $! 2>/dev/null || true
   sleep 1.8
   echo "  PID api: $(cat "$PIDFILE" 2>/dev/null || echo '?')"
