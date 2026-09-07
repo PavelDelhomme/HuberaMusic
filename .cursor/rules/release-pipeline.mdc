@@ -1,0 +1,60 @@
+---
+description: Pipeline de release PLM — local → Samsung → dev → Nothing → preprod (beta) → prod
+alwaysApply: true
+---
+
+# Pipeline de release PLM
+
+## Canaux (ne pas mélanger)
+
+| Étape | Git | Serveur | App Android | Compte login | Qui teste |
+|-------|-----|---------|-------------|--------------|-----------|
+| **1. Local** | branche `feat/` / `fix/` / … depuis `dev` | API PC (`:8787` LAN) | **PLM Dev** (`…ytmusic.dev`, `d+`) | `dev@delhomme.ovh` | **Samsung** (et PC) |
+| **2. Intégration** | PR → merge **`dev`** | VPS image **`:dev`** | PLM Dev → API **dev** | `dev@delhomme.ovh` | Samsung, **Nothing**, Blackview |
+| **3. Preprod** | promo depuis `dev` + tag `:preprod` | `ytmusic-preprod…` `APP_ENV=preprod` | **PLM Preprod** (`…preprod`, `b+`) | `dev@` (+ beta allowlist) | Beta uniquement |
+| **4. Prod** | PR **`dev` → `prod`** | `:latest` / `:prod` | **PLM** (`p+`) | **`pavel@delhomme.ovh`** | Tout le monde (perso) |
+
+## Mapping appareil × APK × compte
+
+| Appareil | PLM Dev (`d+`) | PLM Preprod (`b+`) | PLM prod (`p+`) |
+|----------|----------------|--------------------|-----------------|
+| **Samsung** | `dev@` (gate local) | `dev@` (sync check) | `pavel@` (sync check) |
+| **Nothing** | `dev@` (gate après merge `dev`) | `dev@` | **`pavel@`** (quotidien) |
+| **Blackview** | `dev@` | `dev@` | `pavel@` optionnel |
+
+- Admin API / seed : toujours `dev@` (`ADMIN_EMAILS`).
+- Perso prod : `pavel@` (`AUTH_ALLOWED_EMAILS`, pas admin).
+- Secrets : Bitwarden + KeePassXC — **jamais** dans Git (voir `docs/OPS-BACKUP.md`).
+
+## Règles strictes
+
+1. **Jamais** installer / publier **prod** pour valider une feature non testée sur Samsung puis Nothing (canal `dev`).
+2. Travail local + ADB = flavor **`dev`** + `API_BASE_URL=http://<LAN>:8787` (jamais HTTPS prod).
+3. Après merge `dev` : déployer le **serveur `:dev`**, tester Nothing en **dev** — pas de promo `prod`.
+4. Preprod = allowlist emails (`AUTH_ALLOWED_EMAILS` / comptes beta). Pas d’accès public.
+5. Prod uniquement quand les items sont validés en preprod (ou explicitement OK Nothing + Samsung en `dev` si preprod pas encore up).
+
+## Appareils de référence
+
+- **Samsung** (`R5CT7263YJL`) — premier gate local / feature branch
+- **Nothing** — gate après merge `dev` + API serveur `:dev` ; prod quotidienne = `pavel@`
+- **Blackview** — optionnel, même allowlist appareils perso
+
+## Commandes types
+
+```bash
+# Gate 1 — Samsung, branche locale, API LAN
+DEVICE=R5CT7263YJL FLAVOR=dev API_BASE_URL=http://192.168.x.x:8787 make android-install
+
+# Gate 2 — après merge dev + redeploy VPS :dev
+# Nothing en PLM Dev → login dev@
+
+# Gate 3 — preprod
+# FLAVOR=preprod API_BASE_URL=https://ytmusic-preprod.delhomme.ovh make android-install
+# login: dev@
+
+# Gate 4 — prod
+# PR dev→prod + publish APK prod ; Nothing login: pavel@
+```
+
+Ne pas court-circuiter : local → Samsung → `dev` → Nothing → preprod → prod.

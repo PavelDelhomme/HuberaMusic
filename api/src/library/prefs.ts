@@ -640,6 +640,31 @@ export function replacePins(userId: string, items: PinSyncItem[]) {
   return { ...merged, replaced: true };
 }
 
+export function reorderPins(userId: string, orderedTargetIds: string[]) {
+  purgeDuplicatePins(userId);
+  const current = listPins(userId);
+  if (!current.length) return current;
+  const byTarget = new Map(current.map((p) => [String(p.targetId || ''), p]));
+  const seen = new Set<string>();
+  let pos = 0;
+  const update = db.prepare(
+    'UPDATE pins SET position = ? WHERE user_id = ? AND target_id = ?',
+  );
+  for (const raw of orderedTargetIds) {
+    const tid = String(raw || '').trim();
+    if (!tid || seen.has(tid) || !byTarget.has(tid)) continue;
+    seen.add(tid);
+    update.run(pos++, userId, tid);
+  }
+  // Pins absents de la liste demandée : collés à la fin (ordre relatif conservé)
+  for (const p of current) {
+    const tid = String(p.targetId || '');
+    if (!tid || seen.has(tid)) continue;
+    update.run(pos++, userId, tid);
+  }
+  return listPins(userId);
+}
+
 export function removePin(userId: string, pinId: string) {
   db.prepare('DELETE FROM pins WHERE id = ? AND user_id = ?').run(pinId, userId);
   return listPins(userId);

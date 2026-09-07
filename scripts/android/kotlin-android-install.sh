@@ -51,10 +51,11 @@ elif [[ "$API_NORM" == https://* ]] && [[ "$API_NORM" != *127.0.0.1* ]] && [[ "$
 else
   CHANNEL_FLAVOR=dev
 fi
-case "$CHANNEL_FLAVOR" in
+  case "$CHANNEL_FLAVOR" in
   prod) PKG=ovh.delhomme.ytmusic ;;
+  preprod) PKG=ovh.delhomme.ytmusic.preprod ;;
   dev) PKG=ovh.delhomme.ytmusic.dev ;;
-  *) echo "❌ FLAVOR invalide: $CHANNEL_FLAVOR (prod|dev)" >&2; exit 1 ;;
+  *) echo "❌ FLAVOR invalide: $CHANNEL_FLAVOR (prod|preprod|dev)" >&2; exit 1 ;;
 esac
 
 echo "==> MODE=$MODE"

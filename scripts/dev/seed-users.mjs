@@ -3,7 +3,11 @@
  * Crée / met à jour les comptes locaux (email déjà vérifié).
  *
  *   node scripts/dev/seed-users.mjs
- *   # lit SEED_EMAIL / SEED_PASSWORD / SEED_* dans .env
+ *   # lit SEED_* dans .env
+ *
+ * Comptes typiques :
+ *   SEED_EMAIL=dev@…              → admin / test (ADMIN_EMAILS)
+ *   SEED_EMAIL_SECONDARY=pavel@…  → perso prod (mdp distinct via SEED_PASSWORD_SECONDARY)
  */
 import 'dotenv/config';
 import { randomBytes, randomUUID, scryptSync } from 'node:crypto';
@@ -18,8 +22,8 @@ const dataDir = join(ROOT, 'data');
 if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
 const dbPath = process.env.DB_PATH || join(dataDir, 'ytmusic.db');
 
-const password = process.env.SEED_PASSWORD;
-if (!password) {
+const primaryPassword = process.env.SEED_PASSWORD;
+if (!primaryPassword) {
   console.error('SEED_PASSWORD manquant (dans .env ou l’environnement)');
   process.exit(1);
 }
@@ -32,10 +36,33 @@ if (!primaryEmail) {
 const primaryName = (process.env.SEED_NAME || 'Dev').trim() || 'Dev';
 const secondaryEmail = (process.env.SEED_EMAIL_SECONDARY || '').trim().toLowerCase();
 const secondaryName = (process.env.SEED_NAME_SECONDARY || 'User').trim() || 'User';
+/** Mot de passe distinct pour le secondaire (sinon SEED_PASSWORD — déconseillé en prod). */
+const secondaryPassword = (
+  process.env.SEED_PASSWORD_SECONDARY ||
+  process.env.SEED_PASSWORD ||
+  ''
+).trim();
 
-const users = [{ email: primaryEmail, name: primaryName }];
+const users = [{ email: primaryEmail, name: primaryName, password: primaryPassword }];
 if (secondaryEmail && secondaryEmail !== primaryEmail) {
-  users.push({ email: secondaryEmail, name: secondaryName });
+  if (!secondaryPassword) {
+    console.error('SEED_PASSWORD_SECONDARY (ou SEED_PASSWORD) requis pour le compte secondaire');
+    process.exit(1);
+  }
+  if (
+    secondaryPassword === primaryPassword &&
+    process.env.SEED_PASSWORD_SECONDARY
+  ) {
+    console.warn(
+      '!! SEED_PASSWORD_SECONDARY identique à SEED_PASSWORD — préfère un mdp distinct pour pavel@',
+    );
+  }
+  if (!process.env.SEED_PASSWORD_SECONDARY) {
+    console.warn(
+      '!! SEED_PASSWORD_SECONDARY absent — le secondaire réutilise SEED_PASSWORD (à éviter pour pavel@)',
+    );
+  }
+  users.push({ email: secondaryEmail, name: secondaryName, password: secondaryPassword });
 }
 
 function hashPassword(pw) {
@@ -74,12 +101,12 @@ const adminEmails = (process.env.ADMIN_EMAILS || '')
   .filter(Boolean);
 
 const now = Date.now();
-const ph = hashPassword(password);
 
 for (const u of users) {
   const email = u.email.toLowerCase();
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   const isAdmin = adminEmails.includes(email) ? 1 : 0;
+  const ph = hashPassword(u.password);
   if (existing) {
     db.prepare(
       `UPDATE users SET password_hash = ?, name = ?, email_verified = 1, is_admin = ?, updated_at = ? WHERE email = ?`,

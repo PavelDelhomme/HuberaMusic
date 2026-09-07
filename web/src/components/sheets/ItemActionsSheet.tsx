@@ -554,9 +554,76 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
             />
           )}
 
-          {/* 3. Radios */}
+          {/* 3. Accès rapide (après télécharger) */}
+          <Row
+            icon={pinId ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+            label={pinId ? "Retirer de l'accès rapide" : "Épingler à l'accès rapide"}
+            sub={pinId ? 'Sur l’accueil' : undefined}
+            onClick={() =>
+              after(async () => {
+                try {
+                  await togglePin(item);
+                } catch {
+                  /* ignore */
+                }
+              })
+            }
+          />
+
+          {/* 4. File d'attente */}
+          {playable &&
+            (inQueue && !isCurrent ? (
+              <Row
+                icon={<ListMinus className="h-4 w-4" />}
+                label="Supprimer de la file d'attente"
+                onClick={() => after(() => removeFromQueue(absQueueIndex))}
+              />
+            ) : (
+              <Row
+                icon={<ListEnd className="h-4 w-4" />}
+                label="Ajouter à la file d'attente"
+                sub="À la fin de la file prévue"
+                onClick={() => after(() => addToQueue(item))}
+              />
+            ))}
+
+          {/* 5. Album lié */}
+          {playable && albumId && (
+            <Row
+              icon={albumSaved ? <Check className="h-4 w-4" /> : <Library className="h-4 w-4" />}
+              label={
+                albumSaved ? 'Album dans la bibliothèque' : "Enregistrer l'album dans la bibliothèque"
+              }
+              disabled={busy}
+              onClick={() =>
+                after(async () => {
+                  setBusy(true);
+                  try {
+                    if (albumSaved) {
+                      const r = await api.removeAlbum(albumId);
+                      applyLibrary(r.library);
+                    } else {
+                      const r = await api.saveAlbum({
+                        id: albumId,
+                        title: item.album?.name || item.title,
+                        artists: item.artists,
+                        thumbnails: item.thumbnails,
+                        type: 'album',
+                      });
+                      applyLibrary(r.library);
+                    }
+                  } finally {
+                    setBusy(false);
+                  }
+                })
+              }
+            />
+          )}
+
+          {/* 6. Radios (en fin de zone lecture) */}
           {playable && (
             <>
+              <div className="my-1 border-t border-white/10" />
               <Row
                 icon={
                   <Radio
@@ -609,24 +676,7 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
             </>
           )}
 
-          {/* 4. File d'attente */}
-          {playable &&
-            (inQueue && !isCurrent ? (
-              <Row
-                icon={<ListMinus className="h-4 w-4" />}
-                label="Supprimer de la file d'attente"
-                onClick={() => after(() => removeFromQueue(absQueueIndex))}
-              />
-            ) : (
-              <Row
-                icon={<ListEnd className="h-4 w-4" />}
-                label="Ajouter à la file d'attente"
-                sub="À la fin de la file prévue"
-                onClick={() => after(() => addToQueue(item))}
-              />
-            ))}
-
-          {/* 5. Collections / album lié */}
+          {/* 7. Collections album/playlist/artiste (hors titre) */}
           {opts.playlistId && opts.onRemoveFromPlaylist && (
             <Row
               icon={<Trash2 className="h-4 w-4" />}
@@ -682,39 +732,7 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
             />
           )}
 
-          {playable && albumId && (
-            <Row
-              icon={albumSaved ? <Check className="h-4 w-4" /> : <Library className="h-4 w-4" />}
-              label={
-                albumSaved ? 'Album dans la bibliothèque' : "Enregistrer l'album dans la bibliothèque"
-              }
-              disabled={busy}
-              onClick={() =>
-                after(async () => {
-                  setBusy(true);
-                  try {
-                    if (albumSaved) {
-                      const r = await api.removeAlbum(albumId);
-                      applyLibrary(r.library);
-                    } else {
-                      const r = await api.saveAlbum({
-                        id: albumId,
-                        title: item.album?.name || item.title,
-                        artists: item.artists,
-                        thumbnails: item.thumbnails,
-                        type: 'album',
-                      });
-                      applyLibrary(r.library);
-                    }
-                  } finally {
-                    setBusy(false);
-                  }
-                })
-              }
-            />
-          )}
-
-          {/* 6. Divers */}
+          {/* 8. Divers */}
           {playable && onOpenEqualizer && isCurrentPlaying && (
             <Row
               icon={<SlidersHorizontal className="h-4 w-4" />}
@@ -727,21 +745,6 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
               }
             />
           )}
-
-          <Row
-            icon={pinId ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-            label={pinId ? 'Épinglé — retirer' : "Épingler à l'accès rapide"}
-            sub={pinId ? 'Sur l’accueil' : undefined}
-            onClick={() =>
-              after(async () => {
-                try {
-                  await togglePin(item);
-                } catch {
-                  /* ignore */
-                }
-              })
-            }
-          />
 
           <Row
             icon={receiveRemoteSync ? <Unlink className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}

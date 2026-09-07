@@ -321,6 +321,7 @@ type PersistedPlayer = {
   progress: number;
   /** Durée en secondes — pour la barre de progression dès le reload (sans attendre Play). */
   duration?: number;
+  playbackSpeed?: number;
   savedAt?: number;
 };
 
@@ -405,6 +406,7 @@ function persistPlayer() {
       repeat: s.repeat,
       progress,
       duration: durationSec > 0 ? durationSec : undefined,
+      playbackSpeed: s.playbackSpeed || 1,
       savedAt: Date.now(),
     };
 
@@ -431,6 +433,7 @@ function persistPlayer() {
         repeat: s.repeat,
         progress,
         duration: durationSec > 0 ? durationSec : undefined,
+        playbackSpeed: s.playbackSpeed || 1,
         savedAt: Date.now(),
       };
       localStorage.setItem(PLAYER_STORAGE_KEY, JSON.stringify(compact));
@@ -1655,6 +1658,10 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         typeof saved.volume === 'number' && saved.volume > 0.02 ? saved.volume : 0.9,
       shuffle: Boolean(saved.shuffle),
       repeat: saved.repeat || 'off',
+      playbackSpeed:
+        typeof saved.playbackSpeed === 'number' && saved.playbackSpeed >= 0.5
+          ? Math.min(2, saved.playbackSpeed)
+          : 1,
       progress,
       duration: durationSeed,
       isPlaying: false,
@@ -2309,6 +2316,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     if (audioEl) audioEl.playbackRate = speed;
     if (standbyEl) standbyEl.playbackRate = speed;
     set({ playbackSpeed: speed });
+    persistPlayer();
   },
 
   toggleShuffle: () => {

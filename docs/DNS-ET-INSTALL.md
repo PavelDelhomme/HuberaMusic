@@ -14,11 +14,20 @@ Dans le manager OVH → Domaines → `delhomme.ovh` → Zone DNS :
 | **A** | `ytmusic` | IP publique du VPS (ex. `95.111.227.204`) | 300 ou défaut |
 | ou **CNAME** | `ytmusic` | le même hôte que Nextcloud / NPM | 300 |
 
-Optionnel préprod :
+Optionnel préprod (à créer / vérifier) :
 
 | Type | Nom | Cible |
 |------|-----|--------|
-| A/CNAME | `ytmusic-preprod` | même VPS (autre stack Portainer) |
+| A/CNAME | `ytmusic-preprod` | même VPS (stack Portainer **séparée**) |
+
+### NPM preprod (checklist)
+
+1. Proxy Host : `ytmusic-preprod.delhomme.ovh`
+2. Forward : `http://ytmusic-preprod:8787` (conteneur `deploy/portainer-preprod.yml`)
+3. SSL Let’s Encrypt + Force SSL + **Websockets** ON
+4. Env : `deploy/stack.env.preprod.example` → Portainer (JWT/SMTP **distincts** de la prod)
+5. Image : `ghcr.io/…/ytmusic:preprod` (Actions → workflow_dispatch `tag_preprod`)
+6. Ne pas monter le volume `ytmusic_data` (prod) sur preprod
 
 Vérifie :
 

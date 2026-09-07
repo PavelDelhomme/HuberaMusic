@@ -1,5 +1,5 @@
 ---
-description: Conventions Git — branches prod/dev et préfixes feat/misc/err/tests
+description: Conventions Git — branches prod/dev/preprod et préfixes feat/misc/err/tests
 alwaysApply: true
 ---
 
@@ -10,9 +10,12 @@ alwaysApply: true
 | Branche | Rôle |
 |---------|------|
 | **`prod`** | Production (défaut GitHub). Images `:latest` / `:prod`. Ne jamais committer du WIP ici. |
-| **`dev`** | Intégration web/mobile/desktop en mode développement. Image `:dev`. |
+| **`dev`** | Intégration web/mobile/desktop. Image `:dev`. Tests serveur + apps sur appareils perso (Samsung / Nothing / Blackview). |
+| **preprod** (stack / tags) | Validation beta (`APP_ENV=preprod`, allowlist emails). Pas de WIP direct — promo depuis `dev` validé. |
 
 Travail courant = toujours depuis **`dev`**, jamais directement sur `prod`.
+
+Voir aussi **release-pipeline.mdc** (local → Samsung → `dev` → Nothing → preprod → prod).
 
 ## Branches de travail (depuis `dev`)
 
@@ -33,15 +36,16 @@ Créer une branche courte-lived avec un préfixe :
 - kebab-case après le préfixe : `feat/ma-feature`
 - Pas d’espaces, pas d’accents, pas de majuscules inutiles
 - Une branche = un sujet ; merger via PR vers **`dev`**
-- Promo prod : PR **`dev` → `prod`** uniquement
+- Promo prod : PR **`dev` → `prod`** uniquement (après validation preprod / gate Nothing)
 
 ### Exemples
 
 ```bash
 git checkout dev && git pull
 git checkout -b feat/cast-session
-# … commits …
-# PR → dev, puis plus tard merge dev → prod
+# … commits … test Samsung (PLM Dev / LAN)
+# PR → dev → redeploy :dev → test Nothing
+# puis preprod (beta) → PR dev → prod
 ```
 
 ## CI / images

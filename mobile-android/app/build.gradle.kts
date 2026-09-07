@@ -112,6 +112,20 @@ fun resolveProdApiBase(): String {
     }
 }
 
+/** API HTTPS preprod (beta) — défaut ytmusic-preprod / override -PAPI_BASE_URL. */
+fun resolvePreprodApiBase(): String {
+    val fromProp = (project.findProperty("API_BASE_URL") as String?)?.trim()?.trimEnd('/').orEmpty()
+    if (fromProp.startsWith("https://") &&
+        !fromProp.contains("127.0.0.1") &&
+        !fromProp.contains("localhost")
+    ) {
+        return fromProp
+    }
+    val fromEnv = rootEnv["PREPROD_API_URL"]?.trim()?.trimEnd('/').orEmpty()
+    if (fromEnv.startsWith("https://")) return fromEnv
+    return "https://ytmusic-preprod.delhomme.ovh"
+}
+
 android {
     namespace = "ovh.delhomme.ytmusic"
     compileSdk = 35
@@ -134,9 +148,10 @@ android {
         buildConfigField("String", "PUBLIC_API_URL", "\"${escBuildConfig(publicApiBase)}\"")
     }
 
-    // Deux APK côte à côte sur le même téléphone :
-    //   prod → ovh.delhomme.ytmusic      (PLM)   · p+ · API HTTPS
-    //   dev  → ovh.delhomme.ytmusic.dev  (PLM Dev) · d+ · API LAN
+    // Trois APK côte à côte sur le même téléphone :
+    //   prod    → ovh.delhomme.ytmusic         (PLM)        · p+ · API HTTPS prod
+    //   preprod → ovh.delhomme.ytmusic.preprod (PLM Preprod)· b+ · API HTTPS preprod (beta)
+    //   dev     → ovh.delhomme.ytmusic.dev     (PLM Dev)    · d+ · API LAN / serveur :dev
     flavorDimensions += "channel"
     productFlavors {
         create("prod") {
@@ -149,6 +164,19 @@ android {
             buildConfigField("String", "DEV_EMAIL", "\"\"")
             buildConfigField("String", "DEV_PASSWORD", "\"\"")
             buildConfigField("String", "APP_CHANNEL", "\"p\"")
+            buildConfigField("String", "APP_VERSION_LABEL", "\"${escBuildConfig(versionName!!)}\"")
+        }
+        create("preprod") {
+            dimension = "channel"
+            applicationIdSuffix = ".preprod"
+            resValue("string", "app_name", "PLM Preprod")
+            manifestPlaceholders["usesCleartext"] = "false"
+            val api = resolvePreprodApiBase()
+            versionName = "b+$appSemver"
+            buildConfigField("String", "API_BASE_URL", "\"${escBuildConfig(api)}\"")
+            buildConfigField("String", "DEV_EMAIL", "\"\"")
+            buildConfigField("String", "DEV_PASSWORD", "\"\"")
+            buildConfigField("String", "APP_CHANNEL", "\"b\"")
             buildConfigField("String", "APP_VERSION_LABEL", "\"${escBuildConfig(versionName!!)}\"")
         }
         create("dev") {

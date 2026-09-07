@@ -355,6 +355,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun saveMix(categoryId: String, title: String, covers: List<TrackDto>) {
+        // Upsert optimiste — le filtre Mixes se rafraîchit via libraryEpoch
+        _state.value = _state.value.copy(
+            savedMixIds = _state.value.savedMixIds + categoryId,
+        )
+        container.bumpLibraryEpoch()
         viewModelScope.launch {
             runCatching {
                 container.ensureFreshToken()
@@ -366,8 +371,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         "tracks" to covers,
                     ),
                 )
+                container.bumpLibraryEpoch()
+            }.onFailure {
                 _state.value = _state.value.copy(
-                    savedMixIds = _state.value.savedMixIds + categoryId,
+                    savedMixIds = _state.value.savedMixIds - categoryId,
                 )
                 container.bumpLibraryEpoch()
             }
@@ -376,13 +383,18 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Retire uniquement l’entrée mix (library_mixes) — ne touche pas aux titres déjà en biblio. */
     fun removeMix(categoryId: String) {
+        val prev = _state.value.savedMixIds
+        _state.value = _state.value.copy(
+            savedMixIds = prev - categoryId,
+        )
+        container.bumpLibraryEpoch()
         viewModelScope.launch {
             runCatching {
                 container.ensureFreshToken()
                 container.api.removeMix(categoryId)
-                _state.value = _state.value.copy(
-                    savedMixIds = _state.value.savedMixIds - categoryId,
-                )
+                container.bumpLibraryEpoch()
+            }.onFailure {
+                _state.value = _state.value.copy(savedMixIds = prev)
                 container.bumpLibraryEpoch()
             }
         }

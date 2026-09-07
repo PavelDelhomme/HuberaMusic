@@ -179,6 +179,7 @@ import {
   listWeights,
   mergePins,
   replacePins,
+  reorderPins,
   recoAdminStats,
   recordListenEvent,
   removePin,
@@ -2007,6 +2008,19 @@ app.post('/api/pins/sync', accountRequired, (req, res) => {
   const result =
     mode === 'replace' ? replacePins(req.userId!, items) : mergePins(req.userId!, items);
   res.json({ ok: true, mode: mode === 'replace' ? 'replace' : 'merge', ...result });
+});
+
+/** Réordonne l’Accès rapide : ids = target_id dans l’ordre gauche → droite. */
+app.put('/api/pins/reorder', accountRequired, (req, res) => {
+  const raw = Array.isArray(req.body?.ids)
+    ? req.body.ids
+    : Array.isArray(req.body?.targetIds)
+      ? req.body.targetIds
+      : Array.isArray(req.body)
+        ? req.body
+        : [];
+  const ids = raw.map((x: unknown) => String(x || '').trim()).filter(Boolean);
+  res.json({ pins: reorderPins(req.userId!, ids) });
 });
 
 app.delete('/api/pins/:id', accountRequired, (req, res) => {

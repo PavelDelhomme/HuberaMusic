@@ -89,6 +89,8 @@ type PinsState = {
     title?: string;
     [k: string]: unknown;
   }) => Promise<'pinned' | 'unpinned'>;
+  /** Réordonne gauche → droite (premier épinglé = index 0). */
+  reorderPins: (orderedTargetIds: string[]) => Promise<void>;
   clearLocal: () => void;
 };
 
@@ -185,6 +187,38 @@ export const usePins = create<PinsState>((set, get) => ({
       /* pin OK même si biblio échoue */
     }
     return 'pinned';
+  },
+  reorderPins: async (orderedTargetIds) => {
+    const userId = currentUserId();
+    const ids = orderedTargetIds.map((x) => String(x || '').trim()).filter(Boolean);
+    if (!ids.length) return;
+    // Optimistic local order
+    const byTid = new Map(
+      get().pins.map((p) => [String(p.targetId || p.id || ''), p] as const),
+    );
+    const next: PinRow[] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      const row = byTid.get(id);
+      if (!row || seen.has(id)) continue;
+      seen.add(id);
+      next.push(row);
+    }
+    for (const p of get().pins) {
+      const tid = String(p.targetId || p.id || '');
+      if (!tid || seen.has(tid)) continue;
+      next.push(p);
+    }
+    if (userId) writePinsCache(userId, next);
+    set({ pins: next, loaded: true, boundUserId: userId || null });
+    try {
+      const r = await api.reorderPins(ids);
+      const pins = dedupePinRows((r.pins || []) as PinRow[]);
+      if (userId) writePinsCache(userId, pins);
+      set({ pins, loaded: true, boundUserId: userId || null });
+    } catch {
+      /* garde l’ordre optimistic ; refresh ultérieur */
+    }
   },
 }));
 

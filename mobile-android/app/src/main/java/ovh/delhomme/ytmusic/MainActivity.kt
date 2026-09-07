@@ -1468,9 +1468,8 @@ private fun MainTabs(
                                 player.stopAndClear()
                             },
                             onSeek = { ratio ->
-                                val dur = playerUi.durationMs
-                                if (dur > 0) player.seek((ratio * dur).toLong())
-                            },
+                player.seekRatio(ratio)
+            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(MaterialTheme.colorScheme.surfaceVariant),

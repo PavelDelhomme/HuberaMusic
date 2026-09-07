@@ -46,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -375,6 +376,34 @@ fun LibraryScreen(
                     }
                 }
                 val listState = rememberLazyListState()
+                // Fenêtre progressive (~180 puis +150) — évite de composer 14k items d’un coup
+                var windowLimit by remember(selected) {
+                    mutableIntStateOf(180.coerceAtMost(content.rows.size.coerceAtLeast(0)))
+                }
+                LaunchedEffect(selected) {
+                    windowLimit = 180.coerceAtMost(content.rows.size.coerceAtLeast(0))
+                    listState.scrollToItem(0)
+                }
+                LaunchedEffect(content.rows.size) {
+                    if (content.rows.size <= 250) {
+                        windowLimit = content.rows.size
+                    } else if (windowLimit < 180) {
+                        windowLimit = 180.coerceAtMost(content.rows.size)
+                    }
+                }
+                LaunchedEffect(listState, content.rows.size, selected) {
+                    snapshotFlow {
+                        listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                    }
+                        .distinctUntilChanged()
+                        .collect { lastVisible ->
+                            val total = content.rows.size
+                            if (total <= 250) return@collect
+                            if (lastVisible >= windowLimit - 40 && windowLimit < total) {
+                                windowLimit = (windowLimit + 150).coerceAtMost(total)
+                            }
+                        }
+                }
                 LaunchedEffect(selected, content.playableQueue) {
                     snapshotFlow {
                         listState.firstVisibleItemIndex to listState.layoutInfo.visibleItemsInfo.size
@@ -468,7 +497,10 @@ fun LibraryScreen(
                                     )
                                 }
                             }
-                            itemsIndexed(content.rows, key = { i, r -> "${selected.name}-${r.id}-$i" }) { _, row ->
+                            val rowsWindow =
+                                if (content.rows.size > 250) content.rows.take(windowLimit)
+                                else content.rows
+                            itemsIndexed(rowsWindow, key = { i, r -> "${selected.name}-${r.id}-$i" }) { _, row ->
                                 TrackRow(
                                     track = row,
                                     onClick = {
@@ -499,6 +531,16 @@ fun LibraryScreen(
                                         }
                                     },
                                 )
+                            }
+                            if (content.rows.size > rowsWindow.size) {
+                                item {
+                                    Text(
+                                        "Affichés ${rowsWindow.size} / ${content.rows.size} — continue de scroller",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                    )
+                                }
                             }
                             item {
                                 Spacer(Modifier.height(12.dp))
@@ -602,9 +644,16 @@ private fun buildLibraryContent(
 ): LibraryContent {
     fun az(tracks: List<TrackDto>) = tracks.sortedBy { it.title.lowercase() }
 
-    fun playlistKey(id: String): String =
-        id.removePrefix("local:").lowercase()
-
+    fun playlistKey(id: String): String {
+        val raw = id.removePrefix("local:").lowercase()
+        // UUID local miroir d’une playlist YT → privilégier PL… si présent dans le titre n/a ;
+        // dédup : strip tirets UUID pour coller les miroirs faux-doublons.
+        return if (raw.matches(Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))) {
+            "uuid:$raw"
+        } else {
+            raw
+        }
+    }
     fun playlistAsTrack(pl: PlaylistDto): TrackDto =
         TrackDto(
             id = if (pl.id.startsWith("local:")) pl.id else "local:${pl.id}",
@@ -722,7 +771,10 @@ private fun buildLibraryContent(
             val rows = sorted?.playlists ?: buildList {
                 addAll(data.playlists.map { playlistAsTrack(it) })
                 addAll(data.likedPlaylists.map { likedPlaylistAsTrack(it) })
-            }.distinctBy { playlistKey(it.id) }.sortedBy { it.title.lowercase() }
+            }.distinctBy {
+                val title = it.title.trim().lowercase()
+                if (title.length >= 2) "t:$title" else playlistKey(it.id)
+            }.sortedBy { it.title.lowercase() }
             LibraryContent(
                 headline = if (rows.isEmpty()) "Playlists · A–Z" else "Playlists · ${rows.size}",
                 rows = rows,
