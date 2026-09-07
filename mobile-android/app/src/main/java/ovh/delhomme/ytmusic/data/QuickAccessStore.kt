@@ -43,6 +43,34 @@ class QuickAccessStore(
 
     suspend fun isPinned(id: String): Boolean = pins.first().any { it.id == id }
 
+    /** Vrai si l’un des ids candidats (route / cover / browse) est déjà épinglé. */
+    suspend fun isPinnedAny(vararg ids: String): Boolean {
+        val set = ids.map { it.trim() }.filter { it.isNotBlank() }.toHashSet()
+        if (set.isEmpty()) return false
+        return pins.first().any { it.id in set }
+    }
+
+    /**
+     * Toggle en tenant compte des alias d’id (album browse vs payload cover).
+     * Si un pin existe sous un alias → on le retire ; sinon on épingle [preferred].
+     */
+    suspend fun toggleMatching(
+        preferred: TrackDto,
+        alternateIds: List<String> = emptyList(),
+        api: YtMusicApi? = null,
+    ): Boolean {
+        val candidates = (listOf(preferred.id) + alternateIds)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val existing = pins.first().firstOrNull { it.id in candidates }
+        return if (existing != null) {
+            toggle(existing, api)
+        } else {
+            toggle(preferred, api)
+        }
+    }
+
     suspend fun clear() {
         context.quickAccessStore.edit { prefs ->
             prefs.remove(key)

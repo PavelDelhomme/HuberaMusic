@@ -487,7 +487,10 @@ export function AlbumPage() {
   const startRadio = usePlayer((s) => s.startRadio);
   const { hasAlbum, applyLibrary } = useLibrary();
   const togglePin = usePins((s) => s.togglePin);
-  const isPinned = usePins((s) => s.pins.some((p) => p.targetId === id));
+  const albumPinId = data?.album?.id || id;
+  const isPinned = usePins(
+    (s) => s.isPinned(id) || s.isPinned(albumPinId) || s.pins.some((p) => p.targetId === id || p.id === id),
+  );
   const openItemActions = useItemActions((s) => s.open);
   const [radioBusy, setRadioBusy] = useState(false);
   const [radioToast, setRadioToast] = useState<string | null>(null);

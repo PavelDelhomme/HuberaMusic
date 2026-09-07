@@ -1531,6 +1531,11 @@ private fun MainTabs(
                             launchSingleTop = true
                         }
                     },
+                    onOpenQuickAccess = {
+                        nav.navigate("quick_access") {
+                            launchSingleTop = true
+                        }
+                    },
                     onMoreMix = { id, title, covers ->
                         menuTrack = TrackDto(
                             id = id,
@@ -1584,6 +1589,15 @@ private fun MainTabs(
                     container = container,
                     onBack = { nav.popBackStack() },
                     onPlay = onPlayTracks,
+                    onOpenDetail = ::openDetail,
+                )
+            }
+            composable("quick_access") {
+                ovh.delhomme.ytmusic.ui.quickaccess.QuickAccessScreen(
+                    container = container,
+                    onBack = { nav.popBackStack() },
+                    onPlay = onPlayTracks,
+                    onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenDetail = ::openDetail,
                 )
             }

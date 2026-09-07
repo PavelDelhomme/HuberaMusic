@@ -125,7 +125,8 @@ fun TrackActionsSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val maxSheetBody = (LocalConfiguration.current.screenHeightDp * 0.72f).dp
     var enriched by remember(track.id) { mutableStateOf(track) }
-    var pinned by remember { mutableStateOf(false) }
+    val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
+    val pinned = remember(pins, enriched.id) { pins.any { it.id == enriched.id } }
     var showSleep by remember { mutableStateOf(false) }
     var downloaded by remember { mutableStateOf(false) }
     var wasDownloading by remember { mutableStateOf(false) }
@@ -176,7 +177,6 @@ fun TrackActionsSheet(
 
     LaunchedEffect(track.id) {
         enriched = track
-        pinned = container.quickAccess.isPinned(track.id)
         liked = track.id in likedIds
         songInLibrary = track.id in likedIds
         albumInLibrary = false
@@ -537,8 +537,8 @@ fun TrackActionsSheet(
                     if (pinned) "Retirer accès rapide" else "Accès rapide",
                 ) {
                     scope.launch {
-                        pinned = container.quickAccess.toggle(enriched, container.api)
-                        context.toastMain(if (pinned) "Épinglé" else "Retiré de l'accès rapide")
+                        val nowPinned = container.quickAccess.toggle(enriched, container.api)
+                        context.toastMain(if (nowPinned) "Épinglé" else "Retiré de l'accès rapide")
                         onDismiss()
                     }
                 }
@@ -895,8 +895,8 @@ fun TrackActionsSheet(
                     if (pinned) "Retirer accès rapide" else "Accès rapide",
                 ) {
                     scope.launch {
-                        pinned = container.quickAccess.toggle(enriched, container.api)
-                        context.toastMain(if (pinned) "Épinglé" else "Retiré de l'accès rapide")
+                        val nowPinned = container.quickAccess.toggle(enriched, container.api)
+                        context.toastMain(if (nowPinned) "Épinglé" else "Retiré de l'accès rapide")
                         onDismiss()
                     }
                 }
@@ -968,8 +968,8 @@ fun TrackActionsSheet(
                 if (pinned) "Retirer de l'accès rapide" else "Épingler à l'accès rapide",
             ) {
                 scope.launch {
-                    pinned = container.quickAccess.toggle(enriched, container.api)
-                    context.toastMain(if (pinned) "Épinglé" else "Retiré de l'accès rapide")
+                    val nowPinned = container.quickAccess.toggle(enriched, container.api)
+                    context.toastMain(if (nowPinned) "Épinglé" else "Retiré de l'accès rapide")
                     onDismiss()
                 }
             }
