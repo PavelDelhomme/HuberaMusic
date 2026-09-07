@@ -95,6 +95,7 @@ fun HomeScreen(
     onOpenArtist: ((String?, String) -> Unit)? = null,
     onOpenAccount: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
+    onOpenQuickAccess: () -> Unit = {},
     onMoreMix: ((id: String, title: String, covers: List<TrackDto>) -> Unit)? = null,
     vm: HomeViewModel = viewModel(factory = HomeViewModel.factory(container)),
 ) {
@@ -220,6 +221,7 @@ fun HomeScreen(
                                 container.quickAccess.toggle(track, container.api)
                             }
                         },
+                        onOpenAll = onOpenQuickAccess,
                     )
                 }
 
@@ -563,6 +565,7 @@ private fun QuickAccessHomeCard(
     onMore: (TrackDto) -> Unit,
     onPlayNamed: (List<TrackDto>, Int, String) -> Unit,
     onUnpin: (TrackDto) -> Unit,
+    onOpenAll: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var shuffleBusy by remember { mutableStateOf(false) }
@@ -595,8 +598,15 @@ private fun QuickAccessHomeCard(
                 "Accès rapide",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onOpenAll),
             )
+            if (pins.isNotEmpty()) {
+                TextButton(onClick = onOpenAll) {
+                    Text("Tout voir")
+                }
+            }
             if (pins.size > 1) {
                 IconButton(
                     onClick = { showReorder = true },

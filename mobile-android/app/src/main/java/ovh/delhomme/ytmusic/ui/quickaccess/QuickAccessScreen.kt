@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,26 +39,38 @@ import ovh.delhomme.ytmusic.ui.components.TrackRow
 @Composable
 fun QuickAccessScreen(
     container: AppContainer,
+    onBack: () -> Unit = {},
     onPlay: (List<TrackDto>, Int) -> Unit,
     onMore: (TrackDto) -> Unit,
     onOpenDetail: (TrackDto) -> Unit = {},
 ) {
+    // Flux DataStore live — même source que le carrousel Accueil (pas de snapshot figé)
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
 
     Column(Modifier.fillMaxSize()) {
-        Text(
-            "Accès rapide",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(16.dp),
-        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+            }
+            Text(
+                "Accès rapide",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+        }
         Text(
             "Premier épinglé en haut / à gauche · glisse la poignée pour réordonner",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
         )
 
         if (pins.isEmpty()) {
@@ -72,7 +86,7 @@ fun QuickAccessScreen(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    "Utilise « Épingler dans l'accès rapide » sur un titre.",
+                    "Utilise « Épingler dans l'accès rapide » sur un titre, album ou playlist.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
@@ -142,6 +156,12 @@ fun QuickAccessScreen(
                                 }
                             },
                             onMore = { onMore(track) },
+                            pinned = true,
+                            onTogglePin = {
+                                scope.launch {
+                                    container.quickAccess.toggle(track, container.api)
+                                }
+                            },
                             modifier = Modifier.weight(1f),
                         )
                     }

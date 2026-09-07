@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-07",
   "versions": [
     {
+      "version": "1.3.177",
+      "date": "2026-09-07",
+      "title": "Accès rapide : désépingler partout",
+      "notes": [
+        "Album / playlist déjà épinglés : tu peux les retirer depuis la page détail (bouton Épinglé + menu ⋮ « Retirer »)",
+        "Page Accès rapide (Tout voir) : liste live, désépinglage et réordonnancement — plus seulement le carrousel Accueil",
+        "Web album : même détection d’épinglage (id route + id album)"
+      ]
+    },
+    {
       "version": "1.3.176",
       "date": "2026-09-07",
       "title": "Seek, Accès rapide, lecture plus stable",
