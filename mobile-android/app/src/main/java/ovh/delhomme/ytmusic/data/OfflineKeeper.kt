@@ -59,9 +59,9 @@ class OfflineKeeper(
     private suspend fun tick(reason: String) = tickMutex.withLock {
         if (!NetworkMonitor.isOnline()) return
         if (StreamPrefetcher.isStreamDown()) {
-            // Ne pas empiler des DL pendant 502/timeout — annule les jobs fantômes.
-            val n = downloadManager.cancelAll()
-            if (n > 0) AppLog.w("OfflineKeeper", "stream down — cancelAll=$n")
+            // Ne pas empiler des DL ahead pendant 502/timeout — garde les clics user.
+            val n = downloadManager.cancelOpportunistic()
+            if (n > 0) AppLog.w("OfflineKeeper", "stream down — cancelOpportunistic=$n")
             return
         }
         if (!BatterySaver.allowBackgroundDownloads()) {

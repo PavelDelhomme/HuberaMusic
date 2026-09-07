@@ -381,7 +381,7 @@ class PlaybackService : MediaSessionService() {
                 // Libère bande : coupe prefetch / DL pendant recovery.
                 StreamPrefetcher.quietPrefetch(8_000L)
                 StreamPrefetcher.cancelIdle(preserveNext = false)
-                runCatching { YtMusicApp.instance.container.downloadManager.cancelAll() }
+                runCatching { YtMusicApp.instance.container.downloadManager.cancelOpportunistic() }
                 scope.launch {
                     runCatching {
                         YtMusicApp.instance.container.invalidateStreamUrlCache(curId)
@@ -632,7 +632,7 @@ class PlaybackService : MediaSessionService() {
                     }
                     // Reprise lecture : libère la bande (Mon Mix / ahead offline).
                     runCatching {
-                        YtMusicApp.instance.container.downloadManager.cancelAll()
+                        YtMusicApp.instance.container.downloadManager.cancelOpportunistic()
                     }
                 } else if (player.playbackState == Player.STATE_IDLE) {
                     audioFocus?.abandon(force = true)
@@ -881,7 +881,7 @@ class PlaybackService : MediaSessionService() {
                     StreamPrefetcher.markStreamDown(90_000L)
                     StreamPrefetcher.cancelIdle()
                     runCatching {
-                        ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.cancelAll()
+                        ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.cancelOpportunistic()
                     }
                 } else {
                     // Laisse le titre courant retenter : coupe seulement le bruit (LibHeads / prefetch suite).
@@ -2151,7 +2151,7 @@ class PlaybackService : MediaSessionService() {
         val nextId = ids.getOrNull(fromIndex + 1)
         StreamPrefetcher.cancelIdle(preserveNext = true)
         runCatching {
-            YtMusicApp.instance.container.downloadManager.cancelAll()
+            YtMusicApp.instance.container.downloadManager.cancelOpportunistic()
         }
         if (nextId != null && nextId.length == 11) {
             PlayerCache.pinTrack(nextId)

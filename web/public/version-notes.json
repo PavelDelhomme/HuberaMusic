@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-07",
   "versions": [
     {
+      "version": "1.3.180",
+      "date": "2026-09-07",
+      "title": "Téléchargement qui survit au seek",
+      "notes": [
+        "Un seek / rebuffer pendant l’écoute ne coupe plus un téléchargement que tu as lancé (icône ou menu ⋮)",
+        "Seuls les préchargements automatiques (file / mix) sont mis en pause pour libérer la bande",
+        "En cas de hic réseau, le DL demandé attend et réessaie au lieu d’abandonner"
+      ]
+    },
+    {
       "version": "1.3.179",
       "date": "2026-09-07",
       "title": "Téléchargé : clic = supprimer",

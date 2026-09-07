@@ -328,7 +328,7 @@ object StreamPrefetcher {
         // Coupe le bruit biblio mais préserve un éventuel +1 déjà en cache.
         cancelIdle(preserveNext = true)
         runCatching {
-            YtMusicApp.instance.container.downloadManager.cancelAll()
+            YtMusicApp.instance.container.downloadManager.cancelOpportunistic()
         }
         val app = YtMusicApp.instance
         // 1) Format sync puis tête ~10–12 s (priorité absolue)
