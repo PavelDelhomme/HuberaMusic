@@ -31,6 +31,8 @@ class OfflineDownloadManager(
     private val ensureToken: suspend () -> Unit,
     private val notifyServer: suspend (trackId: String) -> Unit,
     private val warmStream: (suspend (trackId: String) -> Unit)? = null,
+    /** URL avec retry/offline — invalide le format DASH côté API. */
+    private val streamUrlForAttempt: ((trackId: String, attempt: Int) -> String)? = null,
     /** 2 max : 1 laissait les albums coincés à 2 % derrière un warm bloqué. */
     private val maxConcurrent: Int = 2,
 ) {
@@ -206,7 +208,9 @@ class OfflineDownloadManager(
                         } else if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
                             return@withPermit
                         }
-                        val result = offlineStore.download(track, streamUrl(track.id)) { p ->
+                        val url = streamUrlForAttempt?.invoke(track.id, attempt - 1)
+                            ?: streamUrl(track.id)
+                        val result = offlineStore.download(track, url) { p ->
                             _progress.update { cur ->
                                 cur + (track.id to p.coerceIn(0.08f, 0.99f))
                             }
@@ -217,16 +221,24 @@ class OfflineDownloadManager(
                         }
                         lastFail = result.exceptionOrNull()
                         val msg = lastFail?.message.orEmpty()
-                        if (
+                        val dashOrFtyp =
                             msg.contains("DASH", ignoreCase = true) ||
-                            msg.contains("pas de ftyp", ignoreCase = true) ||
-                            msg.contains("Conteneur", ignoreCase = true)
-                        ) {
+                                msg.contains("pas de ftyp", ignoreCase = true) ||
+                                msg.contains("Conteneur", ignoreCase = true)
+                        if (dashOrFtyp && attempt < 4) {
+                            // Ne pas permanentFail : retry avec ?offline=1&retry=N (fichier disque / 140).
+                            AppLog.w(
+                                "offline",
+                                "user/opportunistic DL format KO ${track.id} attempt=$attempt — progressive retry",
+                            )
+                            delay(1_200L * attempt)
+                            continue
+                        }
+                        if (dashOrFtyp) {
                             permanentFail.add(track.id)
                             throw lastFail ?: Exception(msg)
                         }
                         if (priority == Priority.User && isStreamInfraFailure(lastFail ?: Exception(msg))) {
-                            // Ne tue pas les autres DL user — pause courte puis retry.
                             AppLog.w(
                                 "offline",
                                 "user DL infra ${track.id} attempt=$attempt — wait/retry",
