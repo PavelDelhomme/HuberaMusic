@@ -83,7 +83,7 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const queueIndex = usePlayer((s) => s.queueIndex);
   const currentId = queue[queueIndex]?.id;
   const isCurrentPlaying = !!item && item.id === currentId;
-  const { isLiked, isInLibrary, toggleLike, toggleLibrarySong, playlists, addToPlaylist, createPlaylist, hasAlbum, hasArtist, hasMix, saveMix, removeMix, isPlaylistLiked, applyLibrary, downloaded, refresh } =
+  const { isLiked, isInLibrary, toggleLike, toggleLibrarySong, playlists, addToPlaylist, createPlaylist, hasAlbum, hasArtist, hasMix, saveMix, removeMix, isPlaylistLiked, applyLibrary, downloaded, refresh, loaded } =
     useLibrary();
   const pinId = usePins((s) => (item ? s.pinIdFor(item.id) : null));
   const togglePin = usePins((s) => s.togglePin);
@@ -117,30 +117,33 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
     setPlaylistMsg('');
     setNewPlaylistName('');
     setCreatingPlaylist(false);
-    setMembershipReady(false);
+    setMembershipReady(true); // UI playlist tout de suite — ids affinent en fond
     setContainedPlaylistIds(new Set());
-    // Membership playlists en premier (valeur fiable, playlists light = tracks vides)
     if (isPlayable(item)) {
+      const localHits = new Set(
+        (playlists || [])
+          .filter((p) => (p.tracks || []).some((t) => t.id === item.id))
+          .map((p) => p.id),
+      );
+      if (localHits.size) setContainedPlaylistIds(localHits);
       void api
         .playlistsContaining(item.id)
         .then((r) => {
           setContainedPlaylistIds(new Set(r.playlistIds || []));
-          setMembershipReady(true);
         })
         .catch(() => {
-          setContainedPlaylistIds(new Set());
-          setMembershipReady(true);
+          /* garde localHits */
         });
-    } else {
-      setMembershipReady(true);
     }
-    void refresh().catch(() => undefined);
+    // Ne plus recharger toute la biblio (14k) à chaque ⋮ — store déjà en mémoire
+    if (!loaded) {
+      void refresh().catch(() => undefined);
+    }
     void refreshPins();
-    void refreshDownloads();
     void listCachedIds()
       .then((ids) => setOnDevice(ids.includes(item.id) || downloaded.includes(item.id) || dlDoneGlobal))
       .catch(() => setOnDevice(downloaded.includes(item.id) || dlDoneGlobal));
-  }, [item?.id, downloaded, refresh, refreshPins, refreshDownloads, dlDoneGlobal]);
+  }, [item?.id, downloaded, loaded, refresh, refreshPins, playlists, dlDoneGlobal]);
 
   useEffect(() => {
     if (!item) return;
