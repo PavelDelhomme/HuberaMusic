@@ -62,7 +62,7 @@ class AppContainer(context: Context) {
         OfflineDownloadManager(
             scope = appScope,
             offlineStore = offlineStore,
-            streamUrl = { id -> remoteStreamUrl(id) },
+            streamUrl = { id -> remoteStreamUrl(id, offline = true) },
             ensureToken = { ensureFreshToken() },
             // Ack rapide : le fichier est déjà local — ne pas relancer yt-dlp (~10–20 s)
             notifyServer = { id -> runCatching { api.download(id, ack = 1) } },
@@ -76,6 +76,9 @@ class AppContainer(context: Context) {
                         .build()
                     client.newCall(req).execute().close()
                 }
+            },
+            streamUrlForAttempt = { id, attempt ->
+                remoteStreamUrl(id, retry = attempt.coerceAtLeast(0), offline = true)
             },
         )
     }
@@ -386,11 +389,13 @@ class AppContainer(context: Context) {
     }
 
     /** URL HTTP stream uniquement (pour télécharger en local). */
-    fun remoteStreamUrl(trackId: String, retry: Int = 0): String {
+    fun remoteStreamUrl(trackId: String, retry: Int = 0, offline: Boolean = false): String {
         val base = resolvedApiBase() + "/api/stream/$trackId"
         val token = tokenStore.peekAccess()
-        val retryQ = if (retry > 0) "&retry=$retry" else ""
-        val withClient = if (base.contains('?')) "$base&client=android$retryQ" else "$base?client=android$retryQ"
+        val qs = mutableListOf("client=android")
+        if (offline) qs += "offline=1"
+        if (retry > 0) qs += "retry=$retry"
+        val withClient = "$base?${qs.joinToString("&")}"
         return if (!token.isNullOrBlank()) {
             "$withClient&access_token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
         } else {
