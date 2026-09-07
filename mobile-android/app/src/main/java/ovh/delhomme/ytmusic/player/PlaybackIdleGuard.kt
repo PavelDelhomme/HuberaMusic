@@ -83,7 +83,7 @@ object PlaybackIdleGuard {
             networkCutDone = true
             AppLog.i("PlaybackIdleGuard", "Coupe prefetch après ${idleMs / 60_000} min pause (notif gardée)")
             StreamPrefetcher.cancelIdle()
-            runCatching { app.container.downloadManager.cancelAll() }
+            runCatching { app.container.downloadManager.cancelOpportunistic() }
         }
         if (idleMs < IDLE_SHUTDOWN_MS) return
 
@@ -92,7 +92,7 @@ object PlaybackIdleGuard {
             "Arrêt service après ${idleMs / 60_000} min sans lecture (BG)",
         )
         StreamPrefetcher.cancelIdle()
-        runCatching { app.container.downloadManager.cancelAll() }
+        runCatching { app.container.downloadManager.cancelOpportunistic() }
         // Ne pas clearMediaItems ici : snapshot LocalPlaybackStore suffit pour reprise UI.
         // Arrêt service → notif disparaît seulement après très longue pause.
         runCatching {

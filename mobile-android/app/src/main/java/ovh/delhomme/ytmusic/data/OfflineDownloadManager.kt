@@ -3,23 +3,26 @@ package ovh.delhomme.ytmusic.data
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import ovh.delhomme.ytmusic.debug.AppLog
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Téléchargements hors du scope Compose (survit à la fermeture du sheet).
  * Progress partagée : sheet, chrome NP, biblio.
- * Concurrence limitée pour éviter les DL bloqués à 2 % (saturation réseau / API).
+ *
+ * Deux priorités :
+ * - **user** : clic « Télécharger » / album — survit aux seek, stall, reprise lecture
+ * - **opportunistic** : ahead mix/file — annulable pour libérer la bande au rebuffer
  */
 class OfflineDownloadManager(
     private val scope: CoroutineScope,
@@ -28,11 +31,14 @@ class OfflineDownloadManager(
     private val ensureToken: suspend () -> Unit,
     private val notifyServer: suspend (trackId: String) -> Unit,
     private val warmStream: (suspend (trackId: String) -> Unit)? = null,
-    /** 2 max : 1 laissait les albums (Pandemonium) coincés à 2 % derrière un warm bloqué. */
+    /** 2 max : 1 laissait les albums coincés à 2 % derrière un warm bloqué. */
     private val maxConcurrent: Int = 2,
 ) {
-    private val jobsMutex = Mutex()
-    private val jobs = mutableMapOf<String, Job>()
+    private enum class Priority { User, Opportunistic }
+
+    private data class JobEntry(val job: Job, val priority: Priority)
+
+    private val jobs = ConcurrentHashMap<String, JobEntry>()
     private val gate = Semaphore(maxConcurrent.coerceIn(1, 2))
     private val aheadRunning = AtomicBoolean(false)
 
@@ -42,7 +48,7 @@ class OfflineDownloadManager(
     private val _errors = MutableStateFlow<Map<String, String>>(emptyMap())
     val errors: StateFlow<Map<String, String>> = _errors.asStateFlow()
     /** IDs refusés (DASH / ftyp) — ne plus ré-enqueue pendant la session. */
-    private val permanentFail = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val permanentFail = ConcurrentHashMap.newKeySet<String>()
 
     fun progressOf(trackId: String): Float? = _progress.value[trackId]
 
@@ -51,7 +57,7 @@ class OfflineDownloadManager(
     fun hasActiveJobs(ids: Collection<String>): Boolean {
         if (ids.isEmpty()) return false
         val active = _progress.value
-        return ids.any { id -> active.containsKey(id) || jobs[id]?.isActive == true }
+        return ids.any { id -> active.containsKey(id) || jobs[id]?.job?.isActive == true }
     }
 
     /**
@@ -72,10 +78,9 @@ class OfflineDownloadManager(
         return (sum / ids.size).coerceIn(0f, 1f)
     }
 
-    /**
-     * Lance le DL en arrière-plan (no-op si déjà local / déjà en cours).
-     */
-    fun enqueue(track: TrackDto): Boolean = enqueueInternal(track, duringPlaybackSafe = true)
+    /** Lance le DL utilisateur (no-op si déjà local / déjà en cours). */
+    fun enqueue(track: TrackDto): Boolean =
+        enqueueInternal(track, priority = Priority.User, duringPlaybackSafe = true)
 
     /**
      * Pré-télécharge silencieusement les prochains titres (mix / file).
@@ -101,7 +106,7 @@ class OfflineDownloadManager(
             .asSequence()
             .filter { it.id.matches(Regex("^[a-zA-Z0-9_-]{11}$")) }
             .filter { !offlineStore.has(it.id) }
-            .filter { jobs[it.id]?.isActive != true }
+            .filter { jobs[it.id]?.job?.isActive != true }
             .take(cap)
             .toList()
         if (candidates.isEmpty()) return
@@ -113,14 +118,18 @@ class OfflineDownloadManager(
                     isPlaybackActive() -> 18_000L
                     else -> 2_500L
                 }
-                kotlinx.coroutines.delay(initialDelay)
+                delay(initialDelay)
                 for ((i, t) in candidates.withIndex()) {
                     if (!NetworkMonitor.isOnline()) break
                     if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) break
                     if (offlineStore.has(t.id)) continue
-                    enqueueInternal(t, duringPlaybackSafe = duringPlaybackSafe)
+                    enqueueInternal(
+                        t,
+                        priority = Priority.Opportunistic,
+                        duringPlaybackSafe = duringPlaybackSafe,
+                    )
                     val gap = if (duringPlaybackSafe) 14_000L else 8_000L
-                    if (i < candidates.lastIndex) kotlinx.coroutines.delay(gap)
+                    if (i < candidates.lastIndex) delay(gap)
                 }
             } finally {
                 aheadRunning.set(false)
@@ -128,17 +137,27 @@ class OfflineDownloadManager(
         }
     }
 
-    /** DL pendant lecture : titres à +3 et au-delà (pas le courant / suivants immédiats). */
+    /** DL opportuniste pendant lecture : titres à +3 et au-delà. */
     fun enqueueAheadDuringPlayback(tracks: List<TrackDto>, limit: Int = 1) {
         enqueueAhead(tracks, limit = limit, skipFirst = 3, duringPlaybackSafe = true)
     }
 
-    private fun enqueueInternal(track: TrackDto, duringPlaybackSafe: Boolean = false): Boolean {
+    private fun enqueueInternal(
+        track: TrackDto,
+        priority: Priority,
+        duringPlaybackSafe: Boolean = false,
+    ): Boolean {
         if (offlineStore.has(track.id)) return false
         if (permanentFail.contains(track.id)) return false
-        val already = jobs[track.id]?.isActive == true
+        val already = jobs[track.id]?.job?.isActive == true
         if (already) return false
-        if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return false
+        // Opportuniste : refuse si stream down. User : enfile et attend.
+        if (
+            priority == Priority.Opportunistic &&
+            ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()
+        ) {
+            return false
+        }
 
         _progress.update { it + (track.id to 0.02f) }
         _errors.update { it - track.id }
@@ -147,9 +166,12 @@ class OfflineDownloadManager(
             try {
                 while (!NetworkMonitor.refreshFromSystem()) {
                     _progress.update { it + (track.id to 0.02f) }
-                    kotlinx.coroutines.delay(2_500)
+                    delay(2_500)
                 }
-                if (!duringPlaybackSafe) {
+                if (priority == Priority.User) {
+                    // Seek / stall / 5xx : on attend, on n’abandonne pas le clic user.
+                    waitUntilStreamReady(track.id, maxLoops = 80, loopMs = 2_500L)
+                } else if (!duringPlaybackSafe) {
                     var waitLoops = 0
                     while (
                         isPlaybackActive() ||
@@ -157,9 +179,9 @@ class OfflineDownloadManager(
                     ) {
                         if (++waitLoops > 40) return@launch
                         _progress.update { it + (track.id to 0.02f) }
-                        kotlinx.coroutines.delay(15_000)
+                        delay(15_000)
                         if (!NetworkMonitor.refreshFromSystem()) {
-                            kotlinx.coroutines.delay(2_500)
+                            delay(2_500)
                         }
                     }
                 } else if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
@@ -173,18 +195,50 @@ class OfflineDownloadManager(
                     if (offlineStore.has(track.id)) return@withPermit
                     ensureToken()
                     _progress.update { it + (track.id to 0.05f) }
-                    // Warm resolve même pendant la lecture (timeout court) — titres « cold »
-                    // (nouvel artiste / jamais écouté) sinon 502 + DL tronqué.
                     withTimeoutOrNull(2_500L) { warmStream?.invoke(track.id) }
                     _progress.update { it + (track.id to 0.12f) }
-                    offlineStore
-                        .download(track, streamUrl(track.id)) { p ->
+                    var attempt = 0
+                    var lastFail: Throwable? = null
+                    while (attempt < 4) {
+                        attempt++
+                        if (priority == Priority.User) {
+                            waitUntilStreamReady(track.id, maxLoops = 40, loopMs = 2_000L)
+                        } else if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
+                            return@withPermit
+                        }
+                        val result = offlineStore.download(track, streamUrl(track.id)) { p ->
                             _progress.update { cur ->
                                 cur + (track.id to p.coerceIn(0.08f, 0.99f))
                             }
                         }
-                        .getOrThrow()
-                    runCatching { notifyServer(track.id) }
+                        if (result.isSuccess) {
+                            runCatching { notifyServer(track.id) }
+                            return@withPermit
+                        }
+                        lastFail = result.exceptionOrNull()
+                        val msg = lastFail?.message.orEmpty()
+                        if (
+                            msg.contains("DASH", ignoreCase = true) ||
+                            msg.contains("pas de ftyp", ignoreCase = true) ||
+                            msg.contains("Conteneur", ignoreCase = true)
+                        ) {
+                            permanentFail.add(track.id)
+                            throw lastFail ?: Exception(msg)
+                        }
+                        if (priority == Priority.User && isStreamInfraFailure(lastFail ?: Exception(msg))) {
+                            // Ne tue pas les autres DL user — pause courte puis retry.
+                            AppLog.w(
+                                "offline",
+                                "user DL infra ${track.id} attempt=$attempt — wait/retry",
+                            )
+                            ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(25_000L)
+                            cancelOpportunistic()
+                            delay(3_000L * attempt)
+                            continue
+                        }
+                        throw lastFail ?: Exception(msg)
+                    }
+                    throw lastFail ?: Exception("Échec téléchargement")
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 runCatching {
@@ -204,8 +258,13 @@ class OfflineDownloadManager(
                 ) {
                     permanentFail.add(track.id)
                 }
-                if (isStreamInfraFailure(e)) {
+                if (priority == Priority.Opportunistic && isStreamInfraFailure(e)) {
                     onStreamInfraFailure(msg)
+                } else if (priority == Priority.User && isStreamInfraFailure(e)) {
+                    // Soft : coupe seulement l’ahead, garde les autres user DL.
+                    ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(45_000L)
+                    cancelOpportunistic()
+                    AppLog.w("offline", "user DL failed infra ${track.id}: ${msg.take(120)}")
                 }
             } finally {
                 _progress.update { cur ->
@@ -213,11 +272,24 @@ class OfflineDownloadManager(
                     next.remove(track.id)
                     next
                 }
-                jobsMutex.withLock { jobs.remove(track.id) }
+                jobs.remove(track.id)
             }
         }
-        jobs[track.id] = job
+        jobs[track.id] = JobEntry(job, priority)
         return true
+    }
+
+    /** Attend réseau + stream OK (seek / stall / 5xx). */
+    private suspend fun waitUntilStreamReady(trackId: String, maxLoops: Int, loopMs: Long) {
+        var loops = 0
+        while (
+            ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown() ||
+            !NetworkMonitor.refreshFromSystem()
+        ) {
+            if (++loops > maxLoops) return
+            _progress.update { it + (trackId to 0.03f) }
+            delay(loopMs)
+        }
     }
 
     /** 502 / timeout / DNS : coupe les DL offline pour ne pas saturer l’API. */
@@ -231,6 +303,7 @@ class OfflineDownloadManager(
             if (m.contains("timeout", ignoreCase = true)) return true
             if (m.contains("Unable to resolve host", ignoreCase = true)) return true
             if (m.contains("stream down", ignoreCase = true)) return true
+            if (m.contains("stream infra", ignoreCase = true)) return true
             cur = cur.cause
         }
         return false
@@ -238,14 +311,14 @@ class OfflineDownloadManager(
 
     private fun onStreamInfraFailure(detail: String) {
         ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(180_000L)
-        val n = cancelAll()
+        val n = cancelOpportunistic()
         AppLog.w(
             "offline",
-            "circuit-breaker stream down — cancelAll=$n detail=${detail.take(120)}",
+            "circuit-breaker stream down — cancelOpportunistic=$n detail=${detail.take(120)}",
         )
     }
 
-    /** Enfile une collection (album / playlist) — concurrence gérée par le sémaphore. */
+    /** Enfile une collection (album / playlist) — priorité user. */
     fun enqueueMany(tracks: List<TrackDto>): Int {
         var started = 0
         for (t in tracks) {
@@ -257,7 +330,7 @@ class OfflineDownloadManager(
     private fun isPlaybackActive(): Boolean =
         runCatching {
             ovh.delhomme.ytmusic.player.PlaybackService.Holder.isPlaybackActiveSafe()
-        }.getOrDefault(true) // en doute : ne pas DL pendant une éventuelle lecture
+        }.getOrDefault(true) // en doute : ne pas DL opportuniste pendant lecture
 
     /** Exposé à OfflineKeeper — file non vide OU lecture/buffer = busy. */
     fun isPlaybackBusy(): Boolean =
@@ -274,9 +347,10 @@ class OfflineDownloadManager(
 
     /** Annule un DL en cours et supprime le fichier partiel. */
     fun cancel(trackId: String): Boolean {
-        val job = jobs[trackId]
-        val active = job?.isActive == true || _progress.value.containsKey(trackId)
-        job?.cancel()
+        val entry = jobs[trackId]
+        val active = entry?.job?.isActive == true || _progress.value.containsKey(trackId)
+        entry?.job?.cancel()
+        jobs.remove(trackId)
         _progress.update { it - trackId }
         _errors.update { it - trackId }
         runCatching {
@@ -294,6 +368,15 @@ class OfflineDownloadManager(
         return n
     }
 
-    /** Annule tous les téléchargements actifs (ex. arrêt idle en arrière-plan). */
+    /**
+     * Annule uniquement les DL opportunistes (ahead).
+     * À utiliser au seek / stall / reprise lecture — **ne coupe pas** un clic « Télécharger ».
+     */
+    fun cancelOpportunistic(): Int {
+        val ids = jobs.filter { it.value.priority == Priority.Opportunistic }.keys.toList()
+        return cancelMany(ids)
+    }
+
+    /** Annule absolument tout (idle long / crash). Préférer [cancelOpportunistic] au quotidien. */
     fun cancelAll(): Int = cancelMany(jobs.keys.toList())
 }
