@@ -83,7 +83,7 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const queueIndex = usePlayer((s) => s.queueIndex);
   const currentId = queue[queueIndex]?.id;
   const isCurrentPlaying = !!item && item.id === currentId;
-  const { isLiked, isInLibrary, toggleLike, toggleLibrarySong, playlists, addToPlaylist, createPlaylist, hasAlbum, hasArtist, hasMix, saveMix, removeMix, isPlaylistLiked, applyLibrary, downloaded, refresh, loaded } =
+  const { isLiked, isInLibrary, toggleLike, toggleLibrarySong, playlists, addToPlaylist, createPlaylist, hasAlbum, hasArtist, hasMix, saveMix, removeMix, isPlaylistLiked, applyLibrary, refresh, loaded } =
     useLibrary();
   const pinId = usePins((s) => (item ? s.pinIdFor(item.id) : null));
   const togglePin = usePins((s) => s.togglePin);
@@ -96,7 +96,6 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const dlDoneGlobal = useDownloads((s) => (item ? Boolean(s.done[item.id]) : false));
   const startDownload = useDownloads((s) => s.start);
   const removeDownload = useDownloads((s) => s.remove);
-  const refreshDownloads = useDownloads((s) => s.refreshDone);
   const sourceKind = usePlayer((s) => s.sourceKind);
   const sourceId = usePlayer((s) => s.sourceId);
   const [busy, setBusy] = useState(false);
