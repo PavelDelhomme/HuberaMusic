@@ -7,7 +7,7 @@ const HEAD_BYTES = Math.max(
   256 * 1024,
   Number(process.env.STREAM_HEAD_BYTES || 1024 * 1024) || 1024 * 1024,
 );
-const MAX_HEADS = Math.max(8, Math.min(64, Number(process.env.STREAM_HEAD_CACHE || 36) || 36));
+const MAX_HEADS = Math.max(8, Math.min(96, Number(process.env.STREAM_HEAD_CACHE || 48) || 48));
 const HEAD_TTL_MS = 35 * 60_000;
 
 type HeadEntry = {

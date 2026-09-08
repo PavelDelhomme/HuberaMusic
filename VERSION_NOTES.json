@@ -1,6 +1,16 @@
 {
-  "updatedAt": "2026-09-07",
+  "updatedAt": "2026-09-08",
   "versions": [
+    {
+      "version": "1.3.182",
+      "date": "2026-09-08",
+      "title": "Aléatoire : démarrage vraiment préchauffé",
+      "notes": [
+        "Aléatoire / Tout lire : le 1er titre (et les 2 suivants) sont chauffés avant la lecture — finis les 50–60 s à froid sur Enregistré récemment",
+        "Warm serveur élargi (plus de têtes en cache, priorité aux 12 premiers) + lot « récents » dédié",
+        "Si le titre est déjà prêt, la lecture démarre sans attendre le prefetch lointain"
+      ]
+    },
     {
       "version": "1.3.181",
       "date": "2026-09-07",
