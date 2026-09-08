@@ -146,8 +146,8 @@ fun HomeScreen(
             }
     }
 
-    fun playItem(item: TrackDto, shelfItems: List<TrackDto>) {
-        if (item.isPlaylist() || item.isAlbum() || item.isArtist()) {
+    fun playItem(item: TrackDto, shelfItems: List<TrackDto>, queueTitle: String? = null) {
+        if (item.isPlaylist() || item.isAlbum() || item.isArtist() || item.isMix()) {
             onOpenDetail(item)
             return
         }
@@ -161,7 +161,8 @@ fun HomeScreen(
                     else -> shelfItems.filter { it.isPlayable() }.ifEmpty { listOf(item) }
                 }
                 val idx = list.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
-                onPlay(list, idx)
+                val title = queueTitle?.takeIf { it.isNotBlank() }
+                if (title != null) onPlayNamed(list, idx, title) else onPlay(list, idx)
             } else {
                 onOpenDetail(item)
             }
@@ -212,7 +213,9 @@ fun HomeScreen(
                     QuickAccessHomeCard(
                         pins = pins,
                         container = container,
-                        onPlayItem = { playItem(it, pins.filter { p -> p.isPlayable() }) },
+                        onPlayItem = {
+                            playItem(it, pins.filter { p -> p.isPlayable() }, "Accès rapide")
+                        },
                         onOpenDetail = onOpenDetail,
                         onMore = onMore,
                         onPlayNamed = onPlayNamed,
@@ -422,7 +425,7 @@ fun HomeScreen(
                 items(state.shelves, key = { it.title }) { shelf ->
                     val items = shelf.items
                     val mostlyCards = items.count {
-                        it.isPlaylist() || it.isAlbum() || it.isArtist()
+                        it.isPlaylist() || it.isAlbum() || it.isArtist() || it.isMix()
                     } >= items.size / 2 && items.isNotEmpty()
 
                     Text(
@@ -448,7 +451,7 @@ fun HomeScreen(
                                     Modifier
                                         .width(tile + 8.dp)
                                         .combinedClickable(
-                                            onClick = { playItem(track, items) },
+                                            onClick = { playItem(track, items, shelf.title) },
                                             onLongClick = { onMore(track) },
                                         )
                                         .padding(4.dp),
@@ -502,7 +505,7 @@ fun HomeScreen(
                         items.take(10).forEach { track ->
                             TrackRow(
                                 track = track,
-                                onClick = { playItem(track, items) },
+                                onClick = { playItem(track, items, shelf.title) },
                                 onMore = { onMore(track) },
                                 onOpenArtist = onOpenArtist,
                                 pinned = track.id in pinIds,
@@ -649,7 +652,7 @@ private fun QuickAccessHomeCard(
                                     track = slot.track,
                                     onClick = {
                                         val t = slot.track
-                                        if (t.isPlaylist() || t.isAlbum() || t.isArtist()) {
+                                        if (t.isPlaylist() || t.isAlbum() || t.isArtist() || t.isMix()) {
                                             onOpenDetail(t)
                                         } else {
                                             onPlayItem(t)

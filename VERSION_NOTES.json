@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-08",
   "versions": [
     {
+      "version": "1.3.184",
+      "date": "2026-09-08",
+      "title": "Accès rapide : file et mix",
+      "notes": [
+        "Tout voir Accès rapide : un titre joue dans la file des pins, pas tout seul",
+        "Les mix épinglés entrent dans Aléatoire Accès rapide",
+        "Titre de file correct (Accès rapide / nom du rayon) au lieu de « File d’attente »"
+      ]
+    },
+    {
       "version": "1.3.183",
       "date": "2026-09-08",
       "title": "Aléatoire vraiment aléatoire",

@@ -1597,6 +1597,7 @@ private fun MainTabs(
                     container = container,
                     onBack = { nav.popBackStack() },
                     onPlay = onPlayTracks,
+                    onPlayNamed = onPlayNamed,
                     onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenDetail = ::openDetail,
                 )
