@@ -2387,7 +2387,8 @@ app.get('/api/library/contains', accountRequired, (req, res) => {
 app.get('/api/library/shuffle-heads', accountRequired, (req, res) => {
   try {
     const warm = String(req.query.warm || '1') !== '0';
-    const result = getShuffleHeads(req.userId!, { warm });
+    const scope = String(req.query.scope || 'all') === 'recent' ? 'recent' : 'all';
+    const result = getShuffleHeads(req.userId!, { warm, scope });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -2397,7 +2398,8 @@ app.get('/api/library/shuffle-heads', accountRequired, (req, res) => {
 app.post('/api/library/shuffle-heads/refresh', accountRequired, (req, res) => {
   try {
     invalidateShuffleHeads(req.userId!);
-    const result = getShuffleHeads(req.userId!, { warm: true });
+    const scope = String(req.query.scope || req.body?.scope || 'all') === 'recent' ? 'recent' : 'all';
+    const result = getShuffleHeads(req.userId!, { warm: true, scope });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
