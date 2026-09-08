@@ -41,6 +41,7 @@ fun QuickAccessScreen(
     container: AppContainer,
     onBack: () -> Unit = {},
     onPlay: (List<TrackDto>, Int) -> Unit,
+    onPlayNamed: (List<TrackDto>, Int, String) -> Unit = { tracks, idx, _ -> onPlay(tracks, idx) },
     onMore: (TrackDto) -> Unit,
     onOpenDetail: (TrackDto) -> Unit = {},
 ) {
@@ -143,13 +144,24 @@ fun QuickAccessScreen(
                         TrackRow(
                             track = track,
                             onClick = {
-                                if (track.isPlaylist() || track.isAlbum() || track.isArtist()) {
+                                if (
+                                    track.isPlaylist() ||
+                                    track.isAlbum() ||
+                                    track.isArtist() ||
+                                    track.isMix()
+                                ) {
                                     onOpenDetail(track)
                                     return@TrackRow
                                 }
                                 scope.launch {
                                     if (track.isPlayable()) {
-                                        onPlay(listOf(track), 0)
+                                        val music = pins.filter { it.isMusicTrack() }
+                                        val list =
+                                            if (music.any { it.id == track.id }) music
+                                            else listOf(track)
+                                        val idx =
+                                            list.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+                                        onPlayNamed(list, idx, "Accès rapide")
                                     } else {
                                         onOpenDetail(track)
                                     }

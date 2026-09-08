@@ -1,6 +1,6 @@
 package ovh.delhomme.ytmusic.data
 
-/** Résout playlist / album / artiste → liste de titres jouables. */
+/** Résout playlist / album / artiste / mix → liste de titres jouables. */
 suspend fun resolvePlayableTracks(api: YtMusicApi, item: TrackDto): List<TrackDto> {
     if (item.isPlayable()) return listOf(item)
     return when {
@@ -25,6 +25,10 @@ suspend fun resolvePlayableTracks(api: YtMusicApi, item: TrackDto): List<TrackDt
             val detail = runCatching { api.artist(item.id) }.getOrNull()
             (detail?.songs.orEmpty() + detail?.tracks.orEmpty())
                 .distinctBy { it.id }
+                .filter { it.isPlayable() }
+        }
+        item.isMix() -> {
+            runCatching { api.recoRadio(item.id).tracks }.getOrDefault(emptyList())
                 .filter { it.isPlayable() }
         }
         else -> emptyList()
