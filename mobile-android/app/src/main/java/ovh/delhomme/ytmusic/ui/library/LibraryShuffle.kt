@@ -9,9 +9,13 @@ import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 
 /**
- * Aléatoire avec anti-répétition + tête serveur (~100 ids rotatifs ~30 min).
- * Pour « Enregistré récemment », on ne force pas la tête biblio globale
- * (mismatch warm) : shuffle local + [prepareShuffleLead] **avant** le play.
+ * Aléatoire avec anti-répétition.
+ *
+ * Important : on ne force **plus** l’ordre de la tête serveur (`applyHead`) —
+ * ça figeait le même #0 pendant ~30 min (Accès rapide / Aléatoire).
+ * Les ids warm servent seulement de **biais soft** : on tire #0 au hasard
+ * parmi les titres déjà chauffés s’il y en a assez, sinon tirage libre.
+ * [prepareShuffleLead] chauffe ensuite le vrai #0 avant Exo.
  */
 suspend fun playLibraryShuffled(
     container: AppContainer,
@@ -23,22 +27,19 @@ suspend fun playLibraryShuffled(
     if (playable.isEmpty()) return
     val ctx = YtMusicApp.instance
     val recent = ShuffleHeadStore.loadRecentPlayed(ctx, max = 400).toHashSet()
-    val additionsScope = sourceKey.contains("Additions", ignoreCase = true)
-    val serverHead =
-        if (additionsScope) emptyList()
+    val pinsOrRecent =
+        sourceKey.contains("Additions", ignoreCase = true) ||
+            sourceKey.startsWith("home:") ||
+            sourceKey.startsWith("pins") ||
+            playable.size < 24
+    val warmIds =
+        if (pinsOrRecent) emptyList()
         else container.libraryHeadPrefetcher.cachedShuffleHeadIds()
     val shuffled = withContext(Dispatchers.Default) {
-        val fresh = playable.filter { it.id !in recent }
-        val pool = if (fresh.size >= (playable.size / 4).coerceAtLeast(24)) fresh else playable
-        if (serverHead.isNotEmpty()) {
-            ShuffleHeadStore.applyHead(pool, serverHead)
-        } else {
-            pool.shuffled()
-        }
+        trueShuffleQueue(playable, recent, warmIds)
     }
     val base = container.resolvedApiBase()
     val leadIds = shuffled.take(3).map { it.id }
-    // Coupe DL opportuniste + préchauffe #0–#2 **avant** Exo (sinon 50–60 s à froid).
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         runCatching { container.downloadManager.cancelOpportunistic() }
         withContext(Dispatchers.IO) {
@@ -60,6 +61,27 @@ suspend fun playLibraryShuffled(
             container.libraryHeadPrefetcher.requestSoon("after-shuffle")
         }
     }
+}
+
+/**
+ * #0 tiré au hasard (idéalement hors récents ; soft-biais warm si possible),
+ * reste mélangé — jamais d’ordre fixe serveur.
+ */
+internal fun trueShuffleQueue(
+    playable: List<TrackDto>,
+    recent: Set<String>,
+    warmIds: List<String>,
+): List<TrackDto> {
+    if (playable.size <= 1) return playable
+    val fresh = playable.filter { it.id !in recent }
+    val pool = if (fresh.size >= (playable.size / 4).coerceAtLeast(8)) fresh else playable
+    val warmSet = warmIds.toHashSet()
+    val warmInPool = pool.filter { it.id in warmSet }
+    // Soft biais : au moins 3 candidats warm → on tire parmi eux ; sinon pool libre.
+    val startPool = if (warmInPool.size >= 3) warmInPool else pool
+    val start = startPool.random()
+    val rest = pool.filter { it.id != start.id }.shuffled()
+    return listOf(start) + rest
 }
 
 /**
