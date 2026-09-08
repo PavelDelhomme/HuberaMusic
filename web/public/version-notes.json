@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-08",
   "versions": [
     {
+      "version": "1.3.183",
+      "date": "2026-09-08",
+      "title": "Aléatoire vraiment aléatoire",
+      "notes": [
+        "Accès rapide / Aléatoire : chaque tap tire un vrai titre au hasard — plus le même 1er titre figé ~30 min",
+        "Le préchauffage du démarrage reste actif (1.3.182) sur le titre réellement choisi"
+      ]
+    },
+    {
       "version": "1.3.182",
       "date": "2026-09-08",
       "title": "Aléatoire : démarrage vraiment préchauffé",
