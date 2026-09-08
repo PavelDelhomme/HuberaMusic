@@ -174,11 +174,13 @@ data class TrackDto(
 
     fun isAlbum(): Boolean = kind() == "album"
 
+    fun isMix(): Boolean = kind() in setOf("mix", "radio", "station")
+
     fun isVideo(): Boolean = kind() in setOf("video", "episode", "movie")
 
-    /** Titre audio (pas playlist / artiste / album). Les vidéos YT restent jouables. */
+    /** Titre audio (pas playlist / artiste / album / mix). Les vidéos YT restent jouables. */
     fun isPlayable(): Boolean =
-        !isPlaylist() && !isArtist() && !isAlbum() &&
+        !isPlaylist() && !isArtist() && !isAlbum() && !isMix() &&
             id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))
 
     /** Préféré pour les rayons musique Accueil (évite Shorts / vidéos hors musique). */
