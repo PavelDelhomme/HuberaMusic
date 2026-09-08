@@ -56,6 +56,7 @@ data class ShuffleHeadsResponse(
     val slotMs: Long? = null,
     val headN: Int? = null,
     val poolSize: Int? = null,
+    val scope: String? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -626,6 +627,7 @@ interface YtMusicApi {
     @GET("api/library/shuffle-heads")
     suspend fun shuffleHeads(
         @Query("warm") warm: Int? = 1,
+        @Query("scope") scope: String? = null,
     ): ShuffleHeadsResponse
 
     @POST("api/library/like")

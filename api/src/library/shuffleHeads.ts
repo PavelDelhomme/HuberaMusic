@@ -3,6 +3,9 @@
  *
  * Créneaux ~30 min → ~48 rotations / jour (évite de figer les mêmes ~100 titres).
  * Le serveur warm ces ids (proxy/disk) ; le client Android ne tire que ce batch.
+ *
+ * scope=recent : pool = ~120 derniers ajouts biblio (Enregistré récemment),
+ * pour aligner warm + Aléatoire sur ce que l’utilisateur voit.
  */
 import { db } from './db.js';
 import { getHistory } from './library.js';
@@ -15,6 +18,7 @@ const SLOT_MS = Math.max(
 );
 const HEAD_N = Math.max(40, Math.min(160, Number(process.env.SHUFFLE_HEAD_N || 100) || 100));
 const RECENT_EXCLUDE = 400;
+const RECENT_POOL = Math.max(60, Math.min(200, Number(process.env.SHUFFLE_HEAD_RECENT_POOL || 120) || 120));
 
 type CacheEntry = { ids: string[]; slot: number; expiresAt: number; at: number };
 const mem = new Map<string, CacheEntry>();
@@ -38,9 +42,9 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-function hashSeed(userId: string, slot: number): number {
+function hashSeed(userId: string, slot: number, scope: string): number {
   let h = 2166136261;
-  const s = `${userId}:${slot}`;
+  const s = `${userId}:${scope}:${slot}`;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619);
@@ -93,16 +97,22 @@ export type ShuffleHeadsResult = {
   slotMs: number;
   headN: number;
   poolSize: number;
+  scope: 'all' | 'recent';
 };
 
 /**
  * ~HEAD_N ids pour démarrer un aléatoire « prêt » (warm serveur).
- * Exclut les titres trop récents pour varier.
+ * Exclut les titres trop récents pour varier (sauf scope=recent : exclude plus léger).
  */
-export function getShuffleHeads(userId: string, opts?: { warm?: boolean }): ShuffleHeadsResult {
+export function getShuffleHeads(
+  userId: string,
+  opts?: { warm?: boolean; scope?: 'all' | 'recent' },
+): ShuffleHeadsResult {
   const now = Date.now();
   const slot = slotIndex(now);
-  const cached = mem.get(userId);
+  const scope = opts?.scope === 'recent' ? 'recent' : 'all';
+  const cacheKey = `${userId}:${scope}`;
+  const cached = mem.get(cacheKey);
   if (cached && cached.slot === slot && cached.ids.length) {
     if (opts?.warm !== false) scheduleWarmHeads(userId, cached.ids);
     return {
@@ -112,25 +122,29 @@ export function getShuffleHeads(userId: string, opts?: { warm?: boolean }): Shuf
       slotMs: SLOT_MS,
       headN: HEAD_N,
       poolSize: cached.ids.length,
+      scope,
     };
   }
 
   const all = libraryTrackIds(userId);
+  const source = scope === 'recent' ? all.slice(0, Math.min(RECENT_POOL, all.length)) : all;
+  const excludeN = scope === 'recent' ? 40 : RECENT_EXCLUDE;
   const recent = new Set(
-    getHistory(userId, RECENT_EXCLUDE)
+    getHistory(userId, excludeN)
       .map((t) => t.id)
       .filter(validId),
   );
-  let pool = all.filter((id) => !recent.has(id));
-  if (pool.length < Math.min(HEAD_N, Math.floor(all.length / 4))) {
-    pool = all;
+  let pool = source.filter((id) => !recent.has(id));
+  if (pool.length < Math.min(HEAD_N, Math.floor(source.length / 4))) {
+    pool = source;
   }
-  const seed = hashSeed(userId, slot);
-  const ids = seededShuffle(pool, seed).slice(0, HEAD_N);
+  const seed = hashSeed(userId, slot, scope);
+  const headCap = scope === 'recent' ? Math.min(HEAD_N, 80) : HEAD_N;
+  const ids = seededShuffle(pool, seed).slice(0, headCap);
   const expiresAt = (slot + 1) * SLOT_MS;
-  mem.set(userId, { ids, slot, expiresAt, at: now });
-  // Cap mémoire : ~200 users
-  if (mem.size > 220) {
+  mem.set(cacheKey, { ids, slot, expiresAt, at: now });
+  // Cap mémoire : ~200 users × 2 scopes
+  if (mem.size > 420) {
     const oldest = [...mem.entries()].sort((a, b) => a[1].at - b[1].at)[0];
     if (oldest) mem.delete(oldest[0]);
   }
@@ -140,8 +154,9 @@ export function getShuffleHeads(userId: string, opts?: { warm?: boolean }): Shuf
     slot,
     expiresAt,
     slotMs: SLOT_MS,
-    headN: HEAD_N,
-    poolSize: all.length,
+    headN: headCap,
+    poolSize: source.length,
+    scope,
   };
 }
 
@@ -149,8 +164,9 @@ function scheduleWarmHeads(userId: string, ids: string[]): void {
   if (!ids.length) return;
   setTimeout(() => {
     try {
-      // Priorité : premiers de la file aléatoire
-      enqueueStreamWarm(ids.slice(0, 48), userId);
+      // Priorité absolue : #0–#11 (démarrage Aléatoire) avant le reste du lot
+      enqueueStreamWarm(ids.slice(0, 12), userId);
+      enqueueStreamWarm(ids.slice(12, 48), userId);
       const disk = ids.filter(needsDisk).slice(0, 16);
       if (disk.length) enqueueDiskWarm(disk);
     } catch {
@@ -161,5 +177,7 @@ function scheduleWarmHeads(userId: string, ids: string[]): void {
 
 /** Invalide le cache mémoire (tests / après grosse sync biblio). */
 export function invalidateShuffleHeads(userId: string): void {
-  mem.delete(userId);
+  mem.delete(`${userId}:all`);
+  mem.delete(`${userId}:recent`);
+  mem.delete(userId); // ancien format
 }

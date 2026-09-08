@@ -298,12 +298,13 @@ class PlayerController(
             publishOptimistic(playable, idx)
             val base = streamUrl("_").substringBefore("/api/stream/")
             val firstId = playable[idx].id
-            // Laisse Exo prendre /api/stream en priorité — un warm wait=true du
-            // même id concurrence getAudioFormat et allonge le 1er buffer (Favoris froids).
-            StreamPrefetcher.quietPrefetch(900L)
+            // Si prepareShuffleLead a déjà mis la tête en SimpleCache, ne pas
+            // bloquer 900 ms de far-prefetch inutile — Exo lit le cache tout de suite.
+            val headReady = StreamPrefetcher.wasHeadReadyRecently(firstId)
+            StreamPrefetcher.quietPrefetch(if (headReady) 180L else 900L)
             val startId = firstId
             scope.launch {
-                delay(500L)
+                delay(if (headReady) 120L else 500L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 playable.drop(idx + 1).take(2).forEach { t ->
                     StreamPrefetcher.warmTrackFormatOnly(base, t.id)

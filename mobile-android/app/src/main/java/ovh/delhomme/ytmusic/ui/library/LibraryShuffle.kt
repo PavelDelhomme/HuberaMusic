@@ -10,7 +10,8 @@ import ovh.delhomme.ytmusic.player.StreamPrefetcher
 
 /**
  * Aléatoire avec anti-répétition + tête serveur (~100 ids rotatifs ~30 min).
- * Ne réutilise plus une tête locale qui figeait les mêmes 12 titres.
+ * Pour « Enregistré récemment », on ne force pas la tête biblio globale
+ * (mismatch warm) : shuffle local + [prepareShuffleLead] **avant** le play.
  */
 suspend fun playLibraryShuffled(
     container: AppContainer,
@@ -22,7 +23,10 @@ suspend fun playLibraryShuffled(
     if (playable.isEmpty()) return
     val ctx = YtMusicApp.instance
     val recent = ShuffleHeadStore.loadRecentPlayed(ctx, max = 400).toHashSet()
-    val serverHead = container.libraryHeadPrefetcher.cachedShuffleHeadIds()
+    val additionsScope = sourceKey.contains("Additions", ignoreCase = true)
+    val serverHead =
+        if (additionsScope) emptyList()
+        else container.libraryHeadPrefetcher.cachedShuffleHeadIds()
     val shuffled = withContext(Dispatchers.Default) {
         val fresh = playable.filter { it.id !in recent }
         val pool = if (fresh.size >= (playable.size / 4).coerceAtLeast(24)) fresh else playable
@@ -33,30 +37,33 @@ suspend fun playLibraryShuffled(
         }
     }
     val base = container.resolvedApiBase()
+    val leadIds = shuffled.take(3).map { it.id }
+    // Coupe DL opportuniste + préchauffe #0–#2 **avant** Exo (sinon 50–60 s à froid).
+    if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
+        runCatching { container.downloadManager.cancelOpportunistic() }
+        withContext(Dispatchers.IO) {
+            runCatching { StreamPrefetcher.prepareShuffleLead(base, leadIds) }
+        }
+    }
     onPlay(shuffled, 0)
     ShuffleHeadStore.rememberPlayed(ctx, shuffled.take(1).map { it.id })
     withContext(Dispatchers.IO) {
         runCatching {
-            if (base.isNotBlank()) {
-                StreamPrefetcher.warmTrackFormatOnly(base, shuffled.first().id)
-                StreamPrefetcher.warmFormatsLight(base, shuffled.drop(1).take(4).map { it.id }, limit = 4)
-            }
-            val nextHead = shuffled.drop(1).take(12).map { it.id }
-            val fp = ShuffleHeadStore.fingerprint(playable)
-            val cacheKey = ShuffleHeadStore.keyFor(sourceKey, fp)
-            ShuffleHeadStore.saveHead(ctx, cacheKey, nextHead)
             if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
-                StreamPrefetcher.warmFormatsLight(base, nextHead.take(6), limit = 6)
-                StreamPrefetcher.warmHeads3s(base, nextHead.take(4), limit = 4)
+                val nextHead = shuffled.drop(3).take(12).map { it.id }
+                StreamPrefetcher.warmFormatsLight(base, nextHead, limit = 12)
+                StreamPrefetcher.warmHeads3s(base, shuffled.drop(1).take(8).map { it.id }, limit = 8)
+                val fp = ShuffleHeadStore.fingerprint(playable)
+                val cacheKey = ShuffleHeadStore.keyFor(sourceKey, fp)
+                ShuffleHeadStore.saveHead(ctx, cacheKey, shuffled.drop(1).take(12).map { it.id })
             }
-            // Refresh tête serveur en fond (prochain créneau)
             container.libraryHeadPrefetcher.requestSoon("after-shuffle")
         }
     }
 }
 
 /**
- * Tout lire / play à l’index : démarre tout de suite, warm en arrière-plan.
+ * Tout lire / play à l’index : chauffe le lead puis démarre.
  */
 suspend fun playQueueWithLead(
     container: AppContainer,
@@ -67,15 +74,18 @@ suspend fun playQueueWithLead(
     val playable = queue.filter { it.isPlayable() && it.id.length == 11 }
     if (playable.isEmpty()) return
     val idx = startIndex.coerceIn(0, playable.lastIndex)
-    onPlay(playable, idx)
     val base = container.resolvedApiBase()
+    val lead = playable.drop(idx).take(3).map { it.id }
+    if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
+        runCatching { container.downloadManager.cancelOpportunistic() }
+        withContext(Dispatchers.IO) {
+            runCatching { StreamPrefetcher.prepareShuffleLead(base, lead) }
+        }
+    }
+    onPlay(playable, idx)
     if (base.isNotBlank()) {
         withContext(Dispatchers.IO) {
-            val lead = playable.drop(idx).take(4).map { it.id }
-            lead.firstOrNull()?.takeIf { it.length == 11 }?.let {
-                StreamPrefetcher.warmTrackFormatOnly(base, it)
-            }
-            StreamPrefetcher.warmFormatsLight(base, lead.drop(1), limit = 3)
+            StreamPrefetcher.warmFormatsLight(base, playable.drop(idx + 3).take(6).map { it.id }, limit = 6)
         }
     }
 }
