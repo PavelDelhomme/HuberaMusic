@@ -1050,7 +1050,13 @@ class PlaybackService : MediaSessionService() {
                     val end = userQueueEndAfterExtend(nextIdx)
                     android.os.Handler(mainLooper).post {
                         toastMain(
-                            if (unavailable) "Titre indisponible — suivant" else "Flux KO — titre suivant",
+                            when {
+                                unavailable -> "Titre indisponible — suivant"
+                                httpStatus != null && httpStatus >= 500 ->
+                                    "Flux serveur ($httpStatus) — titre suivant"
+                                transientNetwork -> "Réseau instable — titre suivant"
+                                else -> "Flux KO — titre suivant"
+                            },
                             Toast.LENGTH_SHORT,
                         )
                     }
@@ -1142,7 +1148,15 @@ class PlaybackService : MediaSessionService() {
                         armStallWatch(exo)
                         if (rebuilt && resolveOk && streakToastDue()) {
                             lastStallRecoverToastMs = android.os.SystemClock.elapsedRealtime()
-                            toastMain("Reprise du flux…", Toast.LENGTH_SHORT)
+                            toastMain(
+                                when {
+                                    httpStatus != null && httpStatus >= 500 ->
+                                        "Flux serveur ($httpStatus) — nouvel essai…"
+                                    transientNetwork -> "Réseau faible — nouvel essai…"
+                                    else -> "Reprise du flux…"
+                                },
+                                Toast.LENGTH_SHORT,
+                            )
                         }
                     }
                 }

@@ -1502,17 +1502,17 @@ function attachAudioRuntime(
             /* ignore */
           }
           mediaAutoRetry += 1;
-          const maxAuto = 2;
+          const maxAuto = 3;
           if (mediaAutoRetry > maxAuto) {
+            mediaAutoRetry = 0;
             set({
               isPlaying: false,
               isLoading: false,
-              playError:
-                'Stream indisponible. Réessaie manuellement ou change de titre.',
+              playError: null,
             });
             refreshMediaSession();
-            persistPlayer();
-            publish();
+            // Après 3 échecs 502/réseau : passe au suivant au lieu de rester bloqué
+            void get().next({ fromEnded: true });
             return;
           }
           // Retry discret — pas de toast anxiogène au 1er échec
