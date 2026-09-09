@@ -76,7 +76,6 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
-import ovh.delhomme.ytmusic.data.resolvePlayableTracks
 import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
 import ovh.delhomme.ytmusic.ui.components.MediaCover
@@ -162,7 +161,9 @@ fun HomeScreen(
                 }
                 val idx = list.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
                 val title = queueTitle?.takeIf { it.isNotBlank() }
-                if (title != null) onPlayNamed(list, idx, title) else onPlay(list, idx)
+                ovh.delhomme.ytmusic.ui.library.playQueueWithLead(container, list, idx) { q, i ->
+                    if (title != null) onPlayNamed(q, i, title) else onPlay(q, i)
+                }
             } else {
                 onOpenDetail(item)
             }
@@ -571,6 +572,7 @@ private fun QuickAccessHomeCard(
     onOpenAll: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var shuffleBusy by remember { mutableStateOf(false) }
     var showReorder by remember { mutableStateOf(false) }
     val pages = remember(pins) { buildQuickAccessPages(pins) }
@@ -668,21 +670,19 @@ private fun QuickAccessHomeCard(
                                         shuffleBusy = true
                                         scope.launch {
                                             try {
-                                                val pool = mutableListOf<TrackDto>()
-                                                for (p in pins) {
-                                                    val resolved = runCatching {
-                                                        resolvePlayableTracks(container.api, p)
-                                                    }.getOrDefault(emptyList())
-                                                    pool += resolved
-                                                }
-                                                val uniq = pool.distinctBy { it.id }
-                                                if (uniq.isNotEmpty()) {
-                                                    ovh.delhomme.ytmusic.ui.library.playLibraryShuffled(
+                                                val ok =
+                                                    ovh.delhomme.ytmusic.ui.library.playQuickAccessShuffled(
                                                         container,
-                                                        uniq,
-                                                        { q, i -> onPlayNamed(q, i, "Accès rapide · Aléatoire") },
-                                                        sourceKey = "home:pins",
-                                                    )
+                                                        pins,
+                                                    ) { q, i ->
+                                                        onPlayNamed(q, i, "Accès rapide · Aléatoire")
+                                                    }
+                                                if (!ok) {
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Aucun titre jouable dans l’accès rapide",
+                                                        Toast.LENGTH_SHORT,
+                                                    ).show()
                                                 }
                                             } finally {
                                                 shuffleBusy = false

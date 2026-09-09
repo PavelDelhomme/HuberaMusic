@@ -279,7 +279,8 @@ object StreamPrefetcher {
     }
 
     /**
-     * Prépare Aléatoire : format wait + tête Exo bloquante pour #0, puis #1–2 en parallèle.
+     * Prépare Aléatoire : #0 format + tête Exo **bloquants** (1er son immédiat),
+     * #1–2 en fire-and-forget pour ne pas retarder le play (skip bientôt chaud).
      */
     suspend fun prepareShuffleLead(baseApi: String, trackIds: List<String>) {
         if (trackIds.isEmpty() || isStreamDown()) return
@@ -294,11 +295,10 @@ object StreamPrefetcher {
         warmCurrentBlocking(base, first, timeoutMs = 1_500L, wait = true)
         prefetchStartHeadBlocking(app, base, first, HEAD_NEXT_WIFI)
         markHeadReady(first)
-        // #1–2 — formats + têtes courtes (skip rapide)
+        // #1–2 — non bloquant : ne retarde plus le 1er play
         lead.drop(1).forEach { id ->
             warmTrackFormatOnly(base, id)
-            prefetchStartHeadBlocking(app, base, id, HEAD_3S)
-            markHeadReady(id)
+            prefetchStartHead(base, id, HEAD_3S)
         }
         warmFormatsLight(base, trackIds.drop(3).take(6), limit = 6)
     }

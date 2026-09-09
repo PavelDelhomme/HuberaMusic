@@ -1,5 +1,6 @@
 package ovh.delhomme.ytmusic.ui.quickaccess
 
+import android.widget.Toast
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -22,12 +25,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -35,6 +40,8 @@ import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.ui.library.playQueueWithLead
+import ovh.delhomme.ytmusic.ui.library.playQuickAccessShuffled
 
 @Composable
 fun QuickAccessScreen(
@@ -49,6 +56,8 @@ fun QuickAccessScreen(
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val context = LocalContext.current
+    var shuffleBusy by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -66,6 +75,40 @@ fun QuickAccessScreen(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
+            if (pins.isNotEmpty()) {
+                IconButton(
+                    onClick = {
+                        if (shuffleBusy) return@IconButton
+                        shuffleBusy = true
+                        scope.launch {
+                            try {
+                                val ok = playQuickAccessShuffled(container, pins) { q, i ->
+                                    onPlayNamed(q, i, "Accès rapide · Aléatoire")
+                                }
+                                if (!ok) {
+                                    Toast.makeText(
+                                        context,
+                                        "Aucun titre jouable dans l’accès rapide",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            } finally {
+                                shuffleBusy = false
+                            }
+                        }
+                    },
+                    enabled = !shuffleBusy,
+                ) {
+                    if (shuffleBusy) {
+                        CircularProgressIndicator(
+                            Modifier.size(22.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(Icons.Default.Shuffle, contentDescription = "Aléatoire")
+                    }
+                }
+            }
         }
         Text(
             "Premier épinglé en haut / à gauche · glisse la poignée pour réordonner",
@@ -161,7 +204,9 @@ fun QuickAccessScreen(
                                             else listOf(track)
                                         val idx =
                                             list.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
-                                        onPlayNamed(list, idx, "Accès rapide")
+                                        playQueueWithLead(container, list, idx) { q, i ->
+                                            onPlayNamed(q, i, "Accès rapide")
+                                        }
                                     } else {
                                         onOpenDetail(track)
                                     }
