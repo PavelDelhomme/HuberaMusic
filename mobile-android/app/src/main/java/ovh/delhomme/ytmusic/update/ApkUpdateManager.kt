@@ -878,9 +878,9 @@ class ApkUpdateManager(
 
         val base = container.resolvedApiBase().trimEnd('/')
         val path = meta.downloadPath?.takeIf { it.startsWith("/") } ?: "/api/deploy/apk"
-        val url = meta.downloadUrl?.takeIf {
-            it.startsWith("https://") || it.startsWith("http://")
-        } ?: "$base$path"
+        // Toujours passer par l’API résolue (même host que le JWT) — évite 401 si
+        // downloadUrl pointe vers un alias (plm vs ytmusic) mal authentifié.
+        val url = "$base$path"
 
         val dir = File(context.cacheDir, "apk-updates").apply { mkdirs() }
         dir.listFiles()?.forEach { f ->
@@ -953,12 +953,31 @@ class ApkUpdateManager(
         }
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(context.packageName)
-        // API 31+ : MAJ du même package signé → pas (ou peu) de feuille Confirmer.
-        // C’est la seule voie fiable pour Samsung et pour les téléphones des amis.
+        val oem = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
+        val needsExplicitConfirm =
+            oem.contains("samsung") ||
+                oem.contains("xiaomi") ||
+                oem.contains("redmi") ||
+                oem.contains("poco") ||
+                oem.contains("oppo") ||
+                oem.contains("realme") ||
+                oem.contains("oneplus") ||
+                oem.contains("vivo") ||
+                oem.contains("huawei") ||
+                oem.contains("honor")
+        // API 31+ : en théorie USER_ACTION_NOT_REQUIRED suffit pour une MAJ signée du
+        // même package. Sur Samsung / Xiaomi / Oppo ça échoue souvent **sans** feuille
+        // (STATUS_FAILURE / BLOCKED) → l’utilisateur croit que « ça a planté ».
+        // Sur ces OEM : forcer USER_ACTION_REQUIRED pour toujours afficher Confirmer.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching {
-                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-                AppLog.i("apk-update", "USER_ACTION_NOT_REQUIRED (silent update)")
+                if (needsExplicitConfirm) {
+                    params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+                    AppLog.i("apk-update", "USER_ACTION_REQUIRED oem=$oem")
+                } else {
+                    params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                    AppLog.i("apk-update", "USER_ACTION_NOT_REQUIRED oem=$oem")
+                }
             }.onFailure {
                 AppLog.w("apk-update", "setRequireUserAction KO: ${it.message}")
             }
@@ -1048,6 +1067,16 @@ class ApkUpdateManager(
                 tryOpenConfirmUi("pending-user-action") {
                     UpdateRelaunch.startConfirmIntent(ctx, intent)
                 }
+                // Samsung / One UI : la feuille peut rester derrière PLM — 2 relances tardives.
+                val confirm = lastConfirmIntent
+                if (confirm != null) {
+                    mainHandler.postDelayed({
+                        runCatching { UpdateRelaunch.launchConfirm(ctx, confirm) }
+                    }, 1_200L)
+                    mainHandler.postDelayed({
+                        runCatching { UpdateRelaunch.launchConfirm(ctx, confirm) }
+                    }, 3_000L)
+                }
                 publish(
                     _ui.value.copy(
                         phase = Phase.AwaitingConfirm,
@@ -1098,14 +1127,50 @@ class ApkUpdateManager(
             PackageInstaller.STATUS_FAILURE_INVALID,
             PackageInstaller.STATUS_FAILURE_STORAGE,
             -> {
+                val statusMsg =
+                    intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)?.takeIf { it.isNotBlank() }
+                AppLog.w("apk-update", "install FAIL status=$status msg=$statusMsg")
                 notifier.cancel()
                 resetConfirmGate()
                 abandonAllSessions()
+                // OEM (Samsung…) : PackageInstaller a échoué sans feuille → bascule VIEW une fois.
+                val apk = lastInstallApk
+                if (apk != null && apk.exists() && !usedViewInstall) {
+                    usedViewInstall = true
+                    AppLog.i("apk-update", "fallback ACTION_VIEW after status=$status")
+                    mainHandler.post {
+                        runCatching { installApkViaView(apk) }
+                            .onFailure { AppLog.w("apk-update", "VIEW fallback KO: ${it.message}") }
+                    }
+                    publish(
+                        _ui.value.copy(
+                            phase = Phase.AwaitingConfirm,
+                            message = "Ouvre l’écran Confirmer (installateur système) — sinon /install",
+                            available = true,
+                            progress = 1f,
+                        ),
+                    )
+                    notifier.show(
+                        "Mise à jour PLM",
+                        "Confirme l’installation système",
+                        100,
+                        indeterminate = false,
+                    )
+                    return
+                }
                 markInstallCancelled()
+                val human = when (status) {
+                    PackageInstaller.STATUS_FAILURE_BLOCKED -> "bloquée par le système"
+                    PackageInstaller.STATUS_FAILURE_CONFLICT -> "conflit de package"
+                    PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "incompatible"
+                    PackageInstaller.STATUS_FAILURE_INVALID -> "APK invalide"
+                    PackageInstaller.STATUS_FAILURE_STORAGE -> "stockage insuffisant"
+                    else -> "échouée"
+                }
                 publish(
                     _ui.value.copy(
                         phase = Phase.Error,
-                        message = "Installation échouée — appuie pour réessayer ou /install",
+                        message = "Installation $human${statusMsg?.let { " ($it)" } ?: ""} — réessaie ou plm.delhomme.ovh/install",
                         available = true,
                     ),
                 )
