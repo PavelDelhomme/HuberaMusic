@@ -94,13 +94,20 @@ export function InstallBanner() {
   const [showGuide, setShowGuide] = useState(false);
   const platform = useMemo(() => detectPlatform(), []);
   const guide = useMemo(() => installSteps(platform), [platform]);
-  const dismissedKey = `ytm_install_dismissed:${location.host}`;
+  const dismissedKey = `ytm_install_dismissed_at:${location.host}`;
   const isAndroid = platform === 'android';
 
   useEffect(() => {
     if (isNativeApp() || isStandalone()) return;
     const forceInstall = new URLSearchParams(location.search).get('install') === '1';
-    if (!forceInstall && localStorage.getItem(dismissedKey) === '1') return;
+    const raw = localStorage.getItem(dismissedKey);
+    // TTL 10 jours : réaffiche le bandeau (freshness) sauf force ?install=1
+    const dismissedAt = raw ? Number(raw) : 0;
+    const freshEnough =
+      Number.isFinite(dismissedAt) &&
+      dismissedAt > 0 &&
+      Date.now() - dismissedAt < 10 * 24 * 60 * 60 * 1000;
+    if (!forceInstall && (raw === '1' || freshEnough)) return;
     if (forceInstall) {
       localStorage.removeItem(dismissedKey);
     }
@@ -119,7 +126,7 @@ export function InstallBanner() {
     window.addEventListener('beforeinstallprompt', onBip);
 
     const onInstalled = () => {
-      localStorage.setItem(dismissedKey, '1');
+      localStorage.setItem(dismissedKey, String(Date.now()));
       setVisible(false);
       if (forceInstall) {
         const u = new URL(location.href);
@@ -149,7 +156,7 @@ export function InstallBanner() {
   if (location.pathname.startsWith('/install')) return null;
 
   const dismiss = () => {
-    localStorage.setItem(dismissedKey, '1');
+    localStorage.setItem(dismissedKey, String(Date.now()));
     setVisible(false);
     setShowGuide(false);
   };
@@ -164,7 +171,7 @@ export function InstallBanner() {
         await deferred.prompt();
         const choice = await deferred.userChoice;
         if (choice.outcome === 'accepted') {
-          localStorage.setItem(dismissedKey, '1');
+          localStorage.setItem(dismissedKey, String(Date.now()));
           setVisible(false);
         }
       } catch {

@@ -35,9 +35,11 @@ class PlayerAudioFocus(
         const val CALL_WATCH_MAX_MS = 2 * 60 * 60_000L
     }
 
+    private val appCtx = context.applicationContext
     private val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val handler = Handler(Looper.getMainLooper())
     private var request: AudioFocusRequest? = null
+    private var lastDuckToastAt = 0L
     private var held = false
 
     /** Reprendre automatiquement quand le focus revient (appel, GPS, etc.). */
@@ -243,6 +245,17 @@ class PlayerAudioFocus(
         volumeBeforeDuck = p.volume.coerceIn(0.05f, 1f)
         ducked = true
         runCatching { p.volume = (volumeBeforeDuck * 0.22f).coerceAtLeast(0.05f) }
+        val now = System.currentTimeMillis()
+        if (now - lastDuckToastAt > 8_000L) {
+            lastDuckToastAt = now
+            handler.post {
+                android.widget.Toast.makeText(
+                    appCtx,
+                    "Volume baissé — notification ou autre app",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
     }
 
     private fun unduck(p: Player) {

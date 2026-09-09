@@ -227,6 +227,8 @@ fun NowPlayingScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
+    val pinIds = remember(pins) { pins.map { it.id }.toHashSet() }
     var scrub by remember(ui.track?.id) { mutableFloatStateOf(-1f) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     var mediaSlideX by remember { mutableFloatStateOf(0f) }
@@ -1071,6 +1073,51 @@ fun NowPlayingScreen(
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold,
                                         modifier = Modifier.clickable { player.clearSleepTimer() },
+                                    )
+                                }
+                                Spacer(Modifier.height(8.dp))
+                            }
+                            // Pin Accès rapide — retire si orphelin / manquant
+                            val pinnedNow = pins.any { it.id == track.id }
+                            if (pinnedNow || track.id.length == 11) {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .background(Color(0x22FFFFFF))
+                                        .clickable {
+                                            scope.launch {
+                                                runCatching {
+                                                    container.quickAccess.toggle(track, container.api)
+                                                }.onSuccess { now ->
+                                                    android.widget.Toast.makeText(
+                                                        context,
+                                                        if (now) "Épinglé" else "Retiré de l'accès rapide",
+                                                        android.widget.Toast.LENGTH_SHORT,
+                                                    ).show()
+                                                }.onFailure {
+                                                    android.widget.Toast.makeText(
+                                                        context,
+                                                        "Épinglage impossible — réessaie",
+                                                        android.widget.Toast.LENGTH_SHORT,
+                                                    ).show()
+                                                }
+                                            }
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                ) {
+                                    Text(
+                                        if (pinnedNow) "Épinglé · Accès rapide" else "Épingler · Accès rapide",
+                                        color = PlayerFg,
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                    Text(
+                                        if (pinnedNow) "Retirer" else "Ajouter",
+                                        color = if (pinnedNow) SeekRed else PlayerFg,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
                                     )
                                 }
                                 Spacer(Modifier.height(8.dp))
@@ -2989,6 +3036,7 @@ private fun InlineSyncedLyrics(
     var timed by remember(track.id) { mutableStateOf<List<TimedLyricLine>>(emptyList()) }
     var lyricsSource by remember(track.id) { mutableStateOf<String?>(null) }
     var loading by remember(track.id) { mutableStateOf(true) }
+    var lyricsReloadToken by remember(track.id) { mutableIntStateOf(0) }
     val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v1") }
     val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v1") }
     var userOffsetMs by remember(track.id) {
@@ -2998,14 +3046,17 @@ private fun InlineSyncedLyrics(
         mutableStateOf(loadLyricSegments(segPrefs, track.id))
     }
 
-    LaunchedEffect(track.id) {
+    LaunchedEffect(track.id, lyricsReloadToken) {
         loading = true
+        text = null
+        timed = emptyList()
+        lyricsSource = null
         userOffsetMs = syncPrefs.getLong(track.id, 0L)
         segments = loadLyricSegments(segPrefs, track.id)
         val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v5")
         val cachedText = lyricsCache.getString("t_${track.id}", null)
         val cachedTimed = lyricsCache.getString("l_${track.id}", null)
-        if (!cachedText.isNullOrBlank()) {
+        if (!cachedText.isNullOrBlank() && lyricsReloadToken == 0) {
             text = cachedText
             val raw = if (!cachedTimed.isNullOrBlank()) {
                 cachedTimed.lineSequence().mapNotNull { line ->
@@ -3273,6 +3324,12 @@ private fun InlineSyncedLyrics(
             ) {
                 Text("Paroles indisponibles", color = PlayerMuted)
                 Spacer(Modifier.height(12.dp))
+                TextButton(
+                    onClick = { lyricsReloadToken += 1 },
+                    enabled = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline(),
+                ) {
+                    Text("Réessayer")
+                }
                 TextButton(
                     onClick = {
                         val artist = track.artistLine().takeIf { it != "Artiste" }.orEmpty()

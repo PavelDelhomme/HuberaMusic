@@ -301,12 +301,17 @@ object TelemetryReporter {
     private suspend fun flushPendingLocked(container: ovh.delhomme.ytmusic.data.AppContainer) {
         val ctx = YtMusicApp.instance
         if (TelemetryBuffer.pendingCount(ctx) <= 0) return
+        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val events = TelemetryBuffer.drain(ctx)
         if (events.isEmpty()) return
         // Envoi par tranches : une longue coupure accumule bien plus d'entrées
         // qu'une requête ne peut en porter confortablement.
         val echecs = mutableListOf<Map<String, Any?>>()
         for (tranche in events.chunked(400)) {
+            if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) {
+                echecs += tranche
+                continue
+            }
             runCatching {
                 container.api.telemetryBatch(
                     mapOf(
