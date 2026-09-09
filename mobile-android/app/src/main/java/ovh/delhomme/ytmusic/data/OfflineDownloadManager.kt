@@ -353,14 +353,21 @@ class OfflineDownloadManager(
     /** Enfile une collection (album / playlist) — priorité user. */
     fun enqueueMany(tracks: List<TrackDto>): Int {
         val app = ovh.delhomme.ytmusic.YtMusicApp.instance
-        val freeBytes = app.filesDir.usableSpace
+        var freeBytes = app.filesDir.usableSpace
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            runCatching {
+                val sm = app.getSystemService(android.app.usage.StorageStatsManager::class.java)
+                val uuid = android.os.storage.StorageManager.UUID_DEFAULT
+                freeBytes = sm.getFreeBytes(uuid)
+            }
+        }
         val needGuess = tracks.size * 4L * 1024L * 1024L // ~4 Mo / titre
         if (freeBytes in 1 until needGuess) {
             AppLog.w("offline", "espace disque faible free=$freeBytes need~$needGuess")
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 android.widget.Toast.makeText(
                     app,
-                    "Espace disque faible — libère de la place avant un gros téléchargement",
+                    "Espace disque faible (${freeBytes / (1024 * 1024)} Mo libres) — libère de la place",
                     android.widget.Toast.LENGTH_LONG,
                 ).show()
             }

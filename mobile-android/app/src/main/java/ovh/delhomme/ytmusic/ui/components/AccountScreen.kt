@@ -122,7 +122,7 @@ fun AccountScreen(
                 val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
                 val recent = detailed.events.filter { it.createdAt >= weekAgo }
                 if (recent.isEmpty()) {
-                    val hist = container.api.history().tracks
+                    val hist = container.api.history().history
                     if (hist.isEmpty()) null
                     else "Historique · ${hist.size} titres récents"
                 } else {
