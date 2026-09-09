@@ -48,7 +48,7 @@ object NetworkMonitor {
     private var lastTransport: Int = -1
 
     /** Délai avant de confirmer « vraiment hors ligne » (handover 4G/Wi‑Fi). */
-    private const val OFFLINE_DEBOUNCE_MS = 3_500L
+    private const val OFFLINE_DEBOUNCE_MS = 4_200L
 
     fun isOnline(): Boolean = online && !forceOffline
 

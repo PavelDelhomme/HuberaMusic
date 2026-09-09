@@ -258,6 +258,19 @@ class PlayerController(
         } else {
             syncFrom(exo)
         }
+        // Rechauffe le titre courant + suivants après handover / kill partiel
+        val curId = _state.value.track?.id
+            ?: PlaybackService.Holder.queue.getOrNull(PlaybackService.Holder.index)?.id
+        if (!curId.isNullOrBlank() && curId.length == 11) {
+            val base = streamUrl("_").substringBefore("/api/stream/")
+            if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
+                val upcoming = PlaybackService.Holder.queue
+                    .drop(PlaybackService.Holder.index + 1)
+                    .take(3)
+                    .map { it.id }
+                StreamPrefetcher.prepareRestoredCurrent(base, curId, upcoming)
+            }
+        }
     }
 
     fun play(
@@ -741,12 +754,19 @@ class PlayerController(
         }
         if (!nid.isNullOrBlank()) {
             val base = streamUrl("_").substringBefore("/api/stream/")
+            // Skip user : coupe le bruit prefetch et chauffe #1–#2 tout de suite
+            StreamPrefetcher.cancelIdle(preserveNext = true)
+            StreamPrefetcher.quietPrefetch(0L)
             StreamPrefetcher.warmTrackFormatOnly(base, nid)
-            // Skip utilisateur : ignorer quietPrefetch pour chauffer le suivant tout de suite
+            skipQueue.getOrNull(nextIdx + 1)?.id?.takeIf { it.length == 11 }?.let { n2 ->
+                StreamPrefetcher.warmTrackFormatOnly(base, n2)
+                StreamPrefetcher.prefetchStartHead(base, n2, StreamPrefetcher.HEAD_3S)
+            }
+            StreamPrefetcher.prefetchStartHead(base, nid, StreamPrefetcher.HEAD_3S, priorityNext = true)
             StreamPrefetcher.prefetchUpcomingHeadsTiered(
                 base,
-                PlaybackService.Holder.queue.map { it.id },
-                p.currentMediaItemIndex,
+                skipQueue.map { it.id },
+                nextIdx,
                 count = 4,
                 ignoreQuiet = true,
             )
@@ -804,37 +824,26 @@ class PlayerController(
             context.toastMain("Fin de la file")
             return
         }
-        if (fillJob?.isActive == true) {
-            context.toastMain("Suggestions en cours…")
-            return
-        }
         val savedQ = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
         val pNow = player() ?: PlaybackService.Holder.player
         val curIdx = (pNow?.currentMediaItemIndex ?: PlaybackService.Holder.index).coerceAtLeast(0)
+        // Toujours privilégier la file Holder avant toute suggestion
         if (savedQ.size > curIdx + 1) {
             val p = pNow
             if (p != null) {
-                if (p.playbackState == Player.STATE_ENDED ||
-                    p.playbackState == Player.STATE_IDLE ||
-                    p.currentMediaItemIndex < curIdx + 1
-                ) {
-                    playNow(p, savedQ, curIdx + 1, autoplay = true)
-                    return
-                }
-                if (p.hasNextMediaItem()) {
-                    p.seekToNextMediaItem()
-                    p.prepare()
-                    p.play()
-                    syncFrom(p)
-                    return
-                }
-            }
-        }
-        if (savedQ.size > curIdx + 1 && (pNow == null || pNow.mediaItemCount <= curIdx + 1)) {
-            if (pNow != null) {
-                playNow(pNow, savedQ, curIdx + 1, autoplay = true)
+                playNow(p, savedQ, curIdx + 1, autoplay = true)
                 return
             }
+            userWantsPlaying = true
+            pending = savedQ to (curIdx + 1)
+            pendingSeekMs = 0L
+            PlaybackService.Holder.index = curIdx + 1
+            ensureServiceAndConnect()
+            return
+        }
+        if (fillJob?.isActive == true) {
+            context.toastMain("Suggestions en cours…")
+            return
         }
         val seed = _state.value.track?.id
             ?: savedQ.getOrNull(curIdx)?.id
@@ -1433,11 +1442,11 @@ class PlayerController(
         val pos = p.currentPosition
         if (dur <= 0L || dur == androidx.media3.common.C.TIME_UNSET || pos < 0L) return
         if (dur < 45_000L) return
-        // Jamais pendant les 92 % premiers — évite couper l’outro (ex. Papaoutai)
-        if (pos.toDouble() / dur < 0.92) return
+        // Jamais pendant les 90 % premiers — évite couper l’outro
+        if (pos.toDouble() / dur < 0.90) return
         val remaining = dur - pos
         // Il doit rester très peu d’audio audible
-        if (remaining > 2_500L || remaining < 400L) return
+        if (remaining > 2_800L || remaining < 350L) return
 
         val trackId = p.currentMediaItem?.mediaId ?: return
         if (silenceSkipTrackId == trackId) return
@@ -1447,10 +1456,10 @@ class PlayerController(
         // Meta YTM souvent trop courte : ne couper que si le flux dépasse clairement + padding réel
         val paddedEnd =
             metaMs != null &&
-                dur >= metaMs + 12_000L &&
-                pos >= metaMs + 6_000L &&
-                remaining <= 2_000L &&
-                pos.toDouble() / dur >= 0.96
+                dur >= metaMs + 10_000L &&
+                pos >= metaMs + 5_000L &&
+                remaining <= 2_400L &&
+                pos.toDouble() / dur >= 0.94
 
         if (!paddedEnd) return
 
@@ -1943,7 +1952,7 @@ class PlayerController(
 
     /**
      * Feedback utilisateur pendant un long BUFFERING (file / titre froid).
-     * Toasts à ~2,5 s puis ~5 s — aligné sur le stall ~2,5 s.
+     * Messages distincts hors-ligne / serveur / Wi‑Fi ; skip auto après ~8 s.
      */
     private fun noteBuffering(buffering: Boolean, trackId: String?) {
         if (!buffering || trackId.isNullOrBlank()) {
@@ -1956,16 +1965,32 @@ class PlayerController(
         bufferWatchJob?.cancel()
         bufferHintTrackId = trackId
         bufferWatchJob = scope.launch {
-            delay(2_500L)
+            delay(2_200L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
-                context.toastMain("Chargement du flux…", Toast.LENGTH_SHORT)
+                val msg = when {
+                    !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() ->
+                        "Hors ligne — reconnecte le Wi‑Fi ou les données"
+                    StreamPrefetcher.isStreamDown() ->
+                        "Serveur audio temporairement indisponible"
+                    else -> "Chargement du flux…"
+                }
+                context.toastMain(msg, Toast.LENGTH_SHORT)
             }
-            delay(2_500L)
+            delay(2_800L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
                 context.toastMain(
-                    "Toujours en chargement — passe au suivant si besoin",
+                    "Toujours en chargement — passage au suivant…",
                     Toast.LENGTH_SHORT,
                 )
+            }
+            delay(3_000L)
+            if (_state.value.buffering &&
+                _state.value.track?.id == trackId &&
+                ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
+                !StreamPrefetcher.isStreamDown()
+            ) {
+                AppLog.i("PlayerController", "buffer stuck → skipNext id=$trackId")
+                skipNext()
             }
         }
     }

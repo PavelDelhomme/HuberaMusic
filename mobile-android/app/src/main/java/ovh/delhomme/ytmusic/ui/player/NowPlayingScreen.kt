@@ -1340,8 +1340,13 @@ fun NowPlayingScreen(
                                                 ),
                                         )
                                         if (ui.buffering) {
+                                            val bufLabel = when {
+                                                !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() ->
+                                                    "Hors ligne…"
+                                                else -> "Chargement du flux…"
+                                            }
                                             Text(
-                                                "Chargement du flux…",
+                                                bufLabel,
                                                 color = Color(0xFFFF8A80),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 modifier = Modifier
