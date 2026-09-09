@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.NetworkMonitor
@@ -184,9 +185,18 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     radioPreviews = mergedPreviews,
                 )
 
-                // Cold-start client : chauffe seeds + premiers titres des shelves
+                // Cold-start client : chauffe seeds + premiers titres des shelves + pins Accès rapide
                 launch {
+                    val pinSongIds = runCatching {
+                        container.quickAccess.pins.first()
+                            .filter { it.isPlayable() && it.id.length == 11 }
+                            .map { it.id }
+                    }.getOrDefault(emptyList())
+                    if (pinSongIds.isNotEmpty()) {
+                        container.libraryHeadPrefetcher.boostVisible(pinSongIds)
+                    }
                     val ids = buildList {
+                        addAll(pinSongIds)
                         addAll(home.seeds.orEmpty())
                         home.shelves.orEmpty().forEach { shelf ->
                             shelf.items.orEmpty().take(6).forEach { item ->
