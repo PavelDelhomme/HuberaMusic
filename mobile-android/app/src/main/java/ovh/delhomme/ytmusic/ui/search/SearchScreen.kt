@@ -47,7 +47,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import ovh.delhomme.ytmusic.player.StreamPrefetcher
+import ovh.delhomme.ytmusic.ui.util.toastMain
 import android.widget.Toast
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -497,7 +501,11 @@ fun SearchScreen(
                             fontSize = 12.sp,
                         )
                     },
-                    modifier = Modifier.heightIn(max = 32.dp),
+                    modifier = Modifier
+                        .heightIn(max = 32.dp)
+                        .semantics {
+                            contentDescription = "Filtre recherche $label"
+                        },
                     colors = FilterChipDefaults.filterChipColors(),
                 )
             }
@@ -580,17 +588,30 @@ fun SearchScreen(
                 )
             }
             !state.loading && state.sections.isEmpty() -> {
-                Column(Modifier.fillMaxSize()) {
+                Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     SearchSuggestionsBlock(
                         draft = state.query.trim(),
                         suggestions = state.suggestions,
                         onPick = vm::commitSearch,
                     )
                     Text(
-                        "Aucun résultat pour « ${state.query} ». Essaie un autre filtre.",
+                        "Aucun résultat pour « ${state.query} ».",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(24.dp),
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                     )
+                    Text(
+                        "Essaie un autre filtre, orthographe, ou réessaie.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = vm::retrySearch) {
+                        Text("Réessayer")
+                    }
                 }
             }
             else -> {
@@ -623,7 +644,16 @@ fun SearchScreen(
                                 pinned = track.id in pinIds,
                                 onTogglePin = {
                                     scope.launch {
-                                        container.quickAccess.toggle(track, container.api)
+                                        runCatching {
+                                            container.quickAccess.toggle(track, container.api)
+                                        }.onSuccess { now ->
+                                            context.toastMain(
+                                                if (now) "Ajouté à l'accès rapide"
+                                                else "Retiré de l'accès rapide",
+                                            )
+                                        }.onFailure {
+                                            context.toastMain("Épinglage impossible — réessaie")
+                                        }
                                     }
                                 },
                                 onClick = {
@@ -650,6 +680,18 @@ fun SearchScreen(
                                             val playable = section.items.filter { it.isPlayable() }
                                             val idx = playable.indexOfFirst { it.id == track.id }
                                                 .coerceAtLeast(0)
+                                            val base = container.resolvedApiBase()
+                                            if (base.isNotBlank()) {
+                                                StreamPrefetcher.warmTrackFormatOnly(base, track.id)
+                                                val upcoming = playable
+                                                    .drop(idx + 1)
+                                                    .map { it.id }
+                                                    .filter { it.length == 11 }
+                                                    .take(3)
+                                                if (upcoming.isNotEmpty()) {
+                                                    StreamPrefetcher.warmHeads3s(base, upcoming, limit = 3)
+                                                }
+                                            }
                                             onPlay(playable.ifEmpty { listOf(track) }, idx)
                                         } else {
                                             onOpenDetail(track)

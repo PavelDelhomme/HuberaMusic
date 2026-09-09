@@ -144,6 +144,8 @@ fun TrackActionsSheet(
                     localLib?.mixes?.any { it.id == track.id } == true),
         )
     }
+    /** Ignore le sync réseau si l’utilisateur vient de basculer (évite flash lent). */
+    var songLibUserOverrideAt by remember(track.id) { mutableStateOf(0L) }
     var albumTracks by remember(track.id) { mutableStateOf<List<TrackDto>>(emptyList()) }
     var albumAllLiked by remember(track.id) { mutableStateOf(false) }
     var playlistContainedIds by remember(track.id) { mutableStateOf<Set<String>>(emptySet()) }
@@ -216,7 +218,9 @@ fun TrackActionsSheet(
             }.getOrNull() ?: return@launch
             liked = c.liked
             if (track.type?.equals("mix", ignoreCase = true) != true) {
-                songInLibrary = c.inLibrary
+                if (System.currentTimeMillis() - songLibUserOverrideAt > 2_500L) {
+                    songInLibrary = c.inLibrary
+                }
             }
             albumInLibrary = c.albumInLibrary
             if (c.liked != (track.id in likedIds)) {
@@ -505,11 +509,13 @@ fun TrackActionsSheet(
                 ) {
                     val next = !songInLibrary
                     songInLibrary = next
+                    songLibUserOverrideAt = System.currentTimeMillis()
                     container.appScope().launch {
                         runCatching {
                             container.ensureFreshToken()
                             val r = container.api.toggleLibrarySong(enriched)
                             songInLibrary = r.saved
+                            songLibUserOverrideAt = System.currentTimeMillis()
                             container.bumpLibraryEpoch()
                             context.toastMain(if (r.saved) "Dans la bibliothèque" else "Retiré de la bibliothèque")
                         }.onFailure { e ->

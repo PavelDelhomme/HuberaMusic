@@ -2,6 +2,29 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.190",
+      "date": "2026-09-09",
+      "title": "Cast, session, notifications",
+      "notes": [
+        "Cast : libellés Lecture ici / Musique ailleurs",
+        "Reprendre ici : toast + playResume sur la file locale",
+        "Chromecast web : message d’échec clair + fallback Appareils PLM",
+        "Notif MediaSession : durée hint depuis métadonnées titre",
+        "Artwork / titre / artiste toujours exposés à la notif",
+        "Sync lecture ON/OFF : texte plus explicite dans la feuille",
+        "À suivre : toggle visible même si autoplay OFF",
+        "Vitesse lecture déjà mémorisée (SharedPreferences)",
+        "Économiseur batterie : tick NP ralenti",
+        "Aide : section Cast / multi-appareils",
+        "Toast pin Accueil avec succès / échec",
+        "Hero album : libellé Mix explicite",
+        "Artiste : boostVisible + warm têtes au scroll",
+        "Mosaïques Accueil : écriture MixCache au preview",
+        "Podcasts Accueil : empty state + shelf explicite",
+        "Collage mix : commentaire MixCache (cold start)"
+      ]
+    },
+    {
       "version": "1.3.189",
       "date": "2026-09-09",
       "title": "Paroles, hors-ligne, pins",

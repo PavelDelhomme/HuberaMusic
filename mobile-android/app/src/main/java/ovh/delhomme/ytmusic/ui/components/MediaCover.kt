@@ -114,7 +114,9 @@ fun MediaCover(
     }
 }
 
-/** Mosaïque 2×2 des 4 premières covers — carte mix style album. */
+/** Mosaïque 2×2 des 4 premières covers — carte mix style album.
+ *  Préférer des tracks issus de [MixCacheStore] (Home seed) pour un collage immédiat.
+ */
 @Composable
 fun MixCollageCover(
     tracks: List<TrackDto>,
