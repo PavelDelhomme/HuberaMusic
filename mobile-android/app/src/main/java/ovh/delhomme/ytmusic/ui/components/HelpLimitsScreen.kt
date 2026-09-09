@@ -109,7 +109,8 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item {
                 Bullet(
                     "Hors-ligne : seuls les titres téléchargés (Téléchargements / aimés gardés) jouent. " +
-                        "Depuis 1.3.189, les paroles sont aussi mises en cache au téléchargement quand possible.",
+                        "Depuis 1.3.189, les paroles sont aussi mises en cache au téléchargement quand possible. " +
+                        "Avant un gros DL, un toast prévient si l’espace disque est trop bas.",
                 )
             }
             item {

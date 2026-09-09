@@ -794,7 +794,7 @@ private fun SearchLoadingSkeleton() {
                     Modifier
                         .size(48.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)), // skeleton polish
                 )
                 Column(Modifier.weight(1f)) {
                     Box(
@@ -802,7 +802,7 @@ private fun SearchLoadingSkeleton() {
                             .fillMaxWidth(0.7f)
                             .height(12.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                     )
                     Spacer(Modifier.height(8.dp))
                     Box(

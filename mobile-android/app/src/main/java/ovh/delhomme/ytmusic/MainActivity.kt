@@ -1381,6 +1381,25 @@ private fun MainTabs(
         bottomBar = {
             if (showBottomChrome) {
                 Column(Modifier.navigationBarsPadding()) {
+                    val online by ovh.delhomme.ytmusic.data.NetworkMonitor.onlineFlow.collectAsState(
+                        initial = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline(),
+                    )
+                    if (!online) {
+                        val offlineCount = container.offlineStore.listTracks().size
+                        Text(
+                            if (offlineCount > 0) {
+                                "Hors ligne — $offlineCount titre${if (offlineCount > 1) "s" else ""} sur l'appareil"
+                            } else {
+                                "Hors ligne — télécharge des titres pour écouter sans réseau"
+                            },
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                        )
+                    }
                     if (updateUi.showsUpdateBanner()) {
                         UpdateProgressBanner(
                             ui = updateUi,

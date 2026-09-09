@@ -1,5 +1,11 @@
 package ovh.delhomme.ytmusic.ui.home
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -1016,7 +1022,7 @@ private fun HomeLoadingSkeleton() {
                     .fillMaxWidth(0.4f)
                     .height(18.dp)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.62f)), // skeleton polish
             )
             Row(
                 Modifier.padding(horizontal = 12.dp),
