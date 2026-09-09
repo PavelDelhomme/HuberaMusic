@@ -69,9 +69,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -109,6 +111,7 @@ fun HomeScreen(
     val pinIds = remember(pins) { pins.map { it.id }.toHashSet() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     var showHistory by remember { mutableStateOf(false) }
     var userPicture by remember { mutableStateOf<String?>(null) }
 
@@ -208,7 +211,10 @@ fun HomeScreen(
             else -> {
                 PullToRefreshBox(
                     isRefreshing = state.refreshing,
-                    onRefresh = { vm.refresh(fromUser = true) },
+                    onRefresh = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        vm.refresh(fromUser = true)
+                    },
                     modifier = Modifier.fillMaxSize(),
                 ) {
                 LazyColumn(

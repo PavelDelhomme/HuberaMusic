@@ -209,7 +209,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             return
         }
         sugJob = viewModelScope.launch {
-            delay(180)
+            delay(260)
             val q = _state.value.query.trim()
             if (q.isEmpty()) {
                 _state.value = _state.value.copy(suggestions = emptyList())
