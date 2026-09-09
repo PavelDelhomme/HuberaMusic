@@ -314,7 +314,13 @@ async function tryRefresh(): Promise<boolean> {
 }
 
 export const api = {
-  health: () => req<{ ok: boolean; auth: { googleEnabled: boolean; googleClientId: string | null } }>('/api/health'),
+  health: () =>
+    req<{
+      ok: boolean;
+      appVersion?: string;
+      version?: string;
+      auth: { googleEnabled: boolean; googleClientId: string | null };
+    }>('/api/health'),
   authConfig: () =>
     req<{
       googleEnabled: boolean;

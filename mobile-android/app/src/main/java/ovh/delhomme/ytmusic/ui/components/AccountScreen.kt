@@ -66,7 +66,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.DeviceLoginDeepLink
 import ovh.delhomme.ytmusic.auth.DeviceLoginQr
@@ -75,8 +77,8 @@ import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.RefreshBody
 import ovh.delhomme.ytmusic.data.UserDto
 import ovh.delhomme.ytmusic.ui.auth.QrScannerScreen
-import ovh.delhomme.ytmusic.update.ApkUpdateManager
 import ovh.delhomme.ytmusic.ui.util.toastMain
+import ovh.delhomme.ytmusic.update.ApkUpdateManager
 
 /**
  * Page Compte pleine écran (navigable) — pas un bottom sheet qui se referme
@@ -110,6 +112,30 @@ fun AccountScreen(
     val updater = remember { container.apkUpdateManager }
     val updateUi by updater.ui.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
+    var listenStats by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        listenStats = withContext(Dispatchers.IO) {
+            runCatching {
+                container.ensureFreshToken()
+                val detailed = container.api.historyDetailed()
+                val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+                val recent = detailed.events.filter { it.createdAt >= weekAgo }
+                if (recent.isEmpty()) {
+                    val hist = container.api.history().tracks
+                    if (hist.isEmpty()) null
+                    else "Historique · ${hist.size} titres récents"
+                } else {
+                    val top = recent
+                        .groupingBy { it.track?.title?.takeIf { t -> t.isNotBlank() } ?: it.trackId }
+                        .eachCount()
+                        .maxByOrNull { it.value }
+                    val topLabel = top?.key?.let { " · top : $it" }.orEmpty()
+                    "${recent.size} écoutes (7 j)$topLabel"
+                }
+            }.getOrNull()
+        }
+    }
 
     BackHandler(onBack = onBack)
 
@@ -378,7 +404,7 @@ fun AccountScreen(
                 AccountRow(
                     icon = { Icon(Icons.Default.History, contentDescription = null) },
                     title = "Historique d'écoute",
-                    subtitle = "Titres écoutés récemment",
+                    subtitle = listenStats ?: "Titres écoutés récemment",
                     onClick = onOpenHistory,
                 )
             }

@@ -61,9 +61,9 @@ export function DevicePicker({ open, onClose }: { open: boolean; onClose: () => 
         </div>
 
         <p className="mb-4 text-sm text-yt-muted">
-          {native
-            ? 'Pilote un PC, une TV ou un autre appareil connecté avec le même compte — file, play/pause, volume.'
-            : 'Lance la musique sur un PC / TV et contrôle tout depuis le mobile (file, titres, volume…).'}
+          {activePlayerId === deviceId || !activePlayerId
+            ? 'Lecture ici — tape un autre appareil pour y envoyer la file'
+            : 'Musique ailleurs — « Lire sur cet appareil » pour reprendre ici'}
         </p>
 
         <button
@@ -116,7 +116,17 @@ export function DevicePicker({ open, onClose }: { open: boolean; onClose: () => 
                 type="button"
                 onClick={() => {
                   if (active) return;
-                  transferTo(d.id, snapshot());
+                  void (async () => {
+                    try {
+                      await transferTo(d.id, snapshot());
+                    } catch (e) {
+                      const msg =
+                        e instanceof Error && e.message
+                          ? e.message
+                          : 'Impossible de transférer la lecture';
+                      window.alert(`Cast impossible — ${msg}`);
+                    }
+                  })();
                 }}
                 className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${
                   active ? 'bg-yt-red/20 ring-1 ring-yt-red/50' : 'bg-yt-elevated hover:bg-yt-hover'
@@ -129,7 +139,14 @@ export function DevicePicker({ open, onClose }: { open: boolean; onClose: () => 
                     {isMe ? ' (cet appareil)' : ''}
                   </div>
                   <div className="text-xs text-yt-muted">
-                    {d.type} · {active ? 'En lecture ici' : isMe ? 'Contrôle local' : 'Caster ici'}
+                    {d.type} ·{' '}
+                    {active
+                      ? isMe
+                        ? 'Lecture ici'
+                        : 'Musique ailleurs (actif)'
+                      : isMe
+                        ? 'Cet appareil'
+                        : 'Envoyer ici'}
                   </div>
                 </div>
                 {active && <Check className="h-4 w-4 text-yt-red" />}
