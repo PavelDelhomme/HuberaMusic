@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.195",
+      "date": "2026-09-09",
+      "title": "Polish aide, mini-lecteur & reprise réseau",
+      "notes": [
+        "Aide & limites : cold start ~20–24 s avant skip + note Économiseur d’énergie",
+        "Réseau de retour : toast « reprise » si lecture était en pause hors-ligne",
+        "Mini-lecteur : haptic léger play / précédent / suivant",
+        "Bandeau hors-ligne : compteur titres via revision (pas de scan à chaque frame)"
+      ]
+    },
+    {
       "version": "1.3.194",
       "date": "2026-09-09",
       "title": "UX Accueil, Compte & économie d’énergie",

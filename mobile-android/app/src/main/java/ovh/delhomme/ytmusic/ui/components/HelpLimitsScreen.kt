@@ -81,7 +81,8 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item {
                 Bullet(
                     "Pendant le chargement, le mini-lecteur affiche « Chargement… ». " +
-                        "Si ça dure trop, un message apparaît — tu peux passer au titre suivant.",
+                        "Sur un titre froid, PLM laisse ~20–24 s avant de proposer le suivant " +
+                        "(aligné sur le démarrage cold), pour éviter un saut trop tôt.",
                 )
             }
             item { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)) }
@@ -111,6 +112,12 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
                     "Hors-ligne : seuls les titres téléchargés (Téléchargements / aimés gardés) jouent. " +
                         "Depuis 1.3.189, les paroles sont aussi mises en cache au téléchargement quand possible. " +
                         "Avant un gros DL, un toast prévient si l’espace disque est trop bas.",
+                )
+            }
+            item {
+                Bullet(
+                    "Économiseur d’énergie Android : PLM allège prefetch / pochettes / DL opportunistes " +
+                        "(un toast le confirme). La lecture en cours continue.",
                 )
             }
             item {
