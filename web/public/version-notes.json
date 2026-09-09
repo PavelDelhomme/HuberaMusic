@@ -1,6 +1,16 @@
 {
-  "updatedAt": "2026-09-08",
+  "updatedAt": "2026-09-09",
   "versions": [
+    {
+      "version": "1.3.185",
+      "date": "2026-09-09",
+      "title": "MAJ in-app fiable sur Samsung",
+      "notes": [
+        "Samsung / Xiaomi / Oppo : l’écran Confirmer s’affiche vraiment (plus d’échec silencieux)",
+        "Si PackageInstaller échoue, bascule auto vers l’installateur système",
+        "Téléchargement APK toujours via le même serveur que la session (évite 401)"
+      ]
+    },
     {
       "version": "1.3.184",
       "date": "2026-09-08",
