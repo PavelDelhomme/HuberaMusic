@@ -121,13 +121,17 @@ fun CastSheet(
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Text(
-            "Caster",
+            "Appareils de lecture",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
         )
         Text(
-            "Choisir où lire la musique — le cast reste disponible même sans sync titre",
+            if (activeId == container.deviceId || activeId.isNullOrBlank()) {
+                "Lecture ici — tape un autre appareil pour y envoyer la file"
+            } else {
+                "Musique ailleurs — « Cet appareil » pour reprendre ici"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 20.dp),
@@ -186,7 +190,14 @@ fun CastSheet(
                             container.api.setSessionActive(mapOf("targetId" to container.deviceId))
                         }.onSuccess {
                             activeId = it.activePlayerId
-                            Toast.makeText(context, "Lecture sur cet appareil", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Lecture ici — file reprise", Toast.LENGTH_SHORT).show()
+                            // Reprend la session locale si on avait une file
+                            player?.let { ctrl ->
+                                val q = ctrl.state.value.queue
+                                if (q.isNotEmpty()) {
+                                    ctrl.playResume()
+                                }
+                            }
                             onDismiss()
                         }.onFailure {
                             Toast.makeText(context, "Impossible : ${it.message}", Toast.LENGTH_SHORT).show()

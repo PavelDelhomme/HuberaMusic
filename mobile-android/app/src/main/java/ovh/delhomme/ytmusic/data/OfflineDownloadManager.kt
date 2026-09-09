@@ -217,6 +217,24 @@ class OfflineDownloadManager(
                         }
                         if (result.isSuccess) {
                             runCatching { notifyServer(track.id) }
+                            // Bundle paroles en cache local pour lecture hors-ligne
+                            runCatching {
+                                val app = ovh.delhomme.ytmusic.YtMusicApp.instance
+                                val r = app.container.api.lyrics(track.id)
+                                val prefs = app.getSharedPreferences(
+                                    "plm_lyrics_cache_v5",
+                                    android.content.Context.MODE_PRIVATE,
+                                )
+                                val timed = r.timed.orEmpty()
+                                prefs.edit()
+                                    .putString("t_${track.id}", r.lyrics ?: "")
+                                    .putString("s_${track.id}", r.source)
+                                    .putString(
+                                        "l_${track.id}",
+                                        timed.joinToString("\n") { "${it.startMsLong()}|${it.text}" },
+                                    )
+                                    .apply()
+                            }
                             return@withPermit
                         }
                         lastFail = result.exceptionOrNull()
@@ -236,7 +254,9 @@ class OfflineDownloadManager(
                         }
                         if (dashOrFtyp) {
                             permanentFail.add(track.id)
-                            throw lastFail ?: Exception(msg)
+                            throw Exception(
+                                "Format audio incompatible (DASH) — réessaie plus tard ou un autre titre",
+                            )
                         }
                         if (priority == Priority.User && isStreamInfraFailure(lastFail ?: Exception(msg))) {
                             AppLog.w(

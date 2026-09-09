@@ -1,8 +1,7 @@
 /**
  * Mail récap d’une version PLM (appelé après chaque promo).
  *
- *   VERSION=1.3.187 TITLE="…" NOTES=$'ligne1\nligne2' npx tsx scripts/qa/send-version-mail.mts
- *   ou: npx tsx scripts/qa/send-version-mail.mts --version 1.3.187 --title "…" --notes-file path.txt
+ *   node --env-file=.env --import tsx scripts/qa/send-version-mail.mts --version 1.3.187 --title "…" --notes-file path.txt
  */
 import { readFileSync, existsSync } from 'node:fs';
 import { sendMail } from '../../api/src/platform/mail.ts';

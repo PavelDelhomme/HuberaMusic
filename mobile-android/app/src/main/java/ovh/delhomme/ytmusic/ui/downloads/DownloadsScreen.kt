@@ -158,7 +158,41 @@ fun DownloadsScreen(
             }
         }
 
-        if (tracks.isEmpty() && activeCount == 0) {
+        val failedIds = errors.keys.filter { it !in progress.keys }
+        if (failedIds.isNotEmpty()) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f))
+                    .padding(12.dp),
+            ) {
+                Text(
+                    "Erreurs",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.height(6.dp))
+                failedIds.take(12).forEach { id ->
+                    Text(
+                        tracks.firstOrNull { it.id == id }?.title ?: id,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        errors[id].orEmpty(),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(bottom = 6.dp),
+                    )
+                }
+            }
+        }
+
+        if (tracks.isEmpty() && activeCount == 0 && failedIds.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(

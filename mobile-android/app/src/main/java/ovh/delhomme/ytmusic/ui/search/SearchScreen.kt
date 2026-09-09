@@ -296,6 +296,19 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                     }
                 }
                 _state.value = _state.value.copy(loading = false, sections = sections, error = null)
+                // Chauffe légère des premiers titres trouvés (tap play plus chaud)
+                val warmIds = sections
+                    .flatMap { it.items }
+                    .filter { it.isPlayable() && it.id.length == 11 }
+                    .map { it.id }
+                    .distinct()
+                    .take(8)
+                if (warmIds.isNotEmpty()) {
+                    val base = container.resolvedApiBase()
+                    if (base.isNotBlank()) {
+                        ovh.delhomme.ytmusic.player.StreamPrefetcher.warmFormatsLight(base, warmIds, limit = 8)
+                    }
+                }
             } catch (e: Exception) {
                 if (_state.value.query.trim() != currentQ) return@launch
                 // Hors-ligne / API KO : on expose quand même les DL locaux
@@ -306,7 +319,16 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                         error = null,
                     )
                 } else {
-                    _state.value = _state.value.copy(loading = false, error = e.message)
+                    val msg = when {
+                        !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() ->
+                            "Hors ligne — reconnecte le réseau ou cherche dans tes téléchargements"
+                        e.message?.contains("timeout", ignoreCase = true) == true ->
+                            "Recherche trop lente — réessaie"
+                        e.message?.contains("401") == true || e.message?.contains("403") == true ->
+                            "Session expirée — reconnecte-toi dans Compte"
+                        else -> e.message?.takeIf { it.isNotBlank() } ?: "Recherche indisponible"
+                    }
+                    _state.value = _state.value.copy(loading = false, error = msg)
                 }
             }
         }
