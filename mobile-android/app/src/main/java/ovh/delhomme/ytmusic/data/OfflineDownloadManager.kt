@@ -49,6 +49,8 @@ class OfflineDownloadManager(
 
     private val _errors = MutableStateFlow<Map<String, String>>(emptyMap())
     val errors: StateFlow<Map<String, String>> = _errors.asStateFlow()
+    /** Métadonnées des titres en erreur (retry sans repasser par la biblio). */
+    private val failedTracks = ConcurrentHashMap<String, TrackDto>()
     /** IDs refusés (DASH / ftyp) — ne plus ré-enqueue pendant la session. */
     private val permanentFail = ConcurrentHashMap.newKeySet<String>()
 
@@ -163,6 +165,7 @@ class OfflineDownloadManager(
 
         _progress.update { it + (track.id to 0.02f) }
         _errors.update { it - track.id }
+        failedTracks.remove(track.id)
 
         val job = scope.launch(Dispatchers.IO) {
             try {
@@ -282,6 +285,7 @@ class OfflineDownloadManager(
                 throw e
             } catch (e: Exception) {
                 val msg = e.message ?: "Échec téléchargement"
+                failedTracks[track.id] = track
                 _errors.update { it + (track.id to msg) }
                 if (
                     msg.contains("DASH", ignoreCase = true) ||
@@ -404,6 +408,25 @@ class OfflineDownloadManager(
         val msg = _errors.value[trackId] ?: return null
         _errors.update { it - trackId }
         return msg
+    }
+
+    fun failedTrack(trackId: String): TrackDto? = failedTracks[trackId]
+
+    /**
+     * Relance les DL en erreur (sauf permanentFail DASH).
+     * @return nombre de jobs relancés.
+     */
+    fun retryFailed(limit: Int = 24): Int {
+        val ids = _errors.value.keys
+            .filter { it !in permanentFail && it !in _progress.value }
+            .take(limit)
+        var n = 0
+        for (id in ids) {
+            val track = failedTracks[id] ?: continue
+            _errors.update { it - id }
+            if (enqueue(track)) n++
+        }
+        return n
     }
 
     /** Annule un DL en cours et supprime le fichier partiel. */

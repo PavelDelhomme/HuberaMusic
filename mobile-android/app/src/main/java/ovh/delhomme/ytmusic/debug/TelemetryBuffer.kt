@@ -20,10 +20,11 @@ import java.io.File
  * chronologie d'une avalanche sans en payer le poids mille fois.
  */
 object TelemetryBuffer {
-    private const val MAX_EVENTS = 2_500
-    private const val MAX_BYTES = 2 * 1024 * 1024
-    /** Horodatages conservés par groupe : assez pour lire le rythme d'une rafale. */
-    private const val MAX_TIMES = 500
+    /** Digest compact au retour réseau (E21) — assez pour un mail, pas une avalanche. */
+    private const val MAX_EVENTS = 80
+    private const val MAX_BYTES = 256 * 1024
+    /** Horodatages conservés par groupe : assez pour lire le rythme d’une rafale. */
+    private const val MAX_TIMES = 40
     private val lock = Any()
 
     private fun file(ctx: Context): File = File(ctx.applicationContext.filesDir, "telemetry-buffer.json")

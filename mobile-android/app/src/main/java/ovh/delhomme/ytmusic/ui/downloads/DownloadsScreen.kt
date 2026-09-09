@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -107,6 +108,17 @@ fun DownloadsScreen(
             if (tracks.isNotEmpty()) {
                 TextButton(
                     onClick = {
+                        val playable = tracks.filter { it.isPlayable() }
+                        if (playable.isEmpty()) return@TextButton
+                        onPlay(playable.shuffled(), 0)
+                    },
+                ) {
+                    Icon(Icons.Default.Shuffle, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Aléatoire")
+                }
+                TextButton(
+                    onClick = {
                         onPlay(tracks.filter { it.isPlayable() }, 0)
                     },
                 ) {
@@ -168,12 +180,33 @@ fun DownloadsScreen(
                     .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f))
                     .padding(12.dp),
             ) {
-                Text(
-                    "Erreurs",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Erreurs",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            val n = container.downloadManager.retryFailed()
+                            Toast.makeText(
+                                context,
+                                if (n > 0) "Relance de $n téléchargement(s)"
+                                else "Rien à relancer",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
+                    ) {
+                        Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Tout réessayer")
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
                 failedIds.take(12).forEach { id ->
                     Text(

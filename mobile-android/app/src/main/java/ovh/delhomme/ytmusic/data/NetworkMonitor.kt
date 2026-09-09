@@ -262,17 +262,20 @@ object NetworkMonitor {
 
             fun jumpToOffline(idx: Int) {
                 val track = queue.getOrNull(idx) ?: return
+                if (!store.has(track.id)) return
                 runCatching {
-                    // Remplace toute la file : URI locaux prioritaires via streamUrl()
-                    val items = queue.map { t ->
-                        ovh.delhomme.ytmusic.player.mediaItemFor(
-                            t,
-                            { id -> container.streamUrl(id) },
-                            PlaybackService.Holder.queueTitle,
-                        )
-                    }
-                    val pos = if (idx == curIdx) exo.currentPosition.coerceAtLeast(0L) else 0L
-                    exo.setMediaItems(items, idx, pos)
+                    // Remplace UNIQUEMENT l’item courant (évite setMediaItems sur toute la file =
+                    // E13 / rebuffer / perte du suivant).
+                    val item = ovh.delhomme.ytmusic.player.mediaItemFor(
+                        track,
+                        { id -> container.streamUrl(id) },
+                        PlaybackService.Holder.queueTitle,
+                    )
+                    val mediaIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+                    if (mediaIdx >= exo.mediaItemCount) return@runCatching
+                    val pos = exo.currentPosition.coerceAtLeast(0L)
+                    exo.replaceMediaItem(mediaIdx, item)
+                    exo.seekTo(mediaIdx, pos)
                     exo.prepare()
                     exo.playWhenReady = true
                     exo.play()

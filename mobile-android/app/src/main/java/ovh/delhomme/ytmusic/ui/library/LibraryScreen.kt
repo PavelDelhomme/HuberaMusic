@@ -396,19 +396,19 @@ fun LibraryScreen(
                     }
                 }
                 val listState = rememberLazyListState()
-                // Fenêtre progressive (~180 puis +150) — évite de composer 14k items d’un coup
+                // Fenêtre progressive (~220 puis +200) — scroll plus fluide sans composer 14k items
                 var windowLimit by remember(selected) {
-                    mutableIntStateOf(180.coerceAtMost(content.rows.size.coerceAtLeast(0)))
+                    mutableIntStateOf(220.coerceAtMost(content.rows.size.coerceAtLeast(0)))
                 }
                 LaunchedEffect(selected) {
-                    windowLimit = 180.coerceAtMost(content.rows.size.coerceAtLeast(0))
+                    windowLimit = 220.coerceAtMost(content.rows.size.coerceAtLeast(0))
                     listState.scrollToItem(0)
                 }
                 LaunchedEffect(content.rows.size) {
-                    if (content.rows.size <= 250) {
+                    if (content.rows.size <= 280) {
                         windowLimit = content.rows.size
-                    } else if (windowLimit < 180) {
-                        windowLimit = 180.coerceAtMost(content.rows.size)
+                    } else if (windowLimit < 220) {
+                        windowLimit = 220.coerceAtMost(content.rows.size)
                     }
                 }
                 LaunchedEffect(listState, content.rows.size, selected) {
@@ -418,9 +418,9 @@ fun LibraryScreen(
                         .distinctUntilChanged()
                         .collect { lastVisible ->
                             val total = content.rows.size
-                            if (total <= 250) return@collect
-                            if (lastVisible >= windowLimit - 40 && windowLimit < total) {
-                                windowLimit = (windowLimit + 150).coerceAtMost(total)
+                            if (total <= 280) return@collect
+                            if (lastVisible >= windowLimit - 50 && windowLimit < total) {
+                                windowLimit = (windowLimit + 200).coerceAtMost(total)
                             }
                         }
                 }
@@ -521,7 +521,7 @@ fun LibraryScreen(
                                 }
                             }
                             val rowsWindow =
-                                if (content.rows.size > 250) content.rows.take(windowLimit)
+                                if (content.rows.size > 280) content.rows.take(windowLimit)
                                 else content.rows
                             itemsIndexed(rowsWindow, key = { i, r -> "${selected.name}-${r.id}-$i" }) { _, row ->
                                 TrackRow(

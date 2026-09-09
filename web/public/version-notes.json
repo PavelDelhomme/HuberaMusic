@@ -2,6 +2,20 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.193",
+      "date": "2026-09-09",
+      "title": "Fiabilité lecteur & hors-ligne",
+      "notes": [
+        "Skip auto buffering aligné sur cold start (~24 s) — plus de saut trop tôt sur Samsung",
+        "Hors-ligne : bascule fichier local via replaceMediaItem (sans recharger toute la file)",
+        "Télémétrie : buffer digest plafonné (80 événements / 256 Ko)",
+        "Toast « Reprise après l’appel » à la fin d’un appel",
+        "Téléchargements : bouton Aléatoire + Tout réessayer les erreurs",
+        "Biblio : fenêtre progressive plus large (220 puis +200)",
+        "Recherche : debounce 380 ms (moins de requêtes pendant la frappe)"
+      ]
+    },
+    {
       "version": "1.3.192",
       "date": "2026-09-09",
       "title": "Polish restant vague 187–191",
