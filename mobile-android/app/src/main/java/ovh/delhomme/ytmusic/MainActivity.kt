@@ -1385,7 +1385,10 @@ private fun MainTabs(
                         initial = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline(),
                     )
                     if (!online) {
-                        val offlineCount = container.offlineStore.listTracks().size
+                        val offlineRev by container.offlineStore.revision.collectAsState()
+                        val offlineCount = remember(offlineRev) {
+                            container.offlineStore.listTracks().size
+                        }
                         Text(
                             if (offlineCount > 0) {
                                 "Hors ligne — $offlineCount titre${if (offlineCount > 1) "s" else ""} sur l'appareil"

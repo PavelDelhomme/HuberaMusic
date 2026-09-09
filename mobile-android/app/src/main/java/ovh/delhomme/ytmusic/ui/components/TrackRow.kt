@@ -45,9 +45,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -235,6 +237,7 @@ fun MiniPlayerBar(
     var barWidthPx by remember { mutableFloatStateOf(1f) }
     var dismissDrag by remember { mutableFloatStateOf(0f) }
     val thumbPx = with(LocalDensity.current) { 8.dp.toPx() }
+    val haptic = LocalHapticFeedback.current
     val remainingLabel = remember(shown, durationMs) {
         formatRemainingMs(durationMs, shown)
     }
@@ -415,7 +418,10 @@ fun MiniPlayerBar(
             if (onPrev != null) {
                 if (onSeekBy != null) {
                     HoldSeekIconButton(
-                        onClick = onPrev,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onPrev()
+                        },
                         onHoldTick = { onSeekBy(-2_000L) },
                     ) {
                         Icon(
@@ -426,7 +432,10 @@ fun MiniPlayerBar(
                         )
                     }
                 } else {
-                    IconButton(onClick = onPrev) {
+                    IconButton(onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onPrev()
+                    }) {
                         Icon(
                             Icons.Default.SkipPrevious,
                             contentDescription = "Précédent",
@@ -436,7 +445,10 @@ fun MiniPlayerBar(
                     }
                 }
             }
-            IconButton(onClick = onToggle) {
+            IconButton(onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onToggle()
+            }) {
                 Icon(
                     if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (playing) "Pause" else "Lecture",
@@ -447,7 +459,10 @@ fun MiniPlayerBar(
             if (onNext != null) {
                 if (onSeekBy != null) {
                     HoldSeekIconButton(
-                        onClick = onNext,
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onNext()
+                        },
                         onHoldTick = { onSeekBy(2_000L) },
                     ) {
                         Icon(
@@ -458,7 +473,10 @@ fun MiniPlayerBar(
                         )
                     }
                 } else {
-                    IconButton(onClick = onNext) {
+                    IconButton(onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onNext()
+                    }) {
                         Icon(
                             Icons.Default.SkipNext,
                             contentDescription = "Suivant",
