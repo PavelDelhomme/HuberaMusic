@@ -191,6 +191,7 @@ class QuickAccessStore(
             prefs[key] = adapter.toJson(current.distinctBy { it.id }.take(48))
             if (email.isNotBlank()) prefs[boundUserKey] = email
         }
+        invalidatePinsPoolCache()
         if (api != null) {
             runCatching {
                 if (nowPinned) {

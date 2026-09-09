@@ -6,6 +6,7 @@ import ovh.delhomme.ytmusic.YtMusicApp
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ShuffleHeadStore
 import ovh.delhomme.ytmusic.data.TrackDto
+import ovh.delhomme.ytmusic.data.resolvePinsPool
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 
 /**
@@ -110,4 +111,27 @@ suspend fun playQueueWithLead(
             StreamPrefetcher.warmFormatsLight(base, playable.drop(idx + 3).take(6).map { it.id }, limit = 6)
         }
     }
+}
+
+/**
+ * Aléatoire Accès rapide : résout les pins en parallèle puis [playLibraryShuffled].
+ * @return false si aucun titre jouable (caller → Toast).
+ */
+suspend fun playQuickAccessShuffled(
+    container: AppContainer,
+    pins: List<TrackDto>,
+    onPlay: (List<TrackDto>, Int) -> Unit,
+): Boolean {
+    if (pins.isEmpty()) return false
+    val uniq = withContext(Dispatchers.IO) {
+        resolvePinsPool(container.api, pins, container.mixCache)
+    }
+    if (uniq.isEmpty()) return false
+    playLibraryShuffled(
+        container,
+        uniq,
+        onPlay,
+        sourceKey = "home:pins",
+    )
+    return true
 }

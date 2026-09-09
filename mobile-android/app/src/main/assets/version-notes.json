@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.186",
+      "date": "2026-09-09",
+      "title": "Accès rapide plus rapide",
+      "notes": [
+        "Aléatoire : résolution des pins en parallèle + cache (moins d’attente)",
+        "1er son dès que le titre #0 est chaud (suite en arrière-plan)",
+        "Tap pin / Tout voir : même préchauffe que la biblio",
+        "Aléatoire aussi sur la page Tout voir + message si rien jouable",
+        "À l’accueil, les titres épinglés sont préchauffés"
+      ]
+    },
+    {
       "version": "1.3.185",
       "date": "2026-09-09",
       "title": "MAJ in-app fiable sur Samsung",
