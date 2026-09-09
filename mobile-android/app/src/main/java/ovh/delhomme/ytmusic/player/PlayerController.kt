@@ -1500,7 +1500,7 @@ class PlayerController(
             val q = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
             val idx = q.indexOfFirst { it.id == trackId }.takeIf { it >= 0 }
                 ?: _state.value.queueIndex
-            q.drop(idx + 1).take(2).forEach { next ->
+            q.drop(idx + 1).take(3).forEach { next ->
                 if (next.id.length == 11) prefetchLyricsEnd(next.id)
             }
         }

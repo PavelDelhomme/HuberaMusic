@@ -210,7 +210,9 @@ fun DownloadsScreen(
                 Spacer(Modifier.height(6.dp))
                 failedIds.take(12).forEach { id ->
                     Text(
-                        tracks.firstOrNull { it.id == id }?.title ?: id,
+                        container.downloadManager.failedTrack(id)?.title
+                            ?: tracks.firstOrNull { it.id == id }?.title
+                            ?: id,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodyMedium,
