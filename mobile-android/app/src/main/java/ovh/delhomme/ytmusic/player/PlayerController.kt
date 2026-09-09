@@ -1965,7 +1965,8 @@ class PlayerController(
 
     /**
      * Feedback utilisateur pendant un long BUFFERING (file / titre froid).
-     * Messages distincts hors-ligne / serveur / Wi‑Fi ; skip auto après ~8 s.
+     * Messages distincts hors-ligne / serveur / Wi‑Fi.
+     * Skip auto aligné sur coldGrace stall (~20–42 s) — pas à ~8 s (titres froids Samsung).
      */
     private fun noteBuffering(buffering: Boolean, trackId: String?) {
         if (!buffering || trackId.isNullOrBlank()) {
@@ -1978,7 +1979,7 @@ class PlayerController(
         bufferWatchJob?.cancel()
         bufferHintTrackId = trackId
         bufferWatchJob = scope.launch {
-            delay(2_200L)
+            delay(2_500L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
                 val msg = when {
                     !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() ->
@@ -1989,20 +1990,24 @@ class PlayerController(
                 }
                 context.toastMain(msg, Toast.LENGTH_SHORT)
             }
-            delay(2_800L)
+            delay(5_000L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
                 context.toastMain(
-                    "Toujours en chargement — passage au suivant…",
+                    "Toujours en chargement…",
                     Toast.LENGTH_SHORT,
                 )
             }
-            delay(3_000L)
+            // Titre froid / cold start : laisser armStallWatch travailler (~20–42 s)
+            // avant un skip auto — évite de sauter trop tôt sur Samsung.
+            val pos = player()?.currentPosition ?: _state.value.positionMs
+            val coldStart = pos < 8_000L
+            delay(if (coldStart) 16_000L else 8_000L)
             if (_state.value.buffering &&
                 _state.value.track?.id == trackId &&
                 ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
                 !StreamPrefetcher.isStreamDown()
             ) {
-                AppLog.i("PlayerController", "buffer stuck → skipNext id=$trackId")
+                AppLog.i("PlayerController", "buffer stuck → skipNext id=$trackId cold=$coldStart")
                 skipNext()
             }
         }

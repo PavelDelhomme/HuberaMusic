@@ -228,6 +228,17 @@ class PlayerAudioFocus(
                         p.playWhenReady = true
                         p.play()
                     }
+                    val now = System.currentTimeMillis()
+                    if (now - lastDuckToastAt > 6_000L) {
+                        lastDuckToastAt = now
+                        handler.post {
+                            android.widget.Toast.makeText(
+                                appCtx,
+                                "Reprise après l’appel",
+                                android.widget.Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
                 }
             }
         }

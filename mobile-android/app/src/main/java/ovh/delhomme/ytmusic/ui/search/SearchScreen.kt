@@ -237,7 +237,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         }
         val filter = _state.value.filter
         job = viewModelScope.launch {
-            delay(280)
+            delay(380)
             val currentQ = _state.value.query.trim()
             val currentFilter = _state.value.filter
             if (currentQ.length < 2) return@launch
