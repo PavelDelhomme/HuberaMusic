@@ -109,7 +109,19 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item {
                 Bullet(
                     "Hors-ligne : seuls les titres téléchargés (Téléchargements / aimés gardés) jouent. " +
-                        "Le reste nécessite Internet.",
+                        "Depuis 1.3.189, les paroles sont aussi mises en cache au téléchargement quand possible.",
+                )
+            }
+            item {
+                Bullet(
+                    "Cast / multi-appareils : feuille « Appareils de lecture » — Lecture ici vs ailleurs. " +
+                        "La sync file se coupe si tu désactives « Sync lecture ».",
+                )
+            }
+            item {
+                Bullet(
+                    "Mise à jour APK : Compte → Version. Sur Samsung, confirme bien l’écran d’installation. " +
+                        "Si ça échoue, l’app bascule vers l’installateur système.",
                 )
             }
             item { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)) }

@@ -192,6 +192,14 @@ class QuickAccessStore(
             if (email.isNotBlank()) prefs[boundUserKey] = email
         }
         invalidatePinsPoolCache()
+        if (nowPinned) {
+            runCatching {
+                val app = ovh.delhomme.ytmusic.YtMusicApp.instance
+                if (track.isPlayable() && track.id.length == 11) {
+                    app.container.libraryHeadPrefetcher.boostVisible(listOf(track.id))
+                }
+            }
+        }
         if (api != null) {
             runCatching {
                 if (nowPinned) {
