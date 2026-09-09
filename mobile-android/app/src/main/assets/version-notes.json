@@ -2,6 +2,29 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.191",
+      "date": "2026-09-09",
+      "title": "Polish compte & parité",
+      "notes": [
+        "Biblio sheet ⋮ : état « dans biblio » optimiste (anti-flash réseau)",
+        "Compte : scroll / safe area (padding haut)",
+        "Aide & limites : MAJ Samsung + hors-ligne à jour",
+        "PWA UpdateBanner : vérif toutes les 15 min (moins de stale)",
+        "Barre web : zone vide ouvre déjà Now Playing",
+        "Recherche : warm formats + erreurs FR",
+        "Empty shelves Accueil Podcasts / Livres",
+        "Tick NP ralenti sous BatterySaver",
+        "Debug logs scrollable (écran Debug)",
+        "Filtre Profils / Fichiers : messages empty utiles",
+        "Toast bibliothèque actualisée (pull)",
+        "Prefetch artiste viewport",
+        "Pin toast partout (Accueil / détail)",
+        "MixCache persisté pour mosaïques",
+        "DevicePicker Chromecast message amélioré",
+        "Version notes API alignées à chaque bump"
+      ]
+    },
+    {
       "version": "1.3.190",
       "date": "2026-09-09",
       "title": "Cast, session, notifications",
