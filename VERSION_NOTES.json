@@ -2,6 +2,29 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.187",
+      "date": "2026-09-09",
+      "title": "Lecteur sans silence",
+      "notes": [
+        "Toasts buffering distincts : hors-ligne / serveur / Wi‑Fi",
+        "Skip auto après ~8 s de buffering bloqué sur le même titre",
+        "Skip suivant : chauffe immédiate #1–#2 (coupe quiet prefetch)",
+        "Fin de file : jamais « Suggestions… » si la file Holder a encore des titres",
+        "Silence de fin : seuil un peu plus prévisible (outro)",
+        "Après veille / handover : rechauffe le titre courant + suivants",
+        "Handover Wi‑Fi↔4G : debounce hors-ligne un peu plus long",
+        "Toasts erreur lecteur : 502 / réseau / indisponible différenciés",
+        "Now Playing : libellé « Hors ligne… » pendant le buffering",
+        "Mini-bar : « Chargement… » déjà branché sur buffering",
+        "Web : max 3 retries 502 puis passage au titre suivant (plus de boucle)",
+        "Cache têtes API : plus de slots (64) pour skips plus chauds",
+        "Idle BG : ne coupe plus le réseau pendant un buffering actif",
+        "Durée Exo → file : labels durée plus justes",
+        "Play bloqué pendant un appel (toast MODE_IN_CALL)",
+        "Reprise flux : message « Flux serveur (5xx) — nouvel essai… »"
+      ]
+    },
+    {
       "version": "1.3.186",
       "date": "2026-09-09",
       "title": "Accès rapide plus rapide",
