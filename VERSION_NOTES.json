@@ -2,6 +2,19 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.192",
+      "date": "2026-09-09",
+      "title": "Polish restant vague 187–191",
+      "notes": [
+        "Bandeau hors-ligne Android (compteur titres locaux)",
+        "Alerte espace disque via StorageStats (Mo libres)",
+        "Haptic feedback au pull biblio",
+        "Skeletons Accueil / Recherche plus lisibles",
+        "Aide : mention espace disque avant gros DL",
+        "Compte : fix stats historique (history().history)"
+      ]
+    },
+    {
       "version": "1.3.191",
       "date": "2026-09-09",
       "title": "Polish compte & parité",

@@ -260,16 +260,25 @@ export function PlayerBar({
     if (compactEmpty) {
       return (
         <footer
-          className="pointer-events-none fixed bottom-[var(--ytm-nav-h,0px)] left-0 right-0 z-40 hidden h-0 lg:bottom-0 lg:block"
+          className="fixed bottom-[var(--ytm-nav-h,0px)] left-0 right-0 z-40 hidden h-0 lg:bottom-0 lg:block"
           aria-hidden
         />
       );
     }
     return (
       <footer
-        className="fixed bottom-[var(--ytm-nav-h,0px)] left-0 right-0 z-40 border-t border-yt-border bg-black px-4 py-4 text-center text-sm text-yt-muted lg:bottom-0"
+        role="button"
+        tabIndex={0}
+        onClick={() => onExpand?.('queue')}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onExpand?.('queue');
+          }
+        }}
+        className="fixed bottom-[var(--ytm-nav-h,0px)] left-0 right-0 z-40 cursor-pointer border-t border-yt-border bg-black px-4 py-4 text-center text-sm text-yt-muted hover:bg-yt-elevated/40 lg:bottom-0"
       >
-        Sélectionne un titre pour commencer
+        Sélectionne un titre pour commencer — tape pour ouvrir le lecteur
       </footer>
     );
   }

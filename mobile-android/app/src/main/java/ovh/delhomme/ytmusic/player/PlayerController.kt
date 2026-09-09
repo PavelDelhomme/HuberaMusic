@@ -1276,6 +1276,12 @@ class PlayerController(
         PlaybackService.Holder.queue = queue
         p.moveMediaItem(from, to)
         syncFrom(p)
+        // Chauffe autour du titre déplacé (prochain play plus chaud)
+        val base = PlaybackService.Holder.resolvedApiBase()
+        if (base.isNotBlank() && item.id.length == 11) {
+            StreamPrefetcher.warmTrackFormatOnly(base, item.id)
+            warmAround(queue, to.coerceIn(0, queue.lastIndex))
+        }
     }
 
     fun toggleShuffle() {

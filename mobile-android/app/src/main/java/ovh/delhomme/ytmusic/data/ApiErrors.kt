@@ -5,12 +5,19 @@ import java.net.SocketTimeoutException
 
 /** Lit `{ "error": "…" }` renvoyé par l’API au lieu du seul « HTTP 400 ». */
 fun Throwable.apiMessage(): String {
+    if (!NetworkMonitor.isOnline()) {
+        return "Hors ligne — reconnecte le réseau"
+    }
     if (this is SocketTimeoutException ||
         (this is java.io.IOException && (message ?: "").contains("timeout", ignoreCase = true))
     ) {
-        return "Sync trop longue. Le compte Google reste lié — l’import continue côté serveur."
+        return "Délai dépassé — réessaie dans un instant"
     }
     if (this is HttpException) {
+        when (code()) {
+            401, 403 -> return "Session expirée — reconnecte-toi dans Compte"
+            in 500..599 -> return "Serveur indisponible (${code()}) — réessaie"
+        }
         val raw = runCatching { response()?.errorBody()?.string().orEmpty() }.getOrDefault("")
         val fromJson = Regex(""""error"\s*:\s*"((?:\\.|[^"\\])*)"""")
             .find(raw)
@@ -23,5 +30,11 @@ fun Throwable.apiMessage(): String {
         if (raw.isNotBlank() && raw.length < 400 && !raw.trimStart().startsWith('<')) return raw.trim()
         return message() ?: "Erreur HTTP ${code()}"
     }
-    return message?.takeIf { it.isNotBlank() } ?: toString()
+    val m = message?.takeIf { it.isNotBlank() } ?: return toString()
+    return when {
+        m.contains("Unable to resolve host", ignoreCase = true) ||
+            m.contains("Failed to connect", ignoreCase = true) ->
+            "Réseau indisponible — vérifie la connexion"
+        else -> m
+    }
 }

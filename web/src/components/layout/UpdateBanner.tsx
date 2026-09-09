@@ -1,15 +1,18 @@
+import { useEffect, useState } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { RefreshCw, X } from 'lucide-react';
+import { api } from '../../api';
+import { APP_CHANNEL, APP_VERSION, appVersionLabel } from '../../lib/util/appVersion';
 
-/** Bandeau discret : nouvelle version PWA — rechargement volontaire (pas de force reload). */
+/** Bandeau : nouvelle version PWA (SW) ou API `/api/health` plus récente que le bundle. */
 export function UpdateBanner() {
+  const [apiNewer, setApiNewer] = useState<string | null>(null);
   const {
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
   } = useRegisterSW({
     onRegistered(registration: ServiceWorkerRegistration | undefined) {
       if (!registration) return;
-      // Vérif périodique (~30 min) sans bloquer l'utilisateur
       setInterval(() => {
         void registration.update().catch(() => {
           /* SW mort / réseau — ignorer */
@@ -21,7 +24,33 @@ export function UpdateBanner() {
     },
   });
 
-  if (!needRefresh) return null;
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const h = await api.health();
+        const remote = (h as { appVersion?: string }).appVersion?.trim();
+        if (!remote || cancelled) return;
+        const local = appVersionLabel(APP_CHANNEL, APP_VERSION);
+        // Compare semver après `d+` / `p+`
+        const remoteSem = remote.includes('+') ? remote.split('+')[1] : remote;
+        const localSem = APP_VERSION;
+        if (remoteSem && localSem && remoteSem !== localSem && remote !== local) {
+          setApiNewer(remote);
+        }
+      } catch {
+        /* hors ligne / health KO */
+      }
+    };
+    void check();
+    const t = window.setInterval(() => void check(), 20 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(t);
+    };
+  }, []);
+
+  if (!needRefresh && !apiNewer) return null;
 
   return (
     <div
@@ -30,13 +59,19 @@ export function UpdateBanner() {
     >
       <RefreshCw className="h-4 w-4 shrink-0 text-yt-accent" aria-hidden />
       <p className="min-w-0 flex-1">
-        Nouvelle version PLM disponible — recharge pour appliquer la mise à jour.
+        {needRefresh
+          ? 'Nouvelle version PLM disponible — recharge pour appliquer la mise à jour.'
+          : `Serveur en ${apiNewer} — recharge la page pour aligner l’app.`}
       </p>
       <button
         type="button"
         className="shrink-0 rounded-lg bg-yt-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
         onClick={() => {
-          void updateServiceWorker(true);
+          if (needRefresh) {
+            void updateServiceWorker(true);
+          } else {
+            window.location.reload();
+          }
         }}
       >
         Recharger
@@ -45,7 +80,10 @@ export function UpdateBanner() {
         type="button"
         className="shrink-0 rounded-lg p-1 text-yt-muted hover:text-white"
         aria-label="Fermer"
-        onClick={() => setNeedRefresh(false)}
+        onClick={() => {
+          setNeedRefresh(false);
+          setApiNewer(null);
+        }}
       >
         <X className="h-4 w-4" />
       </button>
