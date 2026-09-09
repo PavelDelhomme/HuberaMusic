@@ -218,6 +218,17 @@ fun DownloadsScreen(
                 contentPadding = PaddingValues(bottom = 96.dp, top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                if (tracks.isNotEmpty()) {
+                    item(key = "ok-header") {
+                        Text(
+                            "OK / Hors-ligne · ${tracks.size}",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+                        )
+                    }
+                }
                 items(tracks, key = { it.id }) { track ->
                     val err = errors[track.id]
                     Row(
