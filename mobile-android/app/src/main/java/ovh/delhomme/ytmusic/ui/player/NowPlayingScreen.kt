@@ -566,9 +566,12 @@ fun NowPlayingScreen(
             delay(
                 when {
                     // Tick serré : un poll à 120 ms annulait tout le lead karaoké.
-                    showLyrics && ui.playing -> 48L
-                    ui.playing -> 400L
-                    else -> 1_200L
+                    showLyrics && ui.playing ->
+                        if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 80L else 48L
+                    ui.playing ->
+                        if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 800L else 400L
+                    else ->
+                        if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 2_000L else 1_200L
                 },
             )
         }

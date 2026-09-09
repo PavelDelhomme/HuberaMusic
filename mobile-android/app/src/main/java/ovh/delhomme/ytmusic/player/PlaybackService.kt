@@ -2739,8 +2739,10 @@ fun mediaItemFor(
         .setArtworkUri(cover?.let { android.net.Uri.parse(it) })
         .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
         .setIsPlayable(true)
-    // Ne pas figer durationMs depuis YTM : un écart vs le flux réel fausse la barre
-    // et masque les fins anticipées. Exo lit la durée dans le conteneur.
+    t.durationMsOrNull()?.takeIf { it > 0L }?.let { ms ->
+        // Hint UI notif / Android Auto — Exo reste maître pour le seek réel
+        meta.setDurationMs(ms)
+    }
     return MediaItem.Builder()
         .setMediaId(t.id)
         .setUri(baseStreamUrl(t.id))
