@@ -121,6 +121,7 @@ fun ArtistDetailScreen(
         }.distinctUntilChanged().collect { ids ->
             if (ids.isEmpty()) return@collect
             if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return@collect
+            container.libraryHeadPrefetcher.boostVisible(ids)
             ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(base, ids, limit = 8)
         }
     }

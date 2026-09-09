@@ -228,12 +228,35 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         _state.value = _state.value.copy(
                             shelves = (_state.value.shelves + spokenShelves).distinctBy { it.title },
                         )
+                    } else if (NetworkMonitor.isOnline()) {
+                        // Shelf vide explicite pour ne pas laisser « Podcasts » invisible sans feedback
+                        val hasPodcastShelf = _state.value.shelves.any {
+                            it.title.equals("Podcasts", ignoreCase = true)
+                        }
+                        if (!hasPodcastShelf) {
+                            _state.value = _state.value.copy(
+                                shelves = _state.value.shelves + ShelfDto(
+                                    "Podcasts",
+                                    emptyList(),
+                                ),
+                            )
+                        }
                     }
                 }
 
                 suspend fun loadPreview(radioId: String): Pair<String, List<TrackDto>>? =
                     runCatching {
-                        radioId to container.api.recoRadio(radioId, preview = 1).tracks.take(4)
+                        val tracks = container.api.recoRadio(radioId, preview = 1).tracks.take(4)
+                        if (tracks.isNotEmpty()) {
+                            // Persiste pour mosaïque immédiate au prochain cold start
+                            runCatching {
+                                container.mixCache.put(
+                                    container.mixCache.keyCategory(radioId),
+                                    tracks,
+                                )
+                            }
+                        }
+                        radioId to tracks
                     }.getOrNull()?.takeIf { it.second.isNotEmpty() }
 
                 // Mosaïques : 2 visibles d’abord (UI se met à jour une par une), puis le reste

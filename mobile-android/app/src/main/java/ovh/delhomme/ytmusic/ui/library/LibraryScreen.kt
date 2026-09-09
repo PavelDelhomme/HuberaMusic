@@ -466,7 +466,10 @@ fun LibraryScreen(
                             )
                         }
                     }
-                    content.rows.isEmpty() -> EmptyHint(content.emptyMessage)
+                    content.rows.isEmpty() -> EmptyHint(
+                        content.emptyMessage,
+                        hint = content.collectionHint,
+                    )
                     else -> {
                         LazyColumn(
                             state = listState,
@@ -734,7 +737,7 @@ private fun buildLibraryContent(
             // titres et bascule sur des suggestions extérieures.
             val playable = (
                 playableRecent + (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }
-                ).distinctBy { it.id }.filter { it.isMusicTrack() || it.isPlayable() }
+                ).distinctBy { it.id }
             // « Tout lire » = titres musique uniquement (pas vidéos / épisodes).
             val songQueue = playable.filter { it.isMusicTrack() }.ifEmpty { playable }
             LibraryContent(
@@ -971,7 +974,9 @@ private fun buildLibraryContent(
             }
             val unresolved = rows.any { it.title == it.id && it.id.length == 11 }
             val enriching = downloadsEnriching && unresolved && rows.isNotEmpty()
-            val playable = tracksDl.filter { it.isPlayable() }
+            val playable = tracksDl.filter { it.isMusicTrack() }.ifEmpty {
+                tracksDl.filter { it.isPlayable() }
+            }
             LibraryContent(
                 headline = when {
                     enriching -> "Téléchargés · ${rows.size} (infos…)"
@@ -997,7 +1002,8 @@ private fun buildLibraryContent(
             headline = "Profils",
             rows = emptyList(),
             playableQueue = emptyList(),
-            emptyMessage = "Les profils d’artistes suivis arriveront bientôt. En attendant : Accueil ou Recherche.",
+            emptyMessage = "Les profils d’artistes suivis arriveront bientôt.",
+            collectionHint = "En attendant : Accueil, Recherche, ou Artistes dans ta bibliothèque.",
             comingSoon = null,
         )
         LibraryFilter.Podcasts -> {
@@ -1008,9 +1014,13 @@ private fun buildLibraryContent(
                 headline = "Podcasts · bibliothèque",
                 rows = rows,
                 playableQueue = playable,
-                emptyMessage = "Aucun podcast ajouté à ta bibliothèque. Enregistre-en un via ⋮ → bibliothèque.",
+                emptyMessage = "Aucun podcast dans ta bibliothèque.",
                 showPlayAll = playable.isNotEmpty(),
-                collectionHint = if (rows.isNotEmpty()) "Uniquement les podcasts que tu as ajoutés." else null,
+                collectionHint = if (rows.isEmpty()) {
+                    "Astuce : Recherche → filtre Podcasts, puis ⋮ → bibliothèque."
+                } else {
+                    "Uniquement les podcasts que tu as ajoutés."
+                },
             )
         }
         LibraryFilter.Audiobooks -> {
@@ -1021,9 +1031,13 @@ private fun buildLibraryContent(
                 headline = "Livres audio · bibliothèque",
                 rows = rows,
                 playableQueue = playable,
-                emptyMessage = "Aucun livre audio ajouté à ta bibliothèque.",
+                emptyMessage = "Aucun livre audio dans ta bibliothèque.",
                 showPlayAll = playable.isNotEmpty(),
-                collectionHint = if (rows.isNotEmpty()) "Uniquement les livres audio que tu as ajoutés." else null,
+                collectionHint = if (rows.isEmpty()) {
+                    "Astuce : Recherche → Livres audio, puis enregistre-en un."
+                } else {
+                    "Uniquement les livres audio que tu as ajoutés."
+                },
             )
         }
         LibraryFilter.DeviceFiles -> LibraryContent(
