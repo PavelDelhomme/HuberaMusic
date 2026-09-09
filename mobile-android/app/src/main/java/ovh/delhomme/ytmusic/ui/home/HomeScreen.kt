@@ -437,6 +437,23 @@ fun HomeScreen(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                     )
 
+                    if (items.isEmpty()) {
+                        Text(
+                            when {
+                                shelf.title.contains("Podcast", ignoreCase = true) ->
+                                    "Aucun podcast à explorer pour l’instant — tire pour actualiser ou cherche « podcast »."
+                                shelf.title.contains("Livre", ignoreCase = true) ->
+                                    "Aucun livre audio proposé — réessaie plus tard."
+                                else -> "Rien à afficher ici pour le moment."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        return@items
+                    }
+
                     if (mostlyCards || items.size > 5) {
                         LazyRow(
                             contentPadding = PaddingValues(horizontal = 12.dp),
@@ -512,7 +529,22 @@ fun HomeScreen(
                                 pinned = track.id in pinIds,
                                 onTogglePin = {
                                     scope.launch {
-                                        container.quickAccess.toggle(track, container.api)
+                                        runCatching {
+                                            container.quickAccess.toggle(track, container.api)
+                                        }.onSuccess { now ->
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                if (now) "Ajouté à l'accès rapide"
+                                                else "Retiré de l'accès rapide",
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }.onFailure {
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "Épinglage impossible — réessaie",
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
                                     }
                                 },
                             )

@@ -160,11 +160,15 @@ fun CollectionDetailScreen(
             alternateIds = pinCandidateIds,
             api = container.api,
         )
-        Toast.makeText(
-            context,
-            if (nowPinned) "Ajouté à l'accès rapide" else "Retiré de l'accès rapide",
-            Toast.LENGTH_SHORT,
-        ).show()
+        runCatching {
+            Toast.makeText(
+                context,
+                if (nowPinned) "Ajouté à l'accès rapide" else "Retiré de l'accès rapide",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }.onFailure {
+            Toast.makeText(context, "Épinglage impossible — réessaie", Toast.LENGTH_SHORT).show()
+        }
     }
 
     // Progress live album / playlist (agrège titres locaux + en cours)
@@ -1365,7 +1369,7 @@ private fun AlbumHeroHeader(
             }
             RoundIconAction(
                 icon = MixIcon,
-                label = "",
+                label = "Mix",
                 hint = "Lancer un mix radio à partir de cet album",
                 onClick = onRadio,
                 enabled = !radioBusy,
