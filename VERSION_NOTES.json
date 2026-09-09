@@ -2,6 +2,29 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.188",
+      "date": "2026-09-09",
+      "title": "Bibliothèque & Accueil fluides",
+      "notes": [
+        "Toast « Bibliothèque actualisée » au pull-to-refresh",
+        "Filtre actif : ✕ avec libellé du filtre (accessibilité)",
+        "Profils / Fichiers appareil : empty states clairs (plus de stub vide)",
+        "Podcasts / Livres audio : uniquement contenus ajoutés (rappel UI)",
+        "Téléchargés : Playlists → Albums → Titres ; lecture = titres only",
+        "Recherche : messages d’erreur FR (hors-ligne / timeout / session)",
+        "Recherche : effacer ✕ + warm des 8 premiers titres trouvés",
+        "Prefetch viewport titres biblio (boostVisible + têtes ~3 s)",
+        "Chip filtre : retour Accueil biblio en un tap",
+        "Accueil pins : warm immédiat à l’épinglage",
+        "Section Téléchargements : progression live En cours",
+        "Aide filtres : messages empty homogènes FR",
+        "Scroll biblio : fenêtre progressive inchangée, chauffe renforcée",
+        "Recherche hors-ligne : résultats locaux d’abord",
+        "Mosaïques Accueil : MixCache déjà utilisé au cold start",
+        "Artist / collection : lead warm via playQueueWithLead ailleurs"
+      ]
+    },
+    {
       "version": "1.3.187",
       "date": "2026-09-09",
       "title": "Lecteur sans silence",

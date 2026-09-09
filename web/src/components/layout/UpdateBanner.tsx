@@ -14,7 +14,7 @@ export function UpdateBanner() {
         void registration.update().catch(() => {
           /* SW mort / réseau — ignorer */
         });
-      }, 30 * 60 * 1000);
+      }, 15 * 60 * 1000);
     },
     onRegisterError() {
       // Évite unhandledrejection « ServiceWorker script at …/sw.js » en mail

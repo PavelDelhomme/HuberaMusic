@@ -130,12 +130,13 @@ class OfflineKeeper(
             .apply()
 
         var started = 0
+        val batchCap = if (BatterySaver.isActive()) 4 else 12
         for (t in pool) {
-            if (started >= 12) break // petit lot par tick (évite saturer)
+            if (started >= batchCap) break
             if (offlineStore.has(t.id)) continue
             if (!NetworkMonitor.isOnline() || StreamPrefetcher.isStreamDown()) break
             if (downloadManager.enqueue(t)) started++
-            delay(2_500)
+            delay(if (BatterySaver.isActive()) 4_000L else 2_500L)
         }
         if (started > 0) AppLog.i("OfflineKeeper", "monMix enqueued=$started target=${pool.size}")
     }

@@ -289,7 +289,16 @@ fun LibraryScreen(
             else -> {
                 PullToRefreshBox(
                     isRefreshing = refreshing,
-                    onRefresh = { scope.launch { repo.refresh(force = true) } },
+                    onRefresh = {
+                    scope.launch {
+                        repo.refresh(force = true)
+                        android.widget.Toast.makeText(
+                            context,
+                            "Bibliothèque actualisée",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
                     modifier = Modifier.fillMaxSize(),
                 ) {
                 val data = lib ?: LibraryResponse()
@@ -311,7 +320,7 @@ fun LibraryScreen(
                             trailingIcon = {
                                 Icon(
                                     Icons.Default.Close,
-                                    contentDescription = "Fermer le filtre · retour bibliothèque",
+                                    contentDescription = "Fermer ${selected.label} · retour accueil bibliothèque",
                                     modifier = Modifier.size(18.dp),
                                 )
                             },
@@ -955,8 +964,8 @@ private fun buildLibraryContent(
             headline = "Profils",
             rows = emptyList(),
             playableQueue = emptyList(),
-            emptyMessage = "",
-            comingSoon = "Profils — bientôt disponible.",
+            emptyMessage = "Les profils d’artistes suivis arriveront bientôt. En attendant : Accueil ou Recherche.",
+            comingSoon = null,
         )
         LibraryFilter.Podcasts -> {
             val pool = (data.songs + data.liked + data.albums).distinctBy { it.id }
@@ -988,8 +997,8 @@ private fun buildLibraryContent(
             headline = "Fichiers de l'appareil",
             rows = emptyList(),
             playableQueue = emptyList(),
-            emptyMessage = "",
-            comingSoon = "Fichiers locaux — bientôt disponible.",
+            emptyMessage = "Import téléphone bientôt. Utilise Téléchargements PLM pour l’instant.",
+            comingSoon = null,
         )
     }
 }

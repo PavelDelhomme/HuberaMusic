@@ -183,8 +183,9 @@ fun AccountScreen(
         LazyColumn(
             Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(bottom = 24.dp),
+                .padding(padding)
+                .padding(top = 4.dp),
+            contentPadding = PaddingValues(bottom = 32.dp),
         ) {
             item {
                 Column(
