@@ -318,6 +318,7 @@ object NetworkMonitor {
             val exo = PlaybackService.Holder.player ?: return@post
             if (resume) {
                 svc?.rebindCurrentStream("back-online", forcePlay = true)
+                ovh.delhomme.ytmusic.YtMusicApp.instance.toastMain("Réseau de retour — reprise")
                 return@post
             }
             // Déjà « online » mais sockets morts (Wi‑Fi → 4G sans debounce) : si coincé, rebind
