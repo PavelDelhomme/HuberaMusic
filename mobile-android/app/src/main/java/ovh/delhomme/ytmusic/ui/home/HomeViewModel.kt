@@ -19,6 +19,7 @@ import ovh.delhomme.ytmusic.data.RadioCategoryDto
 import ovh.delhomme.ytmusic.data.ShelfDto
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
+import ovh.delhomme.ytmusic.ui.util.toastMain
 import ovh.delhomme.ytmusic.update.ApkUpdateManager
 
 data class HomeUiState(
@@ -271,6 +272,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 }
                 // Spinner pull : on le coupe dès que le cœur + 2 mosaïques sont là
                 _state.value = _state.value.copy(refreshing = false)
+                if (fromUser) {
+                    ovh.delhomme.ytmusic.YtMusicApp.instance
+                        .toastMain("Accueil actualisé")
+                }
 
                 val upd = updateJob?.await()
                 if (upd?.available == true) {

@@ -57,6 +57,15 @@ object BatterySaver {
         if (next) {
             AppLog.i("BatterySaver", "ON ($reason) — prefetch/covers/offlineKeeper allégés")
             runCatching { StreamPrefetcher.cancelIdle() }
+            if (prev != next && reason != "boot") {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(
+                        context.applicationContext,
+                        "Économie d’énergie — prefetch allégé",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
         } else if (prev) {
             AppLog.i("BatterySaver", "OFF ($reason)")
         }

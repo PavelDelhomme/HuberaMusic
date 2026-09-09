@@ -113,6 +113,28 @@ fun AccountScreen(
     val updateUi by updater.ui.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     var listenStats by remember { mutableStateOf<String?>(null) }
+    var downloadsSubtitle by remember { mutableStateOf("Titres prêts hors ligne") }
+
+    LaunchedEffect(Unit) {
+        downloadsSubtitle = withContext(Dispatchers.IO) {
+            val n = runCatching { container.offlineStore.listTracks().size }.getOrDefault(0)
+            var freeMb = -1L
+            runCatching {
+                var free = container.appContext.filesDir.usableSpace
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    val sm = container.appContext.getSystemService(android.app.usage.StorageStatsManager::class.java)
+                    free = sm.getFreeBytes(android.os.storage.StorageManager.UUID_DEFAULT)
+                }
+                freeMb = free / (1024 * 1024)
+            }
+            when {
+                n <= 0 && freeMb >= 0 -> "Aucun fichier · ${freeMb} Mo libres"
+                n <= 0 -> "Aucun titre hors ligne"
+                freeMb >= 0 -> "$n hors ligne · ${freeMb} Mo libres"
+                else -> "$n titres hors ligne"
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         listenStats = withContext(Dispatchers.IO) {
@@ -412,7 +434,7 @@ fun AccountScreen(
                 AccountRow(
                     icon = { Icon(Icons.Default.Download, contentDescription = null) },
                     title = "Téléchargements",
-                    subtitle = "Titres prêts hors ligne",
+                    subtitle = downloadsSubtitle,
                     onClick = onOpenDownloads,
                 )
             }
