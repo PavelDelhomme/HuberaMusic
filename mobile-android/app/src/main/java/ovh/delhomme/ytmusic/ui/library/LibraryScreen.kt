@@ -53,10 +53,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.produceState
+import ovh.delhomme.ytmusic.ui.util.toastMain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -86,6 +91,7 @@ fun LibraryScreen(
     onOpenAccount: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val filterStore = remember { LibraryFilterStore(context) }
     val hidden by filterStore.hiddenIds.collectAsState(initial = LibraryFilter.defaultHidden)
@@ -290,15 +296,15 @@ fun LibraryScreen(
                 PullToRefreshBox(
                     isRefreshing = refreshing,
                     onRefresh = {
-                    scope.launch {
-                        repo.refresh(force = true)
-                        android.widget.Toast.makeText(
-                            context,
-                            "Bibliothèque actualisée",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                },
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        scope.launch {
+                            runCatching { repo.refresh(force = true) }
+                                .onSuccess { context.toastMain("Bibliothèque actualisée") }
+                                .onFailure {
+                                    context.toastMain("Actualisation impossible — réessaie")
+                                }
+                        }
+                    },
                     modifier = Modifier.fillMaxSize(),
                 ) {
                 val data = lib ?: LibraryResponse()
@@ -342,12 +348,17 @@ fun LibraryScreen(
                         }
                         .forEach { filter ->
                         Box(
-                            Modifier.combinedClickable(
-                                onClick = { selected = filter },
-                                onLongClick = {
-                                    scope.launch { filterStore.hide(filter) }
-                                },
-                            ),
+                            Modifier
+                                .semantics {
+                                    contentDescription =
+                                        "Filtre ${filter.label}. Appui long pour masquer."
+                                }
+                                .combinedClickable(
+                                    onClick = { selected = filter },
+                                    onLongClick = {
+                                        scope.launch { filterStore.hide(filter) }
+                                    },
+                                ),
                         ) {
                             FilterChip(
                                 selected = false,
@@ -536,7 +547,16 @@ fun LibraryScreen(
                                     pinned = row.id in pinIds,
                                     onTogglePin = {
                                         scope.launch {
-                                            container.quickAccess.toggle(row, container.api)
+                                            runCatching {
+                                                container.quickAccess.toggle(row, container.api)
+                                            }.onSuccess { now ->
+                                                context.toastMain(
+                                                    if (now) "Ajouté à l'accès rapide"
+                                                    else "Retiré de l'accès rapide",
+                                                )
+                                            }.onFailure {
+                                                context.toastMain("Épinglage impossible — réessaie")
+                                            }
                                         }
                                     },
                                 )
@@ -613,7 +633,10 @@ private fun LibraryPlayBar(
 }
 
 @Composable
-private fun EmptyHint(message: String) {
+private fun EmptyHint(
+    message: String,
+    hint: String? = null,
+) {
     Column(
         Modifier
             .fillMaxSize()
@@ -626,6 +649,14 @@ private fun EmptyHint(message: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyLarge,
         )
+        if (!hint.isNullOrBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                hint,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 
@@ -703,11 +734,13 @@ private fun buildLibraryContent(
             // titres et bascule sur des suggestions extérieures.
             val playable = (
                 playableRecent + (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }
-                ).distinctBy { it.id }
+                ).distinctBy { it.id }.filter { it.isMusicTrack() || it.isPlayable() }
+            // « Tout lire » = titres musique uniquement (pas vidéos / épisodes).
+            val songQueue = playable.filter { it.isMusicTrack() }.ifEmpty { playable }
             LibraryContent(
                 headline = "Enregistré récemment",
                 rows = recent,
-                playableQueue = playable,
+                playableQueue = songQueue,
                 emptyMessage = "Rien d'enregistré. Ajoute un titre ou un album à la bibliothèque.",
                 showPlayAll = playable.isNotEmpty(),
                 playLabel = "Tout lire",

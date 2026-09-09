@@ -175,7 +175,11 @@ export function DevicePicker({ open, onClose }: { open: boolean; onClose: () => 
               onClick={() => {
                 void castToChromecast(player.current!)
                   .then(() => setCastMsg('Cast lancé vers Chromecast'))
-                  .catch((e) => setCastMsg(String(e.message || e)));
+                  .catch((e) =>
+                    setCastMsg(
+                      `Cast Chromecast impossible : ${String(e.message || e)}. Vérifie le Wi‑Fi et réessaie, ou utilise « Appareils PLM ».`,
+                    ),
+                  );
               }}
               className="inline-flex items-center justify-center gap-2 rounded-full bg-yt-elevated px-4 py-2.5 text-sm text-yt-muted hover:text-white"
             >

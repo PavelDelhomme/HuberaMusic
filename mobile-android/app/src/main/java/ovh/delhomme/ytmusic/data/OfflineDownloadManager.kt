@@ -352,11 +352,33 @@ class OfflineDownloadManager(
 
     /** Enfile une collection (album / playlist) — priorité user. */
     fun enqueueMany(tracks: List<TrackDto>): Int {
+        val app = ovh.delhomme.ytmusic.YtMusicApp.instance
+        val freeBytes = app.filesDir.usableSpace
+        val needGuess = tracks.size * 4L * 1024L * 1024L // ~4 Mo / titre
+        if (freeBytes in 1 until needGuess) {
+            AppLog.w("offline", "espace disque faible free=$freeBytes need~$needGuess")
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(
+                    app,
+                    "Espace disque faible — libère de la place avant un gros téléchargement",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
         var started = 0
         for (t in tracks) {
             if (enqueue(t)) started++
         }
         return started
+    }
+
+    /** 2ᵉ tap : annule un DL en cours (purge .part). */
+    fun toggleOrEnqueue(track: TrackDto): Boolean {
+        if (jobs[track.id]?.job?.isActive == true) {
+            cancel(track.id)
+            return false
+        }
+        return enqueue(track)
     }
 
     private fun isPlaybackActive(): Boolean =

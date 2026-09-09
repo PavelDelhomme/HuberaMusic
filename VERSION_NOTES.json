@@ -2,6 +2,29 @@
   "updatedAt": "2026-09-09",
   "versions": [
     {
+      "version": "1.3.189",
+      "date": "2026-09-09",
+      "title": "Paroles, hors-ligne, pins",
+      "notes": [
+        "Paroles mises en cache automatiquement à la fin d’un téléchargement",
+        "Prefetch paroles du titre suivant (+2) pour un karaoké sans latence",
+        "Cache paroles plm_lyrics_cache_v5 lu hors-ligne dans Now Playing",
+        "Message clair si format DASH incompatible au DL",
+        "Écran Téléchargements : section Erreurs dédiée",
+        "Alerte espace disque avant DL massif (album / playlist)",
+        "2ᵉ tap annule un téléchargement en cours (+ purge .part)",
+        "OfflineKeeper : lots plus petits si économiseur batterie",
+        "Épingler : warm immédiat du titre",
+        "Pin toggle : toast Épinglé / Retiré",
+        "Aide & limites : hors-ligne + paroles cache documentés",
+        "Progression album / titres : live via OfflineDownloadManager",
+        "Mon Mix hors-ligne : respect BatterySaver",
+        "Recherche offline : titres locaux d’abord",
+        "Bundle audio + paroles au DL (quand l’API répond)",
+        "Toast « Sur l’appareil » après DL réussi"
+      ]
+    },
+    {
       "version": "1.3.188",
       "date": "2026-09-09",
       "title": "Bibliothèque & Accueil fluides",
