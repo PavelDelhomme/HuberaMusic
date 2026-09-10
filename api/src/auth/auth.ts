@@ -12,8 +12,14 @@ import {
   updateUserPasswordHash,
   type UserRow,
 } from '../library/db.js';
-import { createEmailToken, createRefreshToken, markEmailVerified } from '../platform/platform.js';
-import { sendVerificationEmail } from '../platform/mail.js';
+import {
+  createEmailToken,
+  createRefreshToken,
+  markEmailVerified,
+  redeemEmailToken,
+  revokeAllRefreshTokensForUser,
+} from '../platform/platform.js';
+import { sendVerificationEmail, sendPasswordResetEmail } from '../platform/mail.js';
 import { checkUserTotp, userRequiresTotp } from './totp.js';
 import { allowRegisterOverride } from '../platform/runtimeSettings.js';
 
@@ -378,4 +384,52 @@ export function syncSeedCredentials() {
   updateUserPasswordHash(user.id, hashPassword(password));
   promoteAdminIfNeeded(email);
   console.log(`[auth] seed password synchronisé: ${email}`);
+}
+
+/**
+ * Demande de reset MDP — réponse toujours neutre (pas d’énumération d’emails).
+ * Envoie un mail seulement si le compte a un mot de passe local.
+ */
+export async function requestPasswordReset(emailRaw: string) {
+  const email = String(emailRaw || '').trim().toLowerCase();
+  if (!email || !email.includes('@')) {
+    return { ok: true as const };
+  }
+  const user = findUserByEmail(email);
+  if (user?.password_hash) {
+    const raw = createEmailToken(user.id, 'reset', 2 * 3600 * 1000);
+    await sendPasswordResetEmail(user.email, user.name || 'toi', raw).catch((e) =>
+      console.error('mail reset', e),
+    );
+    const env = process.env.APP_ENV || 'local';
+    if (env !== 'production') {
+      const { appUrl } = await import('../platform/mail.js');
+      return {
+        ok: true as const,
+        resetUrl: `${appUrl()}/reset-password?token=${encodeURIComponent(raw)}`,
+        resetToken: raw,
+      };
+    }
+  }
+  return { ok: true as const };
+}
+
+/** Applique un nouveau mot de passe via jeton email (lien 2 h). Révoque toutes les sessions. */
+export async function resetPasswordWithToken(tokenRaw: string, newPassword: string) {
+  if (!newPassword || String(newPassword).length < 10) {
+    throw new Error('Mot de passe trop court (10 caractères minimum)');
+  }
+  const result = redeemEmailToken(String(tokenRaw || '').trim(), 'reset');
+  if (!result.ok) {
+    if (result.reason === 'expired') throw new Error('Lien expiré — demande un nouvel email');
+    if (result.reason === 'missing') throw new Error('Lien invalide — jeton manquant');
+    throw new Error('Lien invalide ou déjà remplacé — demande un nouvel email');
+  }
+  if (result.already) {
+    throw new Error('Lien déjà utilisé — demande un nouvel email si besoin');
+  }
+  updateUserPasswordHash(result.userId, hashPassword(String(newPassword)));
+  revokeAllRefreshTokensForUser(result.userId);
+  const user = findUserById(result.userId);
+  return { ok: true as const, email: user?.email || null };
 }

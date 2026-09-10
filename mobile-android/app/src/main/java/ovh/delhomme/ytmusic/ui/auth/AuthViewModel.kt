@@ -15,6 +15,7 @@ import ovh.delhomme.ytmusic.DeviceLoginDeepLink
 import ovh.delhomme.ytmusic.auth.DeviceLoginQr
 import ovh.delhomme.ytmusic.auth.PasskeyAuth
 import ovh.delhomme.ytmusic.data.AppContainer
+import ovh.delhomme.ytmusic.data.ForgotPasswordBody
 import ovh.delhomme.ytmusic.data.LoginBody
 import ovh.delhomme.ytmusic.data.RegisterBody
 import retrofit2.HttpException
@@ -25,9 +26,12 @@ data class AuthUiState(
     val name: String = "",
     val totp: String = "",
     val registerMode: Boolean = false,
+    /** Demande d’email de reset MDP (pas d’inscription). */
+    val forgotMode: Boolean = false,
     val needs2fa: Boolean = false,
     val loading: Boolean = false,
     val error: String? = null,
+    val info: String? = null,
     val loggedIn: Boolean = false,
     /** Après login mot de passe : proposer d’enregistrer une passkey. */
     val offerPasskey: Boolean = false,
@@ -71,23 +75,44 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun updateEmail(v: String) { _state.value = _state.value.copy(email = v, error = null) }
+    fun updateEmail(v: String) { _state.value = _state.value.copy(email = v, error = null, info = null) }
     fun updatePassword(v: String) { _state.value = _state.value.copy(password = v, error = null) }
     fun updateName(v: String) { _state.value = _state.value.copy(name = v) }
     fun updateTotp(v: String) { _state.value = _state.value.copy(totp = v) }
     fun toggleMode() {
+        if (_state.value.forgotMode) {
+            _state.value = _state.value.copy(forgotMode = false, error = null, info = null)
+            startDeviceLoginQr()
+            return
+        }
         if (!_state.value.allowRegister && !_state.value.registerMode) return
         val next = !_state.value.registerMode
-        _state.value = _state.value.copy(registerMode = next, error = null)
+        _state.value = _state.value.copy(registerMode = next, forgotMode = false, error = null, info = null)
         if (next) stopDeviceLoginQr() else startDeviceLoginQr()
+    }
+
+    fun openForgotPassword() {
+        stopDeviceLoginQr()
+        _state.value = _state.value.copy(
+            forgotMode = true,
+            registerMode = false,
+            error = null,
+            info = null,
+            needs2fa = false,
+        )
+    }
+
+    fun cancelForgotPassword() {
+        _state.value = _state.value.copy(forgotMode = false, error = null, info = null)
+        startDeviceLoginQr()
     }
 
     /** QR sur l’écran login : un appareil déjà connecté scanne pour approuver. */
     fun startDeviceLoginQr() {
-        if (_state.value.registerMode || _state.value.loggedIn || _state.value.offerPasskey) return
+        if (_state.value.registerMode || _state.value.forgotMode || _state.value.loggedIn || _state.value.offerPasskey) return
         deviceLoginJob?.cancel()
         deviceLoginJob = viewModelScope.launch {
-            while (isActive && !_state.value.registerMode && !_state.value.loggedIn) {
+            while (isActive && !_state.value.registerMode && !_state.value.forgotMode && !_state.value.loggedIn) {
                 try {
                     val s = container.api.deviceLoginStart()
                     _state.value = _state.value.copy(
@@ -190,6 +215,28 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
         val password = s.password
             .trim()
             .trim { it <= ' ' || it.code in 0x2000..0x200F || it.code == 0xFEFF }
+        if (s.forgotMode) {
+            if (email.isBlank()) {
+                _state.value = s.copy(error = "Email requis")
+                return
+            }
+            viewModelScope.launch {
+                _state.value = s.copy(loading = true, error = null, info = null, email = email)
+                try {
+                    container.api.forgotPassword(ForgotPasswordBody(email))
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        info = "Si un compte existe, un email avec un lien (2 h) a été envoyé. Ouvre-le pour choisir un nouveau mot de passe.",
+                    )
+                } catch (e: Exception) {
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        error = e.message ?: "Impossible d’envoyer la demande",
+                    )
+                }
+            }
+            return
+        }
         if (email.isBlank() || password.isBlank()) {
             _state.value = s.copy(error = "Email et mot de passe requis")
             return
@@ -199,7 +246,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
             return
         }
         viewModelScope.launch {
-            _state.value = s.copy(loading = true, error = null, email = email, password = password)
+            _state.value = s.copy(loading = true, error = null, info = null, email = email, password = password)
             try {
                 val res = if (s.registerMode) {
                     container.api.register(

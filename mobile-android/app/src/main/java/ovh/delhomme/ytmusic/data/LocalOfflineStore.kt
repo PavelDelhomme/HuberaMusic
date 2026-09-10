@@ -220,8 +220,7 @@ class LocalOfflineStore(
         forceSequential: Boolean = false,
     ): Result<File> {
         val dest = audioFile(track.id)
-        val part = File(dir, "${track.id}.part")
-        part.delete()
+        val part = partFile(track.id)
         return runCatching {
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             val probe = streamRange(streamUrl, "bytes=0-0")
@@ -240,10 +239,38 @@ class LocalOfflineStore(
                     resp.header("Accept-Ranges").orEmpty().contains("bytes", ignoreCase = true)
                 lenHeader to accept
             }
-            // Toujours séquentiel hors-ligne : multi-Range laisse parfois des trous → coupe mid-song.
-            downloadSequential(track, streamUrl, part, dest, onProgress, attempt)
-        }.onFailure {
-            part.delete()
+            val existing = part.takeIf { it.exists() }?.length()?.coerceAtLeast(0L) ?: 0L
+            val resumeFrom =
+                if (ranged && existing > 0L && (total < 0 || existing < total)) existing else 0L
+            if (resumeFrom == 0L && part.exists()) part.delete()
+
+            val unmetered = NetworkMonitor.isUnmeteredPreferred(
+                ovh.delhomme.ytmusic.YtMusicApp.instance,
+            )
+            // Wi‑Fi + gros fichier + Range : 4 bouts en parallèle (moins de saturation mono-flux).
+            // Reprise / retry / mobile : séquentiel (évite trous mid-song).
+            val useParallel =
+                !forceSequential &&
+                    resumeFrom == 0L &&
+                    ranged &&
+                    total >= 2_000_000L &&
+                    unmetered
+            if (useParallel) {
+                downloadParallel(track, streamUrl, part, dest, total, onProgress, attempt)
+            } else {
+                downloadSequential(track, streamUrl, part, dest, onProgress, attempt, resumeFrom)
+            }
+        }.onFailure { err ->
+            val msg = err.message.orEmpty()
+            // Garde le .part pour reprise sauf corruption / format invalide.
+            if (
+                msg.contains("ftyp", ignoreCase = true) ||
+                msg.contains("DASH", ignoreCase = true) ||
+                msg.contains("illisible", ignoreCase = true) ||
+                msg.contains("trop petit", ignoreCase = true)
+            ) {
+                part.delete()
+            }
         }
     }
 
@@ -254,19 +281,38 @@ class LocalOfflineStore(
         dest: File,
         onProgress: ((Float) -> Unit)?,
         attempt: Int,
+        resumeFrom: Long = 0L,
     ): File {
-        val req = streamGet(streamUrl)
+        val req = if (resumeFrom > 0L) {
+            streamRange(streamUrl, "bytes=$resumeFrom-")
+        } else {
+            streamGet(streamUrl)
+        }
         http.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) error("HTTP ${resp.code}")
+            if (resumeFrom > 0L) {
+                if (resp.code != 206 && !resp.isSuccessful) error("HTTP ${resp.code}")
+            } else if (!resp.isSuccessful) {
+                error("HTTP ${resp.code}")
+            }
             val body = resp.body ?: error("Réponse vide")
-            val total = body.contentLength().takeIf { it > 0 } ?: -1L
-            var readTotal = 0L
+            val total = when {
+                resumeFrom > 0L -> {
+                    resp.header("Content-Range")
+                        ?.substringAfter('/')
+                        ?.toLongOrNull()
+                        ?.takeIf { it > 0 }
+                        ?: body.contentLength().takeIf { it > 0 }?.let { resumeFrom + it }
+                        ?: -1L
+                }
+                else -> body.contentLength().takeIf { it > 0 } ?: -1L
+            }
+            var readTotal = resumeFrom
             body.byteStream().use { input ->
-                part.outputStream().use { output ->
+                part.outputStream(append = resumeFrom > 0L).use { output ->
                     val buf = ByteArray(64 * 1024)
                     var lastPct = -1
-                    var lastByteReport = 0L
-                    var lastThrottleAt = 0L
+                    var lastByteReport = resumeFrom
+                    var lastThrottleAt = resumeFrom
                     while (true) {
                         kotlinx.coroutines.currentCoroutineContext().ensureActive()
                         val n = input.read(buf)
@@ -284,8 +330,7 @@ class LocalOfflineStore(
                             val soft = (0.08f + (readTotal / (1024f * 1024f)) * 0.04f).coerceAtMost(0.92f)
                             onProgress?.invoke(soft)
                         }
-                        // Réseau mobile : petite pause tous les ~256 Ko pour laisser
-                        // respirer la bande (lecture / autres apps).
+                        // Mobile : pause légère (~12 ms / 256 Ko) — respire sans trop ralentir.
                         if (
                             readTotal - lastThrottleAt >= 256 * 1024L &&
                             !NetworkMonitor.isUnmeteredPreferred(
@@ -293,7 +338,7 @@ class LocalOfflineStore(
                             )
                         ) {
                             lastThrottleAt = readTotal
-                            kotlinx.coroutines.delay(55L)
+                            kotlinx.coroutines.delay(12L)
                         }
                     }
                     output.flush()

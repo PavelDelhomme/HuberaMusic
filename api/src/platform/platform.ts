@@ -215,6 +215,13 @@ export function revokeRefreshToken(raw: string) {
   );
 }
 
+/** Invalide toutes les sessions refresh d’un user (ex. après reset MDP). */
+export function revokeAllRefreshTokensForUser(userId: string) {
+  db.prepare(
+    `UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`,
+  ).run(Date.now(), userId);
+}
+
 export function insertTelemetry(ev: {
   env?: string;
   level: string;
