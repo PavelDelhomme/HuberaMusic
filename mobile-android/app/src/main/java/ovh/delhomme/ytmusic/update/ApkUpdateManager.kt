@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Request
 import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.data.AppContainer
@@ -264,9 +265,26 @@ class ApkUpdateManager(
     fun reconcileAfterBoot() {
         val remote = prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
         val phase = _ui.value.phase
+        // Checking / Installing fantômes après kill : jamais bloquer Compte
+        if (phase == Phase.Checking || phase == Phase.Installing) {
+            busy.set(false)
+            publish(
+                UiState(
+                    phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.Idle,
+                    message = if (remote > BuildConfig.VERSION_CODE) {
+                        "Mise à jour prête — appuie pour télécharger"
+                    } else {
+                        "Installée ${BuildConfig.VERSION_NAME}"
+                    },
+                    remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
+                    remoteCode = remote,
+                    available = remote > BuildConfig.VERSION_CODE,
+                ),
+            )
+        }
         if (remote > 0 && remote <= BuildConfig.VERSION_CODE) {
             if (phase == Phase.AwaitingConfirm || phase == Phase.Available ||
-                phase == Phase.Error || phase == Phase.Installing
+                phase == Phase.Error || phase == Phase.Installing || phase == Phase.Checking
             ) {
                 lastConfirmIntent = null
                 notifier.cancel()
@@ -452,9 +470,17 @@ class ApkUpdateManager(
     suspend fun refreshAccountStatus() {
         val current = _ui.value
         if (current.phase == Phase.Downloading || current.phase == Phase.Installing ||
-            current.phase == Phase.Checking || current.phase == Phase.AwaitingConfirm
+            current.phase == Phase.AwaitingConfirm
         ) {
-            // Job en cours : ne pas écraser le progrès
+            // Job en cours réel : ne pas écraser le progrès
+            return
+        }
+        // Checking « fantôme » (coroutine annulée en quittant Compte) → on réessaie.
+        val staleChecking =
+            current.phase == Phase.Checking &&
+                !busy.get() &&
+                updateJob?.isActive != true
+        if (current.phase == Phase.Checking && !staleChecking) {
             return
         }
         publish(
@@ -464,79 +490,133 @@ class ApkUpdateManager(
                 progress = 0f,
             ),
         )
-        val result = check(force = true, respectSnooze = false)
-        val remote = result.info?.versionCode ?: 0
-        val remoteName = result.info?.versionName
-        when {
-            remote > BuildConfig.VERSION_CODE && !isSnoozed(remote) -> {
-                val pending = apkFileFor(remote).takeIf { it.isFile && it.length() > 1_000_000L }
-                if (pending != null) {
+        try {
+            val result = withTimeout(22_000L) {
+                check(force = true, respectSnooze = false)
+            }
+            val remote = result.info?.versionCode ?: 0
+            val remoteName = result.info?.versionName
+            when {
+                remote > BuildConfig.VERSION_CODE && !isSnoozed(remote) -> {
+                    val pending = apkFileFor(remote).takeIf { it.isFile && it.length() > 1_000_000L }
+                    if (pending != null) {
+                        publish(
+                            UiState(
+                                phase = Phase.AwaitingConfirm,
+                                message = "APK ${remoteName ?: remote} téléchargée — appuie pour lancer l’installateur",
+                                remoteName = remoteName,
+                                remoteCode = remote,
+                                available = true,
+                            ),
+                        )
+                    } else {
+                        publish(
+                            UiState(
+                                phase = Phase.Available,
+                                message = "Nouvelle version ${remoteName ?: "p+$remote"} — appuie pour télécharger et installer",
+                                remoteName = remoteName,
+                                remoteCode = remote,
+                                available = true,
+                            ),
+                        )
+                    }
+                }
+                remote > BuildConfig.VERSION_CODE -> {
                     publish(
                         UiState(
-                            phase = Phase.AwaitingConfirm,
-                            message = "APK ${remoteName ?: remote} téléchargée — appuie pour lancer l’installateur",
+                            phase = Phase.Idle,
+                            message = "Installée ${BuildConfig.VERSION_NAME} · serveur $remoteName (ignorée pour plus tard)",
                             remoteName = remoteName,
                             remoteCode = remote,
-                            available = true,
+                            available = false,
                         ),
                     )
-                } else {
+                }
+                remote > 0 && remote < BuildConfig.VERSION_CODE -> {
                     publish(
                         UiState(
-                            phase = Phase.Available,
-                            message = "Nouvelle version ${remoteName ?: "p+$remote"} — appuie pour télécharger et installer",
+                            phase = Phase.UpToDate,
+                            message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
+                                (remoteName?.let { " (catalogue serveur $it — republier l’APK)" } ?: ""),
                             remoteName = remoteName,
                             remoteCode = remote,
-                            available = true,
+                            available = false,
+                        ),
+                    )
+                }
+                remote > 0 -> {
+                    publish(
+                        UiState(
+                            phase = Phase.UpToDate,
+                            message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
+                                (remoteName?.let { " · serveur $it" } ?: ""),
+                            remoteName = remoteName,
+                            remoteCode = remote,
+                            available = false,
+                        ),
+                    )
+                }
+                else -> {
+                    publish(
+                        UiState(
+                            phase = Phase.Idle,
+                            message = result.message ?: "Installée ${BuildConfig.VERSION_NAME}",
+                            available = false,
                         ),
                     )
                 }
             }
-            remote > BuildConfig.VERSION_CODE -> {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Quitter Compte pendant « Vérification… » ne doit PAS laisser l’UI coincée.
+            if (_ui.value.phase == Phase.Checking) {
                 publish(
                     UiState(
                         phase = Phase.Idle,
-                        message = "Installée ${BuildConfig.VERSION_NAME} · serveur $remoteName (ignorée pour plus tard)",
-                        remoteName = remoteName,
-                        remoteCode = remote,
-                        available = false,
+                        message = "Installée ${BuildConfig.VERSION_NAME}",
+                        remoteName = current.remoteName,
+                        remoteCode = current.remoteCode,
+                        available = current.available,
                     ),
                 )
             }
-            remote > 0 && remote < BuildConfig.VERSION_CODE -> {
-                publish(
-                    UiState(
-                        phase = Phase.UpToDate,
-                        message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
-                            (remoteName?.let { " (catalogue serveur $it — republier l’APK)" } ?: ""),
-                        remoteName = remoteName,
-                        remoteCode = remote,
-                        available = false,
-                    ),
-                )
-            }
-            remote > 0 -> {
-                publish(
-                    UiState(
-                        phase = Phase.UpToDate,
-                        message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
-                            (remoteName?.let { " · serveur $it" } ?: ""),
-                        remoteName = remoteName,
-                        remoteCode = remote,
-                        available = false,
-                    ),
-                )
-            }
-            else -> {
-                publish(
-                    UiState(
-                        phase = Phase.Idle,
-                        message = result.message ?: "Installée ${BuildConfig.VERSION_NAME}",
-                        available = false,
-                    ),
-                )
-            }
+            throw e
+        } catch (e: Exception) {
+            AppLog.w("apk-update", "refreshAccountStatus fail: ${e.message}")
+            publish(
+                UiState(
+                    phase = Phase.Error,
+                    message = e.message?.take(120) ?: "Vérification impossible — réessaie ou navigateur",
+                    remoteName = current.remoteName,
+                    remoteCode = current.remoteCode,
+                    available = current.remoteCode > BuildConfig.VERSION_CODE,
+                ),
+            )
         }
+    }
+
+    /** Débloque une UI coincée (Checking fantôme) et relance. */
+    fun recoverStuckUpdateUi(reason: String = "manual") {
+        AppLog.i("apk-update", "recoverStuckUpdateUi ($reason) phase=${_ui.value.phase}")
+        updateJob?.cancel()
+        busy.set(false)
+        cancelPendingInstallRetries()
+        resetConfirmGate()
+        notifier.cancel()
+        val remote = _ui.value.remoteCode.takeIf { it > 0 }
+            ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
+        publish(
+            UiState(
+                phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.Idle,
+                message = if (remote > BuildConfig.VERSION_CODE) {
+                    "Mise à jour prête — appuie pour télécharger"
+                } else {
+                    "Installée ${BuildConfig.VERSION_NAME}"
+                },
+                remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
+                remoteCode = remote,
+                available = remote > BuildConfig.VERSION_CODE,
+            ),
+        )
     }
 
     /**
@@ -678,7 +758,30 @@ class ApkUpdateManager(
                     ),
                 )
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is kotlinx.coroutines.CancellationException) {
+                    // Annulation (navigation) : ne jamais laisser « Vérification… » coincée.
+                    if (_ui.value.phase == Phase.Checking ||
+                        _ui.value.phase == Phase.Downloading ||
+                        _ui.value.phase == Phase.Installing
+                    ) {
+                        notifier.cancel()
+                        val remote = _ui.value.remoteCode
+                        publish(
+                            UiState(
+                                phase = if (remote > BuildConfig.VERSION_CODE) {
+                                    Phase.Available
+                                } else {
+                                    Phase.Idle
+                                },
+                                message = "Mise à jour interrompue — réessaie",
+                                remoteName = _ui.value.remoteName,
+                                remoteCode = remote,
+                                available = remote > BuildConfig.VERSION_CODE,
+                            ),
+                        )
+                    }
+                    throw e
+                }
                 AppLog.w("apk-update", "manual update fail", e)
                 notifier.cancel()
                 publish(
@@ -954,30 +1057,13 @@ class ApkUpdateManager(
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(context.packageName)
         val oem = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
-        val needsExplicitConfirm =
-            oem.contains("samsung") ||
-                oem.contains("xiaomi") ||
-                oem.contains("redmi") ||
-                oem.contains("poco") ||
-                oem.contains("oppo") ||
-                oem.contains("realme") ||
-                oem.contains("oneplus") ||
-                oem.contains("vivo") ||
-                oem.contains("huawei") ||
-                oem.contains("honor")
-        // API 31+ : en théorie USER_ACTION_NOT_REQUIRED suffit pour une MAJ signée du
-        // même package. Sur Samsung / Xiaomi / Oppo ça échoue souvent **sans** feuille
-        // (STATUS_FAILURE / BLOCKED) → l’utilisateur croit que « ça a planté ».
-        // Sur ces OEM : forcer USER_ACTION_REQUIRED pour toujours afficher Confirmer.
+        // Toujours USER_ACTION_REQUIRED (API 31+) : NOT_REQUIRED échoue souvent sans feuille
+        // sur Samsung / Lenovo / Xiaomi / Nothing → « Vérification » ou install silencieuse KO.
+        // Une seule feuille « Confirmer » est préférable à une MAJ fantôme.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching {
-                if (needsExplicitConfirm) {
-                    params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
-                    AppLog.i("apk-update", "USER_ACTION_REQUIRED oem=$oem")
-                } else {
-                    params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-                    AppLog.i("apk-update", "USER_ACTION_NOT_REQUIRED oem=$oem")
-                }
+                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+                AppLog.i("apk-update", "USER_ACTION_REQUIRED oem=$oem")
             }.onFailure {
                 AppLog.w("apk-update", "setRequireUserAction KO: ${it.message}")
             }

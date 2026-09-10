@@ -33,6 +33,15 @@
 | **Fix** | `pickSaneDurationMs` : croiser Exo × catalogue YTM × position · ne plus écraser catalogue long · log `durée Exo suspecte` |
 | **Tests** | Titres longs shuffle · remaining cohérent · pas de early skip lié à durée |
 
+### E35 — Compte bloqué sur « Vérification… » (Checking fantôme) + OTA Lenovo
+| | |
+|--|--|
+| **Status** | `investigating` → fix `1.3.198` |
+| **Surfaces** | Android Compte (tous) · surtout Lenovo TB-J616F |
+| **Cause** | `refreshAccountStatus` met `Phase.Checking` puis la coroutine est **annulée** en quittant Compte → UI reste Checking ; au retour on refuse de re-vérifier. Lenovo en `USER_ACTION_NOT_REQUIRED` (hors liste OEM). |
+| **Fix** | try/finally + reset Checking annulé · `recoverStuckUpdateUi` · timeout 22 s · **toujours** `USER_ACTION_REQUIRED` · boutons Annuler + navigateur secours |
+| **Tests** | Lenovo Compte in/out · MAJ 197→198 · Samsung |
+
 ---
 
 ## Session 2026-08-27 (503 multi-titres + pause silencieuse)

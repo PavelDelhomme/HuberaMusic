@@ -345,7 +345,12 @@ fun AccountScreen(
                                     )
                                     if (!ok) updater.dismissAwaitingConfirm(snooze = false)
                                 }
-                                ApkUpdateManager.Phase.Checking,
+                                ApkUpdateManager.Phase.Checking -> {
+                                    // Stuck « Vérification… » : débloque + relance
+                                    updater.recoverStuckUpdateUi("account-tap")
+                                    context.toastMain("Nouvelle vérification…")
+                                    updater.startManualUpdate()
+                                }
                                 ApkUpdateManager.Phase.Downloading,
                                 ApkUpdateManager.Phase.Installing,
                                 -> {
@@ -386,8 +391,21 @@ fun AccountScreen(
                                 Text("Plus tard — masquer la confirmation")
                             }
                         }
+                        if (phase == ApkUpdateManager.Phase.Checking) {
+                            TextButton(
+                                onClick = {
+                                    updater.recoverStuckUpdateUi("account-cancel-check")
+                                    context.toastMain("Vérification annulée")
+                                },
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            ) {
+                                Text("Annuler la vérification")
+                            }
+                        }
                         if (phase == ApkUpdateManager.Phase.Error ||
                             phase == ApkUpdateManager.Phase.Available ||
+                            phase == ApkUpdateManager.Phase.Checking ||
+                            phase == ApkUpdateManager.Phase.AwaitingConfirm ||
                             (phase == ApkUpdateManager.Phase.Idle && updateUi.available)
                         ) {
                             TextButton(
@@ -396,14 +414,17 @@ fun AccountScreen(
                                         context.startActivity(
                                             android.content.Intent(
                                                 android.content.Intent.ACTION_VIEW,
-                                                android.net.Uri.parse("https://plm.delhomme.ovh/install"),
-                                            ),
+                                                android.net.Uri.parse(
+                                                    "https://plm.delhomme.ovh/api/deploy/apk",
+                                                ),
+                                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
                                         )
                                     }
+                                    context.toastMain("Télécharge l’APK puis ouvre le fichier")
                                 },
                                 modifier = Modifier.padding(horizontal = 8.dp),
                             ) {
-                                Text("Installer via navigateur (1 fenêtre)")
+                                Text("Installer via navigateur (secours)")
                             }
                         }
                     }
