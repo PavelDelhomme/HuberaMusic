@@ -485,8 +485,8 @@ fun YtMusicAppContent(
                 apkUpdater.startManualUpdate()
                 Toast.makeText(
                     context,
-                    "Téléchargement lancé — la barre avance ici et dans Compte",
-                    Toast.LENGTH_LONG,
+                    "Téléchargement… la barre avance dans la fenêtre",
+                    Toast.LENGTH_SHORT,
                 ).show()
             },
             onSnooze = { opt ->

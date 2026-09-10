@@ -20,13 +20,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 /**
- * Dialogue MAJ : reste ouvert pendant le téléchargement (barre + %).
- * Fermer sans choisir (back / extérieur) -> [onSoftDismiss] sans snooze,
- * sauf si un DL / install est déjà lancé.
- *
- * Bypass Samsung / amis bloqués : « Via navigateur » → /install (1 feuille système).
+ * Dialogue MAJ : **reste ouvert** pendant vérif / téléchargement / préparation
+ * (barre + %) pour que l’utilisateur sache où il en est.
+ * Fermeture auto seulement après install réussie (Done).
  */
 @Composable
 fun UpdateAvailableDialog(
@@ -42,16 +41,18 @@ fun UpdateAvailableDialog(
     val busy = ui.phase == ApkUpdateManager.Phase.Checking ||
         ui.phase == ApkUpdateManager.Phase.Downloading ||
         ui.phase == ApkUpdateManager.Phase.Installing
-    val showProgress = busy || ui.phase == ApkUpdateManager.Phase.AwaitingConfirm
+    val showProgress = busy ||
+        ui.phase == ApkUpdateManager.Phase.AwaitingConfirm ||
+        ui.phase == ApkUpdateManager.Phase.Done
 
+    // Ne fermer auto qu’à la fin — pas pendant Downloading (sinon popup « bloquée »
+    // sans barre : l’utilisateur ne voit plus où il en est).
     LaunchedEffect(ui.phase) {
         when (ui.phase) {
-            ApkUpdateManager.Phase.Checking,
-            ApkUpdateManager.Phase.Downloading,
-            ApkUpdateManager.Phase.Installing,
-            ApkUpdateManager.Phase.AwaitingConfirm,
-            ApkUpdateManager.Phase.Done,
-            -> onSoftDismiss()
+            ApkUpdateManager.Phase.Done -> {
+                delay(900L)
+                onSoftDismiss()
+            }
             else -> Unit
         }
     }
@@ -82,15 +83,20 @@ fun UpdateAvailableDialog(
     }
 
     AlertDialog(
-        onDismissRequest = { if (!busy) onSoftDismiss() },
+        onDismissRequest = {
+            // Pendant DL : back ferme juste le dialogue (le DL continue + vignette mini).
+            onSoftDismiss()
+        },
         title = {
             Text(
                 when (ui.phase) {
                     ApkUpdateManager.Phase.Downloading ->
                         "Téléchargement… ${(ui.progress * 100).toInt()} %"
-                    ApkUpdateManager.Phase.Installing -> "Installation…"
+                    ApkUpdateManager.Phase.Installing ->
+                        "Préparation… ${(ui.progress * 100).toInt()} %"
                     ApkUpdateManager.Phase.Checking -> "Vérification…"
-                    ApkUpdateManager.Phase.AwaitingConfirm -> "Installation en cours"
+                    ApkUpdateManager.Phase.AwaitingConfirm -> "Confirme l’installation"
+                    ApkUpdateManager.Phase.Done -> "Mise à jour installée"
                     ApkUpdateManager.Phase.Error -> "Mise à jour"
                     else -> "Mise à jour disponible"
                 },
@@ -104,32 +110,47 @@ fun UpdateAvailableDialog(
                             ?: "Une nouvelle version PLM est disponible."
                     },
                 )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Si plusieurs fenêtres s’ouvrent (Samsung) : utilise « Via navigateur » — une seule installation.",
-                )
                 if (showProgress) {
                     Spacer(Modifier.height(12.dp))
-                    if (ui.phase == ApkUpdateManager.Phase.Downloading ||
-                        ui.phase == ApkUpdateManager.Phase.Installing
-                    ) {
-                        LinearProgressIndicator(
-                            progress = { ui.progress.coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    when (ui.phase) {
+                        ApkUpdateManager.Phase.Downloading,
+                        ApkUpdateManager.Phase.Installing,
+                        -> {
+                            LinearProgressIndicator(
+                                progress = { ui.progress.coerceIn(0.02f, 1f) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text("${(ui.progress * 100).toInt().coerceIn(0, 100)} %")
+                        }
+                        ApkUpdateManager.Phase.Checking,
+                        ApkUpdateManager.Phase.AwaitingConfirm,
+                        -> {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                        ApkUpdateManager.Phase.Done -> {
+                            LinearProgressIndicator(
+                                progress = { 1f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        else -> Unit
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(enabled = !busy, onClick = onInstall) {
+            TextButton(
+                enabled = !busy && ui.phase != ApkUpdateManager.Phase.AwaitingConfirm,
+                onClick = onInstall,
+            ) {
                 Text(
                     when {
                         busy -> "En cours…"
+                        ui.phase == ApkUpdateManager.Phase.AwaitingConfirm -> "En attente…"
                         ui.phase == ApkUpdateManager.Phase.Error -> "Réessayer"
-                        else -> "Installer"
+                        ui.phase == ApkUpdateManager.Phase.Done -> "OK"
+                        else -> "Télécharger"
                     },
                 )
             }
@@ -152,8 +173,25 @@ fun UpdateAvailableDialog(
                 ) { Text("Via navigateur") }
                 TextButton(
                     enabled = !busy,
-                    onClick = { showSnoozePicker = true },
-                ) { Text("Plus tard") }
+                    onClick = {
+                        if (ui.phase == ApkUpdateManager.Phase.AwaitingConfirm ||
+                            ui.phase == ApkUpdateManager.Phase.Done
+                        ) {
+                            onSoftDismiss()
+                        } else {
+                            showSnoozePicker = true
+                        }
+                    },
+                ) {
+                    Text(
+                        when (ui.phase) {
+                            ApkUpdateManager.Phase.AwaitingConfirm,
+                            ApkUpdateManager.Phase.Done,
+                            -> "Fermer"
+                            else -> "Plus tard"
+                        },
+                    )
+                }
             }
         },
     )

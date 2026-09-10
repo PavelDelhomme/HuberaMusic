@@ -123,8 +123,8 @@ fun HomeScreen(
                 container.apkUpdateManager.startManualUpdate()
                 Toast.makeText(
                     context,
-                    "Téléchargement lancé — la barre avance en haut de l’écran",
-                    Toast.LENGTH_LONG,
+                    "Téléchargement… la barre avance dans la fenêtre",
+                    Toast.LENGTH_SHORT,
                 ).show()
             },
             onSnooze = { opt -> vm.snoozeUpdatePrompt(opt) },

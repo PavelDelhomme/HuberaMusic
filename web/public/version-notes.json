@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-10",
   "versions": [
     {
+      "version": "1.3.201",
+      "date": "2026-09-10",
+      "title": "OTA : progression visible dans la popup",
+      "notes": [
+        "Clic Télécharger : la fenêtre reste ouverte avec barre + % (plus de popup figée)",
+        "Fermeture auto seulement une fois l’install terminée"
+      ]
+    },
+    {
       "version": "1.3.200",
       "date": "2026-09-10",
       "title": "UX lecteur, mix, options + vidéo + OTA une feuille",
