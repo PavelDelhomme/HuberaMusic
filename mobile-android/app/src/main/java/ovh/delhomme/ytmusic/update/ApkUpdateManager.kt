@@ -89,6 +89,8 @@ class ApkUpdateManager(
     private var lastInstallApk: File? = null
     /** Verrou anti double-feuille Confirmer (broadcasts / races / VIEW+PI). */
     private val confirmUiGate = AtomicBoolean(false)
+    /** Empêche 2× createSession (tap Compte + resume + banner). */
+    private val installInFlight = AtomicBoolean(false)
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pendingConfirmRetry: Runnable? = null
     private var pendingViewFallback: Runnable? = null
@@ -148,13 +150,15 @@ class ApkUpdateManager(
     /** Relance l’écran système de confirmation (ou réinstalle depuis le cache APK). */
     fun reopenConfirmInstall(): Boolean {
         val now = System.currentTimeMillis()
-        if (now - lastReopenAt < 2_500L) return false
+        if (now - lastReopenAt < 4_000L) {
+            AppLog.i("apk-update", "reopen debounce")
+            return false
+        }
         lastReopenAt = now
-        // Réouverture explicite utilisateur : autorise une nouvelle feuille
-        resetConfirmGate()
         val confirm = lastConfirmIntent
         if (confirm != null) {
-                return tryOpenConfirmUi("reopen-intent") {
+            // Ne PAS resetConfirmGate ici : sinon chaque tap empile une feuille.
+            return tryOpenConfirmUi("reopen-intent") {
                 UpdateRelaunch.launchConfirm(context, confirm)
                 notifier.show(
                     "Mise à jour PLM",
@@ -164,26 +168,47 @@ class ApkUpdateManager(
                 )
             }
         }
-        if (usedViewInstall) {
-            val apk = lastInstallApk
-            if (apk != null && apk.isFile && apk.length() > 1_000_000L) {
-                return tryOpenConfirmUi("reopen-view") {
-                    installApkViaView(apk)
-                    notifier.show(
-                        "Mise à jour PLM",
-                        "Écran d’installation — Rouvrir",
-                        100,
-                        indeterminate = false,
-                    )
-                }
-            }
-        }
+        // Pas d’intent : une seule nouvelle session PackageInstaller (après abandon des autres).
         val remote = _ui.value.remoteCode.takeIf { it > BuildConfig.VERSION_CODE }
             ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
         val pending = if (remote > BuildConfig.VERSION_CODE) apkFileFor(remote) else null
         if (pending != null && pending.isFile && pending.length() > 1_000_000L) {
-            AppLog.i("apk-update", "reopen via cached apk v$remote")
-            startManualUpdate()
+            if (installInFlight.get()) {
+                AppLog.i("apk-update", "reopen: session déjà en vol")
+                return false
+            }
+            AppLog.i("apk-update", "reopen via cached apk v$remote (1 session)")
+            scope.launch {
+                if (!busy.compareAndSet(false, true)) return@launch
+                try {
+                    abandonAllSessions()
+                    resetConfirmGate()
+                    publish(
+                        _ui.value.copy(
+                            phase = Phase.Installing,
+                            message = "Préparation de l’installateur…",
+                            progress = 0f,
+                            available = true,
+                        ),
+                    )
+                    val msg = launchInstall(pending, remote)
+                    val ok = msg.startsWith("Installation")
+                    publish(
+                        _ui.value.copy(
+                            phase = if (ok) Phase.AwaitingConfirm else Phase.Error,
+                            message = if (ok) {
+                                "Valide l’installation système — une seule fenêtre"
+                            } else {
+                                msg
+                            },
+                            progress = 1f,
+                            available = true,
+                        ),
+                    )
+                } finally {
+                    busy.set(false)
+                }
+            }
             return true
         }
         AppLog.w("apk-update", "reopen confirm: pas d’intent ni d’APK cache")
@@ -237,6 +262,8 @@ class ApkUpdateManager(
         cancelPendingInstallRetries()
         lastConfirmIntent = null
         resetConfirmGate()
+        installInFlight.set(false)
+        abandonAllSessions()
         usedViewInstall = false
         lastInstallApk = null
         notifier.cancel()
@@ -641,8 +668,21 @@ class ApkUpdateManager(
     /**
      * Clic Compte « Mettre à jour » : tourne hors composition (survit navigation).
      * Publie l’état **tout de suite** (thread UI) pour que le bouton ne paraisse pas mort.
+     *
+     * Si une feuille Confirmer est déjà ouverte : on la rouvre — **jamais** une 2ᵉ session
+     * (c’était la cause des multi-fenêtres quand on avait plusieurs versions de retard).
      */
     fun startManualUpdate() {
+        val phase = _ui.value.phase
+        if (phase == Phase.AwaitingConfirm) {
+            AppLog.i("apk-update", "startManualUpdate → reopen only (pas de nouvelle session)")
+            reopenConfirmInstall()
+            return
+        }
+        if (phase == Phase.Downloading || phase == Phase.Installing || phase == Phase.Checking) {
+            AppLog.i("apk-update", "startManualUpdate ignoré phase=$phase")
+            return
+        }
         if (!busy.compareAndSet(false, true)) {
             AppLog.i("apk-update", "déjà en cours phase=${_ui.value.phase}")
             return
@@ -844,26 +884,28 @@ class ApkUpdateManager(
         clearSnooze()
         UpdateRelaunch.markPending(context)
         cancelPendingInstallRetries()
-        resetConfirmGate()
+        // Ne reset PAS le gate si on a déjà une feuille en cours — une seule UI.
+        if (!installInFlight.compareAndSet(false, true)) {
+            AppLog.i("apk-update", "launchInstall: déjà une session en vol")
+            return "Installation déjà en cours — une seule fenêtre"
+        }
         lastConfirmIntent = null
         lastInstallApk = file
         usedViewInstall = false
-        // Toujours PackageInstaller (1 seule feuille Confirmer).
-        // ACTION_VIEW en parallèle empilait 2 popups sur Nothing / Samsung / Xiaomi.
+        abandonAllSessions()
+        resetConfirmGate()
+        // Toujours PackageInstaller seul (pas de VIEW en parallèle = 2 feuilles).
         AppLog.i(
             "apk-update",
             "launchInstall PackageInstaller-only mfr=${Build.MANUFACTURER} brand=${Build.BRAND}",
         )
         val ok = runCatching { installViaPackageInstaller(file) }.getOrElse { err ->
-            AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW once")
-            withContext(Dispatchers.Main) {
-                tryOpenConfirmUi("view-fallback") {
-                    installApkViaView(file)
-                    usedViewInstall = true
-                }
-            }
+            AppLog.w("apk-update", "PackageInstaller KO: ${err.message}")
+            installInFlight.set(false)
+            false
         }
-        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur"
+        if (!ok) installInFlight.set(false)
+        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur — réessaie ou plm.delhomme.ovh/install"
     }
 
     /**
@@ -1244,6 +1286,7 @@ class ApkUpdateManager(
             PackageInstaller.STATUS_SUCCESS -> {
                 prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
                 resetConfirmGate()
+                installInFlight.set(false)
                 val target = lastTargetPackage
                     ?: prefs.getString(KEY_TARGET_PACKAGE, null)
                     ?: context.packageName
@@ -1271,6 +1314,7 @@ class ApkUpdateManager(
                 // (sinon Samsung empile 10–25 sessions d’install).
                 notifier.cancel()
                 resetConfirmGate()
+                installInFlight.set(false)
                 abandonAllSessions()
                 publish(
                     _ui.value.copy(
@@ -1292,32 +1336,9 @@ class ApkUpdateManager(
                 AppLog.w("apk-update", "install FAIL status=$status msg=$statusMsg")
                 notifier.cancel()
                 resetConfirmGate()
+                installInFlight.set(false)
                 abandonAllSessions()
-                // OEM (Samsung…) : PackageInstaller a échoué sans feuille → bascule VIEW une fois.
-                val apk = lastInstallApk
-                if (apk != null && apk.exists() && !usedViewInstall) {
-                    usedViewInstall = true
-                    AppLog.i("apk-update", "fallback ACTION_VIEW after status=$status")
-                    mainHandler.post {
-                        runCatching { installApkViaView(apk) }
-                            .onFailure { AppLog.w("apk-update", "VIEW fallback KO: ${it.message}") }
-                    }
-                    publish(
-                        _ui.value.copy(
-                            phase = Phase.AwaitingConfirm,
-                            message = "Ouvre l’écran Confirmer (installateur système) — sinon /install",
-                            available = true,
-                            progress = 1f,
-                        ),
-                    )
-                    notifier.show(
-                        "Mise à jour PLM",
-                        "Confirme l’installation système",
-                        100,
-                        indeterminate = false,
-                    )
-                    return
-                }
+                // Plus de fallback ACTION_VIEW auto : il ouvrait une 2ᵉ feuille système.
                 markInstallCancelled()
                 val human = when (status) {
                     PackageInstaller.STATUS_FAILURE_BLOCKED -> "bloquée par le système"
@@ -1367,7 +1388,7 @@ class ApkUpdateManager(
         private const val KEY_TARGET_PACKAGE = "ota_target_package"
         private const val PROD_PACKAGE = "ovh.delhomme.ytmusic"
         /** Fenêtre anti double-popup (broadcasts OEM / recreation Activity). */
-        private const val CONFIRM_DEBOUNCE_MS = 12_000L
+        private const val CONFIRM_DEBOUNCE_MS = 45_000L
         private val WINDOW_HALF_MS = TimeUnit.MINUTES.toMillis(45)
         private val PERIODIC_INTERVAL_MS = TimeUnit.HOURS.toMillis(6)
     }

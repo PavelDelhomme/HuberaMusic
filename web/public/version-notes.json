@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-10",
   "versions": [
     {
+      "version": "1.3.202",
+      "date": "2026-09-10",
+      "title": "OTA : une seule fenêtre Confirmer",
+      "notes": [
+        "Plus d’empilement de fenêtres d’installation (même avec plusieurs versions de retard)",
+        "Toujours une seule session PackageInstaller vers la dernière APK",
+        "Plus de double ouverture via ACTION_VIEW en secours"
+      ]
+    },
+    {
       "version": "1.3.201",
       "date": "2026-09-10",
       "title": "OTA : progression visible dans la popup",
