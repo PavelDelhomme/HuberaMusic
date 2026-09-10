@@ -993,15 +993,16 @@ class PlayerController(
         }
     }
 
-    /** Meilleure durée connue (Exo > état UI > métadonnées piste), ou 0. */
+    /** Meilleure durée connue (catalogue > Exo sain > UI), ou 0. */
     fun resolveDurationMs(): Long {
         val p = player() ?: PlaybackService.Holder.player
+        val pos = p?.currentPosition?.takeIf { it >= 0L } ?: _state.value.positionMs
         val exo = p?.duration?.takeIf {
             it > 0L && it != androidx.media3.common.C.TIME_UNSET
         }
-        if (exo != null) return exo
-        _state.value.durationMs.takeIf { it >= 1_000L }?.let { return it }
-        return _state.value.track?.durationMsOrNull()?.takeIf { it >= 1_000L } ?: 0L
+        val catalog = _state.value.track?.durationMsOrNull()
+        val ui = _state.value.durationMs.takeIf { it >= 1_000L }
+        return pickSaneDurationMs(exo, catalog, ui, pos)
     }
 
     /**
@@ -2040,13 +2041,18 @@ class PlayerController(
         var queue = PlaybackService.Holder.queue
         val idx = player.currentMediaItemIndex.coerceAtLeast(0)
         val exoDur = player.duration.takeIf { it > 0L && it != androidx.media3.common.C.TIME_UNSET }
+        val posNow = player.currentPosition.coerceAtLeast(0L)
         if (exoDur != null && idx in queue.indices) {
             val cur = queue[idx]
-            if (cur.durationMsOrNull() == null) {
-                val patched = queue.toMutableList()
-                patched[idx] = cur.withKnownDurationMs(exoDur)
-                queue = patched
-                PlaybackService.Holder.queue = patched
+            val catalog = cur.durationMsOrNull()
+            // N’écrire Exo dans la file que s’il est cohérent (évite de polluer le catalogue).
+            if (!isSuspiciousExoDuration(exoDur, catalog, posNow)) {
+                if (catalog == null || kotlin.math.abs(catalog - exoDur) >= 2_000L) {
+                    val patched = queue.toMutableList()
+                    patched[idx] = cur.withKnownDurationMs(exoDur)
+                    queue = patched
+                    PlaybackService.Holder.queue = patched
+                }
             }
         }
         val track = queue.getOrNull(idx)
@@ -2059,12 +2065,13 @@ class PlayerController(
         }
         val busy = _state.value.autoFillBusy
         val rawDur = player.duration
-        val durationMs = when {
-            rawDur > 0L && rawDur != androidx.media3.common.C.TIME_UNSET -> rawDur
-            else -> track?.durationMsOrNull()
-                ?: _state.value.durationMs.takeIf { it > 0L }
-                ?: 0L
-        }
+        val exoRaw = rawDur.takeIf { it > 0L && it != androidx.media3.common.C.TIME_UNSET }
+        val durationMs = pickSaneDurationMs(
+            exoMs = exoRaw,
+            catalogMs = track?.durationMsOrNull(),
+            fallbackMs = _state.value.durationMs.takeIf { it > 0L },
+            positionMs = posNow,
+        )
         val buffering =
             player.playWhenReady &&
                 player.playbackState == Player.STATE_BUFFERING

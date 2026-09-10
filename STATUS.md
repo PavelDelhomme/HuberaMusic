@@ -4,10 +4,10 @@
 > Mis à jour à chaque session. Détail produit : [`docs/FEATURES-BACKLOG.md`](./docs/FEATURES-BACKLOG.md).  
 > Campagnes : [`TESTS.md`](./TESTS.md). Erreurs : [`ERRORS.md`](./ERRORS.md).
 
-**Branche courante** : `fix/skip-503-midtrack-196`  
-**Version** : `1.3.196` (en cours) · prod VPS / OTA était `p+1.3.195`  
+**Branche courante** : `feat/mini-swipe-duration-197`  
+**Version** : `1.3.197` (en cours) · prod OTA `p+1.3.196`  
 **Dernière MAJ STATUS** : 2026-09-10  
-**Erreurs ouvertes** : **E33** (skip mid-piste 503 Nothing) · revalider E13/E21
+**Erreurs ouvertes** : **E33** (fix 196) · durée Exo → **E34** (fix 197)
 
 ---
 
@@ -29,7 +29,9 @@
 
 | ID | Demande | SPEC | CODE | LOCAL | DEV | PR | DEPLOY | PROD |
 |----|---------|:----:|:----:|:-----:|:---:|:--:|:------:|:----:|
-| E33 | Skip mid-song 503 + durée Exo fausse + buffer-stuck pendant recovery | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| E33 | Skip mid-song 503 + durée Exo fausse + buffer-stuck pendant recovery | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 |
+| E34 | Durée Exo trop courte vs catalogue → barre / near-end / seek | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
+| M1 | Mini-lecteur réduit : swipe H = next/prev (comme NP) | ✅ | 🔧 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
 | U1 | Mettre à jour Nothing → dernière APK prod (était coincé 184) | ✅ | — | — | — | — | 🔧 | ⬜ |
 | U2 | Smoke lecture Samsung (API prod, même compte `dev@`) | ✅ | — | 🔧 | ⬜ | — | — | — |
 | 2FA | Web : setup TOTP déjà dans Profil · Android : login accepte code, **pas d’UI enable** dans Compte | ✅ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |

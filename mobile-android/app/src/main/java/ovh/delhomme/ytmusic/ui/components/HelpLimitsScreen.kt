@@ -116,6 +116,13 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             }
             item {
                 Bullet(
+                    "Durée affichée : PLM croise la durée Exo avec le catalogue. " +
+                        "Si Exo annonce une durée trop courte (flux tronqué), on garde la durée catalogue " +
+                        "pour la barre de progression et éviter un skip prématuré.",
+                )
+            }
+            item {
+                Bullet(
                     "Économiseur d’énergie Android : PLM allège prefetch / pochettes / DL opportunistes " +
                         "(un toast le confirme). La lecture en cours continue.",
                 )
