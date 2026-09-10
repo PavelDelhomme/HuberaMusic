@@ -302,7 +302,7 @@ fun NowPlayingScreen(
     var visualVideoError by remember { mutableStateOf<String?>(null) }
     var visualIdUsed by remember { mutableStateOf<String?>(null) }
 
-    // Mode Vidéo : URL immédiate (même ID) — ne JAMAIS attendre le resolve réseau
+    // Mode Vidéo : clip officiel en priorité (cache) — sinon même ID, puis upgrade search
     LaunchedEffect(ui.track?.id, SessionMediaMode.video, sheetVisible) {
         val track = ui.track
         if (!sheetVisible || track == null || !SessionMediaMode.video) {
@@ -316,12 +316,12 @@ fun NowPlayingScreen(
             return@LaunchedEffect
         }
         visualVideoError = null
-        // Toujours démarrer sur le même ID (instantané) — le cache ne sert qu’en upgrade
-        visualIdUsed = track.id
-        visualVideoUrl = container.videoStreamUrl(track.id)
+        val cached = VisualIdCache.get(context, track.id)
+        val startId = cached?.takeIf { it.isNotBlank() } ?: track.id
+        visualIdUsed = startId
+        visualVideoUrl = container.videoStreamUrl(startId)
         runCatching {
             container.ensureFreshToken()
-            val cached = VisualIdCache.get(context, track.id)
             val vis = container.api.trackVisual(
                 track.id,
                 title = track.title,
@@ -334,10 +334,12 @@ fun NowPlayingScreen(
             if (vid != track.id) {
                 VisualIdCache.put(context, track.id, vid)
             }
+            // Upgrade seulement si meilleur clip et mode vidéo encore actif
             if (vid != visualIdUsed && SessionMediaMode.video) {
                 visualIdUsed = vid
                 visualVideoUrl = container.videoStreamUrl(vid)
             }
+            // Warm resolve (formats) sans bloquer l’UI
             runCatching { container.api.streamResolveUrl(vid, "video") }
         }.onFailure {
             if (ovh.delhomme.ytmusic.BuildConfig.DEBUG) {
@@ -1073,51 +1075,6 @@ fun NowPlayingScreen(
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold,
                                         modifier = Modifier.clickable { player.clearSleepTimer() },
-                                    )
-                                }
-                                Spacer(Modifier.height(8.dp))
-                            }
-                            // Pin Accès rapide — retire si orphelin / manquant
-                            val pinnedNow = pins.any { it.id == track.id }
-                            if (pinnedNow || track.id.length == 11) {
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(20.dp))
-                                        .background(Color(0x22FFFFFF))
-                                        .clickable {
-                                            scope.launch {
-                                                runCatching {
-                                                    container.quickAccess.toggle(track, container.api)
-                                                }.onSuccess { now ->
-                                                    android.widget.Toast.makeText(
-                                                        context,
-                                                        if (now) "Épinglé" else "Retiré de l'accès rapide",
-                                                        android.widget.Toast.LENGTH_SHORT,
-                                                    ).show()
-                                                }.onFailure {
-                                                    android.widget.Toast.makeText(
-                                                        context,
-                                                        "Épinglage impossible — réessaie",
-                                                        android.widget.Toast.LENGTH_SHORT,
-                                                    ).show()
-                                                }
-                                            }
-                                        }
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                ) {
-                                    Text(
-                                        if (pinnedNow) "Épinglé · Accès rapide" else "Épingler · Accès rapide",
-                                        color = PlayerFg,
-                                        style = MaterialTheme.typography.labelMedium,
-                                    )
-                                    Text(
-                                        if (pinnedNow) "Retirer" else "Ajouter",
-                                        color = if (pinnedNow) SeekRed else PlayerFg,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
                                     )
                                 }
                                 Spacer(Modifier.height(8.dp))

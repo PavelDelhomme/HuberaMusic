@@ -1222,18 +1222,9 @@ class ApkUpdateManager(
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 lastConfirmIntent = UpdateRelaunch.extractConfirmIntent(intent)
+                // UNE seule ouverture — les postDelayed ×2 empilaient des feuilles sur Nothing.
                 tryOpenConfirmUi("pending-user-action") {
                     UpdateRelaunch.startConfirmIntent(ctx, intent)
-                }
-                // Samsung / One UI : la feuille peut rester derrière PLM — 2 relances tardives.
-                val confirm = lastConfirmIntent
-                if (confirm != null) {
-                    mainHandler.postDelayed({
-                        runCatching { UpdateRelaunch.launchConfirm(ctx, confirm) }
-                    }, 1_200L)
-                    mainHandler.postDelayed({
-                        runCatching { UpdateRelaunch.launchConfirm(ctx, confirm) }
-                    }, 3_000L)
                 }
                 publish(
                     _ui.value.copy(

@@ -338,8 +338,8 @@ fun HomeScreen(
                                         ) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(30.dp)
-                                                    .clip(RoundedCornerShape(15.dp))
+                                                    .size(40.dp)
+                                                    .clip(RoundedCornerShape(20.dp))
                                                     .background(Color.Black.copy(alpha = 0.72f))
                                                     .clickable {
                                                         onMoreMix?.invoke(radio.id, radio.title, preview)
@@ -350,13 +350,13 @@ fun HomeScreen(
                                                     Icons.Default.MoreVert,
                                                     contentDescription = "Options",
                                                     tint = Color.White,
-                                                    modifier = Modifier.size(16.dp),
+                                                    modifier = Modifier.size(22.dp),
                                                 )
                                             }
                                             Box(
                                                 modifier = Modifier
-                                                    .size(30.dp)
-                                                    .clip(RoundedCornerShape(15.dp))
+                                                    .size(40.dp)
+                                                    .clip(RoundedCornerShape(20.dp))
                                                     .background(Color.Black.copy(alpha = 0.72f))
                                                     .clickable {
                                                         scope.launch {
@@ -381,7 +381,7 @@ fun HomeScreen(
                                                     } else {
                                                         Color.White
                                                     },
-                                                    modifier = Modifier.size(16.dp),
+                                                    modifier = Modifier.size(22.dp),
                                                 )
                                             }
                                         }
