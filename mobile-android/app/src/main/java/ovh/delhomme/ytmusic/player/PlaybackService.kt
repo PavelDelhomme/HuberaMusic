@@ -551,8 +551,16 @@ class PlaybackService : MediaSessionService() {
                         if (lastPlayingPosMs > maxPlayingPosMs) maxPlayingPosMs = lastPlayingPosMs
                         lastPlayingBufferedMs = player.bufferedPosition.coerceAtLeast(0L)
                         val d = player.duration
-                        if (d > 0L && d != C.TIME_UNSET && d >= lastPlayingPosMs - 2_000L) {
-                            lastPlayingDurationMs = d
+                        if (d > 0L && d != C.TIME_UNSET) {
+                            val catalog = Holder.queue.firstOrNull { it.id == id }?.durationMsOrNull()
+                            if (!isSuspiciousExoDuration(d, catalog, lastPlayingPosMs)) {
+                                lastPlayingDurationMs = d
+                            } else if (
+                                catalog != null &&
+                                (lastPlayingDurationMs <= 0L || catalog > lastPlayingDurationMs)
+                            ) {
+                                lastPlayingDurationMs = catalog
+                            }
                         }
                     }
                     // Avant stall : si la marge buffer fond, coupe le prefetch concurrent
@@ -572,7 +580,12 @@ class PlaybackService : MediaSessionService() {
                     lastPlayingPosMs = maxOf(pos, lastPlayingPosMs, maxPlayingPosMs)
                     maxPlayingPosMs = lastPlayingPosMs
                     if (player.duration > 0L && player.duration != C.TIME_UNSET) {
-                        lastPlayingDurationMs = player.duration
+                        val catalog = Holder.queue.firstOrNull { it.id == id }?.durationMsOrNull()
+                        if (!isSuspiciousExoDuration(player.duration, catalog, pos)) {
+                            lastPlayingDurationMs = player.duration
+                        } else if (catalog != null && catalog > lastPlayingDurationMs) {
+                            lastPlayingDurationMs = catalog
+                        }
                     }
                 }
             }
@@ -828,17 +841,26 @@ class PlaybackService : MediaSessionService() {
             val networkish = !localFile && isNetworkOrServerError(error)
             val pos = bestKnownPos(exo)
             // Exo affiche parfois une durée trop courte (chunk / content-length) alors que
-            // la position a déjà dépassé — ne jamais s’en servir pour nearEnd / logs.
+            // la position a déjà dépassé — pickSaneDurationMs privilégie le catalogue YTM.
             val exoDurRaw = when {
                 exo.duration > 0L && exo.duration != C.TIME_UNSET -> exo.duration
                 else -> 0L
             }
-            val dur = when {
-                exoDurRaw > 0L && (pos <= 0L || exoDurRaw >= pos - 2_000L) -> exoDurRaw
-                lastPlayingDurationMs > 0L && lastPlayingDurationMs >= pos - 2_000L -> lastPlayingDurationMs
-                lastPlayingDurationMs > exoDurRaw -> lastPlayingDurationMs
-                exoDurRaw > 0L -> exoDurRaw
-                else -> 0L
+            val catalogDur = Holder.queue.firstOrNull { it.id == id }?.durationMsOrNull()
+            val dur = pickSaneDurationMs(
+                exoMs = exoDurRaw.takeIf { it > 0L },
+                catalogMs = catalogDur,
+                fallbackMs = lastPlayingDurationMs.takeIf { it > 0L },
+                positionMs = pos,
+            )
+            if (
+                exoDurRaw > 0L &&
+                isSuspiciousExoDuration(exoDurRaw, catalogDur, pos)
+            ) {
+                AppLog.i(
+                    "PlaybackService",
+                    "durée Exo suspecte exo=${exoDurRaw}ms catalog=${catalogDur} pos=$pos → use=${dur}ms",
+                )
             }
             // Fin de titre souvent signalée comme IO/403/connexion coupée par googlevideo —
             // ce n’est PAS une panne réseau : avancer proprement, sans toast « connexion perdue ».
@@ -848,7 +870,7 @@ class PlaybackService : MediaSessionService() {
                 dur >= 45_000L &&
                     pos >= 0L &&
                     exoDurRaw >= 45_000L &&
-                    exoDurRaw >= pos - 2_000L &&
+                    !isSuspiciousExoDuration(exoDurRaw, catalogDur, pos) &&
                     (
                         pos.toDouble() / dur.toDouble() >= 0.96 ||
                             (dur - pos) in 0L..2_500L

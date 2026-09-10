@@ -5,9 +5,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +58,8 @@ import ovh.delhomme.ytmusic.data.TrackDto
 import kotlin.math.roundToInt
 
 private val SeekRed = Color(0xFFFF0033)
+
+private enum class MiniDragAxis { None, Horizontal, Vertical }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -236,6 +238,7 @@ fun MiniPlayerBar(
     val shown = if (scrub >= 0f) scrub else progress.coerceIn(0f, 1f)
     var barWidthPx by remember { mutableFloatStateOf(1f) }
     var dismissDrag by remember { mutableFloatStateOf(0f) }
+    var slideX by remember { mutableFloatStateOf(0f) }
     val thumbPx = with(LocalDensity.current) { 8.dp.toPx() }
     val haptic = LocalHapticFeedback.current
     val remainingLabel = remember(shown, durationMs) {
@@ -259,6 +262,7 @@ fun MiniPlayerBar(
             .graphicsLayer {
                 val p = (dismissDrag / 140f).coerceIn(0f, 1f)
                 translationY = dismissDrag.coerceAtLeast(0f) * 0.55f
+                translationX = slideX * 0.35f
                 alpha = 1f - p * 0.55f
             },
     ) {
@@ -339,25 +343,72 @@ fun MiniPlayerBar(
                 .fillMaxWidth()
                 .height(barH)
                 .clickable(onClick = onOpen)
-                .pointerInput(onDismiss, onOpen) {
-                    var total = 0f
-                    detectVerticalDragGestures(
-                        onVerticalDrag = { _, amount ->
-                            total += amount
-                            dismissDrag = total.coerceAtLeast(0f)
+                .pointerInput(track.id, onDismiss, onOpen, onNext, onPrev) {
+                    var axis = MiniDragAxis.None
+                    var totalX = 0f
+                    var totalY = 0f
+                    detectDragGestures(
+                        onDragStart = {
+                            axis = MiniDragAxis.None
+                            totalX = 0f
+                            totalY = 0f
+                            slideX = 0f
+                            dismissDrag = 0f
+                        },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            totalX += amount.x
+                            totalY += amount.y
+                            if (axis == MiniDragAxis.None) {
+                                val ax = kotlin.math.abs(totalX)
+                                val ay = kotlin.math.abs(totalY)
+                                if (ax > 18f || ay > 18f) {
+                                    axis = if (ax >= ay) MiniDragAxis.Horizontal else MiniDragAxis.Vertical
+                                }
+                            }
+                            when (axis) {
+                                MiniDragAxis.Horizontal -> {
+                                    slideX = totalX.coerceIn(-120f, 120f)
+                                    dismissDrag = 0f
+                                }
+                                MiniDragAxis.Vertical -> {
+                                    dismissDrag = totalY.coerceAtLeast(0f)
+                                    slideX = 0f
+                                }
+                                MiniDragAxis.None -> Unit
+                            }
                         },
                         onDragEnd = {
-                            when {
-                                // Swipe vers le bas → fermer lecteur + vider file
-                                total > 56f && onDismiss != null -> onDismiss()
-                                // Swipe vers le haut → ouvrir le lecteur plein écran
-                                total < -48f -> onOpen()
+                            when (axis) {
+                                MiniDragAxis.Horizontal -> {
+                                    when {
+                                        totalX < -72f && onNext != null -> {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onNext()
+                                        }
+                                        totalX > 72f && onPrev != null -> {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onPrev()
+                                        }
+                                    }
+                                }
+                                MiniDragAxis.Vertical -> {
+                                    when {
+                                        totalY > 56f && onDismiss != null -> onDismiss()
+                                        totalY < -48f -> onOpen()
+                                    }
+                                }
+                                MiniDragAxis.None -> Unit
                             }
-                            total = 0f
+                            totalX = 0f
+                            totalY = 0f
+                            slideX = 0f
                             dismissDrag = 0f
                         },
                         onDragCancel = {
-                            total = 0f
+                            totalX = 0f
+                            totalY = 0f
+                            slideX = 0f
                             dismissDrag = 0f
                         },
                     )

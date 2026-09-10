@@ -143,7 +143,12 @@ data class TrackDto(
     /** Enrichit la piste avec une durée Exo/catalogue sans toucher au reste. */
     fun withKnownDurationMs(ms: Long): TrackDto {
         if (ms <= 0L) return this
-        durationMsOrNull()?.takeIf { kotlin.math.abs(it - ms) < 2_000L }?.let { return this }
+        val existing = durationMsOrNull()
+        if (existing != null) {
+            if (kotlin.math.abs(existing - ms) < 2_000L) return this
+            // Ne jamais raccourcir fortement une durée catalogue (Exo parfois trompeur).
+            if (existing >= 45_000L && ms < (existing * 0.75).toLong()) return this
+        }
         val sec = ((ms + 500L) / 1000L).toInt().coerceAtLeast(1)
         return copy(durationSeconds = sec, duration = formatDurationLabel(ms))
     }

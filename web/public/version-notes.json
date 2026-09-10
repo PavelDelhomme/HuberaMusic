@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-10",
   "versions": [
     {
+      "version": "1.3.197",
+      "date": "2026-09-10",
+      "title": "Swipe mini-lecteur + durée Exo fiable",
+      "notes": [
+        "Mini-lecteur : swipe gauche → suivant, swipe droite → précédent (comme le plein écran)",
+        "Durée Exo fausse : croisement catalogue YTM (pickSaneDurationMs) — barre / seek / near-end fiables",
+        "Ne plus écraser une durée catalogue longue par une durée Exo trop courte",
+        "Aide : note sur la durée croisée"
+      ]
+    },
+    {
       "version": "1.3.196",
       "date": "2026-09-10",
       "title": "Fix skip mid-piste 503 (Nothing)",
