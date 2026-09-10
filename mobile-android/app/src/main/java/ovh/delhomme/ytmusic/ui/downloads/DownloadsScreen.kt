@@ -66,6 +66,7 @@ fun DownloadsScreen(
     val revision by container.offlineStore.revision.collectAsState()
     val progress by container.downloadManager.progress.collectAsState()
     val errors by container.downloadManager.errors.collectAsState()
+    val pending by container.downloadManager.pending.collectAsState()
 
     val tracks = remember(revision) {
         container.offlineStore.listTracks().sortedBy { it.title.lowercase() }
@@ -73,6 +74,7 @@ fun DownloadsScreen(
     val downloadingIds = progress.keys.toList()
     val activeCount = downloadingIds.size
     val readyCount = tracks.size
+    val meteredHint = !ovh.delhomme.ytmusic.data.NetworkMonitor.isUnmeteredPreferred(context)
 
     Column(
         Modifier
@@ -139,7 +141,11 @@ fun DownloadsScreen(
                     .padding(12.dp),
             ) {
                 Text(
-                    "En cours",
+                    if (meteredHint) {
+                        "En cours · 1 à la fois (données mobiles)"
+                    } else {
+                        "En cours"
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -147,24 +153,73 @@ fun DownloadsScreen(
                 downloadingIds.forEach { id ->
                     val pct = progress[id] ?: 0f
                     val err = errors[id]
-                    Text(
-                        tracks.firstOrNull { it.id == id }?.title ?: id,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    LinearProgressIndicator(
-                        progress = { pct.coerceIn(0.02f, 1f) },
-                        modifier = Modifier
+                    val track = pending[id]
+                        ?: container.downloadManager.failedTrack(id)
+                        ?: tracks.firstOrNull { it.id == id }
+                    Row(
+                        Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
-                    )
-                    if (!err.isNullOrBlank()) {
-                        Text(
-                            err,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AsyncImage(
+                            model = track?.coverUrl(120),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
                         )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                track?.title?.takeIf { it.isNotBlank() && it != id } ?: "Téléchargement…",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = FontWeight.Medium,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                track?.artistLine()?.takeIf { it.isNotBlank() && it != "Artiste" }
+                                    ?: "Préparation du fichier…",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            LinearProgressIndicator(
+                                progress = { pct.coerceIn(0.02f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 6.dp),
+                            )
+                            Text(
+                                "${(pct * 100).toInt().coerceIn(0, 99)} %",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                            if (!err.isNullOrBlank()) {
+                                Text(
+                                    err,
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                container.downloadManager.cancel(id)
+                                Toast.makeText(context, "Téléchargement annulé", Toast.LENGTH_SHORT).show()
+                            },
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Annuler",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -209,20 +264,46 @@ fun DownloadsScreen(
                 }
                 Spacer(Modifier.height(6.dp))
                 failedIds.take(12).forEach { id ->
-                    Text(
-                        container.downloadManager.failedTrack(id)?.title
-                            ?: tracks.firstOrNull { it.id == id }?.title
-                            ?: id,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        errors[id].orEmpty(),
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(bottom = 6.dp),
-                    )
+                    val failTrack = container.downloadManager.failedTrack(id)
+                        ?: tracks.firstOrNull { it.id == id }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                failTrack?.title?.takeIf { it.isNotBlank() } ?: id,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                failTrack?.artistLine()?.takeIf { it != "Artiste" }.orEmpty(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                errors[id].orEmpty(),
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (failTrack != null) {
+                            IconButton(
+                                onClick = {
+                                    container.downloadManager.enqueue(failTrack)
+                                    Toast.makeText(context, "Nouvelle tentative…", Toast.LENGTH_SHORT).show()
+                                },
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = "Réessayer")
+                            }
+                        }
+                    }
                 }
             }
         }

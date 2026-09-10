@@ -363,6 +363,16 @@ export const api = {
     }),
   resendVerification: () =>
     req<{ ok: boolean }>('/api/auth/resend-verification', { method: 'POST', body: '{}' }),
+  forgotPassword: (email: string) =>
+    req<{ ok: boolean; resetUrl?: string }>('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+  resetPassword: (token: string, password: string) =>
+    req<{ ok: boolean; email?: string | null }>('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    }),
   totpSetup: () => req<{ secret: string; otpauthUrl: string }>('/api/auth/2fa/setup', { method: 'POST', body: '{}' }),
   totpEnable: (secret: string, code: string) =>
     req<{ ok: boolean; user: User }>('/api/auth/2fa/enable', {

@@ -533,6 +533,12 @@ interface YtMusicApi {
     @POST("api/auth/register")
     suspend fun register(@Body body: RegisterBody): AuthResponse
 
+    @POST("api/auth/forgot-password")
+    suspend fun forgotPassword(@Body body: ForgotPasswordBody): OkMessageResponse
+
+    @POST("api/auth/reset-password")
+    suspend fun resetPassword(@Body body: ResetPasswordBody): OkMessageResponse
+
     @POST("api/auth/refresh")
     suspend fun refresh(@Body body: RefreshBody): AuthResponse
 
