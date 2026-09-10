@@ -83,9 +83,16 @@ object UpdateRelaunch {
             }
     }
 
-    /** Relance PLM après remplacement du paquet (plusieurs tentatives : OEM tuent vite). */
-    fun relaunch(ctx: Context) {
-        val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return
+    /**
+     * Relance l’app après install.
+     * [targetPackage] = paquet de l’APK OTA (souvent PLM prod) — peut différer de
+     * l’app courante (PLM Dev / Preprod) quand on met à jour l’autre icône.
+     */
+    fun relaunch(ctx: Context, targetPackage: String? = null) {
+        val pkg = targetPackage?.takeIf { it.isNotBlank() } ?: ctx.packageName
+        val launch = ctx.packageManager.getLaunchIntentForPackage(pkg)
+            ?: ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+            ?: return
         launch.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP or
@@ -94,7 +101,7 @@ object UpdateRelaunch {
         val main = Handler(Looper.getMainLooper())
         fun go(tag: String) {
             runCatching { ctx.startActivity(launch) }
-                .onFailure { AppLog.w("apk-update", "relaunch $tag KO: ${it.message}") }
+                .onFailure { AppLog.w("apk-update", "relaunch $tag pkg=$pkg KO: ${it.message}") }
         }
         main.post { go("immédiat") }
         main.postDelayed({ go("400ms") }, 400L)

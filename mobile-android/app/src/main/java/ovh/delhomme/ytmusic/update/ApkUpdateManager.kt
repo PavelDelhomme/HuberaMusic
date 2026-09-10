@@ -34,6 +34,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Vérifie / télécharge / installe l’APK publiée sur le serveur (`/api/deploy/apk`)
  * — toujours la **dernière** version seule (pas de chaîne d’intermédiaires).
  *
+ * L’APK OTA est **PLM prod** (`ovh.delhomme.ytmusic`). Depuis PLM Dev / Preprod,
+ * la MAJ met à jour l’autre icône (pas le package courant) — messages + relaunch
+ * ciblent donc le paquet de l’APK, pas `context.packageName`.
+ *
  * Le téléchargement vit dans un scope **application** : quitter Compte
  * n’annule plus la MAJ, et l’écran retrouve l’état (phase + %) au retour.
  */
@@ -46,6 +50,9 @@ class ApkUpdateManager(
     private var updateJob: Job? = null
     private val busy = AtomicBoolean(false)
     private val notifier = UpdateProgressNotifier(context.applicationContext)
+    /** Paquet cible de la dernière session d’install (persisté pour SUCCESS après kill). */
+    private var lastTargetPackage: String? =
+        prefs.getString(KEY_TARGET_PACKAGE, null)?.takeIf { it.isNotBlank() }
 
     enum class Phase {
         Idle,
@@ -496,6 +503,12 @@ class ApkUpdateManager(
             }
             val remote = result.info?.versionCode ?: 0
             val remoteName = result.info?.versionName
+            val targetPkg = result.info?.packageName?.takeIf { it.isNotBlank() } ?: PROD_PACKAGE
+            if (targetPkg != context.packageName) {
+                lastTargetPackage = targetPkg
+                prefs.edit().putString(KEY_TARGET_PACKAGE, targetPkg).apply()
+            }
+            val hint = crossPackageHint(targetPkg)
             when {
                 remote > BuildConfig.VERSION_CODE && !isSnoozed(remote) -> {
                     val pending = apkFileFor(remote).takeIf { it.isFile && it.length() > 1_000_000L }
@@ -503,7 +516,10 @@ class ApkUpdateManager(
                         publish(
                             UiState(
                                 phase = Phase.AwaitingConfirm,
-                                message = "APK ${remoteName ?: remote} téléchargée — appuie pour lancer l’installateur",
+                                message = listOfNotNull(
+                                    "APK ${remoteName ?: remote} téléchargée — appuie pour lancer l’installateur",
+                                    hint,
+                                ).joinToString(" · "),
                                 remoteName = remoteName,
                                 remoteCode = remote,
                                 available = true,
@@ -513,7 +529,10 @@ class ApkUpdateManager(
                         publish(
                             UiState(
                                 phase = Phase.Available,
-                                message = "Nouvelle version ${remoteName ?: "p+$remote"} — appuie pour télécharger et installer",
+                                message = listOfNotNull(
+                                    "Nouvelle version ${remoteName ?: "p+$remote"} — appuie pour télécharger et installer",
+                                    hint,
+                                ).joinToString(" · "),
                                 remoteName = remoteName,
                                 remoteCode = remote,
                                 available = true,
@@ -975,8 +994,29 @@ class ApkUpdateManager(
         val meta = info ?: container.api.apkInfo()
         if (meta.ready != true) return@withContext "APK pas encore publiée"
         val remote = meta.versionCode ?: 0
-        if (remote <= BuildConfig.VERSION_CODE) {
+        val metaPkg = meta.packageName?.takeIf { it.isNotBlank() } ?: PROD_PACKAGE
+        // Dev/Preprod : on compare au catalogue OTA prod — même si le package courant
+        // n’est pas celui de l’APK, on doit pouvoir installer PLM pour les vieilles builds.
+        if (remote <= BuildConfig.VERSION_CODE && metaPkg == context.packageName) {
             return@withContext "Déjà à jour — ${BuildConfig.VERSION_NAME}"
+        }
+        if (remote <= BuildConfig.VERSION_CODE && metaPkg != context.packageName) {
+            // Même versionCode que le serveur, mais autre package (ex. d+198 vs p+198) :
+            // pas de DL — l’utilisateur doit ouvrir l’icône PLM.
+            return@withContext crossPackageHint(metaPkg)
+                ?: "Ouvre l’app PLM (prod) — cette build Dev est déjà au même code $remote"
+        }
+        lastTargetPackage = metaPkg
+        prefs.edit().putString(KEY_TARGET_PACKAGE, metaPkg).apply()
+        val hint = crossPackageHint(metaPkg)
+        if (hint != null) {
+            publish(
+                _ui.value.copy(
+                    phase = Phase.Downloading,
+                    message = hint,
+                    available = true,
+                ),
+            )
         }
 
         val base = container.resolvedApiBase().trimEnd('/')
@@ -1044,7 +1084,37 @@ class ApkUpdateManager(
         launchInstall(out, remote)
     }
 
-    /** Session PackageInstaller — MAJ du même paquet sans empiler de feuilles Samsung. */
+    /** Package déclaré dans l’APK (prod), pas forcément celui de l’app qui lance la MAJ. */
+    private fun packageNameFromApk(file: File): String? {
+        val pi = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        return pi?.packageName?.takeIf { it.isNotBlank() }
+    }
+
+    private fun resolveTargetPackage(file: File, metaPackage: String? = null): String {
+        val fromFile = packageNameFromApk(file)
+        val fromMeta = metaPackage?.takeIf { it.isNotBlank() }
+        val target = fromFile ?: fromMeta ?: PROD_PACKAGE
+        lastTargetPackage = target
+        prefs.edit().putString(KEY_TARGET_PACKAGE, target).apply()
+        if (target != context.packageName) {
+            AppLog.i(
+                "apk-update",
+                "cross-package OTA self=${context.packageName} target=$target channel=${BuildConfig.APP_CHANNEL}",
+            )
+        }
+        return target
+    }
+
+    private fun crossPackageHint(target: String): String? {
+        if (target == context.packageName) return null
+        return when (BuildConfig.APP_CHANNEL) {
+            "d" -> "Tu es sur PLM Dev — la MAJ installe/met à jour l’app PLM (icône sans « Dev »)."
+            "b" -> "Tu es sur PLM Preprod — la MAJ installe/met à jour l’app PLM (prod)."
+            else -> "La MAJ cible $target (pas cette app)."
+        }
+    }
+
+    /** Session PackageInstaller — paquet = celui de l’APK (prod), même depuis Dev. */
     private fun installViaPackageInstaller(file: File): Boolean {
         val installer = context.packageManager.packageInstaller
         // One UI / MIUI : d’anciennes sessions actives → plusieurs PENDING_USER_ACTION
@@ -1054,8 +1124,10 @@ class ApkUpdateManager(
                 installer.abandonSession(info.sessionId)
             }
         }
+        val targetPkg = resolveTargetPackage(file)
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-        params.setAppPackageName(context.packageName)
+        // Critiquer : .dev / .preprod ne doivent PAS forcer leur packageId sur une APK prod.
+        params.setAppPackageName(targetPkg)
         val oem = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
         // Toujours USER_ACTION_REQUIRED (API 31+) : NOT_REQUIRED échoue souvent sans feuille
         // sur Samsung / Lenovo / Xiaomi / Nothing → « Vérification » ou install silencieuse KO.
@@ -1181,16 +1253,27 @@ class ApkUpdateManager(
             PackageInstaller.STATUS_SUCCESS -> {
                 prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
                 resetConfirmGate()
-                notifier.done("Installée — réouverture…")
+                val target = lastTargetPackage
+                    ?: prefs.getString(KEY_TARGET_PACKAGE, null)
+                    ?: context.packageName
+                val cross = target != context.packageName
+                notifier.done(
+                    if (cross) "PLM mis à jour — ouvre l’icône PLM"
+                    else "Installée — réouverture…",
+                )
                 publish(
                     UiState(
                         phase = Phase.Done,
-                        message = "Mise à jour installée — réouverture…",
+                        message = if (cross) {
+                            "PLM (prod) installé — ouvre l’icône « PLM », pas PLM Dev"
+                        } else {
+                            "Mise à jour installée — réouverture…"
+                        },
                         available = false,
                         progress = 1f,
                     ),
                 )
-                UpdateRelaunch.relaunch(ctx.applicationContext)
+                UpdateRelaunch.relaunch(ctx.applicationContext, targetPackage = target)
             }
             PackageInstaller.STATUS_FAILURE_ABORTED -> {
                 // Annulation feuille système : NE PAS re-prompt au prochain ON_RESUME
@@ -1290,6 +1373,8 @@ class ApkUpdateManager(
         private const val KEY_UI_PHASE = "ui_phase"
         private const val KEY_UI_MESSAGE = "ui_message"
         private const val KEY_CONFIRM_OPENED_AT = "confirm_opened_at_ms"
+        private const val KEY_TARGET_PACKAGE = "ota_target_package"
+        private const val PROD_PACKAGE = "ovh.delhomme.ytmusic"
         /** Fenêtre anti double-popup (broadcasts OEM / recreation Activity). */
         private const val CONFIRM_DEBOUNCE_MS = 12_000L
         private val WINDOW_HALF_MS = TimeUnit.MINUTES.toMillis(45)

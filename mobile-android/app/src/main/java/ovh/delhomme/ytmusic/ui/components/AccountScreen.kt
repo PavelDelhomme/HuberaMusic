@@ -321,6 +321,21 @@ fun AccountScreen(
                     phase == ApkUpdateManager.Phase.AwaitingConfirm ||
                     phase == ApkUpdateManager.Phase.Error
                 Column(Modifier.fillMaxWidth()) {
+                    if (BuildConfig.APP_CHANNEL != "p") {
+                        Text(
+                            when (BuildConfig.APP_CHANNEL) {
+                                "d" ->
+                                    "Canal Dev (d+) — l’OTA serveur met à jour l’app « PLM », pas « PLM Dev ». " +
+                                        "Usage quotidien : ouvre l’icône PLM (p+)."
+                                "b" ->
+                                    "Canal Preprod (b+) — l’OTA serveur met à jour l’app « PLM » (prod)."
+                                else -> "Canal non-prod — OTA cible PLM (prod)."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = accentRed,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
                     AccountRow(
                         icon = {
                             Icon(

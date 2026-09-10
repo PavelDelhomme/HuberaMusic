@@ -42,6 +42,15 @@
 | **Fix** | try/finally + reset Checking annulé · `recoverStuckUpdateUi` · timeout 22 s · **toujours** `USER_ACTION_REQUIRED` · boutons Annuler + navigateur secours |
 | **Tests** | Lenovo Compte in/out · MAJ 197→198 · Samsung |
 
+### E38 — OTA depuis PLM Dev (d+) : « installation » ne change pas la version affichée
+| | |
+|--|--|
+| **Status** | `fixed` (`1.3.199`) |
+| **Surfaces** | Android Compte · canal Dev / Preprod (Blackview `d+1.3.83`) |
+| **Cause** | OTA publie `ovh.delhomme.ytmusic` ; `setAppPackageName(context.packageName)` forçait `.dev` → no-op / conflit. L’utilisateur restait sur `d+…` en croyant que « ça ne marche pas ». |
+| **Fix** | Paquet cible = package lu dans l’APK · messages cross-canal · relaunch icône PLM · bandeau Compte · `/api/deploy/apk/info.package` |
+| **Tests** | Blackview : ouvrir **PLM** (pas Dev) · OTA p+100→199 · Dev 199 met à jour PLM |
+
 ---
 
 ## Session 2026-08-27 (503 multi-titres + pause silencieuse)

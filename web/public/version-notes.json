@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-10",
   "versions": [
     {
+      "version": "1.3.199",
+      "date": "2026-09-10",
+      "title": "OTA multi-canal : Dev met à jour PLM",
+      "notes": [
+        "Depuis PLM Dev, l’installateur cible le paquet PLM (prod) — plus de MAJ fantôme",
+        "Bandeau Compte sur Dev/Preprod pour éviter la confusion d+/p+",
+        "Relance automatique de l’icône PLM après install cross-package",
+        "API /apk/info expose le champ package"
+      ]
+    },
+    {
       "version": "1.3.198",
       "date": "2026-09-10",
       "title": "OTA : déblocage vérification + Lenovo",
