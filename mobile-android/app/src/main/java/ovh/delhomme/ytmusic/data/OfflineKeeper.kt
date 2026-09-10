@@ -65,13 +65,13 @@ class OfflineKeeper(
             return
         }
         if (!BatterySaver.allowBackgroundDownloads()) {
-            AppLog.d("OfflineKeeper", "skip tick — économiseur batterie")
+            AppLog.d("OfflineKeeper", "DL opportuniste reporté — économiseur batterie")
             return
         }
         // File média non vide = session active (même en pause en fin de titre) :
         // ne pas saturer /api/stream pendant Mama → Sapé.
         if (downloadManager.isPlaybackBusy() || mediaSessionBusy()) {
-            AppLog.d("OfflineKeeper", "skip tick — session média active")
+            AppLog.d("OfflineKeeper", "DL opportuniste reporté — lecture / file active")
             return
         }
         if (!NetworkMonitor.isUnmeteredPreferred(context)) {
@@ -85,7 +85,7 @@ class OfflineKeeper(
         }
         AppLog.i("OfflineKeeper", "tick reason=$reason")
         if (StreamPrefetcher.isStreamDown()) {
-            AppLog.w("OfflineKeeper", "skip tick — stream down")
+            AppLog.w("OfflineKeeper", "DL opportuniste reporté — stream down")
             return
         }
         ensureToken()
