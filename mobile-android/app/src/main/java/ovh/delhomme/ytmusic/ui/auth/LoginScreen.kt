@@ -273,7 +273,18 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(10.dp))
             Text(it, color = MaterialTheme.colorScheme.primary)
         }
-        Spacer(modifier = Modifier.height(18.dp))
+        if (!state.registerMode && !state.forgotMode) {
+            TextButton(
+                onClick = vm::openForgotPassword,
+                enabled = !state.loading,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+            ) {
+                Text("Mot de passe oublié ?")
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
         Button(
             onClick = vm::submit,
             enabled = !state.loading,
@@ -289,11 +300,7 @@ fun LoginScreen(
             )
         }
         if (!state.registerMode && !state.forgotMode) {
-            Spacer(modifier = Modifier.height(6.dp))
-            TextButton(onClick = vm::openForgotPassword, enabled = !state.loading) {
-                Text("Mot de passe oublié ?")
-            }
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(10.dp))
             OutlinedButton(
                 onClick = { vm.loginWithPasskey(context) },
                 enabled = !state.loading,
