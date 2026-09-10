@@ -18,11 +18,11 @@ import ovh.delhomme.ytmusic.debug.AppLog
  * Coupe le service de lecture après une longue inactivité en arrière-plan
  * (aucune lecture en cours) pour limiter réseau / CPU / batterie.
  * La notif média reste tant que la file existe — on n’arrête le service
- * qu’après plusieurs heures en pause (pas 20 min).
+ * qu’après quelques heures en pause (pas 20 min).
  */
 object PlaybackIdleGuard {
-    /** 6 h en pause BG — garde la notif permanente pour reprise rapide. */
-    private const val IDLE_SHUTDOWN_MS = 6 * 60 * 60_000L
+    /** 3 h en pause BG — coupe le FGS / wake ; 20 min coupe déjà le réseau. */
+    private const val IDLE_SHUTDOWN_MS = 3 * 60 * 60_000L
     /** Après 20 min pause : coupe prefetch / DL seulement (service + notif restent). */
     private const val IDLE_NETWORK_CUT_MS = 20 * 60_000L
     private const val CHECK_INTERVAL_MS = 60_000L

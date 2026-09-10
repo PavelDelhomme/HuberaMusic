@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-10",
   "versions": [
     {
+      "version": "1.3.205",
+      "date": "2026-09-10",
+      "title": "Batterie + téléchargements plus doux",
+      "notes": [
+        "Économie d’énergie aussi sous 15 % de batterie (prefetch allégé)",
+        "Moins de warm serveur / têtes en fond sous économiseur",
+        "Téléchargements : 1 à la fois pendant la lecture ; Wi‑Fi en 2 bouts si lecture en cours (4 au repos)",
+        "Données mobiles : frein un peu plus doux, toujours assez rapide pour finir"
+      ]
+    },
+    {
       "version": "1.3.204",
       "date": "2026-09-10",
       "title": "Mot de passe oublié + DL par morceaux",

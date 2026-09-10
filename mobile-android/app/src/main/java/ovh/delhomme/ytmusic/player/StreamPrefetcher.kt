@@ -808,8 +808,10 @@ object StreamPrefetcher {
             return
         }
         val unmetered = isUnmetered()
-        val aheadN = if (unmetered) ahead.coerceAtMost(AHEAD_WIFI) else ahead.coerceAtMost(AHEAD_METERED)
-        val behindN = if (unmetered) behind else 0
+        val rawAhead = if (unmetered) ahead.coerceAtMost(AHEAD_WIFI) else ahead.coerceAtMost(AHEAD_METERED)
+        // Économiseur / batterie faible : garde au moins +1 pour un skip fiable.
+        val aheadN = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(rawAhead).coerceAtLeast(1)
+        val behindN = if (unmetered && !ovh.delhomme.ytmusic.data.BatterySaver.isActive()) behind else 0
 
         // Libère le cache Exo des titres déjà écoutés (garde [behindN] derrière)
         evictPlayed(queueIds, idx, keepBehind = behindN.coerceAtLeast(0))

@@ -52,6 +52,7 @@ class LibraryHeadPrefetcher(
     private suspend fun warmServerShuffleHeads(force: Boolean) {
         if (!NetworkMonitor.isOnline()) return
         if (StreamPrefetcher.isStreamDown()) return
+        if (!BatterySaver.allowBackgroundDownloads()) return
         val now = System.currentTimeMillis()
         val expires = prefs.getLong(KEY_SHUFFLE_EXPIRES, 0L)
         if (!force && expires > now + 60_000L) return
@@ -82,6 +83,7 @@ class LibraryHeadPrefetcher(
     private suspend fun warmServerRecentHeads() {
         if (!NetworkMonitor.isOnline()) return
         if (StreamPrefetcher.isStreamDown()) return
+        if (!BatterySaver.allowBackgroundDownloads()) return
         val now = System.currentTimeMillis()
         if (now - prefs.getLong(KEY_RECENT_FETCH, 0L) < 8 * 60_000L) return
         runCatching { container.ensureFreshToken() }
@@ -110,6 +112,7 @@ class LibraryHeadPrefetcher(
     /** POST /api/stream/warm pour les 1ers titres biblio (petits comptes inclus). */
     private suspend fun warmFormatsBurst() {
         if (!NetworkMonitor.isOnline()) return
+        if (!BatterySaver.allowBackgroundDownloads()) return
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
         val ids = libraryIds().take(36)

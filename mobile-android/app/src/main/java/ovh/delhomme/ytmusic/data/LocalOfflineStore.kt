@@ -247,8 +247,14 @@ class LocalOfflineStore(
             val unmetered = NetworkMonitor.isUnmeteredPreferred(
                 ovh.delhomme.ytmusic.YtMusicApp.instance,
             )
-            // Wi‑Fi + gros fichier + Range : 4 bouts en parallèle (moins de saturation mono-flux).
+            // Wi‑Fi + gros fichier + Range : bouts en parallèle (moins de mono-flux).
+            // Pendant lecture / BatterySaver : 2 bouts max (radio + chaleur).
             // Reprise / retry / mobile : séquentiel (évite trous mid-song).
+            val playingOrSaver =
+                BatterySaver.isActive() ||
+                    runCatching {
+                        ovh.delhomme.ytmusic.player.PlaybackService.Holder.isPlaybackActiveSafe()
+                    }.getOrDefault(false)
             val useParallel =
                 !forceSequential &&
                     resumeFrom == 0L &&
@@ -256,7 +262,8 @@ class LocalOfflineStore(
                     total >= 2_000_000L &&
                     unmetered
             if (useParallel) {
-                downloadParallel(track, streamUrl, part, dest, total, onProgress, attempt)
+                val chunks = if (playingOrSaver) 2 else 4
+                downloadParallel(track, streamUrl, part, dest, total, onProgress, attempt, chunks)
             } else {
                 downloadSequential(track, streamUrl, part, dest, onProgress, attempt, resumeFrom)
             }
@@ -330,7 +337,7 @@ class LocalOfflineStore(
                             val soft = (0.08f + (readTotal / (1024f * 1024f)) * 0.04f).coerceAtMost(0.92f)
                             onProgress?.invoke(soft)
                         }
-                        // Mobile : pause légère (~12 ms / 256 Ko) — respire sans trop ralentir.
+                        // Mobile : pause légère (~20 ms / 256 Ko) — respire sans trop ralentir.
                         if (
                             readTotal - lastThrottleAt >= 256 * 1024L &&
                             !NetworkMonitor.isUnmeteredPreferred(
@@ -338,7 +345,7 @@ class LocalOfflineStore(
                             )
                         ) {
                             lastThrottleAt = readTotal
-                            kotlinx.coroutines.delay(12L)
+                            kotlinx.coroutines.delay(20L)
                         }
                     }
                     output.flush()
@@ -367,18 +374,19 @@ class LocalOfflineStore(
         total: Long,
         onProgress: ((Float) -> Unit)?,
         attempt: Int,
+        chunks: Int = 4,
     ): File {
-        val chunks = 4
+        val nChunks = chunks.coerceIn(2, 4)
         val read = AtomicLong(0L)
         part.parentFile?.mkdirs()
         RandomAccessFile(part, "rw").use { raf ->
             raf.setLength(total)
             coroutineScope {
-                val size = total / chunks
-                (0 until chunks).map { i ->
+                val size = total / nChunks
+                (0 until nChunks).map { i ->
                     async(Dispatchers.IO) {
                         val from = i * size
-                        val to = if (i == chunks - 1) total - 1 else (from + size - 1)
+                        val to = if (i == nChunks - 1) total - 1 else (from + size - 1)
                         val req = streamRange(streamUrl, "bytes=$from-$to")
                         http.newCall(req).execute().use { resp ->
                             if (resp.code != 206 && !resp.isSuccessful) error("HTTP ${resp.code}")

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
@@ -14,7 +15,8 @@ import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 
 /**
- * Suit le mode Économiseur d’énergie système et allège l’app **sans couper la lecture** :
+ * Suit le mode Économiseur d’énergie système (et batterie faible) et allège l’app
+ * **sans couper la lecture** :
  * - pas de prefetch pochettes / stream agressif
  * - OfflineKeeper en pause
  * - UI : pochettes réduites / placeholders hors lecteur
@@ -26,6 +28,9 @@ object BatterySaver {
     @Volatile private var started = false
     @Volatile private var lastChangeElapsed = 0L
 
+    /** Sous 15 % : même allègement que l’économiseur OS (sans toast spam). */
+    private const val LOW_BATTERY_PCT = 15
+
     fun isActive(): Boolean = _active.value
 
     fun start(context: Context) {
@@ -33,10 +38,15 @@ object BatterySaver {
         started = true
         val app = context.applicationContext
         refresh(app, reason = "boot")
-        val filter = IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+        val filter = IntentFilter().apply {
+            addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
+            addAction(Intent.ACTION_BATTERY_CHANGED)
+            addAction(Intent.ACTION_BATTERY_LOW)
+            addAction(Intent.ACTION_BATTERY_OKAY)
+        }
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
-                refresh(app, reason = "system")
+                refresh(app, reason = intent?.action ?: "system")
             }
         }
         if (Build.VERSION.SDK_INT >= 33) {
@@ -49,15 +59,22 @@ object BatterySaver {
 
     fun refresh(context: Context, reason: String = "manual") {
         val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        val next = pm?.isPowerSaveMode == true
+        val powerSave = pm?.isPowerSaveMode == true
+        val lowBattery = batteryPercent(context)?.let { it <= LOW_BATTERY_PCT } == true
+        val next = powerSave || lowBattery
         val prev = _active.value
         if (prev == next && SystemClock.elapsedRealtime() - lastChangeElapsed < 800L) return
         lastChangeElapsed = SystemClock.elapsedRealtime()
         _active.value = next
         if (next) {
-            AppLog.i("BatterySaver", "ON ($reason) — prefetch/covers/offlineKeeper allégés")
+            val why = when {
+                powerSave && lowBattery -> "powerSave+lowBatt"
+                powerSave -> "powerSave"
+                else -> "lowBatt"
+            }
+            AppLog.i("BatterySaver", "ON ($reason/$why) — prefetch/covers/offlineKeeper allégés")
             runCatching { StreamPrefetcher.cancelIdle() }
-            if (prev != next && reason != "boot") {
+            if (prev != next && reason != "boot" && powerSave) {
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     android.widget.Toast.makeText(
                         context.applicationContext,
@@ -69,6 +86,12 @@ object BatterySaver {
         } else if (prev) {
             AppLog.i("BatterySaver", "OFF ($reason)")
         }
+    }
+
+    private fun batteryPercent(context: Context): Int? {
+        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager ?: return null
+        val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        return pct.takeIf { it in 0..100 }
     }
 
     /** Taille max de couverture demandée à Coil / API thumbs. */

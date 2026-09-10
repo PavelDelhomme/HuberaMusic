@@ -179,9 +179,14 @@ class OfflineDownloadManager(
             val self = coroutineContext[Job]
             try {
                 // Données mobiles : 1 DL à la fois pour ne pas saturer la bande.
+                // Lecture / BatterySaver : aussi 1 seul (laisse la radio à Exo).
                 while (
-                    !NetworkMonitor.isUnmeteredPreferred(ovh.delhomme.ytmusic.YtMusicApp.instance) &&
-                    jobs.values.any { it.job !== self && it.job.isActive }
+                    jobs.values.any { it.job !== self && it.job.isActive } &&
+                    (
+                        !NetworkMonitor.isUnmeteredPreferred(ovh.delhomme.ytmusic.YtMusicApp.instance) ||
+                            BatterySaver.isActive() ||
+                            isPlaybackActive()
+                    )
                 ) {
                     _progress.update { it + (track.id to 0.02f) }
                     delay(1_800L)
