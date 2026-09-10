@@ -308,7 +308,7 @@ class LocalOfflineStore(
             }
             var readTotal = resumeFrom
             body.byteStream().use { input ->
-                part.outputStream(append = resumeFrom > 0L).use { output ->
+                java.io.FileOutputStream(part, resumeFrom > 0L).use { output ->
                     val buf = ByteArray(64 * 1024)
                     var lastPct = -1
                     var lastByteReport = resumeFrom
