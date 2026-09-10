@@ -98,6 +98,9 @@ data class ApkInfoResponse(
     val sizeBytes: Long? = null,
     val downloadPath: String? = null,
     val downloadUrl: String? = null,
+    /** Package de l’APK OTA (toujours `ovh.delhomme.ytmusic` = PLM prod). */
+    @com.squareup.moshi.Json(name = "package")
+    val packageName: String? = null,
 )
 
 @JsonClass(generateAdapter = false)

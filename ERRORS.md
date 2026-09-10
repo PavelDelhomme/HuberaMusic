@@ -33,6 +33,24 @@
 | **Fix** | `pickSaneDurationMs` : croiser Exo × catalogue YTM × position · ne plus écraser catalogue long · log `durée Exo suspecte` |
 | **Tests** | Titres longs shuffle · remaining cohérent · pas de early skip lié à durée |
 
+### E35 — Compte bloqué sur « Vérification… » (Checking fantôme) + OTA Lenovo
+| | |
+|--|--|
+| **Status** | `investigating` → fix `1.3.198` |
+| **Surfaces** | Android Compte (tous) · surtout Lenovo TB-J616F |
+| **Cause** | `refreshAccountStatus` met `Phase.Checking` puis la coroutine est **annulée** en quittant Compte → UI reste Checking ; au retour on refuse de re-vérifier. Lenovo en `USER_ACTION_NOT_REQUIRED` (hors liste OEM). |
+| **Fix** | try/finally + reset Checking annulé · `recoverStuckUpdateUi` · timeout 22 s · **toujours** `USER_ACTION_REQUIRED` · boutons Annuler + navigateur secours |
+| **Tests** | Lenovo Compte in/out · MAJ 197→198 · Samsung |
+
+### E38 — OTA depuis PLM Dev (d+) : « installation » ne change pas la version affichée
+| | |
+|--|--|
+| **Status** | `fixed` (`1.3.199`) |
+| **Surfaces** | Android Compte · canal Dev / Preprod (Blackview `d+1.3.83`) |
+| **Cause** | OTA publie `ovh.delhomme.ytmusic` ; `setAppPackageName(context.packageName)` forçait `.dev` → no-op / conflit. L’utilisateur restait sur `d+…` en croyant que « ça ne marche pas ». |
+| **Fix** | Paquet cible = package lu dans l’APK · messages cross-canal · relaunch icône PLM · bandeau Compte · `/api/deploy/apk/info.package` |
+| **Tests** | Blackview : ouvrir **PLM** (pas Dev) · OTA p+100→199 · Dev 199 met à jour PLM |
+
 ---
 
 ## Session 2026-08-27 (503 multi-titres + pause silencieuse)

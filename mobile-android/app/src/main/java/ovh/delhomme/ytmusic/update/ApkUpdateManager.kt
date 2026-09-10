@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Request
 import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.data.AppContainer
@@ -33,6 +34,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Vérifie / télécharge / installe l’APK publiée sur le serveur (`/api/deploy/apk`)
  * — toujours la **dernière** version seule (pas de chaîne d’intermédiaires).
  *
+ * L’APK OTA est **PLM prod** (`ovh.delhomme.ytmusic`). Depuis PLM Dev / Preprod,
+ * la MAJ met à jour l’autre icône (pas le package courant) — messages + relaunch
+ * ciblent donc le paquet de l’APK, pas `context.packageName`.
+ *
  * Le téléchargement vit dans un scope **application** : quitter Compte
  * n’annule plus la MAJ, et l’écran retrouve l’état (phase + %) au retour.
  */
@@ -45,6 +50,9 @@ class ApkUpdateManager(
     private var updateJob: Job? = null
     private val busy = AtomicBoolean(false)
     private val notifier = UpdateProgressNotifier(context.applicationContext)
+    /** Paquet cible de la dernière session d’install (persisté pour SUCCESS après kill). */
+    private var lastTargetPackage: String? =
+        prefs.getString(KEY_TARGET_PACKAGE, null)?.takeIf { it.isNotBlank() }
 
     enum class Phase {
         Idle,
@@ -81,6 +89,8 @@ class ApkUpdateManager(
     private var lastInstallApk: File? = null
     /** Verrou anti double-feuille Confirmer (broadcasts / races / VIEW+PI). */
     private val confirmUiGate = AtomicBoolean(false)
+    /** Empêche 2× createSession (tap Compte + resume + banner). */
+    private val installInFlight = AtomicBoolean(false)
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var pendingConfirmRetry: Runnable? = null
     private var pendingViewFallback: Runnable? = null
@@ -140,13 +150,15 @@ class ApkUpdateManager(
     /** Relance l’écran système de confirmation (ou réinstalle depuis le cache APK). */
     fun reopenConfirmInstall(): Boolean {
         val now = System.currentTimeMillis()
-        if (now - lastReopenAt < 2_500L) return false
+        if (now - lastReopenAt < 4_000L) {
+            AppLog.i("apk-update", "reopen debounce")
+            return false
+        }
         lastReopenAt = now
-        // Réouverture explicite utilisateur : autorise une nouvelle feuille
-        resetConfirmGate()
         val confirm = lastConfirmIntent
         if (confirm != null) {
-                return tryOpenConfirmUi("reopen-intent") {
+            // Ne PAS resetConfirmGate ici : sinon chaque tap empile une feuille.
+            return tryOpenConfirmUi("reopen-intent") {
                 UpdateRelaunch.launchConfirm(context, confirm)
                 notifier.show(
                     "Mise à jour PLM",
@@ -156,26 +168,47 @@ class ApkUpdateManager(
                 )
             }
         }
-        if (usedViewInstall) {
-            val apk = lastInstallApk
-            if (apk != null && apk.isFile && apk.length() > 1_000_000L) {
-                return tryOpenConfirmUi("reopen-view") {
-                    installApkViaView(apk)
-                    notifier.show(
-                        "Mise à jour PLM",
-                        "Écran d’installation — Rouvrir",
-                        100,
-                        indeterminate = false,
-                    )
-                }
-            }
-        }
+        // Pas d’intent : une seule nouvelle session PackageInstaller (après abandon des autres).
         val remote = _ui.value.remoteCode.takeIf { it > BuildConfig.VERSION_CODE }
             ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
         val pending = if (remote > BuildConfig.VERSION_CODE) apkFileFor(remote) else null
         if (pending != null && pending.isFile && pending.length() > 1_000_000L) {
-            AppLog.i("apk-update", "reopen via cached apk v$remote")
-            startManualUpdate()
+            if (installInFlight.get()) {
+                AppLog.i("apk-update", "reopen: session déjà en vol")
+                return false
+            }
+            AppLog.i("apk-update", "reopen via cached apk v$remote (1 session)")
+            scope.launch {
+                if (!busy.compareAndSet(false, true)) return@launch
+                try {
+                    abandonAllSessions()
+                    resetConfirmGate()
+                    publish(
+                        _ui.value.copy(
+                            phase = Phase.Installing,
+                            message = "Préparation de l’installateur…",
+                            progress = 0f,
+                            available = true,
+                        ),
+                    )
+                    val msg = launchInstall(pending, remote)
+                    val ok = msg.startsWith("Installation")
+                    publish(
+                        _ui.value.copy(
+                            phase = if (ok) Phase.AwaitingConfirm else Phase.Error,
+                            message = if (ok) {
+                                "Valide l’installation système — une seule fenêtre"
+                            } else {
+                                msg
+                            },
+                            progress = 1f,
+                            available = true,
+                        ),
+                    )
+                } finally {
+                    busy.set(false)
+                }
+            }
             return true
         }
         AppLog.w("apk-update", "reopen confirm: pas d’intent ni d’APK cache")
@@ -229,6 +262,8 @@ class ApkUpdateManager(
         cancelPendingInstallRetries()
         lastConfirmIntent = null
         resetConfirmGate()
+        installInFlight.set(false)
+        abandonAllSessions()
         usedViewInstall = false
         lastInstallApk = null
         notifier.cancel()
@@ -264,9 +299,26 @@ class ApkUpdateManager(
     fun reconcileAfterBoot() {
         val remote = prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
         val phase = _ui.value.phase
+        // Checking / Installing fantômes après kill : jamais bloquer Compte
+        if (phase == Phase.Checking || phase == Phase.Installing) {
+            busy.set(false)
+            publish(
+                UiState(
+                    phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.Idle,
+                    message = if (remote > BuildConfig.VERSION_CODE) {
+                        "Mise à jour prête — appuie pour télécharger"
+                    } else {
+                        "Installée ${BuildConfig.VERSION_NAME}"
+                    },
+                    remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
+                    remoteCode = remote,
+                    available = remote > BuildConfig.VERSION_CODE,
+                ),
+            )
+        }
         if (remote > 0 && remote <= BuildConfig.VERSION_CODE) {
             if (phase == Phase.AwaitingConfirm || phase == Phase.Available ||
-                phase == Phase.Error || phase == Phase.Installing
+                phase == Phase.Error || phase == Phase.Installing || phase == Phase.Checking
             ) {
                 lastConfirmIntent = null
                 notifier.cancel()
@@ -452,9 +504,17 @@ class ApkUpdateManager(
     suspend fun refreshAccountStatus() {
         val current = _ui.value
         if (current.phase == Phase.Downloading || current.phase == Phase.Installing ||
-            current.phase == Phase.Checking || current.phase == Phase.AwaitingConfirm
+            current.phase == Phase.AwaitingConfirm
         ) {
-            // Job en cours : ne pas écraser le progrès
+            // Job en cours réel : ne pas écraser le progrès
+            return
+        }
+        // Checking « fantôme » (coroutine annulée en quittant Compte) → on réessaie.
+        val staleChecking =
+            current.phase == Phase.Checking &&
+                !busy.get() &&
+                updateJob?.isActive != true
+        if (current.phase == Phase.Checking && !staleChecking) {
             return
         }
         publish(
@@ -464,86 +524,165 @@ class ApkUpdateManager(
                 progress = 0f,
             ),
         )
-        val result = check(force = true, respectSnooze = false)
-        val remote = result.info?.versionCode ?: 0
-        val remoteName = result.info?.versionName
-        when {
-            remote > BuildConfig.VERSION_CODE && !isSnoozed(remote) -> {
-                val pending = apkFileFor(remote).takeIf { it.isFile && it.length() > 1_000_000L }
-                if (pending != null) {
+        try {
+            val result = withTimeout(22_000L) {
+                check(force = true, respectSnooze = false)
+            }
+            val remote = result.info?.versionCode ?: 0
+            val remoteName = result.info?.versionName
+            val targetPkg = result.info?.packageName?.takeIf { it.isNotBlank() } ?: PROD_PACKAGE
+            if (targetPkg != context.packageName) {
+                lastTargetPackage = targetPkg
+                prefs.edit().putString(KEY_TARGET_PACKAGE, targetPkg).apply()
+            }
+            val hint = crossPackageHint(targetPkg)
+            when {
+                remote > BuildConfig.VERSION_CODE && !isSnoozed(remote) -> {
+                    val pending = apkFileFor(remote).takeIf { it.isFile && it.length() > 1_000_000L }
+                    if (pending != null) {
+                        publish(
+                            UiState(
+                                phase = Phase.AwaitingConfirm,
+                                message = listOfNotNull(
+                                    "APK ${remoteName ?: remote} téléchargée — appuie pour lancer l’installateur",
+                                    hint,
+                                ).joinToString(" · "),
+                                remoteName = remoteName,
+                                remoteCode = remote,
+                                available = true,
+                            ),
+                        )
+                    } else {
+                        publish(
+                            UiState(
+                                phase = Phase.Available,
+                                message = listOfNotNull(
+                                    "Nouvelle version ${remoteName ?: "p+$remote"} — appuie pour télécharger et installer",
+                                    hint,
+                                ).joinToString(" · "),
+                                remoteName = remoteName,
+                                remoteCode = remote,
+                                available = true,
+                            ),
+                        )
+                    }
+                }
+                remote > BuildConfig.VERSION_CODE -> {
                     publish(
                         UiState(
-                            phase = Phase.AwaitingConfirm,
-                            message = "APK ${remoteName ?: remote} téléchargée — appuie pour lancer l’installateur",
+                            phase = Phase.Idle,
+                            message = "Installée ${BuildConfig.VERSION_NAME} · serveur $remoteName (ignorée pour plus tard)",
                             remoteName = remoteName,
                             remoteCode = remote,
-                            available = true,
+                            available = false,
                         ),
                     )
-                } else {
+                }
+                remote > 0 && remote < BuildConfig.VERSION_CODE -> {
                     publish(
                         UiState(
-                            phase = Phase.Available,
-                            message = "Nouvelle version ${remoteName ?: "p+$remote"} — appuie pour télécharger et installer",
+                            phase = Phase.UpToDate,
+                            message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
+                                (remoteName?.let { " (catalogue serveur $it — republier l’APK)" } ?: ""),
                             remoteName = remoteName,
                             remoteCode = remote,
-                            available = true,
+                            available = false,
+                        ),
+                    )
+                }
+                remote > 0 -> {
+                    publish(
+                        UiState(
+                            phase = Phase.UpToDate,
+                            message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
+                                (remoteName?.let { " · serveur $it" } ?: ""),
+                            remoteName = remoteName,
+                            remoteCode = remote,
+                            available = false,
+                        ),
+                    )
+                }
+                else -> {
+                    publish(
+                        UiState(
+                            phase = Phase.Idle,
+                            message = result.message ?: "Installée ${BuildConfig.VERSION_NAME}",
+                            available = false,
                         ),
                     )
                 }
             }
-            remote > BuildConfig.VERSION_CODE -> {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Quitter Compte pendant « Vérification… » ne doit PAS laisser l’UI coincée.
+            if (_ui.value.phase == Phase.Checking) {
                 publish(
                     UiState(
                         phase = Phase.Idle,
-                        message = "Installée ${BuildConfig.VERSION_NAME} · serveur $remoteName (ignorée pour plus tard)",
-                        remoteName = remoteName,
-                        remoteCode = remote,
-                        available = false,
+                        message = "Installée ${BuildConfig.VERSION_NAME}",
+                        remoteName = current.remoteName,
+                        remoteCode = current.remoteCode,
+                        available = current.available,
                     ),
                 )
             }
-            remote > 0 && remote < BuildConfig.VERSION_CODE -> {
-                publish(
-                    UiState(
-                        phase = Phase.UpToDate,
-                        message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
-                            (remoteName?.let { " (catalogue serveur $it — republier l’APK)" } ?: ""),
-                        remoteName = remoteName,
-                        remoteCode = remote,
-                        available = false,
-                    ),
-                )
-            }
-            remote > 0 -> {
-                publish(
-                    UiState(
-                        phase = Phase.UpToDate,
-                        message = "À jour — installée ${BuildConfig.VERSION_NAME}" +
-                            (remoteName?.let { " · serveur $it" } ?: ""),
-                        remoteName = remoteName,
-                        remoteCode = remote,
-                        available = false,
-                    ),
-                )
-            }
-            else -> {
-                publish(
-                    UiState(
-                        phase = Phase.Idle,
-                        message = result.message ?: "Installée ${BuildConfig.VERSION_NAME}",
-                        available = false,
-                    ),
-                )
-            }
+            throw e
+        } catch (e: Exception) {
+            AppLog.w("apk-update", "refreshAccountStatus fail: ${e.message}")
+            publish(
+                UiState(
+                    phase = Phase.Error,
+                    message = e.message?.take(120) ?: "Vérification impossible — réessaie ou navigateur",
+                    remoteName = current.remoteName,
+                    remoteCode = current.remoteCode,
+                    available = current.remoteCode > BuildConfig.VERSION_CODE,
+                ),
+            )
         }
+    }
+
+    /** Débloque une UI coincée (Checking fantôme) et relance. */
+    fun recoverStuckUpdateUi(reason: String = "manual") {
+        AppLog.i("apk-update", "recoverStuckUpdateUi ($reason) phase=${_ui.value.phase}")
+        updateJob?.cancel()
+        busy.set(false)
+        cancelPendingInstallRetries()
+        resetConfirmGate()
+        notifier.cancel()
+        val remote = _ui.value.remoteCode.takeIf { it > 0 }
+            ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
+        publish(
+            UiState(
+                phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.Idle,
+                message = if (remote > BuildConfig.VERSION_CODE) {
+                    "Mise à jour prête — appuie pour télécharger"
+                } else {
+                    "Installée ${BuildConfig.VERSION_NAME}"
+                },
+                remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
+                remoteCode = remote,
+                available = remote > BuildConfig.VERSION_CODE,
+            ),
+        )
     }
 
     /**
      * Clic Compte « Mettre à jour » : tourne hors composition (survit navigation).
      * Publie l’état **tout de suite** (thread UI) pour que le bouton ne paraisse pas mort.
+     *
+     * Si une feuille Confirmer est déjà ouverte : on la rouvre — **jamais** une 2ᵉ session
+     * (c’était la cause des multi-fenêtres quand on avait plusieurs versions de retard).
      */
     fun startManualUpdate() {
+        val phase = _ui.value.phase
+        if (phase == Phase.AwaitingConfirm) {
+            AppLog.i("apk-update", "startManualUpdate → reopen only (pas de nouvelle session)")
+            reopenConfirmInstall()
+            return
+        }
+        if (phase == Phase.Downloading || phase == Phase.Installing || phase == Phase.Checking) {
+            AppLog.i("apk-update", "startManualUpdate ignoré phase=$phase")
+            return
+        }
         if (!busy.compareAndSet(false, true)) {
             AppLog.i("apk-update", "déjà en cours phase=${_ui.value.phase}")
             return
@@ -678,7 +817,30 @@ class ApkUpdateManager(
                     ),
                 )
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is kotlinx.coroutines.CancellationException) {
+                    // Annulation (navigation) : ne jamais laisser « Vérification… » coincée.
+                    if (_ui.value.phase == Phase.Checking ||
+                        _ui.value.phase == Phase.Downloading ||
+                        _ui.value.phase == Phase.Installing
+                    ) {
+                        notifier.cancel()
+                        val remote = _ui.value.remoteCode
+                        publish(
+                            UiState(
+                                phase = if (remote > BuildConfig.VERSION_CODE) {
+                                    Phase.Available
+                                } else {
+                                    Phase.Idle
+                                },
+                                message = "Mise à jour interrompue — réessaie",
+                                remoteName = _ui.value.remoteName,
+                                remoteCode = remote,
+                                available = remote > BuildConfig.VERSION_CODE,
+                            ),
+                        )
+                    }
+                    throw e
+                }
                 AppLog.w("apk-update", "manual update fail", e)
                 notifier.cancel()
                 publish(
@@ -722,26 +884,28 @@ class ApkUpdateManager(
         clearSnooze()
         UpdateRelaunch.markPending(context)
         cancelPendingInstallRetries()
-        resetConfirmGate()
+        // Ne reset PAS le gate si on a déjà une feuille en cours — une seule UI.
+        if (!installInFlight.compareAndSet(false, true)) {
+            AppLog.i("apk-update", "launchInstall: déjà une session en vol")
+            return "Installation déjà en cours — une seule fenêtre"
+        }
         lastConfirmIntent = null
         lastInstallApk = file
         usedViewInstall = false
-        // Toujours PackageInstaller (1 seule feuille Confirmer).
-        // ACTION_VIEW en parallèle empilait 2 popups sur Nothing / Samsung / Xiaomi.
+        abandonAllSessions()
+        resetConfirmGate()
+        // Toujours PackageInstaller seul (pas de VIEW en parallèle = 2 feuilles).
         AppLog.i(
             "apk-update",
             "launchInstall PackageInstaller-only mfr=${Build.MANUFACTURER} brand=${Build.BRAND}",
         )
         val ok = runCatching { installViaPackageInstaller(file) }.getOrElse { err ->
-            AppLog.w("apk-update", "PackageInstaller KO: ${err.message} — fallback VIEW once")
-            withContext(Dispatchers.Main) {
-                tryOpenConfirmUi("view-fallback") {
-                    installApkViaView(file)
-                    usedViewInstall = true
-                }
-            }
+            AppLog.w("apk-update", "PackageInstaller KO: ${err.message}")
+            installInFlight.set(false)
+            false
         }
-        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur"
+        if (!ok) installInFlight.set(false)
+        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur — réessaie ou plm.delhomme.ovh/install"
     }
 
     /**
@@ -872,8 +1036,29 @@ class ApkUpdateManager(
         val meta = info ?: container.api.apkInfo()
         if (meta.ready != true) return@withContext "APK pas encore publiée"
         val remote = meta.versionCode ?: 0
-        if (remote <= BuildConfig.VERSION_CODE) {
+        val metaPkg = meta.packageName?.takeIf { it.isNotBlank() } ?: PROD_PACKAGE
+        // Dev/Preprod : on compare au catalogue OTA prod — même si le package courant
+        // n’est pas celui de l’APK, on doit pouvoir installer PLM pour les vieilles builds.
+        if (remote <= BuildConfig.VERSION_CODE && metaPkg == context.packageName) {
             return@withContext "Déjà à jour — ${BuildConfig.VERSION_NAME}"
+        }
+        if (remote <= BuildConfig.VERSION_CODE && metaPkg != context.packageName) {
+            // Même versionCode que le serveur, mais autre package (ex. d+198 vs p+198) :
+            // pas de DL — l’utilisateur doit ouvrir l’icône PLM.
+            return@withContext crossPackageHint(metaPkg)
+                ?: "Ouvre l’app PLM (prod) — cette build Dev est déjà au même code $remote"
+        }
+        lastTargetPackage = metaPkg
+        prefs.edit().putString(KEY_TARGET_PACKAGE, metaPkg).apply()
+        val hint = crossPackageHint(metaPkg)
+        if (hint != null) {
+            publish(
+                _ui.value.copy(
+                    phase = Phase.Downloading,
+                    message = hint,
+                    available = true,
+                ),
+            )
         }
 
         val base = container.resolvedApiBase().trimEnd('/')
@@ -941,7 +1126,37 @@ class ApkUpdateManager(
         launchInstall(out, remote)
     }
 
-    /** Session PackageInstaller — MAJ du même paquet sans empiler de feuilles Samsung. */
+    /** Package déclaré dans l’APK (prod), pas forcément celui de l’app qui lance la MAJ. */
+    private fun packageNameFromApk(file: File): String? {
+        val pi = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        return pi?.packageName?.takeIf { it.isNotBlank() }
+    }
+
+    private fun resolveTargetPackage(file: File, metaPackage: String? = null): String {
+        val fromFile = packageNameFromApk(file)
+        val fromMeta = metaPackage?.takeIf { it.isNotBlank() }
+        val target = fromFile ?: fromMeta ?: PROD_PACKAGE
+        lastTargetPackage = target
+        prefs.edit().putString(KEY_TARGET_PACKAGE, target).apply()
+        if (target != context.packageName) {
+            AppLog.i(
+                "apk-update",
+                "cross-package OTA self=${context.packageName} target=$target channel=${BuildConfig.APP_CHANNEL}",
+            )
+        }
+        return target
+    }
+
+    private fun crossPackageHint(target: String): String? {
+        if (target == context.packageName) return null
+        return when (BuildConfig.APP_CHANNEL) {
+            "d" -> "Tu es sur PLM Dev — la MAJ installe/met à jour l’app PLM (icône sans « Dev »)."
+            "b" -> "Tu es sur PLM Preprod — la MAJ installe/met à jour l’app PLM (prod)."
+            else -> "La MAJ cible $target (pas cette app)."
+        }
+    }
+
+    /** Session PackageInstaller — paquet = celui de l’APK (prod), même depuis Dev. */
     private fun installViaPackageInstaller(file: File): Boolean {
         val installer = context.packageManager.packageInstaller
         // One UI / MIUI : d’anciennes sessions actives → plusieurs PENDING_USER_ACTION
@@ -951,33 +1166,18 @@ class ApkUpdateManager(
                 installer.abandonSession(info.sessionId)
             }
         }
+        val targetPkg = resolveTargetPackage(file)
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-        params.setAppPackageName(context.packageName)
+        // Critiquer : .dev / .preprod ne doivent PAS forcer leur packageId sur une APK prod.
+        params.setAppPackageName(targetPkg)
         val oem = "${Build.MANUFACTURER} ${Build.BRAND}".lowercase()
-        val needsExplicitConfirm =
-            oem.contains("samsung") ||
-                oem.contains("xiaomi") ||
-                oem.contains("redmi") ||
-                oem.contains("poco") ||
-                oem.contains("oppo") ||
-                oem.contains("realme") ||
-                oem.contains("oneplus") ||
-                oem.contains("vivo") ||
-                oem.contains("huawei") ||
-                oem.contains("honor")
-        // API 31+ : en théorie USER_ACTION_NOT_REQUIRED suffit pour une MAJ signée du
-        // même package. Sur Samsung / Xiaomi / Oppo ça échoue souvent **sans** feuille
-        // (STATUS_FAILURE / BLOCKED) → l’utilisateur croit que « ça a planté ».
-        // Sur ces OEM : forcer USER_ACTION_REQUIRED pour toujours afficher Confirmer.
+        // Toujours USER_ACTION_REQUIRED (API 31+) : NOT_REQUIRED échoue souvent sans feuille
+        // sur Samsung / Lenovo / Xiaomi / Nothing → « Vérification » ou install silencieuse KO.
+        // Une seule feuille « Confirmer » est préférable à une MAJ fantôme.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching {
-                if (needsExplicitConfirm) {
-                    params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
-                    AppLog.i("apk-update", "USER_ACTION_REQUIRED oem=$oem")
-                } else {
-                    params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-                    AppLog.i("apk-update", "USER_ACTION_NOT_REQUIRED oem=$oem")
-                }
+                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+                AppLog.i("apk-update", "USER_ACTION_REQUIRED oem=$oem")
             }.onFailure {
                 AppLog.w("apk-update", "setRequireUserAction KO: ${it.message}")
             }
@@ -1064,18 +1264,9 @@ class ApkUpdateManager(
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 lastConfirmIntent = UpdateRelaunch.extractConfirmIntent(intent)
+                // UNE seule ouverture — les postDelayed ×2 empilaient des feuilles sur Nothing.
                 tryOpenConfirmUi("pending-user-action") {
                     UpdateRelaunch.startConfirmIntent(ctx, intent)
-                }
-                // Samsung / One UI : la feuille peut rester derrière PLM — 2 relances tardives.
-                val confirm = lastConfirmIntent
-                if (confirm != null) {
-                    mainHandler.postDelayed({
-                        runCatching { UpdateRelaunch.launchConfirm(ctx, confirm) }
-                    }, 1_200L)
-                    mainHandler.postDelayed({
-                        runCatching { UpdateRelaunch.launchConfirm(ctx, confirm) }
-                    }, 3_000L)
                 }
                 publish(
                     _ui.value.copy(
@@ -1095,22 +1286,35 @@ class ApkUpdateManager(
             PackageInstaller.STATUS_SUCCESS -> {
                 prefs.edit().remove(KEY_REPROMPT_INSTALL).apply()
                 resetConfirmGate()
-                notifier.done("Installée — réouverture…")
+                installInFlight.set(false)
+                val target = lastTargetPackage
+                    ?: prefs.getString(KEY_TARGET_PACKAGE, null)
+                    ?: context.packageName
+                val cross = target != context.packageName
+                notifier.done(
+                    if (cross) "PLM mis à jour — ouvre l’icône PLM"
+                    else "Installée — réouverture…",
+                )
                 publish(
                     UiState(
                         phase = Phase.Done,
-                        message = "Mise à jour installée — réouverture…",
+                        message = if (cross) {
+                            "PLM (prod) installé — ouvre l’icône « PLM », pas PLM Dev"
+                        } else {
+                            "Mise à jour installée — réouverture…"
+                        },
                         available = false,
                         progress = 1f,
                     ),
                 )
-                UpdateRelaunch.relaunch(ctx.applicationContext)
+                UpdateRelaunch.relaunch(ctx.applicationContext, targetPackage = target)
             }
             PackageInstaller.STATUS_FAILURE_ABORTED -> {
                 // Annulation feuille système : NE PAS re-prompt au prochain ON_RESUME
                 // (sinon Samsung empile 10–25 sessions d’install).
                 notifier.cancel()
                 resetConfirmGate()
+                installInFlight.set(false)
                 abandonAllSessions()
                 publish(
                     _ui.value.copy(
@@ -1132,32 +1336,9 @@ class ApkUpdateManager(
                 AppLog.w("apk-update", "install FAIL status=$status msg=$statusMsg")
                 notifier.cancel()
                 resetConfirmGate()
+                installInFlight.set(false)
                 abandonAllSessions()
-                // OEM (Samsung…) : PackageInstaller a échoué sans feuille → bascule VIEW une fois.
-                val apk = lastInstallApk
-                if (apk != null && apk.exists() && !usedViewInstall) {
-                    usedViewInstall = true
-                    AppLog.i("apk-update", "fallback ACTION_VIEW after status=$status")
-                    mainHandler.post {
-                        runCatching { installApkViaView(apk) }
-                            .onFailure { AppLog.w("apk-update", "VIEW fallback KO: ${it.message}") }
-                    }
-                    publish(
-                        _ui.value.copy(
-                            phase = Phase.AwaitingConfirm,
-                            message = "Ouvre l’écran Confirmer (installateur système) — sinon /install",
-                            available = true,
-                            progress = 1f,
-                        ),
-                    )
-                    notifier.show(
-                        "Mise à jour PLM",
-                        "Confirme l’installation système",
-                        100,
-                        indeterminate = false,
-                    )
-                    return
-                }
+                // Plus de fallback ACTION_VIEW auto : il ouvrait une 2ᵉ feuille système.
                 markInstallCancelled()
                 val human = when (status) {
                     PackageInstaller.STATUS_FAILURE_BLOCKED -> "bloquée par le système"
@@ -1204,8 +1385,10 @@ class ApkUpdateManager(
         private const val KEY_UI_PHASE = "ui_phase"
         private const val KEY_UI_MESSAGE = "ui_message"
         private const val KEY_CONFIRM_OPENED_AT = "confirm_opened_at_ms"
+        private const val KEY_TARGET_PACKAGE = "ota_target_package"
+        private const val PROD_PACKAGE = "ovh.delhomme.ytmusic"
         /** Fenêtre anti double-popup (broadcasts OEM / recreation Activity). */
-        private const val CONFIRM_DEBOUNCE_MS = 12_000L
+        private const val CONFIRM_DEBOUNCE_MS = 45_000L
         private val WINDOW_HALF_MS = TimeUnit.MINUTES.toMillis(45)
         private val PERIODIC_INTERVAL_MS = TimeUnit.HOURS.toMillis(6)
     }

@@ -4,10 +4,10 @@
 > Mis à jour à chaque session. Détail produit : [`docs/FEATURES-BACKLOG.md`](./docs/FEATURES-BACKLOG.md).  
 > Campagnes : [`TESTS.md`](./TESTS.md). Erreurs : [`ERRORS.md`](./ERRORS.md).
 
-**Branche courante** : `feat/mini-swipe-duration-197`  
-**Version** : `1.3.197` (en cours) · prod OTA `p+1.3.196`  
+**Branche courante** : `feat/ux-video-ota-200`  
+**Version** : `1.3.200` · E36 OTA d+/p+ package  
 **Dernière MAJ STATUS** : 2026-09-10  
-**Erreurs ouvertes** : **E33** (fix 196) · durée Exo → **E34** (fix 197)
+**Erreurs ouvertes** : E33–E35 livrés · **E36** OTA cross-canal (en cours)
 
 ---
 

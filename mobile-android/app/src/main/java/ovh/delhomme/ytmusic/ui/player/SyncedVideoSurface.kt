@@ -115,16 +115,20 @@ fun SyncedVideoSurface(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     ready = true
+                    error = null
                     runCatching { exo.seekTo(latestPos.coerceAtLeast(0L)) }
                     if (ovh.delhomme.ytmusic.BuildConfig.DEBUG) {
                         Log.i(TAG, "video ready clipAudio=$latestUseClip url=${streamUrl.take(80)}")
                     }
+                } else if (playbackState == Player.STATE_ENDED) {
+                    // fin clip : pas d’erreur
                 }
             }
 
             override fun onPlayerError(e: PlaybackException) {
                 val msg = e.message ?: "Vidéo indisponible"
                 error = msg
+                ready = false
                 latestOnError?.invoke(msg)
                 if (ovh.delhomme.ytmusic.BuildConfig.DEBUG) {
                     Log.e(TAG, "video error code=${e.errorCode} $msg url=${streamUrl.take(120)}", e)
@@ -136,6 +140,18 @@ fun SyncedVideoSurface(
             exo.removeListener(listener)
             exo.pause()
             exo.volume = 0f
+        }
+    }
+
+    // Timeout : ne plus mouliner sans fin si le flux vidéo ne devient jamais READY
+    LaunchedEffect(streamUrl, active) {
+        if (!active || streamUrl.isBlank()) return@LaunchedEffect
+        delay(14_000L)
+        if (!ready && error == null) {
+            val msg = "Clip trop lent — réessaie ou repasse en Titre"
+            error = msg
+            latestOnError?.invoke(msg)
+            Log.w(TAG, "video timeout 14s url=${streamUrl.take(100)}")
         }
     }
 

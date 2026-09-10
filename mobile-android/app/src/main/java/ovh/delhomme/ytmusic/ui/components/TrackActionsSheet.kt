@@ -56,7 +56,6 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SyncDisabled
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -506,6 +505,7 @@ fun TrackActionsSheet(
                 QuickAction(
                     if (songInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                     if (songInLibrary) "Bibliothèque" else "Bibliothèque",
+                    active = songInLibrary,
                 ) {
                     val next = !songInLibrary
                     songInLibrary = next
@@ -532,6 +532,7 @@ fun TrackActionsSheet(
                         downloadProgress != null -> "${(downloadProgress!! * 100).toInt()} %"
                         else -> "Télécharger"
                     },
+                    active = downloaded || downloadProgress != null,
                 ) {
                     if (downloaded) {
                         // UI immédiate ; IO + sync en arrière-plan
@@ -563,6 +564,7 @@ fun TrackActionsSheet(
                 QuickAction(
                     if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
                     if (pinned) "Retirer accès rapide" else "Accès rapide",
+                    active = pinned,
                 ) {
                     scope.launch {
                         val nowPinned = container.quickAccess.toggle(enriched, container.api)
@@ -598,6 +600,7 @@ fun TrackActionsSheet(
                     QuickAction(
                         if (albumInLibrary) Icons.Default.CheckCircle else Icons.Default.Album,
                         if (albumInLibrary) "Album enregistré" else "Enregistrer l'album",
+                        active = albumInLibrary,
                     ) {
                         scope.launch {
                             runCatching {
@@ -801,35 +804,6 @@ fun TrackActionsSheet(
                     onDismiss()
                 }
             }
-            SheetAction(
-                Icons.Default.Email,
-                "Envoyer aussi par mail",
-                "Ouvre ton app mail avec un résumé du titre",
-            ) {
-                val artist = enriched.artistLine().takeIf { it != "Artiste" }.orEmpty()
-                val body = buildString {
-                    appendLine("Signalement PLM")
-                    appendLine("id=${enriched.id}")
-                    appendLine("${enriched.title}${if (artist.isNotBlank()) " — $artist" else ""}")
-                    appendLine()
-                    appendLine("--- logs récents ---")
-                    append(ovh.delhomme.ytmusic.debug.AppLog.recentLogText(12_000))
-                }
-                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(
-                        android.content.Intent.EXTRA_SUBJECT,
-                        "PLM — ${enriched.title}",
-                    )
-                    putExtra(android.content.Intent.EXTRA_TEXT, body)
-                }
-                runCatching {
-                    context.startActivity(android.content.Intent.createChooser(intent, "Envoyer le rapport"))
-                }.onFailure {
-                    context.toastMain(it.message ?: "Aucune app mail")
-                }
-                onDismiss()
-            }
 
             if (onCast != null) {
                 SheetAction(Icons.Default.Cast, "Caster", "Écouter sur un autre appareil") {
@@ -876,6 +850,7 @@ fun TrackActionsSheet(
                 QuickAction(
                     if (albumInLibrary) Icons.Default.LibraryAddCheck else Icons.Outlined.LibraryAdd,
                     if (albumInLibrary) "Bibliothèque" else "Bibliothèque",
+                    active = albumInLibrary,
                 ) {
                     scope.launch {
                         runCatching {
@@ -1091,7 +1066,14 @@ private fun SleepTimerDialog(
 }
 
 @Composable
-private fun QuickAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+private fun QuickAction(
+    icon: ImageVector,
+    label: String,
+    active: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val accent = Color(0xFFFF0033)
+    val tint = if (active) accent else MaterialTheme.colorScheme.onSurface
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -1103,16 +1085,19 @@ private fun QuickAction(icon: ImageVector, label: String, onClick: () -> Unit) {
             Modifier
                 .size(56.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
+                .background(
+                    if (active) accent.copy(alpha = 0.18f)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(28.dp))
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(28.dp))
         }
         Spacer(Modifier.height(8.dp))
         Text(
             label,
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = tint,
             textAlign = TextAlign.Center,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,

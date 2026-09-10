@@ -2,20 +2,74 @@
   "updatedAt": "2026-09-10",
   "versions": [
     {
+      "version": "1.3.202",
+      "date": "2026-09-10",
+      "title": "OTA : une seule fenêtre Confirmer",
+      "notes": [
+        "Plus d’empilement de fenêtres d’installation (même avec plusieurs versions de retard)",
+        "Toujours une seule session PackageInstaller vers la dernière APK",
+        "Plus de double ouverture via ACTION_VIEW en secours"
+      ]
+    },
+    {
+      "version": "1.3.201",
+      "date": "2026-09-10",
+      "title": "OTA : progression visible dans la popup",
+      "notes": [
+        "Clic Télécharger : la fenêtre reste ouverte avec barre + % (plus de popup figée)",
+        "Fermeture auto seulement une fois l’install terminée"
+      ]
+    },
+    {
+      "version": "1.3.200",
+      "date": "2026-09-10",
+      "title": "UX lecteur, mix, options + vidéo + OTA une feuille",
+      "notes": [
+        "Mise à jour : une seule fenêtre Confirmer (plus d’empilement)",
+        "Accueil mix : boutons ⋮ et + plus grands",
+        "Lecteur : suppression du bandeau Épingler · Accès rapide sous le titre",
+        "Options titre : plus d’« Envoyer aussi par mail »",
+        "Options : icônes rouge quand déjà en biblio / épinglé / téléchargé / album enregistré",
+        "Vidéo : timeout 14 s si ça mouline, clip officiel préféré, démarrage via cache"
+      ]
+    },
+    {
+      "version": "1.3.199",
+      "date": "2026-09-10",
+      "title": "OTA multi-canal: Dev met à jour PLM",
+      "notes": [
+        "Depuis PLM Dev, l’installateur cible le paquet PLM (prod) — plus de MAJ fantôme",
+        "Bandeau Compte sur Dev / Preprod pour éviter la confusion d+ / p+",
+        "Relance automatique de l’icône PLM après install cross-package",
+        "API / apk / info expose le champ package"
+      ]
+    },
+    {
+      "version": "1.3.198",
+      "date": "2026-09-10",
+      "title": "OTA: déblocage vérification +",
+      "notes": [
+        "OTA: plus de « Vérification… » coincée en quittant Compte (Checking fantôme)",
+        "/ tous OEM: toujours feuille Confirmer (USER_ACTION_REQUIRED)",
+        "Compte: Annuler vérification + Installer via navigateur (secours) pendant Checking",
+        "Timeout vérif 22 s + recoverStuckUpdateUi au tap"
+      ]
+    },
+    {
       "version": "1.3.197",
       "date": "2026-09-10",
       "title": "Swipe mini-lecteur + durée Exo fiable",
       "notes": [
-        "Mini-lecteur : swipe gauche → suivant, swipe droite → précédent (comme le plein écran)",
-        "Durée Exo fausse : croisement catalogue YTM (pickSaneDurationMs) — barre / seek / near-end fiables",
+        "Mini-lecteur: swipe gauche → suivant, swipe droite → précédent (comme le plein écran)",
+        "Durée Exo fausse: croisement catalogue YTM (pickSaneDurationMs) — barre / seek / near-end fiables",
         "Ne plus écraser une durée catalogue longue par une durée Exo trop courte",
-        "Aide : note sur la durée croisée"
+        "Aide: note sur la durée croisée"
       ]
     },
     {
       "version": "1.3.196",
       "date": "2026-09-10",
-      "title": "Fix skip mid-piste 503 (Nothing)",
+      "title": "Fix skip mid-piste 503 ()",
       "notes": [
         "Fix skip mid-piste après HTTP 503 (ne plus auto-skip pendant recovery)",
         "Ignore durée Exo incohérente (pos ≫ dur) — cause décisions mid-song foireuses",
@@ -29,10 +83,10 @@
       "date": "2026-09-09",
       "title": "Polish aide, mini-lecteur & reprise réseau",
       "notes": [
-        "Aide & limites : cold start ~20–24 s avant skip + note Économiseur d’énergie",
-        "Réseau de retour : toast « reprise » si lecture était en pause hors-ligne",
-        "Mini-lecteur : haptic léger play / précédent / suivant",
-        "Bandeau hors-ligne : compteur titres via revision (pas de scan à chaque frame)"
+        "Aide & limites: cold start ~20–24 s avant skip + note Économiseur d’énergie",
+        "Réseau de retour: toast « reprise » si lecture était en pause hors-ligne",
+        "Mini-lecteur: haptic léger play / précédent / suivant",
+        "Bandeau hors-ligne: compteur titres via revision (pas de scan à chaque frame)"
       ]
     },
     {
@@ -40,12 +94,12 @@
       "date": "2026-09-09",
       "title": "UX Accueil, Compte & économie d’énergie",
       "notes": [
-        "Accueil : haptic au pull + toast « Accueil actualisé »",
-        "Compte : ligne Téléchargements avec compteur + Mo libres",
-        "Économiseur d’énergie : toast quand le mode s’active (prefetch allégé)",
-        "Paroles : prefetch des 3 titres suivants (karaoké au skip)",
-        "Suggestions recherche : debounce 260 ms",
-        "Erreurs DL : titres affichés même hors liste locale"
+        "Accueil: haptic au pull + toast « Accueil actualisé »",
+        "Compte: ligne Téléchargements avec compteur + Mo libres",
+        "Économiseur d’énergie: toast quand le mode s’active (prefetch allégé)",
+        "Paroles: prefetch des 3 titres suivants (karaoké au skip)",
+        "Suggestions recherche: debounce 260 ms",
+        "Erreurs DL: titres affichés même hors liste locale"
       ]
     },
     {
@@ -53,13 +107,13 @@
       "date": "2026-09-09",
       "title": "Fiabilité lecteur & hors-ligne",
       "notes": [
-        "Skip auto buffering aligné sur cold start (~24 s) — plus de saut trop tôt sur Samsung",
-        "Hors-ligne : bascule fichier local via replaceMediaItem (sans recharger toute la file)",
-        "Télémétrie : buffer digest plafonné (80 événements / 256 Ko)",
+        "Skip auto buffering aligné sur cold start (~24 s) — plus de saut trop tôt sur",
+        "Hors-ligne: bascule fichier local via replaceMediaItem (sans recharger toute la file)",
+        "Télémétrie: buffer digest plafonné (80 événements / 256 Ko)",
         "Toast « Reprise après l’appel » à la fin d’un appel",
-        "Téléchargements : bouton Aléatoire + Tout réessayer les erreurs",
-        "Biblio : fenêtre progressive plus large (220 puis +200)",
-        "Recherche : debounce 380 ms (moins de requêtes pendant la frappe)"
+        "Téléchargements: bouton Aléatoire + Tout réessayer les erreurs",
+        "Biblio: fenêtre progressive plus large (220 puis +200)",
+        "Recherche: debounce 380 ms (moins de requêtes pendant la frappe)"
       ]
     },
     {
@@ -71,8 +125,8 @@
         "Alerte espace disque via StorageStats (Mo libres)",
         "Haptic feedback au pull biblio",
         "Skeletons Accueil / Recherche plus lisibles",
-        "Aide : mention espace disque avant gros DL",
-        "Compte : fix stats historique (history().history)"
+        "Aide: mention espace disque avant gros DL",
+        "Compte: fix stats historique (history.history)"
       ]
     },
     {
@@ -80,16 +134,16 @@
       "date": "2026-09-09",
       "title": "Polish compte & parité",
       "notes": [
-        "Biblio sheet ⋮ : état « dans biblio » optimiste (anti-flash réseau)",
-        "Compte : scroll / safe area (padding haut)",
-        "Aide & limites : MAJ Samsung + hors-ligne à jour",
-        "PWA UpdateBanner : vérif toutes les 15 min (moins de stale)",
-        "Barre web : zone vide ouvre déjà Now Playing",
-        "Recherche : warm formats + erreurs FR",
+        "Biblio sheet ⋮: état « dans biblio » optimiste (anti-flash réseau)",
+        "Compte: scroll / safe area (padding haut)",
+        "Aide & limites: MAJ + hors-ligne à jour",
+        "PWA UpdateBanner: vérif toutes les 15 min (moins de stale)",
+        "Barre web: zone vide ouvre déjà Now Playing",
+        "Recherche: warm formats + erreurs FR",
         "Empty shelves Accueil Podcasts / Livres",
         "Tick NP ralenti sous BatterySaver",
         "Debug logs scrollable (écran Debug)",
-        "Filtre Profils / Fichiers : messages empty utiles",
+        "Filtre Profils / Fichiers: messages empty utiles",
         "Toast bibliothèque actualisée (pull)",
         "Prefetch artiste viewport",
         "Pin toast partout (Accueil / détail)",
@@ -103,22 +157,22 @@
       "date": "2026-09-09",
       "title": "Cast, session, notifications",
       "notes": [
-        "Cast : libellés Lecture ici / Musique ailleurs",
-        "Reprendre ici : toast + playResume sur la file locale",
-        "Chromecast web : message d’échec clair + fallback Appareils PLM",
-        "Notif MediaSession : durée hint depuis métadonnées titre",
+        "Cast: libellés Lecture ici / Musique ailleurs",
+        "Reprendre ici: toast + playResume sur la file locale",
+        "Chromecast web: message d’échec clair + fallback Appareils PLM",
+        "Notif MediaSession: durée hint depuis métadonnées titre",
         "Artwork / titre / artiste toujours exposés à la notif",
-        "Sync lecture ON/OFF : texte plus explicite dans la feuille",
-        "À suivre : toggle visible même si autoplay OFF",
+        "Sync lecture ON / OFF: texte plus explicite dans la feuille",
+        "À suivre: toggle visible même si autoplay OFF",
         "Vitesse lecture déjà mémorisée (SharedPreferences)",
-        "Économiseur batterie : tick NP ralenti",
-        "Aide : section Cast / multi-appareils",
+        "Économiseur batterie: tick NP ralenti",
+        "Aide: section Cast / multi-appareils",
         "Toast pin Accueil avec succès / échec",
-        "Hero album : libellé Mix explicite",
-        "Artiste : boostVisible + warm têtes au scroll",
-        "Mosaïques Accueil : écriture MixCache au preview",
-        "Podcasts Accueil : empty state + shelf explicite",
-        "Collage mix : commentaire MixCache (cold start)"
+        "Hero album: libellé Mix explicite",
+        "Artiste: boostVisible + warm têtes au scroll",
+        "Mosaïques Accueil: écriture MixCache au preview",
+        "Podcasts Accueil: empty state + shelf explicite",
+        "Collage mix: commentaire MixCache (cold start)"
       ]
     },
     {
@@ -130,16 +184,16 @@
         "Prefetch paroles du titre suivant (+2) pour un karaoké sans latence",
         "Cache paroles plm_lyrics_cache_v5 lu hors-ligne dans Now Playing",
         "Message clair si format DASH incompatible au DL",
-        "Écran Téléchargements : section Erreurs dédiée",
+        "Écran Téléchargements: section Erreurs dédiée",
         "Alerte espace disque avant DL massif (album / playlist)",
-        "2ᵉ tap annule un téléchargement en cours (+ purge .part)",
-        "OfflineKeeper : lots plus petits si économiseur batterie",
-        "Épingler : warm immédiat du titre",
-        "Pin toggle : toast Épinglé / Retiré",
-        "Aide & limites : hors-ligne + paroles cache documentés",
-        "Progression album / titres : live via OfflineDownloadManager",
-        "Mon Mix hors-ligne : respect BatterySaver",
-        "Recherche offline : titres locaux d’abord",
+        "2ᵉ tap annule un téléchargement en cours (+ purge.part)",
+        "OfflineKeeper: lots plus petits si économiseur batterie",
+        "Épingler: warm immédiat du titre",
+        "Pin toggle: toast Épinglé / Retiré",
+        "Aide & limites: hors-ligne + paroles cache documentés",
+        "Progression album / titres: live via OfflineDownloadManager",
+        "Mon Mix hors-ligne: respect BatterySaver",
+        "Recherche offline: titres locaux d’abord",
         "Bundle audio + paroles au DL (quand l’API répond)",
         "Toast « Sur l’appareil » après DL réussi"
       ]
@@ -150,21 +204,21 @@
       "title": "Bibliothèque & Accueil fluides",
       "notes": [
         "Toast « Bibliothèque actualisée » au pull-to-refresh",
-        "Filtre actif : ✕ avec libellé du filtre (accessibilité)",
-        "Profils / Fichiers appareil : empty states clairs (plus de stub vide)",
-        "Podcasts / Livres audio : uniquement contenus ajoutés (rappel UI)",
-        "Téléchargés : Playlists → Albums → Titres ; lecture = titres only",
-        "Recherche : messages d’erreur FR (hors-ligne / timeout / session)",
-        "Recherche : effacer ✕ + warm des 8 premiers titres trouvés",
+        "Filtre actif: ✕ avec libellé du filtre (accessibilité)",
+        "Profils / Fichiers appareil: empty states clairs (plus de stub vide)",
+        "Podcasts / Livres audio: uniquement contenus ajoutés (rappel UI)",
+        "Téléchargés: Playlists → Albums → Titres; lecture = titres only",
+        "Recherche: messages d’erreur FR (hors-ligne / timeout / session)",
+        "Recherche: effacer ✕ + warm des 8 premiers titres trouvés",
         "Prefetch viewport titres biblio (boostVisible + têtes ~3 s)",
-        "Chip filtre : retour Accueil biblio en un tap",
-        "Accueil pins : warm immédiat à l’épinglage",
-        "Section Téléchargements : progression live En cours",
-        "Aide filtres : messages empty homogènes FR",
-        "Scroll biblio : fenêtre progressive inchangée, chauffe renforcée",
-        "Recherche hors-ligne : résultats locaux d’abord",
-        "Mosaïques Accueil : MixCache déjà utilisé au cold start",
-        "Artist / collection : lead warm via playQueueWithLead ailleurs"
+        "Chip filtre: retour Accueil biblio en un tap",
+        "Accueil pins: warm immédiat à l’épinglage",
+        "Section Téléchargements: progression live En cours",
+        "Aide filtres: messages empty homogènes FR",
+        "Scroll biblio: fenêtre progressive inchangée, chauffe renforcée",
+        "Recherche hors-ligne: résultats locaux d’abord",
+        "Mosaïques Accueil: MixCache déjà utilisé au cold start",
+        "Artist / collection: lead warm via playQueueWithLead ailleurs"
       ]
     },
     {

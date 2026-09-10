@@ -62,8 +62,14 @@ function scoreCandidate(
     else if (ca.includes(na) || na.includes(ca)) score += 22;
   }
   const blob = `${cand.title} ${artistLine(cand)}`.toLowerCase();
-  if (/\b(official|officiel|mv|music video|clip)\b/.test(blob)) score += 12;
-  if (/\b(lyric|paroles|audio only|visualizer)\b/.test(blob)) score -= 8;
+  // Clip officiel artiste en priorité
+  if (/\b(official\s*music\s*video|official\s*video|clip\s*officiel|video\s*officielle)\b/.test(blob)) {
+    score += 28;
+  } else if (/\b(official|officiel|mv|music video|clip)\b/.test(blob)) {
+    score += 16;
+  }
+  if (/\b(lyric|paroles|audio only|visualizer|audio)\b/.test(blob)) score -= 14;
+  if (/\b(topic)\b/.test(blob)) score -= 10; // chaînes « Topic » = souvent audio seul
   if (durationSec && cand.durationSeconds && cand.durationSeconds > 0) {
     const delta = Math.abs(cand.durationSeconds - durationSec) / durationSec;
     if (delta <= 0.08) score += 18;
@@ -115,17 +121,30 @@ async function searchBetterClip(
       return fallback;
     }
     try {
-      const buckets = await search(q, 'video');
-      const pool = [...(buckets.videos || []), ...(buckets.songs || [])].filter(
-        (t) => t?.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id),
-      );
-      const ranked = pool
+      const qOfficial = [title, artist, 'official video'].filter(Boolean).join(' ').trim();
+      const buckets = await search(q || qOfficial, 'video');
+      const bucketsOfficial =
+        qOfficial && qOfficial !== q ? await search(qOfficial, 'video').catch(() => null) : null;
+      const pool = [
+        ...(buckets.videos || []),
+        ...(buckets.songs || []),
+        ...((bucketsOfficial?.videos || []) as Track[]),
+        ...((bucketsOfficial?.songs || []) as Track[]),
+      ].filter((t) => t?.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id));
+      // dédoublonne par id
+      const seen = new Set<string>();
+      const uniq = pool.filter((t) => {
+        if (seen.has(t.id)) return false;
+        seen.add(t.id);
+        return true;
+      });
+      const ranked = uniq
         .map((t) => ({ t, s: scoreCandidate(t, title, artist, durationSec) }))
         .filter((x) => x.s >= 45)
         .sort((a, b) => b.s - a.s);
       const best = ranked[0]?.t;
-      // Préférer un autre ID seulement s’il score clairement mieux qu’un simple match
-      if (best && best.id !== id && (ranked[0]?.s ?? 0) >= 70) {
+      // Préférer un autre ID seulement s’il score clairement mieux (clip officiel)
+      if (best && best.id !== id && (ranked[0]?.s ?? 0) >= 62) {
         const value: VisualResolve = {
           audioId: id,
           visualId: best.id,

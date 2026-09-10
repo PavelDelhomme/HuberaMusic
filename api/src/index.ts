@@ -1531,6 +1531,8 @@ app.get('/api/deploy/apk/info', authOptional, (req, res) => {
     sizeBytes: info.sizeBytes,
     downloadPath: info.downloadPath,
     downloadUrl: info.downloadUrl,
+    // Toujours le paquet PLM prod — Dev/Preprod ne doivent pas croire que c’est « leur » APK.
+    package: info.package ?? 'ovh.delhomme.ytmusic',
   });
 });
 
