@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-10",
   "versions": [
     {
+      "version": "1.3.198",
+      "date": "2026-09-10",
+      "title": "OTA : déblocage vérification + Lenovo",
+      "notes": [
+        "OTA : plus de « Vérification… » coincée en quittant Compte (Checking fantôme)",
+        "Lenovo / tous OEM : toujours feuille Confirmer (USER_ACTION_REQUIRED)",
+        "Compte : Annuler vérification + Installer via navigateur (secours) pendant Checking",
+        "Timeout vérif 22 s + recoverStuckUpdateUi au tap"
+      ]
+    },
+    {
       "version": "1.3.197",
       "date": "2026-09-10",
       "title": "Swipe mini-lecteur + durée Exo fiable",
