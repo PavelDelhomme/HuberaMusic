@@ -160,6 +160,8 @@ import {
   loginGoogle,
   loginLocal,
   registerLocal,
+  requestPasswordReset,
+  resetPasswordWithToken,
   sessionCookieOptions,
   signToken,
   syncSeedCredentials,
@@ -552,6 +554,28 @@ app.post('/api/auth/verify-email', async (req, res) => {
   }
 });
 
+/** Demande de reset — toujours 200 neutre (anti-énumération). */
+app.post('/api/auth/forgot-password', authBurst, async (req, res) => {
+  try {
+    const result = await requestPasswordReset(String(req.body?.email || ''));
+    res.json(result);
+  } catch (err) {
+    console.error('forgot-password', err);
+    res.json({ ok: true });
+  }
+});
+
+app.post('/api/auth/reset-password', authBurst, async (req, res) => {
+  try {
+    const token = String(req.body?.token || '').trim();
+    const password = String(req.body?.password || '');
+    const result = await resetPasswordWithToken(token, password);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: String((err as Error).message || err) });
+  }
+});
+
 /**
  * Landing email — NE consomme PAS le token (anti SafeLinks / prefetch).
  * Le navigateur / mobile POST ensuite vers /api/auth/verify-email.
@@ -642,6 +666,112 @@ app.get('/verify-email', (req, res) => {
   btn.addEventListener('click', verify);
   // Auto-POST (pas sur GET) — SafeLinks ne consomme plus le jeton
   verify();
+})();
+</script></body></html>`);
+});
+
+/**
+ * Landing reset MDP — NE consomme PAS le token (anti SafeLinks).
+ * Formulaire → POST /api/auth/reset-password.
+ */
+app.get('/reset-password', (req, res) => {
+  const token = String(req.query.token || '').trim();
+  const tokenJs = JSON.stringify(token);
+
+  if (!token) {
+    res.status(400).type('html').send(`<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Lien invalide — PLM</title>
+<style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#030303;color:#fff}
+.card{max-width:420px;margin:24px;padding:28px;border-radius:16px;border:1px solid #222;background:#121212}
+.err{color:#f87171}a{color:#ff0033}</style></head>
+<body><div class="card"><h1 class="err">Lien invalide</h1><p>Aucun jeton dans l’URL.</p>
+<p><a href="/">Retour PLM</a></p></div></body></html>`);
+    return;
+  }
+
+  res.type('html').send(`<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Nouveau mot de passe — PLM</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    font-family:system-ui,sans-serif;background:#030303;color:#fff}
+  .card{max-width:420px;margin:24px;padding:28px;border-radius:16px;border:1px solid #222;background:#121212}
+  h1{margin:0 0 12px;font-size:1.35rem;text-align:center}
+  p{color:#aaa;line-height:1.5;text-align:center}
+  .ok{color:#34d399} .err{color:#f87171} .muted{color:#888;font-size:13px}
+  label{display:block;margin:12px 0 6px;font-size:13px;color:#bbb;text-align:left}
+  input{width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:1px solid #333;background:#0a0a0a;color:#fff;font-size:15px}
+  button{margin-top:16px;width:100%;background:#ff0033;color:#fff;border:0;border-radius:999px;padding:12px 22px;font-size:15px;cursor:pointer}
+  button:disabled{opacity:.5;cursor:default}
+  a{color:#ff0033}
+</style></head><body><div class="card">
+  <h1 id="title">Nouveau mot de passe</h1>
+  <p id="msg">Choisis un mot de passe d’au moins 10 caractères.</p>
+  <form id="form">
+    <label for="pw">Mot de passe</label>
+    <input id="pw" type="password" autocomplete="new-password" minlength="10" required />
+    <label for="pw2">Confirmation</label>
+    <input id="pw2" type="password" autocomplete="new-password" minlength="10" required />
+    <button id="btn" type="submit">Enregistrer</button>
+  </form>
+  <p class="muted" id="hint" style="margin-top:16px"></p>
+  <p style="margin-top:20px;text-align:center"><a href="/">Retour PLM</a></p>
+</div>
+<script>
+(function () {
+  var token = ${tokenJs};
+  var title = document.getElementById('title');
+  var msg = document.getElementById('msg');
+  var form = document.getElementById('form');
+  var btn = document.getElementById('btn');
+  var hint = document.getElementById('hint');
+  var once = false;
+  function show(ok, t, m) {
+    title.className = ok ? 'ok' : 'err';
+    title.textContent = t;
+    msg.textContent = m;
+  }
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    if (once) return;
+    var pw = document.getElementById('pw').value;
+    var pw2 = document.getElementById('pw2').value;
+    if (pw.length < 10) {
+      show(false, 'Trop court', 'Au moins 10 caractères.');
+      return;
+    }
+    if (pw !== pw2) {
+      show(false, 'Erreur', 'Les deux mots de passe ne correspondent pas.');
+      return;
+    }
+    once = true;
+    btn.disabled = true;
+    try {
+      var r = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: token, password: pw }),
+        credentials: 'same-origin'
+      });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok) {
+        once = false;
+        btn.disabled = false;
+        show(false, 'Échec', (j && j.error) ? j.error : ('Erreur HTTP ' + r.status));
+        hint.textContent = 'Tu peux demander un nouvel email depuis l’écran de connexion.';
+        return;
+      }
+      form.style.display = 'none';
+      show(true, 'Mot de passe mis à jour',
+        'Tu peux te reconnecter dans l’app web ou Android avec le nouveau mot de passe.');
+      hint.textContent = '';
+    } catch (err) {
+      once = false;
+      btn.disabled = false;
+      show(false, 'Erreur réseau', String(err && err.message || err));
+    }
+  });
 })();
 </script></body></html>`);
 });

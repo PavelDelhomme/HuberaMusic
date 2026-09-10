@@ -54,6 +54,21 @@ data class RegisterBody(
 )
 
 @JsonClass(generateAdapter = false)
+data class ForgotPasswordBody(val email: String)
+
+@JsonClass(generateAdapter = false)
+data class ResetPasswordBody(
+    val token: String,
+    val password: String,
+)
+
+@JsonClass(generateAdapter = false)
+data class OkMessageResponse(
+    val ok: Boolean? = null,
+    val error: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class RefreshBody(val refreshToken: String?)
 
 @JsonClass(generateAdapter = false)

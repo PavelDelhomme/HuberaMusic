@@ -173,6 +173,32 @@ export async function sendVerificationEmail(email: string, name: string, rawToke
   });
 }
 
+export async function sendPasswordResetEmail(email: string, name: string, rawToken: string) {
+  const link = `${appUrl()}/reset-password?token=${encodeURIComponent(rawToken)}`;
+  return sendMail({
+    to: email,
+    subject: 'Réinitialisation du mot de passe — PLM',
+    text: `Salut ${name},\n\nRéinitialise ton mot de passe PLM :\n${link}\n\nLien valable 2 h. Si tu n’as rien demandé, ignore ce message.\n\n— PLM`,
+    html: `
+      <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">
+        <h2 style="color:#111">Mot de passe PLM</h2>
+        <p>Salut <strong>${escapeHtml(name)}</strong>, tu as demandé à réinitialiser ton mot de passe.</p>
+        <p><a href="${link}" style="display:inline-block;background:#ff0033;color:#fff;padding:12px 20px;border-radius:999px;text-decoration:none">Choisir un nouveau mot de passe</a></p>
+        <p style="color:#666;font-size:12px">Ou copie ce lien :<br>${link}</p>
+        <p style="color:#666;font-size:12px">Lien valable <strong>2 heures</strong>. Si tu n’es pas à l’origine de cette demande, ignore cet email.</p>
+        <p style="color:#666;font-size:12px">Envoyé par <strong>PLM</strong> via ${cfgDomain()} · ${getAppEnv()}</p>
+      </div>`,
+  });
+}
+
+function escapeHtml(s: string) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function cfgDomain() {
   return process.env.SMTP_USER?.split('@')[1] || 'localhost';
 }

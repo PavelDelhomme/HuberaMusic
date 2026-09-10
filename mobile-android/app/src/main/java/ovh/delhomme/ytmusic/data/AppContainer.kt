@@ -275,6 +275,8 @@ class AppContainer(context: Context) {
         val path = response.request.url.encodedPath
         if (path.contains("/api/auth/login") ||
             path.contains("/api/auth/register") ||
+            path.contains("/api/auth/forgot-password") ||
+            path.contains("/api/auth/reset-password") ||
             path.contains("/api/auth/refresh") ||
             path.contains("/api/auth/passkeys")
         ) {

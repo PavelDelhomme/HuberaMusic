@@ -2,6 +2,27 @@
   "updatedAt": "2026-09-10",
   "versions": [
     {
+      "version": "1.3.204",
+      "date": "2026-09-10",
+      "title": "Mot de passe oublié + DL par morceaux",
+      "notes": [
+        "Connexion : Mot de passe oublié — email avec lien (2 h) pour choisir un nouveau mot de passe",
+        "Téléchargements Wi‑Fi : gros fichiers en plusieurs bouts (plus rapide, moins de mono-flux)",
+        "Reprise automatique si un téléchargement a été interrompu (.part)",
+        "Données mobiles : frein plus léger pour finir à temps sans saturer"
+      ]
+    },
+    {
+      "version": "1.3.203",
+      "date": "2026-09-10",
+      "title": "Téléchargements : titre/artiste + DL plus doux",
+      "notes": [
+        "Écran Téléchargements : titre, artiste et pochette pendant le DL (plus seulement l’id)",
+        "Données mobiles : un seul téléchargement à la fois + débit un peu bridé",
+        "Plus de pré-téléchargements automatiques sur réseau mobile"
+      ]
+    },
+    {
       "version": "1.3.202",
       "date": "2026-09-10",
       "title": "OTA : une seule fenêtre Confirmer",

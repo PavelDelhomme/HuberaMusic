@@ -26,7 +26,7 @@ const isProdHost =
 export function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { login, register, loginGoogle, googleEnabled, googleClientId, user, init, allowRegister } = useAuth();
   const refresh = useLibrary((s) => s.refresh);
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState(() =>
     import.meta.env.DEV && !isProdHost ? String(import.meta.env.VITE_DEV_EMAIL || '') : '',
   );
@@ -240,10 +240,16 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
         <div className="mb-4 flex items-start justify-between">
           <div>
             <h2 className="font-display text-2xl font-semibold">
-              {mode === 'login' ? 'Connexion' : 'Créer un compte'}
+              {mode === 'login'
+                ? 'Connexion'
+                : mode === 'forgot'
+                  ? 'Mot de passe oublié'
+                  : 'Créer un compte'}
             </h2>
             <p className="mt-1 text-sm text-yt-muted">
-              Session longue sécurisée (refresh) — web, mobile PWA et desktop.
+              {mode === 'forgot'
+                ? 'Un lien de réinitialisation sera envoyé si un compte existe.'
+                : 'Session longue sécurisée (refresh) — web, mobile PWA et desktop.'}
             </p>
           </div>
           <button type="button" onClick={onClose} className="text-yt-muted hover:text-white">
@@ -266,7 +272,7 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
           </p>
         )}
 
-        {googleEnabled && (
+        {googleEnabled && mode !== 'forgot' && (
           <div className="mb-4 flex justify-center">
             <div ref={googleBtn} />
           </div>
@@ -386,6 +392,18 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
             setInfo('');
             void (async () => {
               try {
+                if (mode === 'forgot') {
+                  setBusy(true);
+                  try {
+                    await api.forgotPassword(email);
+                    setInfo(
+                      'Si un compte existe pour cet email, un message avec un lien (valable 2 h) a été envoyé.',
+                    );
+                  } finally {
+                    setBusy(false);
+                  }
+                  return;
+                }
                 if (mode === 'login') {
                   try {
                     await login(email, password, needs2fa ? totp : undefined);
@@ -437,6 +455,7 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
             placeholder="Email"
             className="w-full rounded-xl border border-yt-border bg-yt-bg px-3 py-2.5 text-sm outline-none focus:border-white/30"
           />
+          {mode !== 'forgot' && (
           <div className="relative">
             <input
               type={showPassword ? 'text' : 'password'}
@@ -456,7 +475,8 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
               {showPassword ? 'Masquer' : 'Voir'}
             </button>
           </div>
-          {needs2fa && (
+          )}
+          {needs2fa && mode === 'login' && (
             <input
               value={totp}
               onChange={(e) => setTotp(e.target.value)}
@@ -468,11 +488,42 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
           {error && <p className="text-sm text-red-400">{error}</p>}
           {info && <p className="text-sm text-emerald-400">{info}</p>}
           <button type="submit" className="w-full rounded-full bg-yt-red py-2.5 text-sm font-medium">
-            {mode === 'login' ? 'Se connecter' : "S'inscrire"}
+            {mode === 'login'
+              ? 'Se connecter'
+              : mode === 'forgot'
+                ? 'Envoyer le lien'
+                : "S'inscrire"}
           </button>
         </form>
 
-        {allowRegister || mode === 'register' ? (
+        {mode === 'login' && (
+          <button
+            type="button"
+            className="mt-3 w-full text-center text-sm text-yt-muted hover:text-white"
+            onClick={() => {
+              setMode('forgot');
+              setError('');
+              setInfo('');
+              setNeeds2fa(false);
+            }}
+          >
+            Mot de passe oublié ?
+          </button>
+        )}
+
+        {mode === 'forgot' ? (
+          <button
+            type="button"
+            className="mt-4 w-full text-center text-sm text-yt-muted hover:text-white"
+            onClick={() => {
+              setMode('login');
+              setError('');
+              setInfo('');
+            }}
+          >
+            Retour à la connexion
+          </button>
+        ) : allowRegister || mode === 'register' ? (
         <button
           type="button"
           className="mt-4 w-full text-center text-sm text-yt-muted hover:text-white"

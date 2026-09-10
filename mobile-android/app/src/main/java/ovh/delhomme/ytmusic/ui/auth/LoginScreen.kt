@@ -152,7 +152,7 @@ fun LoginScreen(
         )
         Spacer(modifier = Modifier.height(20.dp))
 
-        if (!state.registerMode) {
+        if (!state.registerMode && !state.forgotMode) {
             Text(
                 "Connexion rapide (QR)",
                 style = MaterialTheme.typography.titleSmall,
@@ -222,37 +222,39 @@ fun LoginScreen(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(modifier = Modifier.height(10.dp))
-        OutlinedTextField(
-            value = state.password,
-            onValueChange = vm::updatePassword,
-            label = { Text("Mot de passe") },
-            singleLine = true,
-            visualTransformation = if (passwordVisible) {
-                VisualTransformation.None
-            } else {
-                PasswordVisualTransformation()
-            },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            trailingIcon = {
-                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Icon(
-                        imageVector = if (passwordVisible) {
-                            Icons.Default.VisibilityOff
-                        } else {
-                            Icons.Default.Visibility
-                        },
-                        contentDescription = if (passwordVisible) {
-                            "Masquer le mot de passe"
-                        } else {
-                            "Afficher le mot de passe"
-                        },
-                    )
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (state.needs2fa) {
+        if (!state.forgotMode) {
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedTextField(
+                value = state.password,
+                onValueChange = vm::updatePassword,
+                label = { Text("Mot de passe") },
+                singleLine = true,
+                visualTransformation = if (passwordVisible) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            imageVector = if (passwordVisible) {
+                                Icons.Default.VisibilityOff
+                            } else {
+                                Icons.Default.Visibility
+                            },
+                            contentDescription = if (passwordVisible) {
+                                "Masquer le mot de passe"
+                            } else {
+                                "Afficher le mot de passe"
+                            },
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (state.needs2fa && !state.forgotMode) {
             Spacer(modifier = Modifier.height(10.dp))
             OutlinedTextField(
                 value = state.totp,
@@ -267,6 +269,10 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(10.dp))
             Text(it, color = MaterialTheme.colorScheme.error)
         }
+        state.info?.let {
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(it, color = MaterialTheme.colorScheme.primary)
+        }
         Spacer(modifier = Modifier.height(18.dp))
         Button(
             onClick = vm::submit,
@@ -274,10 +280,20 @@ fun LoginScreen(
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (state.loading) CircularProgressIndicator(modifier = Modifier.height(20.dp))
-            else Text(if (state.registerMode) "Créer un compte" else "Se connecter")
+            else Text(
+                when {
+                    state.forgotMode -> "Envoyer le lien"
+                    state.registerMode -> "Créer un compte"
+                    else -> "Se connecter"
+                },
+            )
         }
-        if (!state.registerMode) {
-            Spacer(modifier = Modifier.height(10.dp))
+        if (!state.registerMode && !state.forgotMode) {
+            Spacer(modifier = Modifier.height(6.dp))
+            TextButton(onClick = vm::openForgotPassword, enabled = !state.loading) {
+                Text("Mot de passe oublié ?")
+            }
+            Spacer(modifier = Modifier.height(4.dp))
             OutlinedButton(
                 onClick = { vm.loginWithPasskey(context) },
                 enabled = !state.loading,
@@ -293,9 +309,15 @@ fun LoginScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        TextButton(onClick = vm::toggleMode, enabled = state.allowRegister || state.registerMode) {
+        TextButton(
+            onClick = {
+                if (state.forgotMode) vm.cancelForgotPassword() else vm.toggleMode()
+            },
+            enabled = state.forgotMode || state.allowRegister || state.registerMode,
+        ) {
             Text(
                 when {
+                    state.forgotMode -> "Retour à la connexion"
                     state.registerMode -> "Déjà un compte ? Connexion"
                     !state.allowRegister -> "Inscription fermée"
                     else -> "Créer un compte"
