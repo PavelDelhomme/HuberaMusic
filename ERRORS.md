@@ -9,6 +9,23 @@
 
 ---
 
+## Session 2026-09-10 (Nothing PROD — skip mid-piste 503)
+
+### E33 — Skip titre mid-song après HTTP 503 + durée Exo fausse (Nothing `p+1.3.184`)
+| | |
+|--|--|
+| **Status** | `investigating` → fix `1.3.196` (`fix/skip-503-midtrack-196`) |
+| **Surfaces** | Android Nothing PROD (`dev@` / API `plm.delhomme.ovh`) — écoutes 15:18 |
+| **Logs** | `tmp/nothing-logs-20260910/latest/app.log` |
+| **Faits** | Pas de crash (`I/crash: UncaughtExceptionHandler installé` = boot normal). `OfflineKeeper: skip tick` ≠ skip titre (DL opportuniste reporté). `transport change 1/2` = Wi‑Fi↔cell. |
+| **Incident** | `15:18:06` `onPlayerError code=2004 http=503` id=`Ux4nz42lIns` **pos=150870 dur=33226** (durée Exo absurde) → ~42 s plus tard `STATE_READY` autre titre. |
+| **Cause probable** | 1) App **pas à jour** (Nothing encore `p+1.3.184`). 2) Pendant recovery 503, `PlayerController` **buffer stuck → skipNext** (surtout sur 184). 3) Durée Exo trop courte → décisions mid-piste foireuses. |
+| **Mails** | `reportPlayerError` envoie **error** dès 5xx streak=1 (`force`) → mail télémétrie **oui en théorie**. Throttle serveur `TELEMETRY_ALERT_THROTTLE_MS=300000` (5 min) peut absorber. Pas de crash = pas de mail crash. |
+| **Fix** | Ne pas auto-skip buffer pendant `Holder.streamRecoveringId` · ignore durée Exo si `pos > dur` · give-up 5xx à streak **12** · debounce transport 4,5 s · logs OfflineKeeper clarifiés |
+| **Tests** | Install `p+1.3.196` Samsung + Nothing · lecture shuffle biblio 10+ min · forcer 503 (si possible) → doit retenter même titre |
+
+---
+
 ## Session 2026-08-27 (503 multi-titres + pause silencieuse)
 
 ### E32 — Relais PC maison fragile → préférer proxies HTTP gratuits (bypass 50x)
