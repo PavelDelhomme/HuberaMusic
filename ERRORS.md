@@ -24,6 +24,15 @@
 | **Fix** | Ne pas auto-skip buffer pendant `Holder.streamRecoveringId` · ignore durée Exo si `pos > dur` · give-up 5xx à streak **12** · debounce transport 4,5 s · logs OfflineKeeper clarifiés |
 | **Tests** | Install `p+1.3.196` Samsung + Nothing · lecture shuffle biblio 10+ min · forcer 503 (si possible) → doit retenter même titre |
 
+### E34 — Durée Exo trop courte / incohérente (pos ≫ dur)
+| | |
+|--|--|
+| **Status** | `investigating` → fix `1.3.197` |
+| **Surfaces** | Android (tous) — barre progression, remaining `-m:ss`, near-end, seek |
+| **Cause** | Flux progressif googlevideo : Exo lit parfois une durée tronquée (chunk / content-length / moov). Ex. logs Nothing `pos=150870 dur=33226`. |
+| **Fix** | `pickSaneDurationMs` : croiser Exo × catalogue YTM × position · ne plus écraser catalogue long · log `durée Exo suspecte` |
+| **Tests** | Titres longs shuffle · remaining cohérent · pas de early skip lié à durée |
+
 ---
 
 ## Session 2026-08-27 (503 multi-titres + pause silencieuse)
