@@ -46,6 +46,9 @@ object NetworkMonitor {
     /** 1=wifi 2=cell 3=eth 0=other — pour rebind au handover. */
     @Volatile
     private var lastTransport: Int = -1
+    @Volatile
+    private var lastTransportRebindAt: Long = 0L
+    private const val TRANSPORT_REBIND_DEBOUNCE_MS = 4_500L
 
     /** Délai avant de confirmer « vraiment hors ligne » (handover 4G/Wi‑Fi). */
     private const val OFFLINE_DEBOUNCE_MS = 4_200L
@@ -113,12 +116,17 @@ object NetworkMonitor {
                 bindProcessToActive(cm)
                 if (isUsableCaps(networkCapabilities) || hasUsableInternet(cm)) markOnline()
                 if (changed) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val due = now - lastTransportRebindAt >= TRANSPORT_REBIND_DEBOUNCE_MS
                     ovh.delhomme.ytmusic.debug.AppLog.i(
                         "NetworkMonitor",
-                        "transport change → $t (rebind si lecture coincée)",
+                        "transport change → $t (wifi=1 cell=2 eth=3) rebind=${if (due) "si_stall" else "debounce"}",
                     )
-                    main.post {
-                        PlaybackService.Holder.service?.rebindIfStalled("transport-$t")
+                    if (due) {
+                        lastTransportRebindAt = now
+                        main.post {
+                            PlaybackService.Holder.service?.rebindIfStalled("transport-$t")
+                        }
                     }
                 }
             }

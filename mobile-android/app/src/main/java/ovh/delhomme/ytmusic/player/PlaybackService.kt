@@ -551,7 +551,7 @@ class PlaybackService : MediaSessionService() {
                         if (lastPlayingPosMs > maxPlayingPosMs) maxPlayingPosMs = lastPlayingPosMs
                         lastPlayingBufferedMs = player.bufferedPosition.coerceAtLeast(0L)
                         val d = player.duration
-                        if (d > 0L && d != C.TIME_UNSET) {
+                        if (d > 0L && d != C.TIME_UNSET && d >= lastPlayingPosMs - 2_000L) {
                             lastPlayingDurationMs = d
                         }
                     }
@@ -669,6 +669,11 @@ class PlaybackService : MediaSessionService() {
                 player.playWhenReady
             ) {
                 streamFailStreak.set(0)
+                Holder.streamFailStreak = 0
+                val readyId = player.currentMediaItem?.mediaId.orEmpty()
+                if (readyId.isNotBlank() && Holder.streamRecoveringId == readyId) {
+                    Holder.streamRecoveringId = ""
+                }
                 StreamPrefetcher.markStreamOk()
                 cancelStallWatch()
                 // Remplace le placeholder FGS par la vraie notif média (titre + boutons).
@@ -821,25 +826,37 @@ class PlaybackService : MediaSessionService() {
 
             val localFile = item.localConfiguration?.uri?.scheme == "file"
             val networkish = !localFile && isNetworkOrServerError(error)
-            val dur = when {
+            val pos = bestKnownPos(exo)
+            // Exo affiche parfois une durée trop courte (chunk / content-length) alors que
+            // la position a déjà dépassé — ne jamais s’en servir pour nearEnd / logs.
+            val exoDurRaw = when {
                 exo.duration > 0L && exo.duration != C.TIME_UNSET -> exo.duration
-                lastPlayingDurationMs > 0L -> lastPlayingDurationMs
                 else -> 0L
             }
-            val pos = bestKnownPos(exo)
+            val dur = when {
+                exoDurRaw > 0L && (pos <= 0L || exoDurRaw >= pos - 2_000L) -> exoDurRaw
+                lastPlayingDurationMs > 0L && lastPlayingDurationMs >= pos - 2_000L -> lastPlayingDurationMs
+                lastPlayingDurationMs > exoDurRaw -> lastPlayingDurationMs
+                exoDurRaw > 0L -> exoDurRaw
+                else -> 0L
+            }
             // Fin de titre souvent signalée comme IO/403/connexion coupée par googlevideo —
             // ce n’est PAS une panne réseau : avancer proprement, sans toast « connexion perdue ».
-            // Fin de CE fichier (pos ≈ durée Exo) = enchaîner.
+            // Fin de CE fichier (pos ≈ durée Exo fiable) = enchaîner.
             // Ne jamais se baser sur le catalogue YTM (souvent plus court) → skip prématuré.
             val nearExoEnd =
                 dur >= 45_000L &&
                     pos >= 0L &&
+                    exoDurRaw >= 45_000L &&
+                    exoDurRaw >= pos - 2_000L &&
                     (
                         pos.toDouble() / dur.toDouble() >= 0.96 ||
                             (dur - pos) in 0L..2_500L
                     )
             val nearEnd = !localFile && nearExoEnd
             if (nearEnd) {
+                Holder.streamRecoveringId = ""
+                Holder.streamFailStreak = 0
                 streamFailStreak.set(0)
                 StreamPrefetcher.markStreamOk()
                 AppLog.i(
@@ -869,9 +886,11 @@ class PlaybackService : MediaSessionService() {
 
             val httpStatus = httpStatusOf(error)
             val streak = streamFailStreak.incrementAndGet()
+            Holder.streamFailStreak = streak
+            Holder.streamRecoveringId = id
             AppLog.w(
                 "PlaybackService",
-                "onPlayerError code=${error.errorCode} http=$httpStatus network=$networkish local=$localFile streak=$streak id=$id pos=$pos dur=$dur",
+                "onPlayerError code=${error.errorCode} http=$httpStatus network=$networkish local=$localFile streak=$streak id=$id pos=$pos dur=$dur exoDur=$exoDurRaw",
                 error,
             )
             if (httpStatus != null && httpStatus >= 500) {
@@ -1035,6 +1054,8 @@ class PlaybackService : MediaSessionService() {
                         ).containsMatchIn(errBlobEarly)
                 val giveUpStreak = when {
                     unavailable -> 2
+                    // 503/502 mid-piste : retenter longtemps (proxy YT) — ne pas skip après 1–2 essais.
+                    httpStatus != null && httpStatus >= 500 -> 12
                     transientNetwork -> Int.MAX_VALUE
                     else -> 8
                 }
@@ -1043,6 +1064,8 @@ class PlaybackService : MediaSessionService() {
                         "PlaybackService",
                         "onPlayerError give-up streak=$streak → next id=$id pos=$pos http=$httpStatus unavailable=$unavailable",
                     )
+                    Holder.streamRecoveringId = ""
+                    Holder.streamFailStreak = 0
                     streamFailStreak.set(0)
                     cancelStallWatch()
                     clearStallSession()
@@ -2438,8 +2461,18 @@ class PlaybackService : MediaSessionService() {
         @Volatile var onServiceStopped: (() -> Unit)? = null
         /** Mis à jour sur le thread principal — lecture depuis IO sans toucher ExoPlayer. */
         @Volatile var playbackActive: Boolean = false
+        /** Titre en recovery 5xx / réseau — l’UI ne doit pas auto-skip (buffer stuck). */
+        @Volatile var streamRecoveringId: String = ""
+        @Volatile var streamFailStreak: Int = 0
 
         fun isPlaybackActiveSafe(): Boolean = playbackActive
+
+        fun isStreamRecovering(trackId: String? = null): Boolean {
+            val id = streamRecoveringId
+            if (id.isBlank()) return false
+            if (trackId.isNullOrBlank()) return true
+            return id == trackId
+        }
 
         /** Mémorise la file complète dont la fenêtre chargée n'est qu'une tranche. */
         fun rememberFullQueue(full: List<TrackDto>, loadedUpTo: Int) {

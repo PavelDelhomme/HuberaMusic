@@ -2001,12 +2001,27 @@ class PlayerController(
             // avant un skip auto — évite de sauter trop tôt sur Samsung.
             val pos = player()?.currentPosition ?: _state.value.positionMs
             val coldStart = pos < 8_000L
-            delay(if (coldStart) 16_000L else 8_000L)
+            // Mid-piste après 503/rebind : NE PAS skip — PlaybackService retente le même titre.
+            val recovering = PlaybackService.Holder.isStreamRecovering(trackId)
+            delay(
+                when {
+                    recovering -> 45_000L
+                    coldStart -> 16_000L
+                    else -> 8_000L
+                },
+            )
             if (_state.value.buffering &&
                 _state.value.track?.id == trackId &&
                 ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
                 !StreamPrefetcher.isStreamDown()
             ) {
+                if (PlaybackService.Holder.isStreamRecovering(trackId)) {
+                    AppLog.i(
+                        "PlayerController",
+                        "buffer stuck ignoré (recovery 5xx/réseau) id=$trackId streak=${PlaybackService.Holder.streamFailStreak}",
+                    )
+                    return@launch
+                }
                 AppLog.i("PlayerController", "buffer stuck → skipNext id=$trackId cold=$coldStart")
                 skipNext()
             }
