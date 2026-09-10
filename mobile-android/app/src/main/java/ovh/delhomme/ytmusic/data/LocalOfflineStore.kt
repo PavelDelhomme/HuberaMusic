@@ -266,6 +266,7 @@ class LocalOfflineStore(
                     val buf = ByteArray(64 * 1024)
                     var lastPct = -1
                     var lastByteReport = 0L
+                    var lastThrottleAt = 0L
                     while (true) {
                         kotlinx.coroutines.currentCoroutineContext().ensureActive()
                         val n = input.read(buf)
@@ -282,6 +283,17 @@ class LocalOfflineStore(
                             lastByteReport = readTotal
                             val soft = (0.08f + (readTotal / (1024f * 1024f)) * 0.04f).coerceAtMost(0.92f)
                             onProgress?.invoke(soft)
+                        }
+                        // Réseau mobile : petite pause tous les ~256 Ko pour laisser
+                        // respirer la bande (lecture / autres apps).
+                        if (
+                            readTotal - lastThrottleAt >= 256 * 1024L &&
+                            !NetworkMonitor.isUnmeteredPreferred(
+                                ovh.delhomme.ytmusic.YtMusicApp.instance,
+                            )
+                        ) {
+                            lastThrottleAt = readTotal
+                            kotlinx.coroutines.delay(55L)
                         }
                     }
                     output.flush()

@@ -49,6 +49,9 @@ class OfflineDownloadManager(
 
     private val _errors = MutableStateFlow<Map<String, String>>(emptyMap())
     val errors: StateFlow<Map<String, String>> = _errors.asStateFlow()
+    /** Titres en cours de DL (titre / artiste / cover) — UI Téléchargements. */
+    private val _pending = MutableStateFlow<Map<String, TrackDto>>(emptyMap())
+    val pending: StateFlow<Map<String, TrackDto>> = _pending.asStateFlow()
     /** Métadonnées des titres en erreur (retry sans repasser par la biblio). */
     private val failedTracks = ConcurrentHashMap<String, TrackDto>()
     /** IDs refusés (DASH / ftyp) — ne plus ré-enqueue pendant la session. */
@@ -57,6 +60,8 @@ class OfflineDownloadManager(
     fun progressOf(trackId: String): Float? = _progress.value[trackId]
 
     fun isDownloading(trackId: String): Boolean = _progress.value.containsKey(trackId)
+
+    fun pendingTrack(trackId: String): TrackDto? = _pending.value[trackId]
 
     fun hasActiveJobs(ids: Collection<String>): Boolean {
         if (ids.isEmpty()) return false
@@ -98,6 +103,8 @@ class OfflineDownloadManager(
         duringPlaybackSafe: Boolean = false,
     ) {
         if (!NetworkMonitor.isOnline()) return
+        // Jamais d’ahead sur données mobiles — laisse la bande à la lecture / DL user.
+        if (!NetworkMonitor.isUnmeteredPreferred(ovh.delhomme.ytmusic.YtMusicApp.instance)) return
         if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) return
         if (duringPlaybackSafe) {
             if (!NetworkMonitor.isUnmeteredPreferred(ovh.delhomme.ytmusic.YtMusicApp.instance)) return
@@ -166,9 +173,19 @@ class OfflineDownloadManager(
         _progress.update { it + (track.id to 0.02f) }
         _errors.update { it - track.id }
         failedTracks.remove(track.id)
+        _pending.update { it + (track.id to track) }
 
         val job = scope.launch(Dispatchers.IO) {
+            val self = coroutineContext[Job]
             try {
+                // Données mobiles : 1 DL à la fois pour ne pas saturer la bande.
+                while (
+                    !NetworkMonitor.isUnmeteredPreferred(ovh.delhomme.ytmusic.YtMusicApp.instance) &&
+                    jobs.values.any { it.job !== self && it.job.isActive }
+                ) {
+                    _progress.update { it + (track.id to 0.02f) }
+                    delay(1_800L)
+                }
                 while (!NetworkMonitor.refreshFromSystem()) {
                     _progress.update { it + (track.id to 0.02f) }
                     delay(2_500)
@@ -308,6 +325,7 @@ class OfflineDownloadManager(
                     next.remove(track.id)
                     next
                 }
+                _pending.update { it - track.id }
                 jobs.remove(track.id)
             }
         }
@@ -436,6 +454,7 @@ class OfflineDownloadManager(
         entry?.job?.cancel()
         jobs.remove(trackId)
         _progress.update { it - trackId }
+        _pending.update { it - trackId }
         _errors.update { it - trackId }
         runCatching {
             java.io.File(
