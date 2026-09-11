@@ -134,6 +134,16 @@ class MainActivity : ComponentActivity() {
         setTheme(R.style.Theme_PLM)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
+        if (intent?.getBooleanExtra(ovh.delhomme.ytmusic.update.UpdateRelaunch.EXTRA_AFTER_UPDATE, false) == true ||
+            ovh.delhomme.ytmusic.update.UpdateRelaunch.shouldAutoRelaunch(this)
+        ) {
+            ovh.delhomme.ytmusic.update.UpdateRelaunch.clearPending(this)
+            runCatching {
+                val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.cancel(41002)
+                nm.cancel(41001)
+            }
+        }
         val app = application as YtMusicApp
         setContent {
             YtMusicTheme {
@@ -648,6 +658,11 @@ fun YtMusicAppContent(
                             title.startsWith("Mix ·", ignoreCase = true) ||
                             title.startsWith("Mix album", ignoreCase = true) ||
                             title.startsWith("Mix hors-ligne", ignoreCase = true)
+                    val historyish =
+                        title.contains("écouté récemment", ignoreCase = true) ||
+                            title.contains("recently played", ignoreCase = true) ||
+                            title.contains("plus écoutés", ignoreCase = true) ||
+                            title.contains("historique", ignoreCase = true)
                     if (container.receiveRemoteSync()) {
                         scope.launch {
                             runCatching {
@@ -662,7 +677,8 @@ fun YtMusicAppContent(
                             tracks,
                             idx,
                             title = title,
-                            sourceKind = "library",
+                            userQueueEnd = tracks.size,
+                            sourceKind = if (historyish) "history" else "library",
                         )
                     }
                     showNowPlaying = false
@@ -1097,11 +1113,11 @@ private fun MainTabs(
         delay(400)
         publishPlayback()
     }
-    // Heartbeat progress pendant lecture — assez fréquent pour la timeline multi-appareils
+    // Heartbeat progress pendant lecture — espacé si économie batterie (pas de perte de sync métier)
     LaunchedEffect(playerUi.playing, playerUi.track?.id) {
         if (!playerUi.playing || playerUi.track == null) return@LaunchedEffect
         while (isActive) {
-            delay(4_000)
+            delay(ovh.delhomme.ytmusic.data.BatterySaver.sessionHeartbeatMs())
             if (!player.state.value.playing) break
             publishPlayback()
         }
@@ -1112,7 +1128,7 @@ private fun MainTabs(
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
-                delay(2_000)
+                delay(ovh.delhomme.ytmusic.data.BatterySaver.remoteMirrorPollMs())
                 if (!container.receiveRemoteSync()) continue
                 if (player.state.value.playing) continue
                 if (System.currentTimeMillis() < suppressSessionPublishUntil) continue
@@ -1276,7 +1292,13 @@ private fun MainTabs(
     LaunchedEffect(playerUi.playing, playerUi.track?.id) {
         if (!playerUi.playing || playerUi.track == null) return@LaunchedEffect
         while (isActive) {
-            delay(25_000)
+            delay(
+                when {
+                    ovh.delhomme.ytmusic.data.BatterySaver.isActive() -> 45_000L
+                    ovh.delhomme.ytmusic.data.BatterySaver.isSoft() -> 32_000L
+                    else -> 25_000L
+                },
+            )
             val t = player.state.value.track ?: break
             val ui = player.state.value
             if (!ui.playing) break
@@ -1307,7 +1329,7 @@ private fun MainTabs(
         if (playerSheetMounted && playerExpanded) return@LaunchedEffect
         while (playerUi.playing && playerUi.track != null) {
             player.tick()
-            delay(if (playerExpanded) 500 else 400)
+            delay(ovh.delhomme.ytmusic.data.BatterySaver.miniBarTickMs(playerExpanded))
         }
     }
 

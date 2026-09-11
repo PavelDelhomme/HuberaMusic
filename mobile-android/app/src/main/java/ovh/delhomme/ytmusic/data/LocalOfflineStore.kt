@@ -90,6 +90,20 @@ class LocalOfflineStore(
 
     fun audioFile(trackId: String): File = File(dir, "$trackId.m4a")
 
+    fun videoFile(trackId: String): File = File(dir, "$trackId.mp4")
+
+    fun hasVideo(trackId: String): Boolean {
+        val f = videoFile(trackId)
+        return f.isFile && f.length() >= 80_000L
+    }
+
+    fun videoPlayUri(trackId: String): android.net.Uri? {
+        if (!hasVideo(trackId)) return null
+        val f = videoFile(trackId)
+        runCatching { f.setLastModified(System.currentTimeMillis()) }
+        return android.net.Uri.fromFile(f)
+    }
+
     fun has(trackId: String): Boolean {
         val f = audioFile(trackId)
         if (!f.isFile) return false
@@ -99,7 +113,10 @@ class LocalOfflineStore(
 
     fun playUri(trackId: String): Uri? {
         if (!has(trackId)) return null
-        return Uri.fromFile(audioFile(trackId))
+        val f = audioFile(trackId)
+        // Touch pour LRU éviction (titres peu réécoutés partent en premier).
+        runCatching { f.setLastModified(System.currentTimeMillis()) }
+        return Uri.fromFile(f)
     }
 
     fun listIds(): List<String> = synchronized(this) {
@@ -130,7 +147,9 @@ class LocalOfflineStore(
     suspend fun remove(trackId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             audioFile(trackId).delete()
+            videoFile(trackId).delete()
             File(dir, "$trackId.part").delete()
+            File(dir, "$trackId.mp4.part").delete()
             sizeHintFile(trackId).delete()
             okMarker(trackId).delete()
             val meta = readMetaUnlocked().toMutableMap()
@@ -142,6 +161,47 @@ class LocalOfflineStore(
     }
 
     /**
+     * Si l’espace libre est bas, retire les hors-ligne les moins récemment
+     * écoutés (lastModified) jusqu’à retrouver de la marge — ne touche pas
+     * aux titres téléchargés « user » trop récents (&lt; 3 j).
+     */
+    fun trimLeastPlayedIfLowSpace(
+        minFreeBytes: Long = 800L * 1024L * 1024L,
+        keepRecentMs: Long = 3L * 24 * 60 * 60 * 1000,
+    ): Int {
+        val free = runCatching { dir.usableSpace }.getOrDefault(Long.MAX_VALUE)
+        if (free >= minFreeBytes) return 0
+        val now = System.currentTimeMillis()
+        val candidates = dir.listFiles()
+            ?.filter { it.name.endsWith(".m4a") && it.isFile }
+            ?.filter { now - it.lastModified() > keepRecentMs }
+            ?.sortedBy { it.lastModified() }
+            .orEmpty()
+        var removed = 0
+        for (f in candidates) {
+            if (runCatching { dir.usableSpace }.getOrDefault(0L) >= minFreeBytes) break
+            val id = f.name.removeSuffix(".m4a")
+            runCatching {
+                f.delete()
+                File(dir, "$id.part").delete()
+                sizeHintFile(id).delete()
+                okMarker(id).delete()
+                synchronized(this) {
+                    val meta = readMetaUnlocked().toMutableMap()
+                    meta.remove(id)
+                    writeMetaUnlocked(meta)
+                }
+                removed++
+            }
+        }
+        if (removed > 0) {
+            bump()
+            AppLog.i("offline", "trimLeastPlayed removed=$removed free≈${dir.usableSpace / (1024 * 1024)}MiB")
+        }
+        return removed
+    }
+
+    /**
      * Télécharge le flux **audio** (`/api/stream/{id}`) vers le stockage local.
      * Vérifie Content-Length / taille min (évite les .m4a tronqués qui coupent la lecture).
      */
@@ -149,8 +209,13 @@ class LocalOfflineStore(
         track: TrackDto,
         streamUrl: String,
         onProgress: ((Float) -> Unit)? = null,
+        /** Clic user : ignore le circuit-breaker (sinon DL collé à 3 %). */
+        forceDespiteStreamDown: Boolean = false,
     ): Result<File> = withContext(Dispatchers.IO) {
-        if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
+        if (
+            !forceDespiteStreamDown &&
+            ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()
+        ) {
             return@withContext Result.failure(Exception("stream down — DL différé"))
         }
         val dest = audioFile(track.id)
@@ -164,7 +229,10 @@ class LocalOfflineStore(
         }
         var lastError: Throwable? = null
         repeat(3) { attempt ->
-            if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
+            if (
+                !forceDespiteStreamDown &&
+                ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()
+            ) {
                 return@withContext Result.failure(lastError ?: Exception("stream down"))
             }
             val forceSequential = attempt > 0
@@ -208,6 +276,65 @@ class LocalOfflineStore(
             kotlinx.coroutines.delay(1_500L * (attempt + 1) * (attempt + 1))
         }
         Result.failure(lastError ?: Exception("Échec téléchargement"))
+    }
+
+    /**
+     * Télécharge le flux vidéo (`?type=video`) à côté de l’audio.
+     * Best-effort : échec silencieux côté manager.
+     */
+    suspend fun downloadVideo(
+        trackId: String,
+        streamUrl: String,
+        onProgress: ((Float) -> Unit)? = null,
+    ): Result<File> = withContext(Dispatchers.IO) {
+        val dest = videoFile(trackId)
+        if (hasVideo(trackId)) {
+            onProgress?.invoke(1f)
+            return@withContext Result.success(dest)
+        }
+        val part = File(dir, "$trackId.mp4.part")
+        part.delete()
+        try {
+            val req = streamGet(streamUrl)
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext Result.failure(Exception("HTTP ${resp.code} vidéo"))
+                }
+                val body = resp.body ?: return@withContext Result.failure(Exception("body vide"))
+                val total = body.contentLength().takeIf { it > 0 } ?: -1L
+                body.byteStream().use { input ->
+                    part.outputStream().use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        var written = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            written += n
+                            if (total > 0) {
+                                onProgress?.invoke((written.toFloat() / total).coerceIn(0f, 0.99f))
+                            } else if (written % (512 * 1024) == 0L) {
+                                onProgress?.invoke((written / (8f * 1024 * 1024)).coerceIn(0.05f, 0.9f))
+                            }
+                        }
+                    }
+                }
+                if (part.length() < 80_000L) {
+                    part.delete()
+                    return@withContext Result.failure(Exception("clip trop petit"))
+                }
+                if (dest.exists()) dest.delete()
+                if (!part.renameTo(dest)) {
+                    part.copyTo(dest, overwrite = true)
+                    part.delete()
+                }
+                onProgress?.invoke(1f)
+                Result.success(dest)
+            }
+        } catch (e: Exception) {
+            part.delete()
+            Result.failure(e)
+        }
     }
 
     private fun partFile(trackId: String) = File(dir, "$trackId.part")

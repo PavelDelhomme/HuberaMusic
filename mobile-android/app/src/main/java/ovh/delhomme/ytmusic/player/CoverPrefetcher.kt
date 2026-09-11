@@ -20,8 +20,17 @@ object CoverPrefetcher {
         if (tracks.isEmpty()) return
         val ctx = runCatching { YtMusicApp.instance }.getOrNull() ?: return
         val idx = index.coerceIn(0, tracks.lastIndex)
-        val aheadN = if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 0 else ahead
-        val behindN = if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 0 else behind
+        val soft = ovh.delhomme.ytmusic.data.BatterySaver.isSoft()
+        val aheadN = when {
+            ovh.delhomme.ytmusic.data.BatterySaver.isActive() -> 0
+            soft -> 1.coerceAtMost(ahead)
+            else -> ahead
+        }
+        val behindN = when {
+            ovh.delhomme.ytmusic.data.BatterySaver.isActive() -> 0
+            soft -> 0
+            else -> behind
+        }
         val targets = buildList {
             add(tracks[idx])
             for (i in 1..aheadN) tracks.getOrNull(idx + i)?.let { add(it) }

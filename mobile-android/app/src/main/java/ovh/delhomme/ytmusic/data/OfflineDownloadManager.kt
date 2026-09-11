@@ -1,5 +1,7 @@
 package ovh.delhomme.ytmusic.data
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,6 +17,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import ovh.delhomme.ytmusic.debug.AppLog
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Téléchargements hors du scope Compose (survit à la fermeture du sheet).
@@ -33,6 +36,10 @@ class OfflineDownloadManager(
     private val warmStream: (suspend (trackId: String) -> Unit)? = null,
     /** URL avec retry/offline — invalide le format DASH côté API. */
     private val streamUrlForAttempt: ((trackId: String, attempt: Int) -> String)? = null,
+    /** URL flux vidéo (clip) — téléchargé en parallèle de l’audio. */
+    private val videoStreamUrl: ((trackId: String) -> String)? = null,
+    /** Résout un vrai visualId (clip) pour le DL vidéo — évite l’ID Topic audio-only. */
+    private val resolveVisualId: (suspend (TrackDto) -> String?)? = null,
     /** 2 max : 1 laissait les albums coincés à 2 % derrière un warm bloqué. */
     private val maxConcurrent: Int = 2,
 ) {
@@ -191,8 +198,9 @@ class OfflineDownloadManager(
                     delay(2_500)
                 }
                 if (priority == Priority.User) {
-                    // Seek / stall / 5xx : on attend, on n’abandonne pas le clic user.
-                    waitUntilStreamReady(track.id, maxLoops = 80, loopMs = 2_500L)
+                    // User : court délai si stream « down », puis on tente quand même
+                    // (sinon 3 % pendant des minutes = DL « cassé »).
+                    waitUntilStreamReady(track.id, maxLoops = 6, loopMs = 1_200L)
                 } else if (!duringPlaybackSafe) {
                     var waitLoops = 0
                     while (
@@ -216,6 +224,11 @@ class OfflineDownloadManager(
                 gate.withPermit {
                     if (offlineStore.has(track.id)) return@withPermit
                     ensureToken()
+                    if (priority == Priority.User) {
+                        // Un clic « Télécharger » ne doit pas rester bloqué derrière un
+                        // circuit-breaker stream (sinon 3 % pendant des minutes).
+                        ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamOk()
+                    }
                     _progress.update { it + (track.id to 0.05f) }
                     withTimeoutOrNull(2_500L) { warmStream?.invoke(track.id) }
                     _progress.update { it + (track.id to 0.12f) }
@@ -224,16 +237,79 @@ class OfflineDownloadManager(
                     while (attempt < 4) {
                         attempt++
                         if (priority == Priority.User) {
-                            waitUntilStreamReady(track.id, maxLoops = 40, loopMs = 2_000L)
+                            waitUntilStreamReady(track.id, maxLoops = 4, loopMs = 1_000L)
                         } else if (ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown()) {
                             return@withPermit
                         }
                         val url = streamUrlForAttempt?.invoke(track.id, attempt - 1)
                             ?: streamUrl(track.id)
-                        val result = offlineStore.download(track, url) { p ->
-                            _progress.update { cur ->
-                                cur + (track.id to p.coerceIn(0.08f, 0.99f))
+                        val audioProgress = AtomicReference(0.12f)
+                        val videoProgress = AtomicReference(0f)
+                        fun publishProgress() {
+                            val a = audioProgress.get().coerceIn(0f, 1f)
+                            val v = videoProgress.get().coerceIn(0f, 1f)
+                            val combined = if (videoStreamUrl != null) {
+                                (a * 0.72f + v * 0.28f).coerceIn(0.08f, 0.99f)
+                            } else {
+                                a.coerceIn(0.08f, 0.99f)
                             }
+                            _progress.update { cur -> cur + (track.id to combined) }
+                        }
+                        val result = coroutineScope {
+                            val videoJob = async {
+                                if (videoStreamUrl == null || offlineStore.hasVideo(track.id)) {
+                                    videoProgress.set(1f)
+                                    publishProgress()
+                                    return@async
+                                }
+                                runCatching {
+                                    val visualId = resolveVisualId?.invoke(track)
+                                        ?: VisualIdCache.get(
+                                            ovh.delhomme.ytmusic.YtMusicApp.instance,
+                                            track.id,
+                                        )?.takeIf { it.length == 11 && it != track.id }
+                                    if (visualId.isNullOrBlank() || visualId == track.id) {
+                                        videoProgress.set(1f)
+                                        publishProgress()
+                                        AppLog.i("offline", "video DL skip (pas de clip) ${track.id}")
+                                        return@runCatching
+                                    }
+                                    VisualIdCache.put(
+                                        ovh.delhomme.ytmusic.YtMusicApp.instance,
+                                        track.id,
+                                        visualId,
+                                    )
+                                    val clipUrl = videoStreamUrl.invoke(visualId)
+                                    if (clipUrl.isBlank()) return@runCatching
+                                    offlineStore.downloadVideo(track.id, clipUrl) { p ->
+                                        videoProgress.set(p)
+                                        publishProgress()
+                                    }.onFailure { e ->
+                                        AppLog.w(
+                                            "offline",
+                                            "video DL fail ${track.id}: ${e.message?.take(80)}",
+                                        )
+                                    }
+                                    videoProgress.set(1f)
+                                    publishProgress()
+                                }.onFailure { e ->
+                                    videoProgress.set(1f)
+                                    publishProgress()
+                                    AppLog.w("offline", "video DL skip ${track.id}: ${e.message?.take(80)}")
+                                }
+                            }
+                            val audioResult = offlineStore.download(
+                                track,
+                                url,
+                                onProgress = { p ->
+                                    audioProgress.set(p)
+                                    publishProgress()
+                                },
+                                forceDespiteStreamDown = priority == Priority.User,
+                            )
+                            // Attendre le clip (best-effort) sans bloquer le succès audio
+                            runCatching { videoJob.await() }
+                            audioResult
                         }
                         if (result.isSuccess) {
                             runCatching { notifyServer(track.id) }
@@ -340,8 +416,12 @@ class OfflineDownloadManager(
             ovh.delhomme.ytmusic.player.StreamPrefetcher.isStreamDown() ||
             !NetworkMonitor.refreshFromSystem()
         ) {
-            if (++loops > maxLoops) return
-            _progress.update { it + (trackId to 0.03f) }
+            if (++loops > maxLoops) {
+                // Ne pas rester bloqué à 3 % : on tente le DL quand même.
+                AppLog.w("offline", "waitUntilStreamReady timeout $trackId — try anyway")
+                return
+            }
+            _progress.update { it + (trackId to 0.05f) }
             delay(loopMs)
         }
     }

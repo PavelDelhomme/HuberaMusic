@@ -809,10 +809,11 @@ object StreamPrefetcher {
         }
         val unmetered = isUnmetered()
         val aheadN = if (unmetered) ahead.coerceAtMost(AHEAD_WIFI) else ahead.coerceAtMost(AHEAD_METERED)
-        val behindN = if (unmetered) behind else 0
+        // Toujours ≥1 derrière : sinon « précédent » après un skip repart à froid.
+        val behindN = if (unmetered) behind.coerceAtLeast(1) else 1
 
         // Libère le cache Exo des titres déjà écoutés (garde [behindN] derrière)
-        evictPlayed(queueIds, idx, keepBehind = behindN.coerceAtLeast(0))
+        evictPlayed(queueIds, idx, keepBehind = behindN)
 
         val nextIds = buildList {
             for (i in 1..aheadN) {
@@ -832,8 +833,13 @@ object StreamPrefetcher {
         }
         if (isPlaybackActive()) {
             prefetchUpcomingHeadsTiered(baseApi, queueIds, idx, count = aheadN)
+            // Tête du précédent aussi (même pendant lecture) — retour instantané.
+            behindIds.firstOrNull()?.let { exoPrefetch(baseApi, it, distance = 1) }
         } else {
             nextIds.forEachIndexed { i, id ->
+                exoPrefetch(baseApi, id, distance = i + 1)
+            }
+            behindIds.forEachIndexed { i, id ->
                 exoPrefetch(baseApi, id, distance = i + 1)
             }
         }

@@ -161,15 +161,30 @@ fun HomeScreen(
         }
         scope.launch {
             if (item.isPlayable()) {
-                // File musique d’abord (Favoris mélange parfois des vidéos → lenteur / KO)
-                val music = shelfItems.filter { it.isMusicTrack() }
-                val list = when {
-                    music.any { it.id == item.id } -> music
-                    item.isMusicTrack() -> (listOf(item) + music).distinctBy { it.id }
-                    else -> shelfItems.filter { it.isPlayable() }.ifEmpty { listOf(item) }
+                val title = queueTitle?.takeIf { it.isNotBlank() }
+                val historyShelf = isRecentListenShelf(title)
+                // Écouté récemment / tops : toute la file d’écoute, pas le filtre « song only »
+                // (sinon 1 titre + autoplay related hors sujet).
+                var list = if (historyShelf) {
+                    shelfItems.filter { it.isPlayable() }.ifEmpty { listOf(item) }
+                } else {
+                    val music = shelfItems.filter { it.isMusicTrack() }
+                    when {
+                        music.any { it.id == item.id } -> music
+                        item.isMusicTrack() -> (listOf(item) + music).distinctBy { it.id }
+                        else -> shelfItems.filter { it.isPlayable() }.ifEmpty { listOf(item) }
+                    }
+                }
+                if (historyShelf) {
+                    val remote = runCatching {
+                        container.ensureFreshToken()
+                        container.api.history().history
+                    }.getOrNull().orEmpty().filter { it.isPlayable() }
+                    if (remote.size >= list.size && remote.any { it.id == item.id }) {
+                        list = remote.distinctBy { it.id }.take(120)
+                    }
                 }
                 val idx = list.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
-                val title = queueTitle?.takeIf { it.isNotBlank() }
                 ovh.delhomme.ytmusic.ui.library.playQueueWithLead(container, list, idx) { q, i ->
                     if (title != null) onPlayNamed(q, i, title) else onPlay(q, i)
                 }
@@ -497,7 +512,7 @@ fun HomeScreen(
                                                 modifier = Modifier
                                                     .align(Alignment.TopStart)
                                                     .padding(6.dp),
-                                                size = 28.dp,
+                                                size = 32.dp,
                                                 onClick = {
                                                     scope.launch {
                                                         container.quickAccess.toggle(track, container.api)
@@ -1064,4 +1079,15 @@ private fun HomeLoadingSkeleton() {
             Spacer(Modifier.height(20.dp))
         }
     }
+}
+
+/** Rayons où la file = l’ordre d’écoute (pas related / Mix). */
+private fun isRecentListenShelf(title: String?): Boolean {
+    val t = title?.trim().orEmpty()
+    if (t.isEmpty()) return false
+    return t.contains("écouté récemment", ignoreCase = true) ||
+        t.contains("recently played", ignoreCase = true) ||
+        t.contains("plus écoutés", ignoreCase = true) ||
+        t.contains("historique", ignoreCase = true) ||
+        t.equals("Historique", ignoreCase = true)
 }

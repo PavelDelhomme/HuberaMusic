@@ -179,12 +179,28 @@ export function resolveStreamUpstream(): string | null {
   return null;
 }
 
-/** Relais maison : uniquement si ALLOW_STREAM_UPSTREAM=1 (prod et hors-prod). */
+/**
+ * Relais maison (IP résidentielle) :
+ * - `ALLOW_STREAM_UPSTREAM=1` (Portainer), ou
+ * - fichier `data/stream-upstream.url` posé par `link-home-stream.sh`.
+ * Sans l’un des deux, le VPS reste autonome (OAuth TV) — OK audio, souvent KO vidéo progressive.
+ */
 export function isStreamUpstreamAllowed(): boolean {
-  return (
+  if (
     process.env.ALLOW_STREAM_UPSTREAM === '1' ||
     process.env.ALLOW_STREAM_UPSTREAM === 'true'
-  );
+  ) {
+    return true;
+  }
+  try {
+    if (existsSync(STREAM_UPSTREAM_FILE)) {
+      const v = readFileSync(STREAM_UPSTREAM_FILE, 'utf8').trim();
+      if (v.startsWith('http://') || v.startsWith('https://')) return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
 }
 
 /** Relais stream vers l’API maison (évite le blocage IP datacenter YouTube). */

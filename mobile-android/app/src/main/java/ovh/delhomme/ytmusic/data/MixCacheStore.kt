@@ -63,6 +63,11 @@ data class CachedMixEntry(
 )
 
 fun isPrecomputedMixSource(sourceKind: String?, remainingUserTracks: Int): Boolean {
+    // Historique / playlist explicite : rester dans la file choisie jusqu’à la fin
+    // (pas d’injection related tant qu’il reste des titres « user »).
+    if (sourceKind == "history" || sourceKind == "playlist") {
+        return remainingUserTracks >= 1
+    }
     if (sourceKind != "mix" && sourceKind != "radio" && sourceKind != "album" && sourceKind != "artist") {
         return false
     }

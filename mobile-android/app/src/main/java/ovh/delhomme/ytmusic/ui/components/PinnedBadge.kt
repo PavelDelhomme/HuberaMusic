@@ -8,7 +8,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,13 +21,13 @@ import androidx.compose.ui.unit.dp
 fun PinnedBadge(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    size: Dp = 28.dp,
+    size: Dp = 32.dp,
 ) {
     Box(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.error)
+            .background(Color(0xFFFF0033))
             .then(
                 if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
             ),

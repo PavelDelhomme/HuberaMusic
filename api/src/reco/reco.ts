@@ -1427,7 +1427,7 @@ export function warmCategoryMixes(userId: string, count = 3) {
 export async function homeReco(userId: string) {
   const prefs = getPrefs(userId);
   const pins = listPins(userId);
-  let history = getHistory(userId, 30);
+  let history = getHistory(userId, 60);
   const top = getTopListened(userId, 20);
   const follows = listFollows(userId);
   const searches = listSearchHistory(userId, 10);
@@ -1481,7 +1481,7 @@ export async function homeReco(userId: string) {
   }
 
   if (history.length) {
-    shelves.push({ title: 'Écouté récemment', items: history.slice(0, 20) });
+    shelves.push({ title: 'Écouté récemment', items: history.slice(0, 40) });
   }
 
   const recentPlaylists = getEntityHistory(userId, 12, 'playlist');

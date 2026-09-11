@@ -620,6 +620,28 @@ class PlayerController(
         applyMusicVolume()
     }
 
+    /**
+     * Mode clip : mute + **pause** le titre (garde `userWantsPlaying`).
+     * Évite le doublon musique/clip et l’EOS titre qui coupe le clip trop tôt.
+     */
+    fun setVideoClipMode(enabled: Boolean) {
+        musicDucked = enabled
+        applyMusicVolume()
+        val p = player() ?: PlaybackService.Holder.player ?: return
+        if (enabled) {
+            runCatching { p.pause() }
+            runCatching { p.volume = 0f }
+        } else {
+            applyMusicVolume()
+            if (userWantsPlaying == true) {
+                runCatching { p.play() }
+            }
+        }
+    }
+
+    /** Intention utilisateur play (ignore pause technique / duck vidéo). */
+    fun wantsPlaying(): Boolean = userWantsPlaying != false && (userWantsPlaying == true || pendingAutoplay)
+
     fun isMusicDucked(): Boolean = musicDucked
 
     private fun applyMusicVolume() {
@@ -1105,6 +1127,48 @@ class PlayerController(
                 p.seekTo(ms.coerceAtLeast(0L))
             }
         }
+    }
+
+    /**
+     * Associe une durée mesurée (Exo audio ou clip vidéo) au titre courant —
+     * même logique que syncFrom / withKnownDurationMs.
+     */
+    fun applyKnownDurationMs(ms: Long) {
+        if (ms < 5_000L) return
+        val idx = _state.value.queueIndex
+        var queue = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
+        if (idx !in queue.indices) {
+            _state.value = _state.value.copy(
+                durationMs = pickSaneDurationMs(
+                    exoMs = ms,
+                    catalogMs = _state.value.track?.durationMsOrNull(),
+                    fallbackMs = _state.value.durationMs.takeIf { it > 0L },
+                    positionMs = _state.value.positionMs,
+                ),
+            )
+            return
+        }
+        val cur = queue[idx]
+        val catalog = cur.durationMsOrNull()
+        if (isSuspiciousExoDuration(ms, catalog, _state.value.positionMs)) return
+        val patched = cur.withKnownDurationMs(ms)
+        if (patched != cur) {
+            val next = queue.toMutableList()
+            next[idx] = patched
+            queue = next
+            PlaybackService.Holder.queue = next
+        }
+        val durationMs = pickSaneDurationMs(
+            exoMs = ms,
+            catalogMs = queue[idx].durationMsOrNull(),
+            fallbackMs = _state.value.durationMs.takeIf { it > 0L },
+            positionMs = _state.value.positionMs,
+        )
+        _state.value = _state.value.copy(
+            track = queue[idx],
+            queue = queue,
+            durationMs = durationMs,
+        )
     }
 
     /** Restaure une file sync (autres appareils) + timecode, sans forcer le play. */

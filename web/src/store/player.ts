@@ -221,6 +221,23 @@ function isPlayable(t: Track) {
   return /^[a-zA-Z0-9_-]{11}$/.test(t.id);
 }
 
+function isMusicTrack(t: Track) {
+  if (!isPlayable(t)) return false;
+  const type = String(t.type || 'song').toLowerCase();
+  if (type === 'video' || type === 'episode' || type === 'movie') return false;
+  const title = String(t.title || '').toLowerCase();
+  if (
+    /\b(podcast|episode|audiobook|interview|gameplay|trailer|tutorial|asmr|vlog|stand[\s-]?up|documentary|explained|full movie|walkthrough|reaction)\b/.test(
+      title,
+    )
+  ) {
+    return false;
+  }
+  const dur = Number(t.durationSeconds || 0);
+  if (dur >= 25 * 60) return false;
+  return true;
+}
+
 /** Clé titre+artiste normalisée — évite doublons « même chanson » avec ids différents. */
 function trackFingerprint(t: Track): string {
   const title = (t.title || '')
@@ -834,7 +851,7 @@ function mergeAutoTracks(seedId: string, pool: Track[], relatedUpdate?: Track[])
   }
   const extra: Track[] = [];
   for (const t of pool) {
-    if (!t?.id || t.id === seedId || existing.has(t.id) || !isPlayable(t)) continue;
+    if (!t?.id || t.id === seedId || existing.has(t.id) || !isMusicTrack(t)) continue;
     existing.add(t.id);
     extra.push(t);
     if (extra.length >= 80) break;
@@ -1683,7 +1700,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       opts?.sourceKind === 'mix' ||
       opts?.sourceKind === 'radio' ||
       opts?.sourceKind === 'album' ||
-      opts?.sourceKind === 'artist';
+      opts?.sourceKind === 'artist' ||
+      opts?.sourceKind === 'history' ||
+      opts?.sourceKind === 'playlist';
     // Nouvelle file explicite → annule radio auto / file précédente, repart de zéro
     autoRadioSeq += 1;
     autoRadioInflight = null;
@@ -1692,9 +1711,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       forceRestart: true,
       sourceId: opts?.sourceId,
       sourceKind: opts?.sourceKind,
-      noAutoRadio: precomputed && playable.length >= 20,
+      noAutoRadio: Boolean(precomputed && (opts?.sourceKind === 'history' || opts?.sourceKind === 'playlist' || playable.length >= 20)),
     });
-    if (precomputed && playable.length >= 20) {
+    if (precomputed && (opts?.sourceKind === 'history' || playable.length >= 20)) {
       set({ autoplay: false });
     }
     end(`${playable.length} tracks`);

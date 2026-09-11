@@ -168,8 +168,10 @@ async function searchBetterClip(
 }
 
 /**
- * Résolution synchrone rapide : cache → sinon même ID immédiat.
- * Option `upgrade=1` : lance une recherche clip en arrière-plan (ne bloque pas).
+ * Résolution clip visuel.
+ * - Par défaut : cache / même ID immédiat (+ search en fond).
+ * - `waitMs` > 0 : attend jusqu’à N ms la recherche d’un vrai clip officiel
+ *   (évite de streamer un ID « Topic » audio-only → Exo qui mouline).
  */
 export async function resolveVisualVideo(
   audioId: string,
@@ -177,8 +179,10 @@ export async function resolveVisualVideo(
     title?: string;
     artist?: string;
     durationSeconds?: number | null;
-    /** Si true, lance search en fond pour améliorer le cache (réponse toujours rapide). */
+    /** Si true, lance search (fond ou attendu selon waitMs). */
     upgrade?: boolean;
+    /** Attendre la search jusqu’à N ms avant de répondre. */
+    waitMs?: number;
   },
 ): Promise<VisualResolve> {
   const id = String(audioId || '').trim();
@@ -186,8 +190,30 @@ export async function resolveVisualVideo(
     return { audioId: id, visualId: null, source: 'none' };
   }
 
+  const waitMs = Math.max(0, Math.min(12_000, Number(hints?.waitMs || 0) || 0));
+
   const hit = cache.get(id);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  if (hit && Date.now() - hit.at < TTL_MS) {
+    // Cache « same » + client qui attend : retente une search (clip officiel).
+    if (waitMs > 0 && hit.value.source === 'same' && hints?.upgrade !== false) {
+      const title = (hints?.title || hit.value.title || '').trim();
+      const artist = (hints?.artist || hit.value.artist || '').trim();
+      if (title) {
+        try {
+          const better = await Promise.race([
+            searchBetterClip(id, title, artist, hints?.durationSeconds ?? null),
+            new Promise<VisualResolve>((resolve) =>
+              setTimeout(() => resolve(hit.value), waitMs),
+            ),
+          ]);
+          if (better.visualId && better.visualId !== id) return better;
+        } catch {
+          /* keep hit */
+        }
+      }
+    }
+    return hit.value;
+  }
 
   const persisted = getVisualCache(id);
   if (persisted?.visual_id) {
@@ -199,6 +225,23 @@ export async function resolveVisualVideo(
       artist: persisted.artist || hints?.artist || undefined,
     };
     cache.set(id, { at: Date.now(), value });
+    if (waitMs > 0 && value.source === 'same' && hints?.upgrade !== false) {
+      const title = (hints?.title || value.title || '').trim();
+      const artist = (hints?.artist || value.artist || '').trim();
+      if (title) {
+        try {
+          const better = await Promise.race([
+            searchBetterClip(id, title, artist, hints?.durationSeconds ?? null),
+            new Promise<VisualResolve>((resolve) =>
+              setTimeout(() => resolve(value), waitMs),
+            ),
+          ]);
+          if (better.visualId && better.visualId !== id) return better;
+        } catch {
+          /* keep persisted */
+        }
+      }
+    }
     return value;
   }
 
@@ -220,14 +263,31 @@ export async function resolveVisualVideo(
     }
   }
 
-  // Réponse immédiate : même ID (le player streamera ?type=video)
   const fast = sameResolve(id, title, artist);
-  remember(fast);
 
   if (hints?.upgrade !== false && title) {
+    if (waitMs > 0) {
+      try {
+        const better = await Promise.race([
+          searchBetterClip(id, title, artist, durationSec),
+          new Promise<VisualResolve>((resolve) => setTimeout(() => resolve(fast), waitMs)),
+        ]);
+        if (better.visualId) {
+          remember(better);
+          return better;
+        }
+      } catch {
+        /* fall through */
+      }
+      remember(fast);
+      return fast;
+    }
+    remember(fast);
     void searchBetterClip(id, title, artist, durationSec).catch(() => {});
+    return fast;
   }
 
+  remember(fast);
   return fast;
 }
 

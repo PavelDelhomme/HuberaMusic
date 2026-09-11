@@ -43,8 +43,10 @@ export function estimateTimedFromPlain(
   if (lines.length < 2) return [];
   const dur =
     durationSec && durationSec >= 20 ? durationSec : Math.max(lines.length * 3.2, 60);
-  const intro = Math.min(Math.max(dur * 0.08, 6), 18);
-  const outro = Math.min(Math.max(dur * 0.07, 5), 16);
+  // Intro courte : beaucoup de titres (rap / covers) chantent dès 2–6 s.
+  // L’ancien 8 % / min 6 s faisait systématiquement « paroles trop tard ».
+  const intro = Math.min(Math.max(dur * 0.035, 2.2), 10);
+  const outro = Math.min(Math.max(dur * 0.06, 4), 14);
   const window = Math.max(dur - intro - outro, lines.length * 1.2);
   const weights = lines.map((l) => Math.max(8, l.length));
   const total = weights.reduce((a, b) => a + b, 0);
