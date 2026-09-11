@@ -74,6 +74,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -87,6 +88,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -97,6 +99,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -146,6 +149,7 @@ import ovh.delhomme.ytmusic.data.buildRadioQueue
 import ovh.delhomme.ytmusic.data.fetchAutoplayTracksFast
 import ovh.delhomme.ytmusic.data.fetchAutoplayTracksFull
 import ovh.delhomme.ytmusic.debug.AppLog
+// VideoPlaybackHost : rememberVideoPlaybackUi / VideoFullscreenOverlay
 import ovh.delhomme.ytmusic.player.CoverPrefetcher
 import ovh.delhomme.ytmusic.player.PlayerController
 import ovh.delhomme.ytmusic.player.PlayerUiState
@@ -234,9 +238,14 @@ fun NowPlayingScreen(
     var mediaSlideX by remember { mutableFloatStateOf(0f) }
     val queueProgress = remember { Animatable(0f) }
     var showLyrics by remember { mutableStateOf(false) }
-    var videoFullscreen by remember { mutableStateOf(false) }
-    /** Dernière position du clip (maître en mode vidéo) pour resync du titre à la sortie. */
-    var lastClipPosMs by remember { mutableLongStateOf(0L) }
+    val video = rememberVideoPlaybackUi(
+        player = player,
+        ui = ui,
+        container = container,
+        sheetVisible = sheetVisible,
+    )
+    /** Alias locaux pour le reste du fichier (file / chrome). */
+    val videoFullscreen = video.fullscreen
     var showEqualizer by remember { mutableStateOf(false) }
     var showSpeedMenu by remember { mutableStateOf(false) }
     var showSaveQueue by remember { mutableStateOf(false) }
@@ -295,67 +304,6 @@ fun NowPlayingScreen(
         val t = ui.track ?: return@LaunchedEffect
         CoverPrefetcher.warm(t.coverUrl(800))
         CoverPrefetcher.warm(t.coverUrl(360))
-    }
-
-    // Pré-chauffe + resolve clip visuel
-    var visualVideoUrl by remember { mutableStateOf<String?>(null) }
-    var visualVideoError by remember { mutableStateOf<String?>(null) }
-    var visualIdUsed by remember { mutableStateOf<String?>(null) }
-
-    // Mode Vidéo : clip officiel en priorité (cache) — sinon même ID, puis upgrade search
-    LaunchedEffect(ui.track?.id, SessionMediaMode.video, sheetVisible) {
-        val track = ui.track
-        if (!sheetVisible || track == null || !SessionMediaMode.video) {
-            if (!SessionMediaMode.video) {
-                // garde l’URL pour re-toggle
-            } else {
-                visualVideoUrl = null
-                visualVideoError = null
-                visualIdUsed = null
-            }
-            return@LaunchedEffect
-        }
-        visualVideoError = null
-        val cached = VisualIdCache.get(context, track.id)
-        val startId = cached?.takeIf { it.isNotBlank() } ?: track.id
-        visualIdUsed = startId
-        visualVideoUrl = container.videoStreamUrl(startId)
-        runCatching {
-            container.ensureFreshToken()
-            val vis = container.api.trackVisual(
-                track.id,
-                title = track.title,
-                artist = track.artistLine().takeIf { it != "Artiste" },
-                durationSeconds = track.durationSeconds,
-            )
-            val vid = vis.visualId?.takeIf { it.isNotBlank() }
-                ?: cached
-                ?: track.id
-            if (vid != track.id) {
-                VisualIdCache.put(context, track.id, vid)
-            }
-            // Upgrade seulement si meilleur clip et mode vidéo encore actif
-            if (vid != visualIdUsed && SessionMediaMode.video) {
-                visualIdUsed = vid
-                visualVideoUrl = container.videoStreamUrl(vid)
-            }
-            // Warm resolve (formats) sans bloquer l’UI
-            runCatching { container.api.streamResolveUrl(vid, "video") }
-        }.onFailure {
-            if (ovh.delhomme.ytmusic.BuildConfig.DEBUG) {
-                AppLog.w("YTMVideo", "visual upgrade failed: ${it.message}")
-            }
-        }
-    }
-
-    // Prefetch clip du titre suivant (mode vidéo uniquement, léger)
-    LaunchedEffect(ui.track?.id, ui.queueIndex, SessionMediaMode.video, ui.queue.size) {
-        if (!SessionMediaMode.video) return@LaunchedEffect
-        val next = ui.queue.getOrNull(ui.queueIndex + 1) ?: return@LaunchedEffect
-        runCatching {
-            val cached = VisualIdCache.get(context, next.id) ?: next.id
-            runCatching { container.api.streamResolveUrl(cached, "video") }
-        }
     }
 
     // Précharge similaires dès le titre courant (avant d’ouvrir le panneau file)
@@ -568,40 +516,21 @@ fun NowPlayingScreen(
         while (isActive) {
             player.tick()
             delay(
-                when {
-                    // Tick serré : un poll à 120 ms annulait tout le lead karaoké.
-                    showLyrics && ui.playing ->
-                        if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 80L else 48L
-                    ui.playing ->
-                        if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 800L else 400L
-                    else ->
-                        if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 2_000L else 1_200L
-                },
+                ovh.delhomme.ytmusic.data.BatterySaver.nowPlayingTickMs(
+                    lyrics = showLyrics,
+                    playing = ui.playing,
+                ),
             )
         }
     }
 
     LaunchedEffect(ui.track?.id) {
-        lastClipPosMs = 0L
         dragOffset = 0f
         mediaSlideX = 0f
     }
 
-    LaunchedEffect(SessionMediaMode.video) {
-        player.setMusicDucked(SessionMediaMode.video)
-        if (!SessionMediaMode.video) {
-            videoFullscreen = false
-            if (lastClipPosMs > 0L) {
-                player.seek(lastClipPosMs)
-                lastClipPosMs = 0L
-            }
-        }
-    }
-
     // File dépliée : le retour la replie d'abord, il ferme le lecteur au coup suivant.
-    BackHandler(enabled = queueInteractive) { collapseQueue() }
-
-    BackHandler(enabled = videoFullscreen) { videoFullscreen = false }
+    BackHandler(enabled = queueInteractive && !videoFullscreen) { collapseQueue() }
 
     LaunchedEffect(ui.queueIndex, ui.queue.size, sheetVisible) {
         if (!sheetVisible || ui.queue.isEmpty()) return@LaunchedEffect
@@ -760,11 +689,14 @@ fun NowPlayingScreen(
                         MediaModeSwitch(
                             video = SessionMediaMode.video,
                             onChange = { next ->
-                                if (!next && SessionMediaMode.video && lastClipPosMs > 0L) {
-                                    player.seek(lastClipPosMs)
+                                if (!next && SessionMediaMode.video && video.lastClipPosMs > 0L) {
+                                    player.seek(video.lastClipPosMs)
                                 }
                                 SessionMediaMode.video = next
-                                player.setMusicDucked(next)
+                                player.setVideoClipMode(next)
+                                if (!next) {
+                                    ovh.delhomme.ytmusic.player.VisualClipPrefetcher.cancel()
+                                }
                             },
                         )
                         Spacer(Modifier.weight(1f))
@@ -786,85 +718,14 @@ fun NowPlayingScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // Lecteur « plein » : cover + contrôles + aperçu file (portrait : file ancrée en bas)
                 val landscapeLayout = isLandscape()
-                // File ouverte (≥ ~15 %) : panneau dédié (mini-lecteur + onglets + liste), pas un overlay semi-transparent
+                // File ouverte (≥ ~15 %) : panneau dédié par-dessus — le NP (Exo vidéo) reste
+                // composé / en lecture (alpha 0), on ne dispose pas la surface.
                 val showQueuePanel = qp > 0.15f
-                if (showQueuePanel) {
-                    Column(
-                        Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background)
-                            .navigationBarsPadding()
-                            .graphicsLayer {
-                                // Slide opaque (pas d’alpha → plus de grisé pendant le swipe)
-                                val t = ((qp - 0.15f) / 0.85f).coerceIn(0f, 1f)
-                                translationY = (1f - t) * 56f
-                            },
-                    ) {
-                        QueueExpandedHeader(
-                            track = track,
-                            playing = ui.playing,
-                            shuffle = ui.shuffle,
-                            repeat = ui.repeat,
-                            queueTitle = ui.queueTitle,
-                            progressHint = qp,
-                            positionMs = ui.positionMs,
-                            durationMs = ui.durationMs,
-                            onSeekRatio = { player.seekRatio(it) },
-                            onCollapse = { collapseQueue() },
-                            onToggle = player::toggle,
-                            onSkipPrev = {
-                                val now = SystemClock.elapsedRealtime()
-                                val double = now - lastPrevTap < 380L
-                                lastPrevTap = now
-                                player.skipPrevOrRestart(forcePrevious = double)
-                            },
-                            onSkipNext = player::skipNext,
-                            onToggleShuffle = player::toggleShuffle,
-                            onCycleRepeat = player::cycleRepeat,
-                            onOpenArtist = onOpenArtist,
-                            onQueueDrag = ::onQueueDrag,
-                            onQueueDragEnd = { settleQueue(it) },
-                            onSwipeToSimilar = { queuePanelTab = 1 },
-                            onSwipeToQueue = { queuePanelTab = 0 },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        QueueExpandedBody(
-                            ui = ui,
-                            container = container,
-                            player = player,
-                            listState = queueListState,
-                            panelTab = queuePanelTab,
-                            onPanelTabChange = { queuePanelTab = it },
-                            similarListState = similarListState,
-                            similarPanelCache = similarPanelCache,
-                            onPlayAt = player::playAt,
-                            onMore = onMore,
-                            onMove = player::moveInQueue,
-                            onSave = { showSaveQueue = true },
-                            onClear = {
-                                player.clearUpcomingFromQueue()
-                                Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
-                            },
-                            onStartMix = {
-                                val t = ui.track ?: return@QueueExpandedBody
-                                scope.launch {
-                                    val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
-                                    if (mix.isNotEmpty()) {
-                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
-                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            },
-                            onToggleAutoplay = player::toggleAutoplaySuggestions,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                                .fillMaxHeight(),
-                        )
-                    }
-                }
-                if (!showQueuePanel) {
-                Column(Modifier.fillMaxSize()) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .then(if (showQueuePanel) Modifier.alpha(0f) else Modifier),
+                ) {
                 Column(
                     Modifier
                         // Portrait : un peu moins pour la pochette, un peu plus pour
@@ -942,40 +803,70 @@ fun NowPlayingScreen(
                                             .clip(RoundedCornerShape(12.dp))
                                             .background(Color.Black.copy(alpha = 0.42f)),
                                     )
-                                } else if (SessionMediaMode.video) {
+                                } else if (SessionMediaMode.video && !videoFullscreen) {
                                     when {
-                                        visualVideoUrl != null -> SyncedVideoSurface(
-                                            streamUrl = visualVideoUrl!!,
+                                        video.streamUrl != null -> SyncedVideoSurface(
+                                            streamUrl = video.streamUrl!!,
                                             positionMs = ui.positionMs,
-                                            playing = ui.playing,
-                                            active = sheetVisible && SessionMediaMode.video,
+                                            playing = ui.playing || (SessionMediaMode.video && player.wantsPlaying()),
+                                            active = sheetVisible && SessionMediaMode.video && !videoFullscreen,
                                             useClipAudio = true,
+                                            trackDurationMs = ui.durationMs,
                                             onClipPositionMs = { pos ->
-                                                lastClipPosMs = pos
-                                                if (kotlin.math.abs(ui.positionMs - pos) > 850L) {
-                                                    player.seek(pos)
+                                                video.lastClipPosMs = pos
+                                                val cap = ui.durationMs.takeIf { it > 1_000L }
+                                                val safe = if (cap != null) pos.coerceAtMost(cap - 400L) else pos
+                                                if (kotlin.math.abs(ui.positionMs - safe) > 1_200L) {
+                                                    player.seek(safe.coerceAtLeast(0L))
                                                 }
                                             },
-                                            onPlaybackError = {
+                                            onClipDurationMs = { clipDur ->
+                                                VisualIdCache.putClipDurationMs(context, track.id, clipDur)
+                                                player.applyKnownDurationMs(clipDur)
+                                            },
+                                            onPlaybackError = { errMsg ->
                                                 val tid = track.id
-                                                val used = visualIdUsed
-                                                VisualIdCache.put(context, tid, tid)
-                                                if (used != null && used != tid) {
-                                                    visualIdUsed = tid
-                                                    visualVideoUrl = container.videoStreamUrl(tid)
-                                                    visualVideoError = null
-                                                } else {
-                                                    visualVideoError = "Clip indisponible"
+                                                val used = video.visualId
+                                                runCatching { VisualIdCache.remove(context, tid) }
+                                                scope.launch {
+                                                    val retried = runCatching {
+                                                        container.ensureFreshToken()
+                                                        container.api.trackVisual(
+                                                            tid,
+                                                            title = track.title,
+                                                            artist = track.artistLine().takeIf { it != "Artiste" },
+                                                            durationSeconds = track.durationSeconds,
+                                                            waitMs = 4_500,
+                                                            refresh = 1,
+                                                        )
+                                                    }.getOrNull()
+                                                    val alt = retried?.visualId?.takeIf {
+                                                        it.isNotBlank() && it != used && it != tid
+                                                    }
+                                                    if (alt != null && SessionMediaMode.video && ui.track?.id == tid) {
+                                                        VisualIdCache.put(context, tid, alt)
+                                                        video.visualId = alt
+                                                        video.error = null
+                                                        video.streamUrl = container.videoStreamUrl(alt)
+                                                    } else {
+                                                        video.streamUrl = null
+                                                        video.visualId = null
+                                                        video.error = when {
+                                                            errMsg.contains("trop lent", ignoreCase = true) ->
+                                                                "Clip trop lent — pochette affichée"
+                                                            else -> "Clip indisponible — pochette affichée"
+                                                        }
+                                                    }
                                                 }
                                             },
                                             fullscreen = false,
-                                            onToggleFullscreen = { videoFullscreen = true },
+                                            onToggleFullscreen = { video.enterFullscreen() },
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(coverH)
                                                 .clip(RoundedCornerShape(12.dp)),
                                         )
-                                        visualVideoError != null -> Box(
+                                        video.error != null -> Box(
                                             Modifier
                                                 .fillMaxWidth()
                                                 .height(coverH)
@@ -994,7 +885,7 @@ fun NowPlayingScreen(
                                                     },
                                             )
                                             Text(
-                                                visualVideoError!!,
+                                                video.error!!,
                                                 color = PlayerMuted,
                                                 modifier = Modifier
                                                     .align(Alignment.BottomCenter)
@@ -1005,11 +896,47 @@ fun NowPlayingScreen(
                                             Modifier
                                                 .fillMaxWidth()
                                                 .height(coverH)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(Color.Black.copy(alpha = 0.35f)),
-                                            contentAlignment = Alignment.Center,
+                                                .clip(RoundedCornerShape(12.dp)),
                                         ) {
-                                            Text("Chargement vidéo…", color = PlayerMuted)
+                                            // Pochette tout de suite — plus d’écran « Recherche du clip… »
+                                            AsyncImage(
+                                                model = track.coverUrl(400),
+                                                contentDescription = track.title,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .graphicsLayer {
+                                                        scaleX = 1.14f
+                                                        scaleY = 1.14f
+                                                    },
+                                            )
+                                            if (video.resolving) {
+                                                Box(
+                                                    Modifier
+                                                        .align(Alignment.BottomEnd)
+                                                        .padding(10.dp)
+                                                        .background(
+                                                            Color.Black.copy(alpha = 0.45f),
+                                                            RoundedCornerShape(8.dp),
+                                                        )
+                                                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                                                    contentAlignment = Alignment.Center,
+                                                ) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        CircularProgressIndicator(
+                                                            color = Color.White,
+                                                            strokeWidth = 1.5.dp,
+                                                            modifier = Modifier.size(12.dp),
+                                                        )
+                                                        Spacer(Modifier.width(6.dp))
+                                                        Text(
+                                                            "Clip…",
+                                                            color = Color.White.copy(alpha = 0.9f),
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 } else {
@@ -1624,41 +1551,93 @@ fun NowPlayingScreen(
                             .navigationBarsPadding(),
                     )
                 }
-                } // Column lecteur plein
-                } // if (!showQueuePanel)
+                } // Column lecteur plein (reste composé sous la file)
+                if (showQueuePanel) {
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .zIndex(2f)
+                            .background(MaterialTheme.colorScheme.background)
+                            .navigationBarsPadding()
+                            .graphicsLayer {
+                                // Slide opaque (pas d’alpha → plus de grisé pendant le swipe)
+                                val t = ((qp - 0.15f) / 0.85f).coerceIn(0f, 1f)
+                                translationY = (1f - t) * 56f
+                            },
+                    ) {
+                        QueueExpandedHeader(
+                            track = track,
+                            playing = ui.playing,
+                            shuffle = ui.shuffle,
+                            repeat = ui.repeat,
+                            queueTitle = ui.queueTitle,
+                            progressHint = qp,
+                            positionMs = ui.positionMs,
+                            durationMs = ui.durationMs,
+                            onSeekRatio = { player.seekRatio(it) },
+                            onCollapse = { collapseQueue() },
+                            onToggle = player::toggle,
+                            onSkipPrev = {
+                                val now = SystemClock.elapsedRealtime()
+                                val double = now - lastPrevTap < 380L
+                                lastPrevTap = now
+                                player.skipPrevOrRestart(forcePrevious = double)
+                            },
+                            onSkipNext = player::skipNext,
+                            onToggleShuffle = player::toggleShuffle,
+                            onCycleRepeat = player::cycleRepeat,
+                            onOpenArtist = onOpenArtist,
+                            onQueueDrag = ::onQueueDrag,
+                            onQueueDragEnd = { settleQueue(it) },
+                            onSwipeToSimilar = { queuePanelTab = 1 },
+                            onSwipeToQueue = { queuePanelTab = 0 },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        QueueExpandedBody(
+                            ui = ui,
+                            container = container,
+                            player = player,
+                            listState = queueListState,
+                            panelTab = queuePanelTab,
+                            onPanelTabChange = { queuePanelTab = it },
+                            similarListState = similarListState,
+                            similarPanelCache = similarPanelCache,
+                            onPlayAt = player::playAt,
+                            onMore = onMore,
+                            onMove = player::moveInQueue,
+                            onSave = { showSaveQueue = true },
+                            onClear = {
+                                player.clearUpcomingFromQueue()
+                                Toast.makeText(context, "File vidée", Toast.LENGTH_SHORT).show()
+                            },
+                            onStartMix = {
+                                val t = ui.track ?: return@QueueExpandedBody
+                                scope.launch {
+                                    val mix = buildRadioQueue(container.api, "track", t.id, t, mixCache = container.mixCache)
+                                    if (mix.isNotEmpty()) {
+                                        player.playRadioOrEnqueue(mix, "Mix", sourceKind = "radio")
+                                        Toast.makeText(context, "Mix ajouté après le titre en cours", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            onToggleAutoplay = player::toggleAutoplaySuggestions,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                                .fillMaxHeight(),
+                        )
+                    }
+                }
             } // Box
         }
-        if (videoFullscreen && visualVideoUrl != null && SessionMediaMode.video && track != null) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black),
-            ) {
-                SyncedVideoSurface(
-                    streamUrl = visualVideoUrl!!,
-                    positionMs = ui.positionMs,
-                    playing = ui.playing,
-                    active = sheetVisible,
-                    fullscreen = true,
-                    useClipAudio = true,
-                    onClipPositionMs = { pos ->
-                        lastClipPosMs = pos
-                        if (kotlin.math.abs(ui.positionMs - pos) > 850L) {
-                            player.seek(pos)
-                        }
-                    },
-                    onPlaybackError = {
-                        val tid = track.id
-                        VisualIdCache.put(context, tid, tid)
-                        if (visualIdUsed != tid) {
-                            visualIdUsed = tid
-                            visualVideoUrl = container.videoStreamUrl(tid)
-                        }
-                    },
-                    onToggleFullscreen = { videoFullscreen = false },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+        if (track != null) {
+            VideoFullscreenOverlay(
+                video = video,
+                track = track,
+                ui = ui,
+                player = player,
+                container = container,
+            )
         }
     }
 
@@ -1901,8 +1880,7 @@ private fun PortraitQueuePreview(
         }
     }
     val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
-    // L’aperçu replié montre ce qui vient — pas le titre déjà affiché au-dessus.
-    // Header Mix sticky hors LazyColumn — reste visible pendant le scroll
+    // Aperçu replié : titre en cours en premier (rouge) + suite — sticky header au-dessus.
     Column(modifier = modifier.nestedScroll(blockParentDismiss)) {
         val qh = queueHeaderLabels(ui)
         QueueSectionHeader(
@@ -1928,12 +1906,28 @@ private fun PortraitQueuePreview(
             onQueueDrag = onQueueDrag,
             onQueueDragEnd = onQueueDragEnd,
         )
+        // Titre actuel épinglé en rouge — visible dès l’aperçu recroquevillé
+        val current = ui.track ?: ui.queue.getOrNull(ui.queueIndex)
+        if (current != null) {
+            Text(
+                current.title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = SeekRed,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+        }
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f, fill = false),
             state = previewList,
         ) {
+        // Suite après le courant (le courant est déjà en rouge au-dessus)
         val previewFrom = (ui.queueIndex + 1).coerceIn(0, boundary)
         itemsIndexed(
             ui.queue.subList(previewFrom, boundary),
@@ -1943,7 +1937,7 @@ private fun PortraitQueuePreview(
             QueueTrackRow(
                 track = item,
                 index = abs,
-                highlighted = abs == ui.queueIndex,
+                highlighted = false,
                 onClick = { player.playAt(abs) },
                 onLongClick = { onMore?.invoke(item) },
                 onMove = { from, to -> player.moveInQueue(from, to) },
@@ -2189,7 +2183,7 @@ private fun QueueExpandedHeader(
                     track.title,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = PlayerFg,
+                    color = SeekRed,
                     fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.fillMaxWidth(),
@@ -2359,16 +2353,22 @@ private fun QueueExpandedBody(
     val scope = rememberCoroutineScope()
     var lastPanelTab by remember { mutableIntStateOf(panelTab) }
 
-    LaunchedEffect(panelTab, seedId, similarTracks.size, similarListState) {
+    val similarTracksRef = rememberUpdatedState(similarTracks)
+    val similarLoadingMoreRef = rememberUpdatedState(similarLoadingMore)
+    val similarExhaustedRef = rememberUpdatedState(similarExhausted)
+
+    // Scroll infini : append uniquement — ne jamais restart ni takeLast (ça « réactualisait » toute la liste).
+    LaunchedEffect(panelTab, seedId) {
         if (panelTab != 1 || seedId.isNullOrBlank()) return@LaunchedEffect
         snapshotFlow {
             similarListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
         }.distinctUntilChanged().collect { lastVisible ->
-            val size = similarTracks.size
-            if (size == 0 || similarLoadingMore || similarExhausted) return@collect
+            val current = similarTracksRef.value
+            val size = current.size
+            if (size == 0 || similarLoadingMoreRef.value || similarExhaustedRef.value) return@collect
             if (lastVisible < size - 5) return@collect
             similarLoadingMore = true
-            val anchor = similarTracks.lastOrNull()?.id ?: seedId
+            val anchor = current.lastOrNull()?.id ?: seedId
             val more = runCatching {
                 val rel = container.api.related(anchor, full = 0)
                 dedupeSimilar(
@@ -2379,16 +2379,17 @@ private fun QueueExpandedBody(
             val up = runCatching {
                 container.api.upNext(anchor).tracks.orEmpty().filter { it.isPlayable() }
             }.getOrDefault(emptyList())
-            val seen = similarTracks.map { it.id }.toHashSet()
+            val seen = current.map { it.id }.toHashSet()
             val extras = (more + up).filter { it.id !in seen && it.id != seedId }
             if (extras.isEmpty()) {
                 similarExhausted = true
             } else {
-                val merged = (similarTracks + extras).distinctBy { it.id }
-                val trimmed = if (merged.size > 64) merged.takeLast(64) else merged
-                similarTracks = trimmed
+                // Garde le début de la liste (scroll stable) ; plafonne sans dropper le haut.
+                val merged = (current + extras).distinctBy { it.id }.take(120)
+                similarTracks = merged
+                if (merged.size >= 120) similarExhausted = true
                 similarPanelCache[seedId] = (similarPanelCache[seedId] ?: SimilarTabCache()).copy(
-                    tracks = trimmed,
+                    tracks = merged,
                     exhausted = similarExhausted,
                 )
             }
@@ -2487,6 +2488,19 @@ private fun QueueExpandedBody(
             )
         }.getOrDefault(emptyList())
         if (ui.track?.id != seedId) return@LaunchedEffect
+        // N’écrase pas une liste déjà allongée par le scroll (sinon « toute la liste » saute).
+        val alreadyExpanded = similarTracks.size > fast.size + 2
+        if (alreadyExpanded) {
+            val seenId = similarTracks.map { it.id }.toHashSet()
+            val extras = mid.filter { it.id !in seenId }
+            if (extras.isNotEmpty()) {
+                val merged = (similarTracks + extras).distinctBy { it.id }.take(120)
+                similarTracks = merged
+                similarPanelCache[seedId] =
+                    (similarPanelCache[seedId] ?: SimilarTabCache()).copy(tracks = merged)
+            }
+            return@LaunchedEffect
+        }
         val seenId = similarTracks.map { it.id }.toHashSet()
         val extras = mid.filter { it.id !in seenId }
         if (extras.isNotEmpty()) {
@@ -2919,7 +2933,7 @@ private fun QueueTrackRow(
             .fillMaxWidth()
             .alpha(if (enabled) 1f else 0.38f)
             .background(
-                if (highlighted) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                if (highlighted) SeekRed.copy(alpha = 0.14f)
                 else Color.Transparent,
             )
             .combinedClickable(
@@ -2967,7 +2981,7 @@ private fun QueueTrackRow(
                     track.title,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    color = if (highlighted) MaterialTheme.colorScheme.primary else PlayerFg,
+                    color = if (highlighted) SeekRed else PlayerFg,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -3063,7 +3077,7 @@ private fun InlineSyncedLyrics(
             if (lyricsSource == null) {
                 lyricsSource = lyricsCache.getString("s_${track.id}", null)
             }
-            loading = false
+      loading = false
         }
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() && !cachedText.isNullOrBlank()) {
             return@LaunchedEffect
@@ -3091,6 +3105,10 @@ private fun InlineSyncedLyrics(
                         timed = estimateTimedFromPlain(it.lyrics, durationMs.coerceAtLeast(0L))
                         if (timed.isNotEmpty()) lyricsSource = "estimated"
                     }
+                    // Si durée encore 0 au fetch : on marquera estimated pour re-stretch plus bas.
+                    if (durationMs < 20_000L && lyricsSource == "estimated") {
+                        lyricsSource = "estimated"
+                    }
                     runCatching {
                         val ed = lyricsCache.edit()
                         if (!it.lyrics.isNullOrBlank()) {
@@ -3100,8 +3118,10 @@ private fun InlineSyncedLyrics(
                                     "l_${track.id}",
                                     timed.joinToString("\n") { l -> "${l.startMsLong()}|${l.text}" },
                                 )
+                                .putLong("d_${track.id}", durationMs.coerceAtLeast(0L))
                         } else {
                             ed.remove("t_${track.id}").remove("s_${track.id}").remove("l_${track.id}")
+                                .remove("d_${track.id}")
                         }
                         ed.apply()
                     }
@@ -3126,8 +3146,36 @@ private fun InlineSyncedLyrics(
         loading = false
     }
 
-    // Avance karaoké ~0,10 s perçue (180 ms − latence tick/player) ; segments mid-song en plus.
-    val leadMs = 180L
+    // Re-calage dès que la durée réelle est connue (évite estimation figée à ~60 s).
+    LaunchedEffect(durationMs, track.id, text, lyricsSource) {
+        if (durationMs < 20_000L || text.isNullOrBlank() || timed.size < 2) return@LaunchedEffect
+        val src = lyricsSource.orEmpty()
+        val last = timed.last().startMsLong()
+        val spanLooksShort = last < (durationMs * 0.42).toLong()
+        val spanLooksLong = last > (durationMs * 1.18).toLong()
+        val mayRestretchPlain = src == "estimated" ||
+            ((src == "genius" || src == "lyrics.ovh") && (spanLooksShort || spanLooksLong))
+        if (!mayRestretchPlain) return@LaunchedEffect
+        // estimated : toujours recalculer avec la vraie durée + intro courte.
+        if (src != "estimated" && !spanLooksShort && !spanLooksLong) return@LaunchedEffect
+        val re = estimateTimedFromPlain(text, durationMs)
+        if (re.size < 2) return@LaunchedEffect
+        timed = re
+        lyricsSource = "estimated"
+        runCatching {
+            container.sharedPrefs("plm_lyrics_cache_v5").edit()
+                .putString(
+                    "l_${track.id}",
+                    re.joinToString("\n") { l -> "${l.startMsLong()}|${l.text}" },
+                )
+                .putString("s_${track.id}", "estimated")
+                .putLong("d_${track.id}", durationMs)
+                .apply()
+        }
+    }
+
+    // Avance karaoké : un peu plus pour l’estimation (souvent en retard ressenti).
+    val leadMs = if (lyricsSource == "estimated") 320L else 180L
     val sourceLagMs = 0L
     val effectiveOffsetMs = lyricOffsetAtMs(userOffsetMs, segments, positionMs, durationMs)
     val syncPos = positionMs + leadMs - effectiveOffsetMs - sourceLagMs
@@ -3454,8 +3502,9 @@ private fun estimateTimedFromPlain(raw: String?, durationMs: Long): List<TimedLy
     }
     if (lines.size < 2) return emptyList()
     val durSec = if (durationMs >= 20_000L) durationMs / 1000.0 else (lines.size * 3.2).coerceAtLeast(60.0)
-    val intro = (durSec * 0.08).coerceIn(6.0, 18.0)
-    val outro = (durSec * 0.07).coerceIn(5.0, 16.0)
+    // Intro courte : évite « paroles trop tard » (rap / covers dense).
+    val intro = (durSec * 0.035).coerceIn(2.2, 10.0)
+    val outro = (durSec * 0.06).coerceIn(4.0, 14.0)
     val window = (durSec - intro - outro).coerceAtLeast(lines.size * 1.2)
     val weights = lines.map { it.length.coerceAtLeast(8) }
     val total = weights.sum().coerceAtLeast(1)

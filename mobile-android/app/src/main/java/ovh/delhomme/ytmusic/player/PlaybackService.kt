@@ -866,16 +866,28 @@ class PlaybackService : MediaSessionService() {
             // ce n’est PAS une panne réseau : avancer proprement, sans toast « connexion perdue ».
             // Fin de CE fichier (pos ≈ durée Exo fiable) = enchaîner.
             // Ne jamais se baser sur le catalogue YTM (souvent plus court) → skip prématuré.
+            // Interludes / skits (~15–40 s, ex. Rilès « IT IS NOT A MISTAKE… ») : le seuil
+            // historique 45 s laissait passer un faux 503 « Titre indisponible » à l’EOS.
+            val shortTrack = dur in 12_000L..44_999L || exoDurRaw in 12_000L..44_999L
+            val eosRatio = if (shortTrack) 0.88 else 0.96
+            val httpStatus = httpStatusOf(error)
             val nearExoEnd =
-                dur >= 45_000L &&
+                dur >= 12_000L &&
                     pos >= 0L &&
-                    exoDurRaw >= 45_000L &&
+                    exoDurRaw >= 8_000L &&
                     !isSuspiciousExoDuration(exoDurRaw, catalogDur, pos) &&
                     (
-                        pos.toDouble() / dur.toDouble() >= 0.96 ||
+                        pos.toDouble() / dur.toDouble() >= eosRatio ||
                             (dur - pos) in 0L..2_500L
                     )
-            val nearEnd = !localFile && nearExoEnd
+            // Catalogue court + position proche fin + 5xx/coupure : aussi une vraie EOS.
+            val catalogNearEnd =
+                catalogDur != null &&
+                    catalogDur in 12_000L..90_000L &&
+                    pos >= 0L &&
+                    pos.toDouble() / catalogDur.toDouble() >= 0.85 &&
+                    (httpStatus == null || httpStatus >= 400)
+            val nearEnd = !localFile && (nearExoEnd || catalogNearEnd)
             if (nearEnd) {
                 Holder.streamRecoveringId = ""
                 Holder.streamFailStreak = 0
@@ -883,7 +895,7 @@ class PlaybackService : MediaSessionService() {
                 StreamPrefetcher.markStreamOk()
                 AppLog.i(
                     "PlaybackService",
-                    "EOS via error (pas une panne réseau) id=$id pos=$pos dur=$dur code=${error.errorCode}",
+                    "EOS via error (pas une panne réseau) id=$id pos=$pos dur=$dur exo=$exoDurRaw short=$shortTrack catalogNear=$catalogNearEnd code=${error.errorCode} http=$httpStatus",
                 )
                 val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
                 val nextIdx = curIdx + 1
@@ -906,7 +918,6 @@ class PlaybackService : MediaSessionService() {
                 return
             }
 
-            val httpStatus = httpStatusOf(error)
             val streak = streamFailStreak.incrementAndGet()
             Holder.streamFailStreak = streak
             Holder.streamRecoveringId = id
@@ -1928,7 +1939,7 @@ class PlaybackService : MediaSessionService() {
                     return@launch
                 }
                 val existing = Holder.queue.map { it.id }.toHashSet()
-                val toAdd = tracks.filter { it.isPlayable() && it.id !in existing }.take(12)
+                val toAdd = tracks.filter { it.isMusicTrack() && it.id !in existing }.take(12)
                 if (toAdd.isEmpty()) return@launch
                 val base = { id: String -> container.remoteStreamUrl(id) }
                 withContext(Dispatchers.Main.immediate) {

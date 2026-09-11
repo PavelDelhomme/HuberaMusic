@@ -2,6 +2,185 @@
   "updatedAt": "2026-09-11",
   "versions": [
     {
+      "version": "1.3.225",
+      "date": "2026-09-11",
+      "title": "Titre en cours rouge dans la file",
+      "notes": [
+        "File recroquevillée : le titre en cours réapparaît en rouge en haut de l’aperçu",
+        "File dépliée : titre courant en rouge dans l’en-tête",
+        "Ligne surlignée de la file en rouge (plus en couleur thème générique)"
+      ]
+    },
+    {
+      "version": "1.3.224",
+      "date": "2026-09-11",
+      "title": "Stabilisation lecteur vidéo",
+      "notes": [
+        "Correction plantage Now Playing (VerifyError DEX) en mode Vidéo sur certains appareils",
+        "Logique clip / plein écran isolée dans un module dédié — ouverture NP plus fiable",
+        "Comportements file, FS et contrôles inchangés côté usage"
+      ]
+    },
+    {
+      "version": "1.3.223",
+      "date": "2026-09-11",
+      "title": "Clip instantané + batterie",
+      "notes": [
+        "Mode Vidéo : plus d’écran « Recherche du clip… » — pochette immédiate, clip dès qu’il est prêt",
+        "Pré-résolution silencieuse des clips (titre courant + suivants) pour un bascule Vidéo instantanée",
+        "Batterie : Coil plus léger, prefetch pochettes/clips davantage calés sur le niveau batterie"
+      ]
+    },
+    {
+      "version": "1.3.222",
+      "date": "2026-09-11",
+      "title": "Économie batterie sans perte de données",
+      "notes": [
+        "Batterie faible / économiseur : prefetch allégé, ticks UI et sync espacés — lecture intacte",
+        "Titres et clips déjà téléchargés conservés (pas de purge offline)",
+        "Mode Vidéo : moins de prefetch clips et buffers plus légers"
+      ]
+    },
+    {
+      "version": "1.3.221",
+      "date": "2026-09-11",
+      "title": "Vidéo FS contrôles + DL clips",
+      "notes": [
+        "Téléchargement : le clip vidéo part en même temps que l’audio",
+        "Plein écran : overlay lecteur (seek, play/pause, précédent/suivant, quitter) — option dans Compte",
+        "Clips déjà téléchargés lus hors-ligne en mode Vidéo"
+      ]
+    },
+    {
+      "version": "1.3.220",
+      "date": "2026-09-11",
+      "title": "Vidéo plein écran stable",
+      "notes": [
+        "Plein écran vidéo : ne se referme plus tout seul au premier tap",
+        "Overlay natif (plus de Dialog fragile) + paysage propre, retour portrait ensuite"
+      ]
+    },
+    {
+      "version": "1.3.219",
+      "date": "2026-09-11",
+      "title": "Vidéo : file sans coupure + durée clip",
+      "notes": [
+        "Ouvrir la file d’attente ne coupe plus la vidéo : elle reste en lecture et reprend à l’écran au même endroit",
+        "Durée du clip associée au titre (comme pour l’audio) pour la barre et la fin de piste",
+        "Plein écran : toujours le vrai flux vidéo Exo, pas un faux WebView"
+      ]
+    },
+    {
+      "version": "1.3.218",
+      "date": "2026-09-11",
+      "title": "Vidéo plein écran + prefetch file",
+      "notes": [
+        "Plein écran vidéo : plus de doublon son (un seul lecteur) + paysage forcé",
+        "Préchargement des clips comme l’audio : titre courant + 5 suivants"
+      ]
+    },
+    {
+      "version": "1.3.217",
+      "date": "2026-09-11",
+      "title": "Vidéo gestes, recherche, OTA, anti-doublon",
+      "notes": [
+        "Vidéo : double-tap gauche −5 s / droite +5 s ; tap pour plein écran",
+        "Plein écran : orientation paysage ; plus de doublon son titre+clip",
+        "Clip plus long que le titre : ne coupe plus au milieu via la timeline audio",
+        "Recherche « Tout » : meilleur titre (ex. Bella) avant la fiche artiste",
+        "OTA : réouverture plus agressive après installation"
+      ]
+    },
+    {
+      "version": "1.3.216",
+      "date": "2026-09-11",
+      "title": "OTA : réouverture auto après MAJ",
+      "notes": [
+        "Après une mise à jour, PLM se rouvre vraiment (plus seulement la notif « réouverture »)",
+        "Si l’écran reste fermé : une notif urgente « Touche pour rouvrir » apparaît aussi"
+      ]
+    },
+    {
+      "version": "1.3.215",
+      "date": "2026-09-11",
+      "title": "Vidéo : son, fluidité, préchargement",
+      "notes": [
+        "Mode Vidéo : le son du clip est de retour (plus de silence)",
+        "Lecture plus fluide : plus de boucle de seek / URL qui recréait le lecteur",
+        "Les 2–3 titres suivants préchargent déjà leur clip — moins d’attente « Recherche du clip… »",
+        "Mode Titre / musique seule : inchangé, pas de prefetch vidéo en fond"
+      ]
+    },
+    {
+      "version": "1.3.213",
+      "date": "2026-09-11",
+      "title": "Mode Vidéo : image + flux prod",
+      "notes": [
+        "Mode Vidéo : le clip s’affiche vraiment (plus d’écran noir en cours de titre)",
+        "Seek calé sur la durée du clip — plus de frame noire en fin de chanson",
+        "Serveur : flux vidéo via relais maison quand le VPS ne peut pas (YouTube datacenter)"
+      ]
+    },
+    {
+      "version": "1.3.212",
+      "date": "2026-09-11",
+      "title": "Similaires : scroll stable",
+      "notes": [
+        "Onglet Similaires : en descendant, les nouveaux titres s’ajoutent à la suite",
+        "Plus de rafraîchissement de toute la liste au scroll"
+      ]
+    },
+    {
+      "version": "1.3.211",
+      "date": "2026-09-11",
+      "title": "Fins de titres courts",
+      "notes": [
+        "Plus de faux « Titre indisponible / 503 » en fin d’interlude ou skit (~30 s)",
+        "Ex. Rilès « IT IS NOT A MISTAKE… » : enchaîne proprement au titre suivant"
+      ]
+    },
+    {
+      "version": "1.3.210",
+      "date": "2026-09-11",
+      "title": "Épingle, signalement, téléchargements",
+      "notes": [
+        "Accès rapide : épingle instantanée + badge rouge bien visible",
+        "Signaler un problème : texte simple (« À l'équipe de développement »)",
+        "Téléchargement : plus bloqué à 3 % ; démarre vraiment après une courte préparation",
+        "Téléchargement : le clip vidéo est aussi récupéré en fond (pour le mode Vidéo plus tard)"
+      ]
+    },
+    {
+      "version": "1.3.209",
+      "date": "2026-09-11",
+      "title": "Écouté récemment = vraie file",
+      "notes": [
+        "Accueil : un titre dans « Écouté récemment » enfile toute la suite des écoutes récentes",
+        "Plus de suggestions hors sujet au milieu de l’historique — la file reste tes derniers titres",
+        "Même logique pour « Tes plus écoutés » et l’Historique"
+      ]
+    },
+    {
+      "version": "1.3.208",
+      "date": "2026-09-11",
+      "title": "Paroles + suggestions musique",
+      "notes": [
+        "Paroles : suivi moins en retard (intro plus courte + re-calage quand la durée est connue)",
+        "Exemple dense type Welcome to the Internet : estimation recalée sur la vraie durée",
+        "À suivre / Mix : filtre plus strict — podcasts, gameplay, trailers, interviews exclus"
+      ]
+    },
+    {
+      "version": "1.3.207",
+      "date": "2026-09-11",
+      "title": "Mode vidéo : clips qui affichent enfin",
+      "notes": [
+        "Vidéo : on cherche d’abord un vrai clip (plus l’ID Topic sans image)",
+        "Pendant la recherche : pochette + « Recherche du clip… » (plus d’écran noir qui tourne)",
+        "Si pas de clip ou trop lent : pochette tout de suite, message clair"
+      ]
+    },
+    {
       "version": "1.3.206",
       "date": "2026-09-11",
       "title": "Compte, lecteur, cache",

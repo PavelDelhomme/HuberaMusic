@@ -80,6 +80,29 @@ class AppContainer(context: Context) {
             streamUrlForAttempt = { id, attempt ->
                 remoteStreamUrl(id, retry = attempt.coerceAtLeast(0), offline = true)
             },
+            videoStreamUrl = { id -> this.videoStreamUrl(id) },
+            resolveVisualId = { track ->
+                val cached = VisualIdCache.get(appContext, track.id)
+                    ?.takeIf { it.length == 11 && it != track.id }
+                if (cached != null) {
+                    cached
+                } else {
+                    ensureFreshToken()
+                    val vis = runCatching {
+                        api.trackVisual(
+                            track.id,
+                            title = track.title,
+                            artist = track.artistLine().takeIf { it != "Artiste" },
+                            durationSeconds = track.durationSeconds,
+                            waitMs = 4_500,
+                            refresh = null,
+                        )
+                    }.getOrNull()
+                    val vid = vis?.visualId?.takeIf { it.isNotBlank() && it != track.id }
+                    if (vid != null) VisualIdCache.put(appContext, track.id, vid)
+                    vid
+                }
+            },
         )
     }
     val offlineKeeper by lazy {
@@ -379,15 +402,10 @@ class AppContainer(context: Context) {
         offlineStore.invalidateDashCache(trackId)
     }
 
-    /** Stream vidéo progressif (onglet Vidéo) — muet, syncé sur l’audio. */
+    /** Stream vidéo progressif (onglet Vidéo). Auth via header Exo — pas de token dans l’URL
+     * (sinon chaque refresh token recrée le MediaItem → saccades / silence). */
     fun videoStreamUrl(trackId: String): String {
-        val base = resolvedApiBase() + "/api/stream/$trackId?type=video"
-        val token = tokenStore.peekAccess()
-        return if (!token.isNullOrBlank()) {
-            "$base&access_token=${java.net.URLEncoder.encode(token, Charsets.UTF_8.name())}"
-        } else {
-            base
-        }
+        return resolvedApiBase() + "/api/stream/$trackId?type=video&client=android"
     }
 
     /** URL HTTP stream uniquement (pour télécharger en local). */

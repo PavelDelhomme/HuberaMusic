@@ -22,7 +22,15 @@ function localPlaylistId(item: Track) {
   return item.id;
 }
 
-export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
+export function MediaCard({
+  item,
+  queue,
+  queueTitle,
+}: {
+  item: Track;
+  queue?: Track[];
+  queueTitle?: string;
+}) {
   const play = usePlayer((s) => s.play);
   const playQueue = usePlayer((s) => s.playQueue);
   const navigate = useNavigate();
@@ -36,6 +44,11 @@ export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
   const [pinBusy, setPinBusy] = useState(false);
   const [pinToast, setPinToast] = useState<string | null>(null);
   const { active: nowActive, playing: nowPlaying } = useNowPlayingMatch(item);
+
+  const recentListenShelf = Boolean(
+    queueTitle &&
+      (/écouté récemment|recently played|plus écoutés|historique/i.test(queueTitle)),
+  );
 
   const local = isLocalPlaylist(item);
   const isMood = item.id.startsWith('mood:') || item.id.includes('moods_and_genres');
@@ -61,6 +74,12 @@ export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
   const openItem = () => {
     if (href) {
       navigate(href);
+      return;
+    }
+    if (recentListenShelf && queue?.length) {
+      void playQueue(queue, Math.max(0, queue.findIndex((t) => t.id === item.id)), {
+        sourceKind: 'history',
+      });
       return;
     }
     void play(item, queue, { forceRestart: true });
@@ -119,6 +138,11 @@ export function MediaCard({ item, queue }: { item: Track; queue?: Track[] }) {
 
     if (href && item.type === 'artist') {
       navigate(href);
+      return;
+    }
+    if (recentListenShelf && queue?.length) {
+      const idx = Math.max(0, queue.findIndex((t) => t.id === item.id));
+      void playQueue(queue, idx, { sourceKind: 'history' });
       return;
     }
     void play(item, queue, { forceRestart: true });
@@ -386,7 +410,7 @@ export function ShelfRow({ title, items }: { title: string; items: Track[] }) {
       {title ? <h2 className="mb-3 font-display text-xl font-semibold tracking-tight">{title}</h2> : null}
       <div className="shelf-scroll">
         {items.map((item, i) => (
-          <MediaCard key={`${title}-${item.id}-${i}`} item={item} queue={items} />
+          <MediaCard key={`${title}-${item.id}-${i}`} item={item} queue={items} queueTitle={title} />
         ))}
       </div>
     </section>

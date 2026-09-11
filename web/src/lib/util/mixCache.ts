@@ -67,11 +67,14 @@ export function clearCachedMix(key: string) {
   }
 }
 
-/** Mix précalculé assez long → pas besoin d’autoplay incrémental. */
+/** Mix / historique / playlist explicite → pas d’autoplay tant qu’il reste des titres user. */
 export function isPrecomputedMixSource(
   sourceKind: string | null | undefined,
   remainingUserTracks: number,
 ) {
+  if (sourceKind === 'history' || sourceKind === 'playlist') {
+    return remainingUserTracks >= 1;
+  }
   if (sourceKind !== 'mix' && sourceKind !== 'radio' && sourceKind !== 'album' && sourceKind !== 'artist') {
     return false;
   }

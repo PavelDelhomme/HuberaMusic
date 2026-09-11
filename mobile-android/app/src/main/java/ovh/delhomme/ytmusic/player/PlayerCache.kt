@@ -152,6 +152,16 @@ object PlayerCache {
         return DefaultDataSource.Factory(appCtx, http)
     }
 
+    /** Cache disque pour clips (prefetch tête + relecture sans rebuffer). */
+    fun videoCacheDataSourceFactory(context: Context): CacheDataSource.Factory {
+        val appCtx = context.applicationContext
+        val upstream = videoDataSourceFactory(appCtx)
+        return CacheDataSource.Factory()
+            .setCache(get(appCtx))
+            .setUpstreamDataSourceFactory(upstream)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+
     fun cancelPrefetch(preservePinned: Boolean = false) {
         if (preservePinned) {
             val pin = pinnedKey.get()

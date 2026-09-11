@@ -16,9 +16,19 @@ import ovh.delhomme.ytmusic.debug.AppLog
  */
 class UpdateInstallReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        val appCtx = context.applicationContext
         if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             AppLog.i("apk-update", "MY_PACKAGE_REPLACED → réouverture")
-            UpdateRelaunch.relaunch(context.applicationContext)
+            // goAsync : laisse le temps aux alarmes / notifs avant que le receiver meure
+            val pending = goAsync()
+            try {
+                UpdateRelaunch.relaunch(appCtx)
+            } finally {
+                // Petit délai pour que AlarmManager enregistre les triggers
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    runCatching { pending.finish() }
+                }, 800L)
+            }
             return
         }
         val status = intent.getIntExtra(
@@ -32,7 +42,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
             return
         }
         if (status == PackageInstaller.STATUS_SUCCESS) {
-            UpdateRelaunch.relaunch(context.applicationContext)
+            UpdateRelaunch.relaunch(appCtx)
         } else if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
             UpdateRelaunch.startConfirmIntent(context, intent)
         }

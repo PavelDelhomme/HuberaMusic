@@ -119,7 +119,7 @@ fun TrackRow(
                             .align(Alignment.TopStart)
                             .padding(2.dp),
                         onClick = onTogglePin,
-                        size = if (compact) 18.dp else 20.dp,
+                        size = if (compact) 26.dp else 30.dp,
                     )
                 }
             }

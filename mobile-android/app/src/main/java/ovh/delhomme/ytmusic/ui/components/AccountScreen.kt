@@ -42,6 +42,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -613,6 +614,34 @@ fun AccountScreen(
                         "Ajuster le son"
                     },
                     onClick = { showEqualizer = true },
+                )
+            }
+            item {
+                var fsControls by remember {
+                    mutableStateOf(
+                        ovh.delhomme.ytmusic.data.VideoPlaybackPrefs.fullscreenControls(context),
+                    )
+                }
+                ListItem(
+                    headlineContent = { Text("Contrôles vidéo plein écran") },
+                    supportingContent = {
+                        Text("Barre de progression, lecture / pause, précédent / suivant")
+                    },
+                    leadingContent = {
+                        Icon(Icons.Default.Settings, contentDescription = null)
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = fsControls,
+                            onCheckedChange = { on ->
+                                fsControls = on
+                                ovh.delhomme.ytmusic.data.VideoPlaybackPrefs
+                                    .setFullscreenControls(context, on)
+                            },
+                        )
+                    },
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
             // Diagnostics réservés admin / build debug — pas visible au compte perso prod.

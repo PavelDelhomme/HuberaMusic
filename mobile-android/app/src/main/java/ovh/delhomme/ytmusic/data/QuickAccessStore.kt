@@ -10,6 +10,7 @@ import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 private val Context.quickAccessStore by preferencesDataStore("ytmusic_quick_access")
 
@@ -200,33 +201,29 @@ class QuickAccessStore(
                 }
             }
         }
+        // Sync serveur en fond — l’UI ne doit pas attendre addPin + biblio.
         if (api != null) {
-            runCatching {
-                if (nowPinned) {
-                    val pinType = track.type?.takeIf { it != "video" && it.isNotBlank() } ?: "song"
-                    val resp = api.addPin(trackToPinBody(track.copy(type = pinType)))
-                    replaceAll(
-                        resp.pins.mapNotNull { pinToTrack(it) }.distinctBy { it.id }.take(48),
-                        boundEmail = email.ifBlank { null },
-                    )
-                    runCatching {
+            val pinnedSnapshot = nowPinned
+            val pinType = track.type?.takeIf { it != "video" && it.isNotBlank() } ?: "song"
+            ovh.delhomme.ytmusic.YtMusicApp.instance.container.appScope().launch {
+                runCatching {
+                    if (pinnedSnapshot) {
+                        api.addPin(trackToPinBody(track.copy(type = pinType)))
                         when (pinType) {
-                            "album" -> api.saveAlbum(track.copy(type = "album"))
-                            "artist" -> api.saveArtist(track.copy(type = "artist"))
+                            "album" -> runCatching { api.saveAlbum(track.copy(type = "album")) }
+                            "artist" -> runCatching { api.saveArtist(track.copy(type = "artist")) }
                             else -> {
                                 val already = runCatching {
                                     api.library().songs.any { it.id == track.id }
                                 }.getOrDefault(false)
                                 if (!already) {
-                                    api.toggleLibrarySong(track.copy(type = "song"))
+                                    runCatching { api.toggleLibrarySong(track.copy(type = "song")) }
                                 }
                             }
                         }
+                    } else {
+                        api.removePin(track.id)
                     }
-                } else {
-                    val resp = api.removePin(track.id)
-                    val fromServer = resp.pins.mapNotNull { pinToTrack(it) }.distinctBy { it.id }.take(48)
-                    replaceAll(fromServer, boundEmail = email.ifBlank { null })
                 }
             }
         }

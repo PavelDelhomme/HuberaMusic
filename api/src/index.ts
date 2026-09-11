@@ -1939,6 +1939,8 @@ app.get('/api/track/:id/visual', accountRequired, async (req, res) => {
         ? Number(durationRaw)
         : undefined;
     const refresh = String(req.query.refresh || '') === '1';
+    const waitRaw = Number(req.query.wait || 0);
+    const waitMs = Number.isFinite(waitRaw) ? waitRaw : 0;
     if (refresh) {
       const { invalidateVisualCache } = await import('./media/visualResolve.js');
       invalidateVisualCache(id);
@@ -1947,7 +1949,8 @@ app.get('/api/track/:id/visual', accountRequired, async (req, res) => {
       title,
       artist,
       durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : undefined,
-      upgrade: !refresh,
+      upgrade: true,
+      waitMs: refresh || waitMs > 0 ? Math.max(waitMs, refresh ? 4_500 : waitMs) : 0,
     });
     res.json({
       ok: true,
@@ -2283,11 +2286,18 @@ app.get('/api/track/:id/related', accountRequired, async (req, res) => {
     const sim = fast
       ? await similarForUserFast(req.userId!, p(req.params.id))
       : await similarForUser(req.userId!, p(req.params.id), undefined, { full: wantFull });
+    const { isMusicPlayableHit } = await import('./reco/searchRank.js');
+    const musicOnly = (list: typeof sim.tracks) =>
+      (list || []).filter((t) => isMusicPlayableHit(t));
+    const ranked = musicOnly(sim.tracks);
+    const related = ranked.length ? ranked : musicOnly(sim.related);
+    const radio = ranked.length ? ranked : musicOnly(sim.radio);
     res.json({
-      related: sim.tracks.length ? sim.tracks : sim.related,
-      radio: sim.tracks.length ? sim.tracks : sim.radio,
-      rawRelated: sim.related,
-      rawRadio: sim.radio,
+      tracks: ranked,
+      related,
+      radio,
+      rawRelated: musicOnly(sim.related),
+      rawRadio: musicOnly(sim.radio),
       fast,
       cached: 'cached' in sim ? sim.cached : false,
       target: 'target' in sim ? sim.target : undefined,
