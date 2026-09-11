@@ -2716,8 +2716,8 @@ private class YtmForwardingPlayer(
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val api = PlaybackService.Holder.resolvedApiBase()
-        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 12, behind = 0)
-        CoverPrefetcher.warmCovers(queue, index, ahead = 6, behind = 0)
+        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 12, behind = 1)
+        CoverPrefetcher.warmCovers(queue, index, ahead = 6, behind = 1)
     }
 
     override fun seekToPrevious() = seekToPreviousMediaItem()
@@ -2725,7 +2725,11 @@ private class YtmForwardingPlayer(
     override fun seekToPreviousMediaItem() {
         when {
             exo.currentPosition > 3_000L -> exo.seekTo(0L)
-            exo.hasPreviousMediaItem() -> exo.seekToPreviousMediaItem()
+            exo.hasPreviousMediaItem() -> {
+                val prev = (exo.currentMediaItemIndex - 1).coerceAtLeast(0)
+                warmAroundIndex(prev)
+                exo.seekToPreviousMediaItem()
+            }
             exo.mediaItemCount > 1 -> exo.seekTo(exo.mediaItemCount - 1, 0L)
             else -> exo.seekTo(0L)
         }

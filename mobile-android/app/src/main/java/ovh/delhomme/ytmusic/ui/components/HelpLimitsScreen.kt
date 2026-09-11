@@ -173,7 +173,7 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
                 Bullet("Compte → Mise à jour : vérifier que l’app est à jour.")
             }
             item {
-                Bullet("Compte → API & logs : diagnostics (réseau, erreurs) si on te le demande.")
+                Bullet("Si on te le demande : diagnostics réseau (espace admin).")
             }
             item {
                 Spacer(Modifier.height(24.dp))

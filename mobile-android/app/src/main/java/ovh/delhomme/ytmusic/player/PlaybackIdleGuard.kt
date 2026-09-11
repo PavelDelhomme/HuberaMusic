@@ -84,6 +84,9 @@ object PlaybackIdleGuard {
             AppLog.i("PlaybackIdleGuard", "Coupe prefetch après ${idleMs / 60_000} min pause (notif gardée)")
             StreamPrefetcher.cancelIdle()
             runCatching { app.container.downloadManager.cancelOpportunistic() }
+            // Compacte cache Exo + hors-ligne peu réécoutés (place disque).
+            runCatching { PlayerCache.trimColdCache(app) }
+            runCatching { app.container.offlineStore.trimLeastPlayedIfLowSpace() }
         }
         if (idleMs < IDLE_SHUTDOWN_MS) return
 

@@ -99,7 +99,10 @@ class LocalOfflineStore(
 
     fun playUri(trackId: String): Uri? {
         if (!has(trackId)) return null
-        return Uri.fromFile(audioFile(trackId))
+        val f = audioFile(trackId)
+        // Touch pour LRU éviction (titres peu réécoutés partent en premier).
+        runCatching { f.setLastModified(System.currentTimeMillis()) }
+        return Uri.fromFile(f)
     }
 
     fun listIds(): List<String> = synchronized(this) {
@@ -139,6 +142,47 @@ class LocalOfflineStore(
             bump()
         }
         invalidateDashCache(trackId)
+    }
+
+    /**
+     * Si l’espace libre est bas, retire les hors-ligne les moins récemment
+     * écoutés (lastModified) jusqu’à retrouver de la marge — ne touche pas
+     * aux titres téléchargés « user » trop récents (&lt; 3 j).
+     */
+    fun trimLeastPlayedIfLowSpace(
+        minFreeBytes: Long = 800L * 1024L * 1024L,
+        keepRecentMs: Long = 3L * 24 * 60 * 60 * 1000,
+    ): Int {
+        val free = runCatching { dir.usableSpace }.getOrDefault(Long.MAX_VALUE)
+        if (free >= minFreeBytes) return 0
+        val now = System.currentTimeMillis()
+        val candidates = dir.listFiles()
+            ?.filter { it.name.endsWith(".m4a") && it.isFile }
+            ?.filter { now - it.lastModified() > keepRecentMs }
+            ?.sortedBy { it.lastModified() }
+            .orEmpty()
+        var removed = 0
+        for (f in candidates) {
+            if (runCatching { dir.usableSpace }.getOrDefault(0L) >= minFreeBytes) break
+            val id = f.name.removeSuffix(".m4a")
+            runCatching {
+                f.delete()
+                File(dir, "$id.part").delete()
+                sizeHintFile(id).delete()
+                okMarker(id).delete()
+                synchronized(this) {
+                    val meta = readMetaUnlocked().toMutableMap()
+                    meta.remove(id)
+                    writeMetaUnlocked(meta)
+                }
+                removed++
+            }
+        }
+        if (removed > 0) {
+            bump()
+            AppLog.i("offline", "trimLeastPlayed removed=$removed free≈${dir.usableSpace / (1024 * 1024)}MiB")
+        }
+        return removed
     }
 
     /**

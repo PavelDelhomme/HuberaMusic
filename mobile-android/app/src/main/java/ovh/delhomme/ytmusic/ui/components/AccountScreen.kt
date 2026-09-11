@@ -615,16 +615,19 @@ fun AccountScreen(
                     onClick = { showEqualizer = true },
                 )
             }
-            item {
-                AccountRow(
-                    icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
-                    title = "API & logs",
-                    subtitle = "${container.apiEnvLabel()} · ${container.resolvedApiBase()}",
-                    onClick = {
-                        onOpenDebugLogs?.invoke()
-                            ?: Toast.makeText(context, "Ouvre Compte depuis Accueil", Toast.LENGTH_SHORT).show()
-                    },
-                )
+            // Diagnostics réservés admin / build debug — pas visible au compte perso prod.
+            if (user?.isAdmin == true || BuildConfig.DEBUG) {
+                item {
+                    AccountRow(
+                        icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
+                        title = "API & logs",
+                        subtitle = "${container.apiEnvLabel()} · ${container.resolvedApiBase()}",
+                        onClick = {
+                            onOpenDebugLogs?.invoke()
+                                ?: Toast.makeText(context, "Ouvre Compte depuis Accueil", Toast.LENGTH_SHORT).show()
+                        },
+                    )
+                }
             }
 
             item {

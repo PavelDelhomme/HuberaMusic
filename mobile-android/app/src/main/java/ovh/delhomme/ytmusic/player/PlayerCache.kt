@@ -354,4 +354,40 @@ object PlayerCache {
             }
         }
     }
+
+    /**
+     * Compacte le cache Exo : retire les clés peu touchées si on dépasse un
+     * budget « soft », pour libérer de la place sans toucher au titre pinné.
+     * @return octets approximativement libérés (somme des spans retirés).
+     */
+    fun trimColdCache(context: Context, softBudgetBytes: Long = cacheBudgetBytes(context) * 3 / 4): Long {
+        val cache = runCatching { get(context) }.getOrNull() ?: return 0L
+        val pin = pinnedKey.get()
+        var freed = 0L
+        val keys = runCatching { cache.keys }.getOrNull() ?: return 0L
+        // Trie par last touch (plus ancien d’abord) via spans.
+        data class KeyTouch(val key: String, val touch: Long, val size: Long)
+        val ranked = keys.mapNotNull { key ->
+            if (pin != null && key == pin) return@mapNotNull null
+            val spans = runCatching { cache.getCachedSpans(key) }.getOrNull() ?: return@mapNotNull null
+            if (spans.isEmpty()) return@mapNotNull null
+            val touch = spans.maxOf { it.lastTouchTimestamp }
+            val size = spans.sumOf { it.length }
+            KeyTouch(key, touch, size)
+        }.sortedBy { it.touch }
+        var used = ranked.sumOf { it.size }
+        for (entry in ranked) {
+            if (used <= softBudgetBytes) break
+            runCatching { cache.removeResource(entry.key) }
+            used -= entry.size
+            freed += entry.size
+        }
+        if (freed > 0L) {
+            ovh.delhomme.ytmusic.debug.AppLog.i(
+                "PlayerCache",
+                "trimCold freed≈${freed / (1024 * 1024)}MiB soft=${softBudgetBytes / (1024 * 1024)}MiB",
+            )
+        }
+        return freed
+    }
 }

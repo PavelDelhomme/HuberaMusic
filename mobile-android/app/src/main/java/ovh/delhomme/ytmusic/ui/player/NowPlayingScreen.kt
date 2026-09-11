@@ -1322,6 +1322,36 @@ fun NowPlayingScreen(
                                             .fillMaxWidth()
                                             .zIndex(5f)
                                             .background(Color.Black.copy(alpha = 0.72f))
+                                            .then(
+                                                if (showLyrics) Modifier
+                                                else Modifier.nowPlayingMediaGestures(
+                                                    key = "chrome-${track.id}",
+                                                    onDismissDelta = { delta ->
+                                                        if (queueProgress.value > 0.02f) {
+                                                            onQueueDrag(delta)
+                                                        } else if (!dismissArmed) {
+                                                            dragOffset = 0f
+                                                        } else {
+                                                            dragOffset = (dragOffset + delta).coerceAtLeast(0f)
+                                                        }
+                                                    },
+                                                    onDismissEnd = {
+                                                        if (queueProgress.value > 0.02f) settleQueue(0f)
+                                                        else settleOrClose()
+                                                    },
+                                                    onHorizontalDelta = { dx ->
+                                                        mediaSlideX = (mediaSlideX + dx).coerceIn(-120f, 120f)
+                                                    },
+                                                    onHorizontalEnd = { totalX ->
+                                                        when {
+                                                            totalX < -72f -> skipNextFromSwipe()
+                                                            totalX > 72f -> skipPrevFromSwipe()
+                                                            else -> mediaSlideX = 0f
+                                                        }
+                                                    },
+                                                    onHorizontalCancel = { mediaSlideX = 0f },
+                                                ),
+                                            )
                                             .padding(horizontal = 18.dp)
                                             .padding(top = 10.dp, bottom = 0.dp),
                                     ) {
