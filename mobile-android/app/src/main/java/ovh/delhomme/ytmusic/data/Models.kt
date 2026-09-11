@@ -203,8 +203,21 @@ data class TrackDto(
         !isPlaylist() && !isArtist() && !isAlbum() && !isMix() &&
             id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))
 
-    /** Préféré pour les rayons musique Accueil (évite Shorts / vidéos hors musique). */
-    fun isMusicTrack(): Boolean = isPlayable() && !isVideo()
+    /** Préféré pour Accueil / autoplay (évite Shorts, hors-musique, talk). */
+    fun isMusicTrack(): Boolean {
+        if (!isPlayable() || isVideo()) return false
+        val t = title.orEmpty().lowercase()
+        if (
+            Regex(
+                """\b(podcast|episode|audiobook|interview|gameplay|trailer|tutorial|asmr|vlog|stand[\s-]?up|documentary|explained|full movie|walkthrough|reaction)\b""",
+            ).containsMatchIn(t)
+        ) {
+            return false
+        }
+        val dur = durationSeconds ?: 0
+        if (dur >= 25 * 60) return false
+        return true
+    }
 }
 
 /** mm:ss pour UI (file, listes, mini-lecteur). */

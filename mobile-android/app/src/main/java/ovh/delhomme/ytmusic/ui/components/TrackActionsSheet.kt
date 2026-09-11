@@ -529,6 +529,7 @@ fun TrackActionsSheet(
                     if (downloaded) Icons.Default.DownloadDone else Icons.Default.Download,
                     when {
                         downloaded -> "Sur l'appareil"
+                        downloadProgress != null && downloadProgress!! < 0.08f -> "Préparation…"
                         downloadProgress != null -> "${(downloadProgress!! * 100).toInt()} %"
                         else -> "Télécharger"
                     },
@@ -563,13 +564,13 @@ fun TrackActionsSheet(
                 }
                 QuickAction(
                     if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
-                    if (pinned) "Retirer accès rapide" else "Accès rapide",
+                    if (pinned) "Épinglé" else "Accès rapide",
                     active = pinned,
                 ) {
+                    // Optimistic : le Flow pins met à jour le rouge tout de suite
                     scope.launch {
                         val nowPinned = container.quickAccess.toggle(enriched, container.api)
-                        context.toastMain(if (nowPinned) "Épinglé" else "Retiré de l'accès rapide")
-                        onDismiss()
+                        context.toastMain(if (nowPinned) "Épinglé en accès rapide" else "Retiré de l'accès rapide")
                     }
                 }
             }
@@ -773,7 +774,7 @@ fun TrackActionsSheet(
             SheetAction(
                 Icons.Default.BugReport,
                 "Signaler un problème",
-                "Télémétrie + alerte mail admin (logs récents)",
+                "À l'équipe de développement",
             ) {
                 scope.launch {
                     runCatching {
@@ -797,7 +798,7 @@ fun TrackActionsSheet(
                             ),
                             force = true,
                         )
-                        context.toastMain("Rapport envoyé (télémétrie + mail admin)")
+                        context.toastMain("Problème signalé — merci")
                     }.onFailure {
                         context.toastMain(it.message ?: "Échec envoi")
                     }

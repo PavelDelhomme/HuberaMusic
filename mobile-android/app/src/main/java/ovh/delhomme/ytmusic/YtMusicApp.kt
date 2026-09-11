@@ -33,6 +33,11 @@ class YtMusicApp : Application(), ImageLoaderFactory {
         BatterySaver.start(this)
         PlaybackIdleGuard.start(this)
         ovh.delhomme.ytmusic.debug.TelemetryReporter.flushPending()
+        // Après OTA : le process peut redémarrer sans Activity (restriction Android) —
+        // forcer la réouverture si une MAJ vient d’être installée.
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            runCatching { ovh.delhomme.ytmusic.update.UpdateRelaunch.onAppProcessStart(this) }
+        }
         // Précharge les JWT en mémoire dès le boot (évite runBlocking DataStore)
         appScope.launch {
             runCatching { container.tokenStore.warmCache() }
@@ -66,16 +71,17 @@ class YtMusicApp : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
-            .crossfade(true)
+            .crossfade(false) // moins de GPU / frames inutiles
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.18)
+                    // Plus léger en RAM → moins de pression GC / trim
+                    .maxSizePercent(0.12)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("coil-covers"))
-                    .maxSizeBytes(96L * 1024L * 1024L)
+                    .maxSizeBytes(72L * 1024L * 1024L)
                     .build()
             }
             .respectCacheHeaders(false)

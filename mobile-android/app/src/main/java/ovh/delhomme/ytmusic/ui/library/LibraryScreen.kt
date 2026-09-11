@@ -288,7 +288,7 @@ fun LibraryScreen(
                         Text("Réessayer")
                     }
                     TextButton(onClick = onOpenAccount) {
-                        Text("Ouvrir Compte (API & logs)")
+                        Text("Ouvrir Compte")
                     }
                 }
             }

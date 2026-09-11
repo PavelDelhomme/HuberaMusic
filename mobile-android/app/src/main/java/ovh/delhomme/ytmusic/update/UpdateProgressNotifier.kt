@@ -69,7 +69,7 @@ class UpdateProgressNotifier(private val context: Context) {
         val open = PendingIntent.getActivity(
             context,
             0,
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            ovh.delhomme.ytmusic.update.UpdateRelaunch.launchIntent(context),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         nm.notify(
@@ -81,6 +81,7 @@ class UpdateProgressNotifier(private val context: Context) {
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .build(),
         )
     }

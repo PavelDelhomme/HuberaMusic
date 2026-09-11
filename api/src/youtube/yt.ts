@@ -1533,8 +1533,8 @@ export async function getArtistSongs(
 }
 
 const LYRICS_CACHE_MAX = 400;
-/** bump : Genius proxies race + source conservée (v15) */
-const LYRICS_CACHE_VER = 'v15';
+/** bump : intro estimation plus courte (v16) — sync moins « en retard » */
+const LYRICS_CACHE_VER = 'v16';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
@@ -2806,71 +2806,73 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
         : await getYT();
       if (!yt) return null;
       const clients = signed
-        ? (['TV', 'ANDROID', 'WEB'] as const)
-        : (['ANDROID', 'TV', 'WEB_EMBEDDED'] as const);
-      let lastErr: unknown;
-      for (const client of clients) {
-        try {
-          const format = await Promise.race([
-            yt.getStreamingData(videoId, {
-              type: 'video+audio',
-              quality: '360p',
-              client,
-            } as any),
-            new Promise<never>((_, rej) =>
-              setTimeout(() => rej(new Error(`innertube video ${client} timeout`)), signed ? 8_000 : 5_000),
-            ),
-          ]);
-          const url = format.url || (await format.decipher(yt.session.player));
-          if (!url) throw new Error('empty video url');
-          const entry: AudioFormat = {
-            url,
-            mimeType: format.mime_type || 'video/mp4',
-            bitrate: format.bitrate,
-            contentLength: format.content_length,
-            expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
-          };
-          if (!looksLikeVideo(entry.url, entry.mimeType)) {
-            throw new Error(`not a progressive video format (${entry.mimeType})`);
-          }
-          return entry;
-        } catch (err) {
-          lastErr = err;
+        ? (['TV', 'ANDROID', 'MWEB', 'WEB'] as const)
+        : (['ANDROID', 'TV', 'WEB_EMBEDDED', 'ANDROID_VR'] as const);
+      const ms = signed ? 5_500 : 4_000;
+      const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
+        const format = await Promise.race([
+          yt.getStreamingData(videoId, {
+            type: 'video+audio',
+            quality: '360p',
+            client,
+          } as any),
+          new Promise<never>((_, rej) =>
+            setTimeout(() => rej(new Error(`innertube video ${client} timeout`)), ms),
+          ),
+        ]);
+        const url = format.url || (await format.decipher(yt.session.player));
+        if (!url) throw new Error('empty video url');
+        const entry: AudioFormat = {
+          url,
+          mimeType: format.mime_type || 'video/mp4',
+          bitrate: format.bitrate,
+          contentLength: format.content_length,
+          expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+        };
+        if (!looksLikeVideo(entry.url, entry.mimeType)) {
+          throw new Error(`not a progressive video format (${entry.mimeType})`);
         }
+        return entry;
+      };
+      try {
+        return await Promise.any(clients.map((c) => tryClient(c)));
+      } catch (err) {
+        const msg = err instanceof AggregateError
+          ? String(err.errors?.[0] || err).slice(0, 120)
+          : String(err).slice(0, 120);
+        console.warn('[getVideoFormat] innertube', msg);
+        return null;
       }
-      if (lastErr) console.warn('[getVideoFormat] innertube', String(lastErr).slice(0, 120));
-      return null;
     };
 
-    // 1) Session OAuth TV signée (même chemin que l’audio VPS)
-    const viaSigned = await tryInnertubeVideo(true);
-    if (viaSigned) {
-      videoFormatCache.set(videoId, viaSigned);
-      return viaSigned;
-    }
+    // Course : OAuth + yt-dlp + anonyme (comme l’audio) — budget total ~10 s
+    const raced = await Promise.race([
+      Promise.any([
+        tryInnertubeVideo(true).then((v) => {
+          if (!v) throw new Error('signed null');
+          return v;
+        }),
+        videoFormatViaYtDlp(videoId).then((entry) => {
+          if (!looksLikeVideo(entry.url, entry.mimeType)) throw new Error('yt-dlp not progressive');
+          return entry;
+        }),
+        tryInnertubeVideo(false).then((v) => {
+          if (!v) throw new Error('anon null');
+          return v;
+        }),
+      ]),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
+    ]);
 
-    // 2) yt-dlp progressif
-    try {
-      const entry = await videoFormatViaYtDlp(videoId);
-      if (looksLikeVideo(entry.url, entry.mimeType)) {
-        videoFormatCache.set(videoId, entry);
-        return entry;
-      }
-    } catch {
-      /* try anonymous innertube */
-    }
-
-    // 3) Innertube anonyme
-    const viaAnon = await tryInnertubeVideo(false);
-    if (viaAnon) {
-      videoFormatCache.set(videoId, viaAnon);
+    if (raced) {
+      videoFormatCache.set(videoId, raced);
       if (videoFormatCache.size > 120) {
         const stale = [...videoFormatCache.entries()]
           .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
           .slice(0, 40);
         for (const [id] of stale) videoFormatCache.delete(id);
       }
-      return viaAnon;
+      return raced;
     }
 
     throw new Error('Aucun format vidéo progressif');

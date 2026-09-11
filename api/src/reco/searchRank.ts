@@ -80,10 +80,16 @@ export function isSpokenWordHit(track: Track): boolean {
   const title = foldText(track.title);
   const artists = (track.artists || []).map((a) => String(a.name || '').trim()).filter(Boolean);
   const artistFold = foldText(artists.join(' '));
-  if (/\b(episode|podcast|audiobook|audio\s*book|livre\s*audio|full\s*audiobook)\b/.test(title)) {
+  if (
+    /\b(episode|podcast|audiobook|audio\s*book|livre\s*audio|full\s*audiobook|stand\s*up|standup|interview|documentary|documentaire|explained|lecture|sermon|speech|techtalk|ted\s*talk)\b/.test(
+      title,
+    )
+  ) {
     return true;
   }
-  if (/\b(episode|podcast|audiobook|livre\s*audio)\b/.test(artistFold)) return true;
+  if (/\b(episode|podcast|audiobook|livre\s*audio|interview|stand\s*up)\b/.test(artistFold)) {
+    return true;
+  }
   // Sous-titres YTM podcast : artiste = date (ex. « Jul 12, 2024 »)
   if (
     artists.some(
@@ -93,6 +99,9 @@ export function isSpokenWordHit(track: Track): boolean {
   ) {
     return true;
   }
+  // Vidéos très longues typées « song » par erreur (talk / film)
+  const dur = Number(track.durationSeconds || 0);
+  if (dur >= 25 * 60 && track.type !== 'song') return true;
   return false;
 }
 
@@ -107,14 +116,45 @@ export function isLowQualitySearchHit(track: Track): boolean {
   if (/\b(medley\s+reaction|mv\s+reaction|song\s+reaction)\b/.test(title)) return true;
   if (/\b(lyrics?|karaoke|soundlyrics|lyric\s*video)\b/.test(artistFold)) return true;
   if (/\b(lyrics?\s*(video|channel)|karaoke|sound\s*lyrics)\b/.test(title)) return true;
+  // Hors musique : jeux, trailers, tutos, vlogs, films…
+  if (
+    /\b(gameplay|let'?s\s*play|walkthrough|speedrun|playthrough|fortnite|minecraft|roblox|gta\s*5|gta\s*v)\b/.test(
+      title,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(trailer|teaser|behind\s*the\s*scenes|making\s*of|full\s*movie|entire\s*film|watch\s*along)\b/.test(
+      title,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(tutorial|how\s*to|unboxing|vlog|asmr|q\s*&\s*a|q\s*and\s*a|challenge\s*failed|prank)\b/.test(
+      title,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(comedy\s*special|sketch\s*comedy|funny\s*moments|best\s*of\s*fails)\b/.test(title)) {
+    return true;
+  }
   return false;
 }
 
-/** Titre jouable musique (pas album / artiste / podcast). */
+/** Titre jouable musique (pas album / artiste / podcast / hors-musique). */
 export function isMusicPlayableHit(track: Track): boolean {
   if (!track?.id || !/^[a-zA-Z0-9_-]{11}$/.test(track.id)) return false;
   if (track.type === 'album' || track.type === 'artist' || track.type === 'playlist') return false;
   if (isSpokenWordHit(track) || isLowQualitySearchHit(track)) return false;
+  // Reco / autoplay : préférer song ; video OK seulement si pas déjà junk (heuristiques ci-dessus)
+  // et durée plausible (pas un short spam ni un film).
+  if (track.type === 'video') {
+    const dur = Number(track.durationSeconds || 0);
+    if (dur > 0 && (dur < 45 || dur > 12 * 60)) return false;
+  }
   return track.type === 'song' || track.type === 'video' || track.type === 'unknown' || !track.type;
 }
 
@@ -523,8 +563,8 @@ export function pickTopResult(
     return artistNameAliasMatch(name, q);
   });
 
-  // Requête courte = nom d’artiste → fiche artiste gagne sur un titre homonyme d’un autre
-  // (ex. « Suzanne » → artiste, pas Leonard Cohen ; « Suzane » → artiste FR)
+  // Requête courte : si un **titre exact** matche fort (ex. « Bella » → GIMS),
+  // il gagne sur la fiche artiste homonyme — l’onglet Titres doit coller au top.
   if (exactArtists.length >= 1 && qTokens.length <= 2) {
     const bestArtist = [...exactArtists].sort((a, b) => {
       const nameA = foldText(a.title || a.artists?.[0]?.name || '');
@@ -541,7 +581,13 @@ export function pickTopResult(
       ? rankByQuery(exactSongs, query, personalization)[0]
       : null;
     const songScore = bestExactSong ? scoreSearchItem(bestExactSong, query) : 0;
-    // Fausse fiche « Despacito » (peu de qualité) vs vrai tube → garder le titre
+    const songTitleExact =
+      !!bestExactSong && foldText(bestExactSong.title || '') === q;
+    // Tube dont le titre = la requête → avant l’artiste (Bella, Despacito, …)
+    if (bestExactSong && songTitleExact && songScore >= 500) {
+      return bestExactSong;
+    }
+    // Fausse fiche artiste vs vrai tube
     if (bestExactSong && songScore >= 1400 && artistQuality(bestArtist, query) < 220) {
       /* fall through → exact song */
     } else {
@@ -552,8 +598,15 @@ export function pickTopResult(
           return an === artistName || an === q || artistNameAliasMatch(an, artistName);
         }),
       );
+      // Titre du même artiste bien score → préférer le titre en top (pas la fiche)
+      if (songByThisArtist && songScore >= 700) {
+        return bestExactSong || songByThisArtist;
+      }
       if (!songByThisArtist || qTokens.length === 1) {
-        return bestArtist;
+        // 1 token sans tube fort → artiste OK ; sinon laisser le titre gagner plus bas
+        if (!(bestExactSong && songScore >= 900)) {
+          return bestArtist;
+        }
       }
     }
   }

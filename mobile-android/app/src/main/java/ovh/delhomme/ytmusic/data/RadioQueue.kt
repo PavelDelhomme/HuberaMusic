@@ -75,7 +75,7 @@ suspend fun buildRadioQueue(
                     (related?.related.orEmpty()) +
                     (related?.radio.orEmpty())
                 )
-                .filter { it.isPlayable() && it.id != trackId }
+                .filter { it.isMusicTrack() && it.id != trackId }
 
             if (stayClose && seedPlayable?.artists?.firstOrNull() != null) {
                 val key = (
@@ -134,14 +134,14 @@ suspend fun buildRadioQueueContinuation(
     var pool = (
         (mid?.tracks.orEmpty()) + (mid?.related.orEmpty()) + (mid?.radio.orEmpty())
         )
-        .filter { it.isPlayable() && it.id !in alreadyIds && it.id != trackId }
+        .filter { it.isMusicTrack() && it.id !in alreadyIds && it.id != trackId }
         .distinctBy { it.id }
     if (pool.size < 20) {
         val full = runCatching { api.related(trackId, full = 1) }.getOrNull()
         val extra = (
             (full?.tracks.orEmpty()) + (full?.related.orEmpty()) + (full?.radio.orEmpty())
             )
-            .filter { it.isPlayable() && it.id !in alreadyIds && it.id != trackId }
+            .filter { it.isMusicTrack() && it.id !in alreadyIds && it.id != trackId }
         pool = (pool + extra).distinctBy { it.id }
         if (mixCache != null && pool.isNotEmpty()) {
             mixCache.put(

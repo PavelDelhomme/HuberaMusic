@@ -13,7 +13,7 @@ suspend fun fetchAutoplayTracksFast(api: YtMusicApi, seedId: String): List<Track
             fast.related.orEmpty() +
             fast.radio.orEmpty()
         )
-        .filter { it.isPlayable() && it.id != seedId }
+        .filter { it.isMusicTrack() && it.id != seedId }
         .distinctBy { it.id }
 }
 
@@ -26,7 +26,7 @@ suspend fun fetchAutoplayTracksFull(api: YtMusicApi, seedId: String): List<Track
             related.related.orEmpty() +
             related.radio.orEmpty()
         )
-        .filter { it.isPlayable() && it.id != seedId }
+        .filter { it.isMusicTrack() && it.id != seedId }
         .distinctBy { it.id }
 }
 

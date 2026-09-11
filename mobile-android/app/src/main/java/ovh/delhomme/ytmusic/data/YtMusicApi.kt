@@ -864,6 +864,9 @@ interface YtMusicApi {
         @Query("title") title: String? = null,
         @Query("artist") artist: String? = null,
         @Query("durationSeconds") durationSeconds: Int? = null,
+        /** Attendre jusqu’à N ms une search clip officiel (évite Topic audio-only). */
+        @Query("wait") waitMs: Int? = null,
+        @Query("refresh") refresh: Int? = null,
     ): TrackVisualResponse
 }
 

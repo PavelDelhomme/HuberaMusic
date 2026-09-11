@@ -23,8 +23,6 @@ import ovh.delhomme.ytmusic.debug.AppLog
 object PlaybackIdleGuard {
     /** 6 h en pause BG — garde la notif permanente pour reprise rapide. */
     private const val IDLE_SHUTDOWN_MS = 6 * 60 * 60_000L
-    /** Après 20 min pause : coupe prefetch / DL seulement (service + notif restent). */
-    private const val IDLE_NETWORK_CUT_MS = 20 * 60_000L
     private const val CHECK_INTERVAL_MS = 60_000L
     @Volatile private var networkCutDone = false
 
@@ -79,11 +77,15 @@ object PlaybackIdleGuard {
             return
         }
         val idleMs = System.currentTimeMillis() - lastPlaybackActivityMs
-        if (idleMs >= IDLE_NETWORK_CUT_MS && !networkCutDone) {
+        val networkCutMs = ovh.delhomme.ytmusic.data.BatterySaver.idleNetworkCutMs()
+        if (idleMs >= networkCutMs && !networkCutDone) {
             networkCutDone = true
-            AppLog.i("PlaybackIdleGuard", "Coupe prefetch après ${idleMs / 60_000} min pause (notif gardée)")
+            AppLog.i("PlaybackIdleGuard", "Coupe prefetch après ${idleMs / 60_000} min pause (notif gardée, offline intact)")
             StreamPrefetcher.cancelIdle()
+            runCatching { VisualClipPrefetcher.cancel() }
             runCatching { app.container.downloadManager.cancelOpportunistic() }
+            // Compacte uniquement le cache Exo froid — ne touche pas aux titres téléchargés.
+            runCatching { PlayerCache.trimColdCache(app) }
         }
         if (idleMs < IDLE_SHUTDOWN_MS) return
 
@@ -92,6 +94,7 @@ object PlaybackIdleGuard {
             "Arrêt service après ${idleMs / 60_000} min sans lecture (BG)",
         )
         StreamPrefetcher.cancelIdle()
+        runCatching { VisualClipPrefetcher.cancel() }
         runCatching { app.container.downloadManager.cancelOpportunistic() }
         // Ne pas clearMediaItems ici : snapshot LocalPlaybackStore suffit pour reprise UI.
         // Arrêt service → notif disparaît seulement après très longue pause.
