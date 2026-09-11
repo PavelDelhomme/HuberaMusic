@@ -78,7 +78,7 @@ type PlayerState = {
   userQueueEnd: number;
   /** Collection d’où vient la file (album / playlist / mix…) — overlay « en lecture ». */
   sourceId: string | null;
-  sourceKind: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | null;
+  sourceKind: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
   /** Suggestions automatiques après la file (style YTM). */
   autoplay: boolean;
   isPlaying: boolean;
@@ -122,7 +122,7 @@ type PlayerState = {
       /** Nouvelle playlist / titre depuis l’UI : remplace la file et repart de 0. */
       forceRestart?: boolean;
       sourceId?: string | null;
-      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | null;
+      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
     },
   ) => Promise<void>;
   playQueue: (
@@ -130,7 +130,7 @@ type PlayerState = {
     startIndex?: number,
     opts?: {
       sourceId?: string | null;
-      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | null;
+      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
     },
   ) => Promise<void>;
   playAt: (index: number) => Promise<void>;
