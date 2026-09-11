@@ -646,7 +646,9 @@ class PlayerController(
 
     private fun applyMusicVolume() {
         val p = player() ?: PlaybackService.Holder.player ?: return
-        p.volume = if (musicDucked || SessionMediaMode.video) 0f else PLAYBACK_VOLUME
+        // Uniquement musicDucked (setVideoClipMode) — pas SessionMediaMode.video :
+        // sinon le mini-lecteur reste muet après repli du sheet en mode Vidéo.
+        p.volume = if (musicDucked) 0f else PLAYBACK_VOLUME
     }
 
     /**
@@ -1895,7 +1897,7 @@ class PlayerController(
             }
         }
         // Ne jamais toucher au volume STREAM_MUSIC système : garder celui déjà réglé.
-        player.volume = if (musicDucked || SessionMediaMode.video) 0f else PLAYBACK_VOLUME
+        player.volume = if (musicDucked) 0f else PLAYBACK_VOLUME
         val playingSame =
             autoplay &&
                 player.isPlaying &&
