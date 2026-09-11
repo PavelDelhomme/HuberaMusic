@@ -51,6 +51,12 @@ const REPORT_MIN_INTERVAL_MS = Number(
 );
 /** N’envoie un mail que si le cycle a vraiment travaillé (défaut ≥ 50 titres). */
 const REPORT_MIN_DONE = Number(process.env.LIBRARY_HEALTH_REPORT_MIN_DONE || 50);
+/**
+ * File vide depuis au moins ce délai avant de clôturer un cycle.
+ * Sinon la vague de re-vérif (1 titre / quelques secondes après 7 j) crée
+ * des micro-cycles en continu.
+ */
+const EMPTY_GRACE_MS = Number(process.env.LIBRARY_HEALTH_EMPTY_GRACE_MS || 30 * 60_000);
 
 /** `pending` : vidéo morte constatée, remplaçant pas encore cherché. */
 type State = 'ok' | 'replaced' | 'dead' | 'pending';
@@ -60,6 +66,8 @@ let timer: NodeJS.Timeout | null = null;
 let running = false;
 /** Après un cycle vide / bilan : ne pas rappeler finishCycle tant qu’on n’a pas revérifié un titre. */
 let cycleIdleClosed = false;
+/** Première fois où la file due+pending est vide (0 = pas vide). */
+let emptySinceMs = 0;
 const stats = { checked: 0, ok: 0, replaced: 0, dead: 0, pending: 0, startedAt: 0, reportsSent: 0, reportsSkipped: 0 };
 
 function ensureSchema() {
@@ -348,6 +356,7 @@ async function tick() {
     if (msSinceLastStream() >= IDLE_REQUIRED_MS) {
       const pending = nextPendingId();
       if (pending) {
+        emptySinceMs = 0;
         cycleIdleClosed = false;
         const state = await resolvePending(pending);
         markHealth(pending, state);
@@ -360,11 +369,20 @@ async function tick() {
     for (let i = 0; i < FREE_BATCH; i++) {
       const id = nextTrackId();
       if (!id) {
-        // Plus rien à vérifier : le cycle est bouclé. Reste éventuellement des
-        // remplaçants à chercher, qui attendent une accalmie.
-        if (!nextPendingId()) await finishCycle();
+        // Plus rien à vérifier pour l’instant. Attendre EMPTY_GRACE_MS avant de
+        // clôturer : la re-vérif à 7 j drippe 1 titre / 5–20 s et ne doit pas
+        // déclencher un « cycle terminé » à chaque trou.
+        if (!nextPendingId()) {
+          if (!emptySinceMs) emptySinceMs = Date.now();
+          if (Date.now() - emptySinceMs >= EMPTY_GRACE_MS) {
+            await finishCycle();
+          }
+        } else {
+          emptySinceMs = 0;
+        }
         return;
       }
+      emptySinceMs = 0;
       cycleIdleClosed = false;
       const { state, network } = await probeOne(id);
       markHealth(id, state);
