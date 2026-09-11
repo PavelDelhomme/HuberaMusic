@@ -48,6 +48,7 @@ function scoreCandidate(
   const na = normalize(artist);
   const ct = normalize(cand.title || '');
   const ca = normalize(artistLine(cand));
+  const blob = `${cand.title} ${artistLine(cand)}`.toLowerCase();
   let score = 0;
   if (ct === nt) score += 50;
   else if (ct.includes(nt) || nt.includes(ct)) score += 28;
@@ -61,15 +62,24 @@ function scoreCandidate(
     if (ca === na) score += 40;
     else if (ca.includes(na) || na.includes(ca)) score += 22;
   }
-  const blob = `${cand.title} ${artistLine(cand)}`.toLowerCase();
-  // Clip officiel artiste en priorité
+  // Clip officiel artiste / VEVO en priorité forte
   if (/\b(official\s*music\s*video|official\s*video|clip\s*officiel|video\s*officielle)\b/.test(blob)) {
-    score += 28;
+    score += 42;
+  } else if (/\bvevo\b/.test(blob)) {
+    score += 36;
   } else if (/\b(official|officiel|mv|music video|clip)\b/.test(blob)) {
-    score += 16;
+    score += 22;
   }
-  if (/\b(lyric|paroles|audio only|visualizer|audio)\b/.test(blob)) score -= 14;
-  if (/\b(topic)\b/.test(blob)) score -= 10; // chaînes « Topic » = souvent audio seul
+  // Artiste dans le titre du clip ou chaîne proche
+  if (na && (ct.includes(na) || blob.includes(na))) score += 10;
+  // Pénalités contenus non officiels / dérivés
+  if (/\b(cover|karaoke|karaoke|instrumental|sped up|slowed|nightcore|8d|remix|mashup|reaction|fan.?made|lyric|paroles|audio only|visualizer|audio)\b/.test(blob)) {
+    score -= 28;
+  }
+  if (/\b(live|concert|session|performance)\b/.test(blob) && !/\bofficial\b/.test(blob)) {
+    score -= 16;
+  }
+  if (/\b(topic)\b/.test(blob)) score -= 18; // chaînes « Topic » = souvent audio seul
   if (durationSec && cand.durationSeconds && cand.durationSeconds > 0) {
     const delta = Math.abs(cand.durationSeconds - durationSec) / durationSec;
     if (delta <= 0.08) score += 18;
@@ -77,6 +87,14 @@ function scoreCandidate(
     else if (delta > 0.45) score -= 20;
   }
   return score;
+}
+
+/** Titres clairement non officiels → on force une nouvelle search (cache obsolète). */
+function looksNonOfficialBlob(title?: string | null, artist?: string | null): boolean {
+  const blob = `${title || ''} ${artist || ''}`.toLowerCase();
+  return /\b(cover|karaoke|instrumental|sped up|slowed|nightcore|8d|remix|mashup|reaction|fan.?made|lyric video|paroles|audio only|visualizer)\b/.test(
+    blob,
+  );
 }
 
 function remember(value: VisualResolve) {
@@ -116,22 +134,25 @@ async function searchBetterClip(
   const job = (async (): Promise<VisualResolve> => {
     const fallback = sameResolve(id, title, artist);
     const q = [title, artist].filter(Boolean).join(' ').trim();
-    if (!q) {
+    const qOfficial = [title, artist, 'official music video'].filter(Boolean).join(' ').trim();
+    if (!q && !qOfficial) {
       remember(fallback);
       return fallback;
     }
     try {
-      const qOfficial = [title, artist, 'official video'].filter(Boolean).join(' ').trim();
-      const buckets = await search(q || qOfficial, 'video');
-      const bucketsOfficial =
-        qOfficial && qOfficial !== q ? await search(qOfficial, 'video').catch(() => null) : null;
+      // D’abord la query « official music video », puis la query simple
+      const bucketsOfficial = qOfficial
+        ? await search(qOfficial, 'video').catch(() => null)
+        : null;
+      const buckets =
+        q && q !== qOfficial ? await search(q, 'video').catch(() => null) : bucketsOfficial;
       const pool = [
-        ...(buckets.videos || []),
-        ...(buckets.songs || []),
         ...((bucketsOfficial?.videos || []) as Track[]),
         ...((bucketsOfficial?.songs || []) as Track[]),
+        ...(buckets?.videos || []),
+        ...(buckets?.songs || []),
       ].filter((t) => t?.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id));
-      // dédoublonne par id
+      // dédoublonne par id (ordre = priorité official d’abord)
       const seen = new Set<string>();
       const uniq = pool.filter((t) => {
         if (seen.has(t.id)) return false;
@@ -140,11 +161,16 @@ async function searchBetterClip(
       });
       const ranked = uniq
         .map((t) => ({ t, s: scoreCandidate(t, title, artist, durationSec) }))
-        .filter((x) => x.s >= 45)
+        .filter((x) => x.s >= 48)
         .sort((a, b) => b.s - a.s);
       const best = ranked[0]?.t;
-      // Préférer un autre ID seulement s’il score clairement mieux (clip officiel)
-      if (best && best.id !== id && (ranked[0]?.s ?? 0) >= 62) {
+      const bestScore = ranked[0]?.s ?? 0;
+      const bestBlob = `${best?.title || ''} ${artistLine(best || ({} as Track))}`.toLowerCase();
+      const looksOfficial =
+        /\b(official\s*music\s*video|official\s*video|vevo|clip\s*officiel)\b/.test(bestBlob);
+      // Accepter plus tôt si clairement officiel ; sinon seuil plus haut
+      const threshold = looksOfficial ? 55 : 68;
+      if (best && best.id !== id && bestScore >= threshold) {
         const value: VisualResolve = {
           audioId: id,
           visualId: best.id,
@@ -194,55 +220,66 @@ export async function resolveVisualVideo(
 
   const hit = cache.get(id);
   if (hit && Date.now() - hit.at < TTL_MS) {
-    // Cache « same » + client qui attend : retente une search (clip officiel).
-    if (waitMs > 0 && hit.value.source === 'same' && hints?.upgrade !== false) {
-      const title = (hints?.title || hit.value.title || '').trim();
-      const artist = (hints?.artist || hit.value.artist || '').trim();
-      if (title) {
-        try {
-          const better = await Promise.race([
-            searchBetterClip(id, title, artist, hints?.durationSeconds ?? null),
-            new Promise<VisualResolve>((resolve) =>
-              setTimeout(() => resolve(hit.value), waitMs),
-            ),
-          ]);
-          if (better.visualId && better.visualId !== id) return better;
-        } catch {
-          /* keep hit */
+    if (looksNonOfficialBlob(hit.value.title, hit.value.artist)) {
+      cache.delete(id);
+      deleteVisualCache(id);
+    } else {
+      // Cache « same » + client qui attend : retente une search (clip officiel).
+      if (waitMs > 0 && hit.value.source === 'same' && hints?.upgrade !== false) {
+        const title = (hints?.title || hit.value.title || '').trim();
+        const artist = (hints?.artist || hit.value.artist || '').trim();
+        if (title) {
+          try {
+            const better = await Promise.race([
+              searchBetterClip(id, title, artist, hints?.durationSeconds ?? null),
+              new Promise<VisualResolve>((resolve) =>
+                setTimeout(() => resolve(hit.value), waitMs),
+              ),
+            ]);
+            if (better.visualId && better.visualId !== id) return better;
+          } catch {
+            /* keep hit */
+          }
         }
       }
+      return hit.value;
     }
-    return hit.value;
   }
 
   const persisted = getVisualCache(id);
   if (persisted?.visual_id) {
-    const value: VisualResolve = {
-      audioId: id,
-      visualId: persisted.visual_id,
-      source: (persisted.source as VisualResolve['source']) || 'same',
-      title: persisted.title || hints?.title || undefined,
-      artist: persisted.artist || hints?.artist || undefined,
-    };
-    cache.set(id, { at: Date.now(), value });
-    if (waitMs > 0 && value.source === 'same' && hints?.upgrade !== false) {
-      const title = (hints?.title || value.title || '').trim();
-      const artist = (hints?.artist || value.artist || '').trim();
-      if (title) {
-        try {
-          const better = await Promise.race([
-            searchBetterClip(id, title, artist, hints?.durationSeconds ?? null),
-            new Promise<VisualResolve>((resolve) =>
-              setTimeout(() => resolve(value), waitMs),
-            ),
-          ]);
-          if (better.visualId && better.visualId !== id) return better;
-        } catch {
-          /* keep persisted */
+    // Anciens caches « cover / lyrics / … » : invalider pour retomber sur un clip officiel
+    if (looksNonOfficialBlob(persisted.title, persisted.artist)) {
+      deleteVisualCache(id);
+      cache.delete(id);
+    } else {
+      const value: VisualResolve = {
+        audioId: id,
+        visualId: persisted.visual_id,
+        source: (persisted.source as VisualResolve['source']) || 'same',
+        title: persisted.title || hints?.title || undefined,
+        artist: persisted.artist || hints?.artist || undefined,
+      };
+      cache.set(id, { at: Date.now(), value });
+      if (waitMs > 0 && value.source === 'same' && hints?.upgrade !== false) {
+        const title = (hints?.title || value.title || '').trim();
+        const artist = (hints?.artist || value.artist || '').trim();
+        if (title) {
+          try {
+            const better = await Promise.race([
+              searchBetterClip(id, title, artist, hints?.durationSeconds ?? null),
+              new Promise<VisualResolve>((resolve) =>
+                setTimeout(() => resolve(value), waitMs),
+              ),
+            ]);
+            if (better.visualId && better.visualId !== id) return better;
+          } catch {
+            /* keep persisted */
+          }
         }
       }
+      return value;
     }
-    return value;
   }
 
   let title = (hints?.title || '').trim();

@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-11",
   "versions": [
     {
+      "version": "1.3.227",
+      "date": "2026-09-11",
+      "title": "Ouvrir sur YouTube + clips plus officiels",
+      "notes": [
+        "Menu ⋮ du titre : action « Ouvrir sur YouTube » (app YouTube / navigateur)",
+        "Ouvre le clip résolu du mode Vidéo quand il est connu, sinon le titre",
+        "Recherche de clips : priorité official / VEVO, pénalité cover / live / Topic",
+        "Anciens caches « cover / lyrics » invalidés pour retomber sur un meilleur clip"
+      ]
+    },
+    {
       "version": "1.3.226",
       "date": "2026-09-11",
       "title": "Audio mini-lecteur en mode Vidéo",
