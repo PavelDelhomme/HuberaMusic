@@ -2,6 +2,7 @@ import {
   Check,
   Disc3,
   Download,
+  ExternalLink,
   Heart,
   Library,
   ListEnd,
@@ -474,6 +475,35 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
         )}
 
         <div className="py-1 pb-6">
+          {/* 0. YouTube (clip résolu si dispo) */}
+          {playable && (
+            <Row
+              icon={<ExternalLink className="h-4 w-4" />}
+              label="Ouvrir sur YouTube"
+              onClick={() =>
+                after(() => {
+                  void (async () => {
+                    let ytId = item.id;
+                    try {
+                      const vis = await api.trackVisual(item.id, {
+                        title: item.title,
+                        artist: item.artists?.map((a) => a.name).filter(Boolean).join(', '),
+                        durationSeconds: item.durationSeconds ?? undefined,
+                      });
+                      if (vis.visualId && /^[a-zA-Z0-9_-]{11}$/.test(vis.visualId)) {
+                        ytId = vis.visualId;
+                      }
+                    } catch {
+                      /* ouvrir l’ID titre */
+                    }
+                    window.open(`https://www.youtube.com/watch?v=${ytId}`, '_blank', 'noopener,noreferrer');
+                  })();
+                })
+              }
+            />
+          )}
+          {playable && <div className="my-1 border-t border-white/10" />}
+
           {/* 1. Navigation artiste / album */}
           {artistsAll.map((a) => (
             <Row
