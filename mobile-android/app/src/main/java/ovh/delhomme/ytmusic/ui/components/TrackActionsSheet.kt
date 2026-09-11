@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.RemoveFromQueue
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SpatialAudioOff
@@ -470,6 +471,24 @@ fun TrackActionsSheet(
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+        }
+
+        if (enriched.isPlayable()) {
+            SheetAction(Icons.Default.OpenInNew, "Ouvrir sur YouTube") {
+                // Clip résolu (mode Vidéo) si connu, sinon l’ID du titre
+                val ytId = ovh.delhomme.ytmusic.data.VisualIdCache.get(context, enriched.id)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: enriched.id
+                val uri = android.net.Uri.parse("https://www.youtube.com/watch?v=$ytId")
+                runCatching {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }.onFailure {
+                    context.toastMain("Impossible d’ouvrir YouTube")
+                }
+                onDismiss()
+            }
         }
 
         // Accès artiste / album en haut (toujours visibles + scrollables)
