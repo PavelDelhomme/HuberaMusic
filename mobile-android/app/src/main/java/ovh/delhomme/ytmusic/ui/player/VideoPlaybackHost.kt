@@ -125,15 +125,20 @@ fun rememberVideoPlaybackUi(
         }
     }
 
-    // Resolve mode Vidéo
+    // Resolve mode Vidéo — ne PAS clearStream quand le sheet est replié :
+    // le mini-lecteur doit garder l’audio titre ; le clip se réactive à la réouverture.
     LaunchedEffect(ui.track?.id, SessionMediaMode.video, sheetVisible) {
         val track = ui.track
-        if (!sheetVisible || track == null || !SessionMediaMode.video) {
+        if (track == null || !SessionMediaMode.video) {
+            video.resolving = false
             if (!SessionMediaMode.video) {
-                video.resolving = false
-            } else {
                 video.clearStream()
             }
+            return@LaunchedEffect
+        }
+        if (!sheetVisible && !video.fullscreen) {
+            // Sheet replié : garder visualId/streamUrl en mémoire, pas de resolve réseau.
+            video.resolving = false
             return@LaunchedEffect
         }
         video.error = null
@@ -264,7 +269,6 @@ fun rememberVideoPlaybackUi(
     }
 
     LaunchedEffect(SessionMediaMode.video) {
-        player.setVideoClipMode(SessionMediaMode.video)
         if (!SessionMediaMode.video) {
             video.exitFullscreen(force = true)
             VisualClipPrefetcher.cancel()
@@ -272,6 +276,30 @@ fun rememberVideoPlaybackUi(
                 player.seek(video.lastClipPosMs)
                 video.lastClipPosMs = 0L
             }
+            player.setVideoClipMode(false)
+        }
+        // Entrée mode Vidéo : duck géré par l’effet sheetVisible ci-dessous
+        // (évite de mute le mini-lecteur si le sheet est déjà replié).
+    }
+
+    // Sheet replié + mode Vidéo → audio titre (mini-lecteur).
+    // Sheet ouvert / FS → son du clip (duck titre).
+    LaunchedEffect(sheetVisible, video.fullscreen, SessionMediaMode.video) {
+        if (!SessionMediaMode.video) {
+            player.setVideoClipMode(false)
+            return@LaunchedEffect
+        }
+        val clipActive = sheetVisible || video.fullscreen
+        if (clipActive) {
+            player.setVideoClipMode(true)
+        } else {
+            val pos = video.lastClipPosMs.takeIf { it > 0L } ?: ui.positionMs
+            if (pos > 0L) {
+                runCatching { player.seek(pos) }
+            }
+            // Laisse Exo clip se mute (active=false) puis reprend le titre.
+            delay(40)
+            player.setVideoClipMode(false)
         }
     }
 
@@ -281,14 +309,10 @@ fun rememberVideoPlaybackUi(
     LaunchedEffect(video.fullscreen) {
         val act = activity ?: return@LaunchedEffect
         if (video.fullscreen) {
-            player.setVideoClipMode(true)
             act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             video.fsTapArmed = false
             delay(520)
             video.fsTapArmed = true
-        } else if (SessionMediaMode.video) {
-            player.setVideoClipMode(true)
-            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         } else {
             act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         }
