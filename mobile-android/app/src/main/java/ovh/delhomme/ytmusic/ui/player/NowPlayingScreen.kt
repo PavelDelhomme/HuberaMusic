@@ -426,10 +426,10 @@ fun NowPlayingScreen(
 
     fun onQueueDrag(deltaY: Float) {
         // deltaY < 0 = doigt vers le haut → ouvrir la file
-        scope.launch {
-            queueProgress.snapTo(
-                (queueProgress.value - deltaY / queueRangePx).coerceIn(0f, 1f),
-            )
+        // UNDISPATCHED : snapTo immédiat sans file de coroutines (évite le snap saccadé)
+        val next = (queueProgress.value - deltaY / queueRangePx).coerceIn(0f, 1f)
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            queueProgress.snapTo(next)
         }
     }
 

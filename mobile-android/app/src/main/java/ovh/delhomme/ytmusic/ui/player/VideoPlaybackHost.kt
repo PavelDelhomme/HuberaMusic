@@ -79,8 +79,9 @@ fun rememberVideoPlaybackUi(
     val video = remember { VideoPlaybackUi() }
     video.fsMediaControls = VideoPlaybackPrefs.fullscreenControls(context)
 
-    // Warm silencieux visualId
-    LaunchedEffect(ui.track?.id, ui.queueIndex, ui.queue.size) {
+    // Warm silencieux visualId — uniquement en mode Vidéo (sinon radio inutile en audio-only)
+    LaunchedEffect(ui.track?.id, ui.queueIndex, ui.queue.size, SessionMediaMode.video) {
+        if (!SessionMediaMode.video) return@LaunchedEffect
         val track = ui.track ?: return@LaunchedEffect
         if (BatterySaver.isActive()) {
             if (VisualIdCache.get(context, track.id) != null) return@LaunchedEffect
@@ -122,6 +123,12 @@ fun rememberVideoPlaybackUi(
                 val vid = vis.visualId?.takeIf { it.isNotBlank() && it != t.id }
                 if (vid != null) VisualIdCache.put(context, t.id, vid)
             }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            VisualClipPrefetcher.cancel()
         }
     }
 

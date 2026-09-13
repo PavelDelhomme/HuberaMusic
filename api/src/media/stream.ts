@@ -1381,6 +1381,8 @@ function bumpWarmPriority(id: string) {
   }
 }
 
+export { bumpWarmPriority };
+
 export function enqueueStreamWarm(ids: string[], userId?: string) {
   if (!ids.length) return;
   const [first, ...rest] = ids;
