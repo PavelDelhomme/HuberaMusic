@@ -127,7 +127,10 @@ fun TrackActionsSheet(
     val maxSheetBody = (LocalConfiguration.current.screenHeightDp * 0.72f).dp
     var enriched by remember(track.id) { mutableStateOf(track) }
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
-    val pinned = remember(pins, enriched.id) { pins.any { it.id == enriched.id } }
+    var pinned by remember(track.id) { mutableStateOf(false) }
+    LaunchedEffect(pins, enriched.id) {
+        pinned = pins.any { it.id == enriched.id }
+    }
     var showSleep by remember { mutableStateOf(false) }
     var downloaded by remember { mutableStateOf(false) }
     var wasDownloading by remember { mutableStateOf(false) }
@@ -473,24 +476,6 @@ fun TrackActionsSheet(
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
         }
 
-        if (enriched.isPlayable()) {
-            SheetAction(Icons.Default.OpenInNew, "Ouvrir sur YouTube") {
-                // Clip résolu (mode Vidéo) si connu, sinon l’ID du titre
-                val ytId = ovh.delhomme.ytmusic.data.VisualIdCache.get(context, enriched.id)
-                    ?.takeIf { it.isNotBlank() }
-                    ?: enriched.id
-                val uri = android.net.Uri.parse("https://www.youtube.com/watch?v=$ytId")
-                runCatching {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    )
-                }.onFailure {
-                    context.toastMain("Impossible d’ouvrir YouTube")
-                }
-                onDismiss()
-            }
-        }
-
         // Accès artiste / album en haut (toujours visibles + scrollables)
         namedArtists.forEach { a ->
             SheetAction(Icons.Default.Person, "Accéder à ${a.name}") {
@@ -586,10 +571,21 @@ fun TrackActionsSheet(
                     if (pinned) "Épinglé" else "Accès rapide",
                     active = pinned,
                 ) {
-                    // Optimistic : le Flow pins met à jour le rouge tout de suite
+                    // Optimistic rouge immédiat (DataStore peut mettre 1–2 frames)
+                    val next = !pinned
+                    pinned = next
                     scope.launch {
-                        val nowPinned = container.quickAccess.toggle(enriched, container.api)
-                        context.toastMain(if (nowPinned) "Épinglé en accès rapide" else "Retiré de l'accès rapide")
+                        val nowPinned = runCatching {
+                            container.quickAccess.toggle(enriched, container.api)
+                        }.getOrElse {
+                            pinned = !next
+                            context.toastMain("Impossible d’épingler")
+                            return@launch
+                        }
+                        pinned = nowPinned
+                        context.toastMain(
+                            if (nowPinned) "Épinglé en accès rapide" else "Retiré de l'accès rapide",
+                        )
                     }
                 }
             }
@@ -916,11 +912,20 @@ fun TrackActionsSheet(
                 QuickAction(
                     if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
                     if (pinned) "Retirer accès rapide" else "Accès rapide",
+                    active = pinned,
                 ) {
+                    val next = !pinned
+                    pinned = next
                     scope.launch {
-                        val nowPinned = container.quickAccess.toggle(enriched, container.api)
+                        val nowPinned = runCatching {
+                            container.quickAccess.toggle(enriched, container.api)
+                        }.getOrElse {
+                            pinned = !next
+                            context.toastMain("Impossible d’épingler")
+                            return@launch
+                        }
+                        pinned = nowPinned
                         context.toastMain(if (nowPinned) "Épinglé" else "Retiré de l'accès rapide")
-                        onDismiss()
                     }
                 }
                 QuickAction(
@@ -989,11 +994,20 @@ fun TrackActionsSheet(
             SheetAction(
                 if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
                 if (pinned) "Retirer de l'accès rapide" else "Épingler à l'accès rapide",
+                iconTint = if (pinned) Color(0xFFFF0033) else null,
             ) {
+                val next = !pinned
+                pinned = next
                 scope.launch {
-                    val nowPinned = container.quickAccess.toggle(enriched, container.api)
+                    val nowPinned = runCatching {
+                        container.quickAccess.toggle(enriched, container.api)
+                    }.getOrElse {
+                        pinned = !next
+                        context.toastMain("Impossible d’épingler")
+                        return@launch
+                    }
+                    pinned = nowPinned
                     context.toastMain(if (nowPinned) "Épinglé" else "Retiré de l'accès rapide")
-                    onDismiss()
                 }
             }
         }
@@ -1004,6 +1018,23 @@ fun TrackActionsSheet(
             playerUi.sleepLabel?.let { "Actif : $it" },
         ) {
             showSleep = true
+        }
+
+        if (enriched.isPlayable()) {
+            SheetAction(Icons.Default.OpenInNew, "Ouvrir sur YouTube") {
+                val ytId = ovh.delhomme.ytmusic.data.VisualIdCache.get(context, enriched.id)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: enriched.id
+                val uri = android.net.Uri.parse("https://www.youtube.com/watch?v=$ytId")
+                runCatching {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }.onFailure {
+                    context.toastMain("Impossible d’ouvrir YouTube")
+                }
+                onDismiss()
+            }
         }
 
         Spacer(Modifier.height(24.dp))
