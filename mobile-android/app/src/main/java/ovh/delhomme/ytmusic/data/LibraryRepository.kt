@@ -52,10 +52,10 @@ class LibraryRepository(
     )
 
     init {
-        disk.read()?.let { seed ->
-            _library.value = seed
-            sorted = buildSorted(seed)
-            _sortedEpoch.value = 1
+        // Lecture disque hors Main : 14k titres JSON peut freiner le 1er frame sinon.
+        scope.launch {
+            val seed = runCatching { disk.read() }.getOrNull() ?: return@launch
+            publish(seed, fromDisk = true)
         }
     }
 
@@ -85,10 +85,15 @@ class LibraryRepository(
                 cur.partial == lib.partial
         _library.value = lib
         if (!onlyDownloaded) {
-            scope.launch {
-                val s = withContext(Dispatchers.Default) { buildSorted(lib) }
-                sorted = s
-                _sortedEpoch.value += 1
+            // Light partial : garder le tri A–Z existant (évite double tri 14k light+full)
+            if (lib.partial == true && sorted != null) {
+                // no-op sorted
+            } else {
+                scope.launch {
+                    val s = withContext(Dispatchers.Default) { buildSorted(lib) }
+                    sorted = s
+                    _sortedEpoch.value += 1
+                }
             }
         }
         if (!fromDisk && lib.partial != true) {
@@ -156,8 +161,12 @@ class LibraryRepository(
 
     /** Cache mémoire / disque tout de suite ; refresh si stale (>45 s) ou force. */
     fun ensureLoaded(force: Boolean = false) {
+        // Relance lecture disque si encore vide (init async peut être en cours)
         if (_library.value == null) {
-            disk.read()?.let { publish(it, fromDisk = true) }
+            scope.launch {
+                val seed = runCatching { disk.read() }.getOrNull()
+                if (seed != null && _library.value == null) publish(seed, fromDisk = true)
+            }
         }
         val now = System.currentTimeMillis()
         if (!force && now - lastFetchAt < 45_000L && _library.value != null) return
