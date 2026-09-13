@@ -143,11 +143,12 @@ object NetworkMonitor {
         }
         runCatching { cm.registerNetworkCallback(req, cb) }
         runCatching { cm.registerDefaultNetworkCallback(cb) }
-        // Re-scan périodique : rattrape un 4G déjà là après coupure Wi‑Fi.
+        // Re-scan léger uniquement si on se croit offline (callbacks couvrent le cas normal).
+        // Avant : poll 8 s permanent → réveil radio inutile en idle.
         main.post(object : Runnable {
             override fun run() {
-                refreshFromSystem(app)
-                main.postDelayed(this, 8_000L)
+                if (!online) refreshFromSystem(app)
+                main.postDelayed(this, if (online) 60_000L else 12_000L)
             }
         })
     }

@@ -1113,12 +1113,14 @@ private fun MainTabs(
         delay(400)
         publishPlayback()
     }
-    // Heartbeat progress pendant lecture — espacé si économie batterie (pas de perte de sync métier)
+    // Heartbeat progress pendant lecture — seulement si sync multi-appareils active
     LaunchedEffect(playerUi.playing, playerUi.track?.id) {
         if (!playerUi.playing || playerUi.track == null) return@LaunchedEffect
+        if (!container.receiveRemoteSync()) return@LaunchedEffect
         while (isActive) {
             delay(ovh.delhomme.ytmusic.data.BatterySaver.sessionHeartbeatMs())
             if (!player.state.value.playing) break
+            if (!container.receiveRemoteSync()) break
             publishPlayback()
         }
     }
@@ -1128,6 +1130,11 @@ private fun MainTabs(
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
+                if (!container.receiveRemoteSync()) {
+                    // Sync off : dormir longtemps (évite wakeups toutes les 2–6 s)
+                    delay(45_000L)
+                    continue
+                }
                 delay(ovh.delhomme.ytmusic.data.BatterySaver.remoteMirrorPollMs())
                 if (!container.receiveRemoteSync()) continue
                 if (player.state.value.playing) continue

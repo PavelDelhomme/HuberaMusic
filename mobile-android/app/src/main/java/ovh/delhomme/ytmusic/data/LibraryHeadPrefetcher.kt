@@ -1,6 +1,9 @@
 package ovh.delhomme.ytmusic.data
 
 import android.content.Context
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -12,6 +15,7 @@ import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.player.PlaybackService
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Précharge ~5 s de tête (SimpleCache) pour la bibliothèque en fond.
@@ -27,10 +31,20 @@ class LibraryHeadPrefetcher(
     private val tickMutex = Mutex()
     private val boost = ConcurrentLinkedQueue<String>()
     private var started = false
+    private val appForeground = AtomicBoolean(true)
 
     fun start() {
         if (started) return
         started = true
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) {
+                appForeground.set(true)
+            }
+
+            override fun onStop(owner: LifecycleOwner) {
+                appForeground.set(false)
+            }
+        })
         scope.launch(Dispatchers.IO) {
             delay(START_DELAY_MS)
             // Têtes Aléatoire d’abord (ids en prefs) — avant le burst formats qui peut être long
@@ -38,6 +52,11 @@ class LibraryHeadPrefetcher(
             runCatching { warmFormatsBurst() }
             runCatching { warmServerRecentHeads() }
             while (true) {
+                if (!appForeground.get()) {
+                    // App en arrière-plan : ne pas réveiller la radio toutes les 90 s
+                    delay(BG_INTERVAL_MS)
+                    continue
+                }
                 runCatching { tick(reason = "periodic") }
                 runCatching { warmServerShuffleHeads(force = false) }
                 runCatching { warmServerRecentHeads() }
@@ -268,6 +287,8 @@ class LibraryHeadPrefetcher(
         /** Têtes Aléatoire tôt ; burst formats plus tard / plus léger (batterie). */
         private const val START_DELAY_MS = 900L
         private const val INTERVAL_MS = 90_000L
+        /** Hors foreground : pause des ticks réseau. */
+        private const val BG_INTERVAL_MS = 15 * 60_000L
         private const val BATCH = 8
         private const val KEY_CURSOR = "cursor"
         private const val KEY_LAST = "last_tick"
