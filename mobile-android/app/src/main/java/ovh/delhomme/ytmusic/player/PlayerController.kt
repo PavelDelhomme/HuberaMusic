@@ -605,6 +605,7 @@ class PlayerController(
     fun pause() {
         userWantsPlaying = false
         pendingAutoplay = false
+        ovh.delhomme.ytmusic.data.NetworkMonitor.clearPausedForNetwork()
         connect()
         player()?.pause() ?: PlaybackService.Holder.player?.pause()
         StreamPrefetcher.cancelIdle()
