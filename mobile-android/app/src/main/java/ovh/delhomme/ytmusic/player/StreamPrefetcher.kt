@@ -295,8 +295,12 @@ object StreamPrefetcher {
         warmCurrentBlocking(base, first, timeoutMs = 1_500L, wait = true)
         prefetchStartHeadBlocking(app, base, first, HEAD_NEXT_WIFI)
         markHeadReady(first)
-        // #1–2 — non bloquant : ne retarde plus le 1er play
-        lead.drop(1).forEach { id ->
+        // #1 : format wait (court) + tête FF — critique pour skip sans BUFFERING
+        lead.getOrNull(1)?.let { id ->
+            warmCurrentBlocking(base, id, timeoutMs = 900L, wait = true)
+            prefetchStartHead(base, id, HEAD_NEXT_WIFI, priorityNext = true)
+        }
+        lead.getOrNull(2)?.let { id ->
             warmTrackFormatOnly(base, id)
             prefetchStartHead(base, id, HEAD_3S)
         }
@@ -567,27 +571,50 @@ object StreamPrefetcher {
             val last = recent[key]
             if (last != null && System.currentTimeMillis() - last < 3_500L) return
         }
+        // Déjà assez d’octets → marque prêt, pas de re-download
+        val already = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, HEAD_NEXT_METERED)
+        if (already >= 220L * 1024L) {
+            markHeadReady(nextId)
+            synchronized(recent) { recent[key] = System.currentTimeMillis() }
+            return
+        }
         PlayerCache.pinTrack(nextId)
         val bytes = if (isUnmetered()) HEAD_NEXT_PLAYING else HEAD_NEXT_METERED
-        // Warm format sync court puis tête — titres froids Gims / Scylla.
         Thread {
             try {
-                warmCurrentBlocking(baseApi, nextId, timeoutMs = 1_800L, wait = true)
-                val url = "${baseApi.trimEnd('/')}/api/stream/$nextId"
-                PlayerCache.prefetchHead(
-                    YtMusicApp.instance,
-                    url,
-                    nextId,
-                    bytes,
-                    priorityNext = true,
-                )
-                // Attendre un peu que le CacheWriter démarre puis vérifier
-                Thread.sleep(600)
-                val cached = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, bytes)
-                if (cached >= bytes / 8 || cached >= 200L * 1024L) {
+                fun attempt(): Boolean {
+                    warmCurrentBlocking(baseApi, nextId, timeoutMs = 1_800L, wait = true)
+                    val url = "${baseApi.trimEnd('/')}/api/stream/$nextId"
+                    PlayerCache.prefetchHead(
+                        YtMusicApp.instance,
+                        url,
+                        nextId,
+                        bytes,
+                        priorityNext = true,
+                    )
+                    Thread.sleep(700)
+                    val cached = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, bytes)
+                    return cached >= bytes / 8 || cached >= 200L * 1024L
+                }
+                var ok = attempt()
+                if (!ok) {
+                    // 2ᵉ essai (format/CDN froid) — auto-heal local
+                    Thread.sleep(400)
+                    ok = attempt()
+                }
+                if (ok) {
                     markHeadReady(nextId)
-                    synchronized(recent) {
-                        recent[key] = System.currentTimeMillis()
+                    synchronized(recent) { recent[key] = System.currentTimeMillis() }
+                } else {
+                    // Signale au serveur pour re-warm disque/format (prochaine écoute)
+                    runCatching {
+                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                            level = "info",
+                            kind = "android.player.prefetch_miss",
+                            message = "next head cold id=$nextId",
+                            meta = mapOf("trackId" to nextId, "role" to "queue_next"),
+                            force = false,
+                        )
                     }
                 }
             } catch (_: Exception) {
@@ -759,9 +786,9 @@ object StreamPrefetcher {
         val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(capped)
         if (ids.isEmpty()) return
         warmBatch(baseApi, ids.take(MAX_WARM))
-        // Wi‑Fi : demande aussi le .m4a serveur (démarrage + seeks instantanés)
-        if (isUnmetered()) {
-            ids.take(4).forEach { requestServerDiskCache(baseApi, it) }
+        // Wi‑Fi : .m4a serveur seulement hors lecture (sinon concurrence Exo / batterie)
+        if (isUnmetered() && !PlaybackService.Holder.isPlaybackActiveSafe()) {
+            ids.take(2).forEach { requestServerDiskCache(baseApi, it) }
         }
         ids.forEach { id ->
             val url = "${baseApi.trimEnd('/')}/api/stream/$id"

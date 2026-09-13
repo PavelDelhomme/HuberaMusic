@@ -132,29 +132,27 @@ fun LibraryScreen(
         }
     }
 
-    // Préchargement formats — jamais pendant une session média (lecture ou pause)
+    // Têtes Aléatoire dès l’ouverture (léger) ; warm formats plus tard pour ne pas saturer
+    LaunchedEffect(Unit) {
+        delay(200)
+        container.libraryHeadPrefetcher.requestSoon("shuffle-urgent")
+    }
     LaunchedEffect(lib?.songs?.size) {
         val songCount = lib?.songs?.size ?: 0
         if (songCount < 8) return@LaunchedEffect
         if (libraryPrefetchBlocked()) return@LaunchedEffect
         val base = container.resolvedApiBase()
         if (base.isBlank()) return@LaunchedEffect
-        delay(2_500)
+        delay(5_000)
         if (StreamPrefetcher.isStreamDown() || libraryPrefetchBlocked()) return@LaunchedEffect
         withContext(Dispatchers.IO) {
             val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
             if (songs.size < 8) return@withContext
-            val sample = songs.shuffled().take(24).map { it.id }
-            StreamPrefetcher.warmFormatsLight(base, sample, limit = 24)
-            StreamPrefetcher.warmHeads3s(base, sample.take(6), limit = 6)
-            ovh.delhomme.ytmusic.data.ShuffleHeadStore.saveHead(
-                ovh.delhomme.ytmusic.YtMusicApp.instance,
-                ovh.delhomme.ytmusic.data.ShuffleHeadStore.keyFor(
-                    "lib:songs",
-                    ovh.delhomme.ytmusic.data.ShuffleHeadStore.fingerprint(songs),
-                ),
-                sample.take(12),
-            )
+            val sample = songs.shuffled().take(12).map { it.id }
+            StreamPrefetcher.warmFormatsLight(base, sample, limit = 12)
+            if (!libraryPrefetchBlocked()) {
+                StreamPrefetcher.warmHeads3s(base, sample.take(4), limit = 4)
+            }
         }
     }
 
@@ -250,13 +248,6 @@ fun LibraryScreen(
         )
 
         when {
-            loading -> {
-                Column(
-                    Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) { CircularProgressIndicator() }
-            }
             error != null && lib == null -> {
                 Column(
                     Modifier
@@ -294,7 +285,7 @@ fun LibraryScreen(
             }
             else -> {
                 PullToRefreshBox(
-                    isRefreshing = refreshing,
+                    isRefreshing = refreshing || loading,
                     onRefresh = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         scope.launch {
@@ -383,15 +374,26 @@ fun LibraryScreen(
                 val monMixIds = remember(offlineRev) { container.offlineKeeper.monMixIds() }
                 val sortedEpoch by repo.sortedEpoch.collectAsState()
                 val sorted = repo.sorted
+                // initialValue cheap sur Main — jamais buildLibraryContent full (14k) ici
+                // Rebuild seulement si le filtre courant dépend de downloadMeta / offlineRev
+                val contentKeysNeedOffline =
+                    selected == LibraryFilter.Downloads || selected == LibraryFilter.Tracks
                 val content by produceState(
-                    initialValue = buildLibraryContent(
-                        data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds, sorted,
+                    initialValue = LibraryContent(
+                        headline = selected.label,
+                        rows = emptyList(),
+                        playableQueue = emptyList(),
+                        emptyMessage = "Chargement…",
+                        loading = true,
                     ),
-                    sortedEpoch, sorted, selected, downloadMeta, offlineRev, homeMixes, downloadsEnriching, monMixIds, data,
+                    sortedEpoch, sorted, selected, homeMixes, downloadsEnriching, monMixIds, data, loading,
+                    if (contentKeysNeedOffline) downloadMeta else Unit,
+                    if (contentKeysNeedOffline) offlineRev else Unit,
                 ) {
                     value = withContext(Dispatchers.Default) {
                         buildLibraryContent(
                             data, selected, downloadMeta, downloadsEnriching, homeMixes, monMixIds, sorted,
+                            libraryLoading = loading,
                         )
                     }
                 }
@@ -425,12 +427,16 @@ fun LibraryScreen(
                         }
                 }
                 LaunchedEffect(selected, content.playableQueue) {
+                    var lastBoostAt = 0L
                     snapshotFlow {
                         listState.firstVisibleItemIndex to listState.layoutInfo.visibleItemsInfo.size
                     }
                         .distinctUntilChanged()
                         .collect { (first, visible) ->
                         if (libraryPrefetchBlocked()) return@collect
+                        val now = System.currentTimeMillis()
+                        if (now - lastBoostAt < 450L) return@collect
+                        lastBoostAt = now
                         val start = (first - 2).coerceAtLeast(0)
                         val end = (first + visible + 12).coerceAtMost(content.playableQueue.size)
                         if (start >= end) return@collect
@@ -439,12 +445,8 @@ fun LibraryScreen(
                             .map { it.id }
                             .filter { it.length == 11 }
                         if (ids.isEmpty()) return@collect
+                        // Uniquement boost LibHeads (tick fond) — pas warmHeads3s au scroll (batterie + radio)
                         container.libraryHeadPrefetcher.boostVisible(ids)
-                        ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(
-                            container.resolvedApiBase(),
-                            ids,
-                            limit = 8,
-                        )
                     }
                 }
                 when {
@@ -460,8 +462,14 @@ fun LibraryScreen(
                             CircularProgressIndicator()
                             Spacer(Modifier.height(12.dp))
                             Text(
-                                content.emptyMessage.ifBlank { "Chargement…" },
+                                content.emptyMessage.ifBlank { "Chargement de la bibliothèque…" },
                                 style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Les titres en cache apparaissent dès qu’ils sont prêts",
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -684,7 +692,17 @@ private fun buildLibraryContent(
     homeMixes: List<TrackDto> = emptyList(),
     monMixIds: List<String> = emptyList(),
     sorted: LibraryRepository.SortedLibrary? = null,
+    libraryLoading: Boolean = false,
 ): LibraryContent {
+    if (libraryLoading) {
+        return LibraryContent(
+            headline = filter.label,
+            rows = emptyList(),
+            playableQueue = emptyList(),
+            emptyMessage = "Chargement de la bibliothèque…",
+            loading = true,
+        )
+    }
     fun az(tracks: List<TrackDto>) = tracks.sortedBy { it.title.lowercase() }
 
     fun playlistKey(id: String): String {
@@ -732,12 +750,10 @@ private fun buildLibraryContent(
                 }.distinctBy { it.id }
             }
             val playableRecent = sorted?.additionsPlayable ?: recent.filter { it.isPlayable() }
-            // Les ajouts récents ouvrent la file, mais celle-ci se poursuit sur le reste
-            // de la bibliothèque : sans cela la lecture s'épuise après une quarantaine de
-            // titres et bascule sur des suggestions extérieures.
-            val playable = (
-                playableRecent + (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }
-                ).distinctBy { it.id }
+            // Suite de file = sorted.tracks (déjà A–Z jouable) — pas rescanner 14k songs ici
+            val restTracks = sorted?.tracks
+                ?: (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }.distinctBy { it.id }
+            val playable = (playableRecent + restTracks).distinctBy { it.id }
             // « Tout lire » = titres musique uniquement (pas vidéos / épisodes).
             val songQueue = playable.filter { it.isMusicTrack() }.ifEmpty { playable }
             LibraryContent(
@@ -759,7 +775,13 @@ private fun buildLibraryContent(
                     (data.songs.ifEmpty { data.liked }).filter { it.isPlayable() }.distinctBy { it.id },
                 )
             }
-            val totalSec = tracks.sumOf { (it.durationSeconds ?: 0).coerceAtLeast(0).toLong() }
+            val totalSec = if (tracks.size > 2_500) {
+                val sample = tracks.take(500)
+                val s = sample.sumOf { (it.durationSeconds ?: 0).coerceAtLeast(0).toLong() }
+                if (sample.isEmpty()) 0L else (s * tracks.size / sample.size)
+            } else {
+                tracks.sumOf { (it.durationSeconds ?: 0).coerceAtLeast(0).toLong() }
+            }
             val hoursLabel = when {
                 totalSec <= 0L -> null
                 totalSec < 3600L -> "${totalSec / 60} min"
