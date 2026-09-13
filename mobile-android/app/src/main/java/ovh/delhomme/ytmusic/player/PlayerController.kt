@@ -1344,7 +1344,7 @@ class PlayerController(
         _state.value = _state.value.copy(queueTitle = "File d'attente")
     }
 
-    fun moveInQueue(from: Int, to: Int) {
+    fun moveInQueue(from: Int, to: Int, warm: Boolean = true) {
         val p = player() ?: return
         val queue = PlaybackService.Holder.queue.toMutableList()
         if (from !in queue.indices || to !in queue.indices || from == to) return
@@ -1356,12 +1356,22 @@ class PlayerController(
         PlaybackService.Holder.queue = queue
         p.moveMediaItem(from, to)
         syncFrom(p)
+        if (!warm) return
         // Chauffe autour du titre déplacé (prochain play plus chaud)
         val base = PlaybackService.Holder.resolvedApiBase()
         if (base.isNotBlank() && item.id.length == 11) {
             StreamPrefetcher.warmTrackFormatOnly(base, item.id)
             warmAround(queue, to.coerceIn(0, queue.lastIndex))
         }
+    }
+
+    /** Après un drag fluide (warm=false pendant les swaps) : chauffe autour du curseur. */
+    fun warmQueueNeighborhood() {
+        val p = player() ?: return
+        val queue = PlaybackService.Holder.queue
+        if (queue.isEmpty()) return
+        val idx = p.currentMediaItemIndex.coerceIn(0, queue.lastIndex)
+        warmAround(queue, idx)
     }
 
     fun toggleShuffle() {

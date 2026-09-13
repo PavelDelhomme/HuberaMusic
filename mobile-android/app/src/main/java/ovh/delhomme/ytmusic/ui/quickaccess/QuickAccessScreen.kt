@@ -1,7 +1,6 @@
 package ovh.delhomme.ytmusic.ui.quickaccess
 
 import android.widget.Toast
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DragHandle
@@ -22,42 +22,68 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.ui.components.dragReorderHandle
+import ovh.delhomme.ytmusic.ui.components.dragReorderItem
+import ovh.delhomme.ytmusic.ui.components.dragReorderLongPress
+import ovh.delhomme.ytmusic.ui.components.rememberDragReorderState
 import ovh.delhomme.ytmusic.ui.library.playQueueWithLead
 import ovh.delhomme.ytmusic.ui.library.playQuickAccessShuffled
+import ovh.delhomme.ytmusic.ui.util.toastMain
 
 @Composable
 fun QuickAccessScreen(
     container: AppContainer,
     onBack: () -> Unit = {},
     onPlay: (List<TrackDto>, Int) -> Unit,
-    onPlayNamed: (List<TrackDto>, Int, String) -> Unit = { tracks, idx, _ -> onPlay(tracks, idx) },
-    onMore: (TrackDto) -> Unit,
+    onPlayNamed: (List<TrackDto>, Int, String) -> Unit = { q, i, _ -> onPlay(q, i) },
+    onMore: (TrackDto) -> Unit = {},
     onOpenDetail: (TrackDto) -> Unit = {},
 ) {
-    // Flux DataStore live — même source que le carrousel Accueil (pas de snapshot figé)
-    val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
-    val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val pinsRemote by container.quickAccess.pins.collectAsState(initial = emptyList())
+    var order by remember { mutableStateOf(pinsRemote) }
     var shuffleBusy by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val reorderState = rememberDragReorderState(
+        listState = listState,
+        onMove = { from, to ->
+            if (from !in order.indices || to !in order.indices || from == to) return@rememberDragReorderState
+            order = order.toMutableList().also { list ->
+                val item = list.removeAt(from)
+                list.add(to, item)
+            }
+        },
+        onDragEnd = {
+            scope.launch {
+                container.quickAccess.reorder(order.map { it.id }, container.api)
+            }
+        },
+    )
+    LaunchedEffect(pinsRemote) {
+        if (!reorderState.isDragging) order = pinsRemote
+    }
+    val keys = remember(order) { order.map { it.id }.toSet() }
+    val keyToIndex = remember(order) { order.mapIndexed { i, t -> t.id to i }.toMap() }
+    LaunchedEffect(keys, keyToIndex) {
+        reorderState.configure(keys) { keyToIndex[it] }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -75,35 +101,25 @@ fun QuickAccessScreen(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
-            if (pins.isNotEmpty()) {
+            if (order.isNotEmpty()) {
                 IconButton(
                     onClick = {
                         if (shuffleBusy) return@IconButton
                         shuffleBusy = true
                         scope.launch {
                             try {
-                                val ok = playQuickAccessShuffled(container, pins) { q, i ->
+                                val ok = playQuickAccessShuffled(container, order) { q, i ->
                                     onPlayNamed(q, i, "Accès rapide · Aléatoire")
                                 }
-                                if (!ok) {
-                                    Toast.makeText(
-                                        context,
-                                        "Aucun titre jouable dans l’accès rapide",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
+                                if (!ok) context.toastMain("Aucun titre jouable")
                             } finally {
                                 shuffleBusy = false
                             }
                         }
                     },
-                    enabled = !shuffleBusy,
                 ) {
                     if (shuffleBusy) {
-                        CircularProgressIndicator(
-                            Modifier.size(22.dp),
-                            strokeWidth = 2.dp,
-                        )
+                        CircularProgressIndicator(Modifier.size(22.dp))
                     } else {
                         Icon(Icons.Default.Shuffle, contentDescription = "Aléatoire")
                     }
@@ -111,13 +127,13 @@ fun QuickAccessScreen(
             }
         }
         Text(
-            "Premier épinglé en haut / à gauche · glisse la poignée pour réordonner",
-            style = MaterialTheme.typography.bodyMedium,
+            "Reste appuyé ou glisse ≡ pour réordonner",
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
         )
 
-        if (pins.isEmpty()) {
+        if (order.isEmpty()) {
             Column(
                 Modifier
                     .fillMaxSize()
@@ -136,11 +152,16 @@ fun QuickAccessScreen(
                 )
             }
         } else {
-            LazyColumn(contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)) {
-                itemsIndexed(pins, key = { _, track -> track.id }) { index, track ->
-                    var dragAccum by remember(track.id) { mutableFloatStateOf(0f) }
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
+            ) {
+                itemsIndexed(order, key = { _, track -> track.id }) { index, track ->
                     Row(
-                        Modifier.fillMaxWidth(),
+                        Modifier
+                            .fillMaxWidth()
+                            .dragReorderItem(reorderState, track.id)
+                            .dragReorderLongPress(reorderState, listState, index, track.id),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
@@ -150,39 +171,7 @@ fun QuickAccessScreen(
                             modifier = Modifier
                                 .size(40.dp)
                                 .padding(6.dp)
-                                .pointerInput(index, pins.size) {
-                                    detectDragGestures(
-                                        onDragEnd = { dragAccum = 0f },
-                                        onDragCancel = { dragAccum = 0f },
-                                        onDrag = { change, amount ->
-                                            change.consume()
-                                            dragAccum += amount.y
-                                            val threshold = with(density) { 40.dp.toPx() }
-                                            when {
-                                                dragAccum > threshold && index < pins.lastIndex -> {
-                                                    scope.launch {
-                                                        container.quickAccess.move(
-                                                            index,
-                                                            index + 1,
-                                                            container.api,
-                                                        )
-                                                    }
-                                                    dragAccum = 0f
-                                                }
-                                                dragAccum < -threshold && index > 0 -> {
-                                                    scope.launch {
-                                                        container.quickAccess.move(
-                                                            index,
-                                                            index - 1,
-                                                            container.api,
-                                                        )
-                                                    }
-                                                    dragAccum = 0f
-                                                }
-                                            }
-                                        },
-                                    )
-                                },
+                                .dragReorderHandle(reorderState, listState, index, track.id),
                         )
                         TrackRow(
                             track = track,
@@ -198,7 +187,7 @@ fun QuickAccessScreen(
                                 }
                                 scope.launch {
                                     if (track.isPlayable()) {
-                                        val music = pins.filter { it.isMusicTrack() }
+                                        val music = order.filter { it.isMusicTrack() }
                                         val list =
                                             if (music.any { it.id == track.id }) music
                                             else listOf(track)
