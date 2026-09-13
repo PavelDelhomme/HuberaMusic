@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -14,7 +15,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Précharge ~5 s de tête (SimpleCache) pour la bibliothèque en fond.
- * Priorité : titres boostés (viewport) → aimés → songs → historique.
+ * Priorité : pins → aimés → boost viewport → songs → historique.
  * Ne concurrence pas le titre en cours (quiet / stream down / lecture).
  */
 class LibraryHeadPrefetcher(
@@ -168,6 +169,13 @@ class LibraryHeadPrefetcher(
 
         drainBoost(limit = 8)
 
+        // Aimés manquants en tête (après boost) — prioritaire pour Aléatoire / hors-ligne
+        val likedWarm = likedIds().filter { !container.offlineStore.has(it) }.take(6)
+        if (likedWarm.isNotEmpty()) {
+            StreamPrefetcher.prefetchLibraryHeads(base, likedWarm, limit = 6)
+            StreamPrefetcher.warmFormatsLight(base, likedWarm, limit = 6)
+        }
+
         val cursor = prefs.getInt(KEY_CURSOR, 0)
         val ids = libraryIds()
         if (ids.isEmpty()) return
@@ -183,7 +191,7 @@ class LibraryHeadPrefetcher(
             .putInt(KEY_CURSOR, next)
             .putLong(KEY_LAST, System.currentTimeMillis())
             .apply()
-        AppLog.i("LibHeads", "warmed ${batch.size} from=$start next=$next total=${ids.size}")
+        AppLog.i("LibHeads", "warmed ${batch.size} from=$start next=$next total=${ids.size} liked=${likedWarm.size}")
     }
 
     private fun drainBoost(limit: Int) {
@@ -200,26 +208,37 @@ class LibraryHeadPrefetcher(
         }
     }
 
+    private fun likedIds(): List<String> {
+        val lib = container.libraryRepo.library.value
+        return (lib?.liked.orEmpty()).map { it.id }.filter { it.length == 11 }.distinct()
+    }
+
     private suspend fun libraryIds(): List<String> {
+        val pins = runCatching {
+            container.quickAccess.pins.first().map { it.id }
+        }.getOrDefault(emptyList())
         val cached = container.libraryRepo.library.value
         val lib = cached ?: runCatching {
             container.libraryRepo.ensureLoaded(force = false)
             container.libraryRepo.library.value
         }.getOrNull()
         if (lib == null) {
-            val remote = runCatching { container.api.library() }.getOrNull() ?: return emptyList()
+            val remote = runCatching { container.api.library() }.getOrNull()
+                ?: return pins.filter { it.length == 11 }
             return buildList {
-                addAll(remote.songs.orEmpty().map { it.id })
+                addAll(pins)
                 addAll(remote.liked.orEmpty().map { it.id })
+                addAll(remote.songs.orEmpty().map { it.id })
                 addAll(remote.history.orEmpty().map { it.id })
             }
                 .filter { it.length == 11 }
                 .distinct()
         }
         return buildList {
-            // Songs biblio d’abord (ajouts récents / Enregistré récemment), puis likes, puis history
-            addAll(lib.songs.map { it.id })
+            // pins → liked → songs → history
+            addAll(pins)
             addAll(lib.liked.map { it.id })
+            addAll(lib.songs.map { it.id })
             addAll(lib.history.map { it.id })
         }
             .filter { it.length == 11 }

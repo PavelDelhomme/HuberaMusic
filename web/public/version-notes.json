@@ -1,6 +1,18 @@
 {
-  "updatedAt": "2026-09-11",
+  "updatedAt": "2026-09-13",
   "versions": [
+    {
+      "version": "1.3.228",
+      "date": "2026-09-13",
+      "title": "Aléatoire rapide, cache favoris, moins de mails",
+      "notes": [
+        "Aléatoire / Tout lire : démarrage immédiat (plus de bouton mort pendant le warm)",
+        "Têtes warm : soft-biais dès 1 titre chauffé ; favoris injectés dans shuffle-heads serveur",
+        "Cache biblio : priorité pins → J’aime → viewport ; plus d’aimés DL en Wi‑Fi",
+        "Balayage santé : anti-spam (max 2 mails/jour, grâce idle, backoff 30 min)",
+        "Hors-ligne déjà en pause : plus de « reprise dès que le réseau revient »"
+      ]
+    },
     {
       "version": "1.3.227",
       "date": "2026-09-11",
