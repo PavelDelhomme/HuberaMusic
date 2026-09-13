@@ -86,6 +86,10 @@ object NetworkMonitor {
         pausedForNetwork = true
     }
 
+    fun clearPausedForNetwork() {
+        pausedForNetwork = false
+    }
+
     fun start(context: Context) {
         if (!started.compareAndSet(false, true)) return
         val app = context.applicationContext
@@ -268,7 +272,7 @@ object NetworkMonitor {
             val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
             val curId = exo.currentMediaItem?.mediaId
 
-            fun jumpToOffline(idx: Int) {
+            fun jumpToOffline(idx: Int, resumePlay: Boolean) {
                 val track = queue.getOrNull(idx) ?: return
                 if (!store.has(track.id)) return
                 runCatching {
@@ -285,25 +289,31 @@ object NetworkMonitor {
                     exo.replaceMediaItem(mediaIdx, item)
                     exo.seekTo(mediaIdx, pos)
                     exo.prepare()
-                    exo.playWhenReady = true
-                    exo.play()
+                    if (resumePlay) {
+                        exo.playWhenReady = true
+                        exo.play()
+                    } else {
+                        exo.playWhenReady = false
+                    }
                     PlaybackService.Holder.index = idx
                 }
             }
 
+            val wasPlaying = exo.isPlaying || exo.playWhenReady
             if (!curId.isNullOrBlank() && store.has(curId)) {
-                jumpToOffline(curIdx)
+                jumpToOffline(curIdx, resumePlay = wasPlaying)
                 return@post
             }
             // Ne jamais sauter à UN AUTRE titre hors-ligne (ça « change de musique » en milieu de morceau).
-            val wasPlaying = exo.isPlaying || exo.playWhenReady
             exo.playWhenReady = false
             runCatching { exo.pause() }
-            if (wasPlaying) markPausedForNetwork()
-            ovh.delhomme.ytmusic.YtMusicApp.instance.toastMain(
-                "Hors ligne — reprise dès que le réseau revient",
-                android.widget.Toast.LENGTH_LONG,
-            )
+            if (wasPlaying) {
+                markPausedForNetwork()
+                ovh.delhomme.ytmusic.YtMusicApp.instance.toastMain(
+                    "Hors ligne — reprise dès que le réseau revient",
+                    android.widget.Toast.LENGTH_LONG,
+                )
+            }
             // Relance sync quand le réseau reviendra
             runCatching { container.offlineKeeper.requestSoon("back-soon") }
         }

@@ -1056,12 +1056,22 @@ class PlaybackService : MediaSessionService() {
                     StreamPrefetcher.markStreamDown()
                     StreamPrefetcher.cancelIdle()
                     recoverGen.incrementAndGet()
+                    val wasPlaying = exo.isPlaying || exo.playWhenReady
                     exo.playWhenReady = false
                     runCatching { exo.pause() }
                     streamFailStreak.set(0)
-                    ovh.delhomme.ytmusic.data.NetworkMonitor.markPausedForNetwork()
+                    if (wasPlaying) {
+                        ovh.delhomme.ytmusic.data.NetworkMonitor.markPausedForNetwork()
+                    }
                     android.os.Handler(mainLooper).post {
-                        this@PlaybackService.toastMain("Hors ligne — télécharge des titres (⋮) pour continuer", Toast.LENGTH_SHORT)
+                        this@PlaybackService.toastMain(
+                            if (wasPlaying) {
+                                "Hors ligne — télécharge des titres (⋮) pour continuer"
+                            } else {
+                                "Hors ligne"
+                            },
+                            Toast.LENGTH_SHORT,
+                        )
                     }
                     return
                 }
