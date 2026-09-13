@@ -76,7 +76,7 @@ class OfflineKeeper(
         }
         if (!NetworkMonitor.isUnmeteredPreferred(context)) {
             // Données mobiles : seulement aimés manquants (cap bas)
-            syncLiked(limit = 4)
+            syncLiked(limit = 6)
             return
         }
         val last = prefs.getLong(KEY_LAST_TICK, 0L)
@@ -89,7 +89,8 @@ class OfflineKeeper(
             return
         }
         ensureToken()
-        syncLiked(limit = 4)
+        // Favoris d’abord (plus large en Wi‑Fi) — Mon Mix ensuite, sans les écraser
+        syncLiked(limit = if (BatterySaver.isActive()) 6 else 16)
         delay(2_500)
         if (!NetworkMonitor.isOnline() || StreamPrefetcher.isStreamDown()) return
         syncMonMix()
