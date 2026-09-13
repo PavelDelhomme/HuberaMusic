@@ -88,6 +88,10 @@ import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
 import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.MixCollageCover
+import ovh.delhomme.ytmusic.ui.components.dragReorderHandle
+import ovh.delhomme.ytmusic.ui.components.dragReorderItem
+import ovh.delhomme.ytmusic.ui.components.dragReorderLongPress
+import ovh.delhomme.ytmusic.ui.components.rememberDragReorderState
 import ovh.delhomme.ytmusic.ui.components.PinnedBadge
 import ovh.delhomme.ytmusic.ui.components.TrackRow
 
@@ -790,9 +794,9 @@ private fun QuickAccessHomeCard(
         QuickAccessReorderSheet(
             pins = pins,
             onDismiss = { showReorder = false },
-            onMove = { from, to ->
+            onCommitOrder = { ids ->
                 scope.launch {
-                    container.quickAccess.move(from, to, container.api)
+                    container.quickAccess.reorder(ids, container.api)
                 }
             },
         )
@@ -804,12 +808,32 @@ private fun QuickAccessHomeCard(
 private fun QuickAccessReorderSheet(
     pins: List<TrackDto>,
     onDismiss: () -> Unit,
-    onMove: (from: Int, to: Int) -> Unit,
+    onCommitOrder: (List<String>) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val density = LocalDensity.current
+    var order by remember(pins) { mutableStateOf(pins) }
+    val listState = rememberLazyListState()
+    val reorderState = rememberDragReorderState(
+        listState = listState,
+        onMove = { from, to ->
+            if (from !in order.indices || to !in order.indices || from == to) return@rememberDragReorderState
+            order = order.toMutableList().also { list ->
+                val item = list.removeAt(from)
+                list.add(to, item)
+            }
+        },
+        onDragEnd = { onCommitOrder(order.map { it.id }) },
+    )
+    val keys = remember(order) { order.map { it.id }.toSet() }
+    val keyToIndex = remember(order) { order.mapIndexed { i, t -> t.id to i }.toMap() }
+    androidx.compose.runtime.LaunchedEffect(keys, keyToIndex) {
+        reorderState.configure(keys) { keyToIndex[it] }
+    }
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            onCommitOrder(order.map { it.id })
+            onDismiss()
+        },
         sheetState = sheetState,
     ) {
         Text(
@@ -819,19 +843,21 @@ private fun QuickAccessReorderSheet(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
         )
         Text(
-            "Premier épinglé à gauche · glisse la poignée pour changer",
+            "Reste appuyé ou glisse la poignée · déplace librement",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
         )
         LazyColumn(
+            state = listState,
             contentPadding = PaddingValues(bottom = 32.dp, top = 8.dp),
         ) {
-            itemsIndexed(pins, key = { _, t -> t.id }) { index, track ->
-                var dragAccum by remember(track.id) { mutableFloatStateOf(0f) }
+            itemsIndexed(order, key = { _, t -> t.id }) { index, track ->
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .dragReorderItem(reorderState, track.id)
+                        .dragReorderLongPress(reorderState, listState, index, track.id)
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -842,27 +868,7 @@ private fun QuickAccessReorderSheet(
                         modifier = Modifier
                             .size(40.dp)
                             .padding(6.dp)
-                            .pointerInput(index, pins.size) {
-                                detectDragGestures(
-                                    onDragEnd = { dragAccum = 0f },
-                                    onDragCancel = { dragAccum = 0f },
-                                    onDrag = { change, amount ->
-                                        change.consume()
-                                        dragAccum += amount.y
-                                        val threshold = with(density) { 40.dp.toPx() }
-                                        when {
-                                            dragAccum > threshold && index < pins.lastIndex -> {
-                                                onMove(index, index + 1)
-                                                dragAccum = 0f
-                                            }
-                                            dragAccum < -threshold && index > 0 -> {
-                                                onMove(index, index - 1)
-                                                dragAccum = 0f
-                                            }
-                                        }
-                                    },
-                                )
-                            },
+                            .dragReorderHandle(reorderState, listState, index, track.id),
                     )
                     MediaCover(track, 44.dp)
                     Spacer(Modifier.width(12.dp))

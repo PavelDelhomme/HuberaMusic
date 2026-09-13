@@ -160,6 +160,10 @@ import ovh.delhomme.ytmusic.ui.components.DownloadStatusIcon
 import ovh.delhomme.ytmusic.ui.components.EqualizerSheet
 import ovh.delhomme.ytmusic.ui.components.HoldSeekIconButton
 import ovh.delhomme.ytmusic.ui.components.MediaCover
+import ovh.delhomme.ytmusic.ui.components.dragReorderHandle
+import ovh.delhomme.ytmusic.ui.components.dragReorderItem
+import ovh.delhomme.ytmusic.ui.components.dragReorderLongPress
+import ovh.delhomme.ytmusic.ui.components.rememberDragReorderState
 import ovh.delhomme.ytmusic.ui.icons.MixIcon
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -718,6 +722,41 @@ fun NowPlayingScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 // Lecteur « plein » : cover + contrôles + aperçu file (portrait : file ancrée en bas)
                 val landscapeLayout = isLandscape()
+                val landscapeBoundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
+                val landscapePreviewFrom = ui.queueIndex.coerceIn(0, landscapeBoundary)
+                val landscapePlayed = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
+                val landscapeUser = ui.queue.subList(landscapePreviewFrom, landscapeBoundary)
+                val landscapeAuto = ui.queue.drop(landscapeBoundary)
+                val landscapeReorder = rememberDragReorderState(
+                    listState = listState,
+                    onMove = { from, to -> player.moveInQueue(from, to, warm = false) },
+                    onDragEnd = { player.warmQueueNeighborhood() },
+                )
+                val landscapeKeys = remember(ui.queue, ui.queueIndex, landscapeBoundary) {
+                    buildSet {
+                        landscapePlayed.forEachIndexed { i, t -> add("played-c-${t.id}-$i") }
+                        landscapeUser.forEachIndexed { i, t ->
+                            add("iu-${t.id}-${landscapePreviewFrom + i}")
+                        }
+                        landscapeAuto.forEachIndexed { i, t ->
+                            add("ia-${t.id}-${landscapeBoundary + i}")
+                        }
+                    }
+                }
+                val landscapeKeyToAbs = remember(ui.queue, ui.queueIndex, landscapeBoundary) {
+                    buildMap {
+                        landscapePlayed.forEachIndexed { i, t -> put("played-c-${t.id}-$i", i) }
+                        landscapeUser.forEachIndexed { i, t ->
+                            put("iu-${t.id}-${landscapePreviewFrom + i}", landscapePreviewFrom + i)
+                        }
+                        landscapeAuto.forEachIndexed { i, t ->
+                            put("ia-${t.id}-${landscapeBoundary + i}", landscapeBoundary + i)
+                        }
+                    }
+                }
+                LaunchedEffect(landscapeKeys, landscapeKeyToAbs) {
+                    landscapeReorder.configure(landscapeKeys) { landscapeKeyToAbs[it] }
+                }
                 // File ouverte (≥ ~15 %) : panneau dédié par-dessus — le NP (Exo vidéo) reste
                 // composé / en lecture (alpha 0), on ne dispose pas la surface.
                 val showQueuePanel = qp > 0.15f
@@ -1392,8 +1431,9 @@ fun NowPlayingScreen(
                             )
                         }
 
-                        val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
-                        val playedBefore = ui.queue.take(ui.queueIndex.coerceIn(0, ui.queue.size))
+                        val boundary = landscapeBoundary
+                        val playedBefore = landscapePlayed
+                        val previewFrom = landscapePreviewFrom
                         if (playedBefore.isNotEmpty()) {
                             item {
                                 Text(
@@ -1408,13 +1448,14 @@ fun NowPlayingScreen(
                                 playedBefore,
                                 key = { i, t -> "played-c-${t.id}-$i" },
                             ) { index, item ->
+                                val key = "played-c-${item.id}-$index"
                                 QueueTrackRow(
                                     track = item,
                                     index = index,
                                     highlighted = false,
                                     onClick = { player.playAt(index) },
                                     onLongClick = { onMore?.invoke(item) },
-                                    onMove = { from, to -> player.moveInQueue(from, to) },
+                                    onMove = { from, to -> player.moveInQueue(from, to, warm = false) },
                                     onMore = onMore?.let { { it(item) } },
                                     onMix = {
                                         scope.launch {
@@ -1426,6 +1467,9 @@ fun NowPlayingScreen(
                                         }
                                     },
                                     radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                                    reorderState = landscapeReorder,
+                                    listState = listState,
+                                    itemKey = key,
                                 )
                             }
                         }
@@ -1439,19 +1483,19 @@ fun NowPlayingScreen(
                             )
                         }
                         // Aperçu : titre courant + suite user (pas seulement à partir du courant sans label)
-                        val previewFrom = ui.queueIndex.coerceIn(0, boundary)
                         itemsIndexed(
-                            ui.queue.subList(previewFrom, boundary),
+                            landscapeUser,
                             key = { i, t -> "iu-${t.id}-${previewFrom + i}" },
                         ) { index, item ->
                             val abs = previewFrom + index
+                            val key = "iu-${item.id}-$abs"
                             QueueTrackRow(
                                 track = item,
                                 index = abs,
                                 highlighted = abs == ui.queueIndex,
                                 onClick = { player.playAt(abs) },
                                 onLongClick = { onMore?.invoke(item) },
-                                onMove = { from, to -> player.moveInQueue(from, to) },
+                                onMove = { from, to -> player.moveInQueue(from, to, warm = false) },
                                 onMore = onMore?.let { { it(item) } },
                                 onMix = {
                                     scope.launch {
@@ -1463,6 +1507,9 @@ fun NowPlayingScreen(
                                     }
                                 },
                                 radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                                reorderState = landscapeReorder,
+                                listState = listState,
+                                itemKey = key,
                             )
                         }
                         item {
@@ -1501,17 +1548,18 @@ fun NowPlayingScreen(
                             }
                         }
                         itemsIndexed(
-                            ui.queue.drop(boundary),
+                            landscapeAuto,
                             key = { i, t -> "ia-${t.id}-${boundary + i}" },
                         ) { i, item ->
                                 val abs = boundary + i
+                                val key = "ia-${item.id}-$abs"
                                 QueueTrackRow(
                                     track = item,
                                     index = abs,
                                     highlighted = abs == ui.queueIndex,
                                     onClick = { player.playAt(abs) },
                                     onLongClick = { onMore?.invoke(item) },
-                                    onMove = { from, to -> player.moveInQueue(from, to) },
+                                    onMove = { from, to -> player.moveInQueue(from, to, warm = false) },
                                     onMore = onMore?.let { { it(item) } },
                                     onMix = {
                                         scope.launch {
@@ -1522,6 +1570,9 @@ fun NowPlayingScreen(
                                             }
                                         }
                                     },
+                                    reorderState = landscapeReorder,
+                                    listState = listState,
+                                    itemKey = key,
                                 )
                             }
                         item { Spacer(Modifier.height(40.dp)) }
@@ -1880,6 +1931,29 @@ private fun PortraitQueuePreview(
         }
     }
     val boundary = ui.userQueueEnd.coerceIn(0, ui.queue.size)
+    val previewFrom = (ui.queueIndex + 1).coerceIn(0, boundary)
+    val previewUser = ui.queue.subList(previewFrom, boundary)
+    val previewAuto = ui.queue.drop(boundary).take(12)
+    val previewReorder = rememberDragReorderState(
+        listState = previewList,
+        onMove = { from, to -> player.moveInQueue(from, to, warm = false) },
+        onDragEnd = { player.warmQueueNeighborhood() },
+    )
+    val previewKeys = remember(ui.queue, previewFrom, boundary) {
+        buildSet {
+            previewUser.forEachIndexed { i, t -> add("ip-${t.id}-${previewFrom + i}") }
+            previewAuto.forEachIndexed { i, t -> add("ap-${t.id}-${boundary + i}") }
+        }
+    }
+    val previewKeyToAbs = remember(ui.queue, previewFrom, boundary) {
+        buildMap {
+            previewUser.forEachIndexed { i, t -> put("ip-${t.id}-${previewFrom + i}", previewFrom + i) }
+            previewAuto.forEachIndexed { i, t -> put("ap-${t.id}-${boundary + i}", boundary + i) }
+        }
+    }
+    LaunchedEffect(previewKeys, previewKeyToAbs) {
+        previewReorder.configure(previewKeys) { previewKeyToAbs[it] }
+    }
     // Aperçu replié : titre en cours en premier (rouge) + suite — sticky header au-dessus.
     Column(modifier = modifier.nestedScroll(blockParentDismiss)) {
         val qh = queueHeaderLabels(ui)
@@ -1928,19 +2002,19 @@ private fun PortraitQueuePreview(
             state = previewList,
         ) {
         // Suite après le courant (le courant est déjà en rouge au-dessus)
-        val previewFrom = (ui.queueIndex + 1).coerceIn(0, boundary)
         itemsIndexed(
-            ui.queue.subList(previewFrom, boundary),
+            previewUser,
             key = { i, t -> "ip-${t.id}-${previewFrom + i}" },
         ) { index, item ->
             val abs = previewFrom + index
+            val key = "ip-${item.id}-$abs"
             QueueTrackRow(
                 track = item,
                 index = abs,
                 highlighted = false,
                 onClick = { player.playAt(abs) },
                 onLongClick = { onMore?.invoke(item) },
-                onMove = { from, to -> player.moveInQueue(from, to) },
+                onMove = { from, to -> player.moveInQueue(from, to, warm = false) },
                 onMore = onMore?.let { { it(item) } },
                 onMix = {
                     scope.launch {
@@ -1951,6 +2025,9 @@ private fun PortraitQueuePreview(
                     }
                 },
                 radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                reorderState = previewReorder,
+                listState = previewList,
+                itemKey = key,
             )
         }
         item {
@@ -1979,17 +2056,18 @@ private fun PortraitQueuePreview(
             }
         }
         itemsIndexed(
-            ui.queue.drop(boundary).take(12),
+            previewAuto,
             key = { i, t -> "ap-${t.id}-${boundary + i}" },
         ) { i, item ->
             val abs = boundary + i
+            val key = "ap-${item.id}-$abs"
             QueueTrackRow(
                 track = item,
                 index = abs,
                 highlighted = abs == ui.queueIndex,
                 onClick = { player.playAt(abs) },
                 onLongClick = { onMore?.invoke(item) },
-                onMove = { from, to -> player.moveInQueue(from, to) },
+                onMove = { from, to -> player.moveInQueue(from, to, warm = false) },
                 onMore = onMore?.let { { it(item) } },
                 onMix = {
                     scope.launch {
@@ -1999,6 +2077,9 @@ private fun PortraitQueuePreview(
                         }
                     }
                 },
+                reorderState = previewReorder,
+                listState = previewList,
+                itemKey = key,
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
@@ -2345,6 +2426,29 @@ private fun QueueExpandedBody(
     }
     val autoTracks = ui.queue.drop(boundary)
 
+    val queueReorder = rememberDragReorderState(
+        listState = listState,
+        onMove = { from, to -> player.moveInQueue(from, to, warm = false) },
+        onDragEnd = { player.warmQueueNeighborhood() },
+    )
+    val queueReorderKeys = remember(ui.queue, ui.queueIndex, boundary) {
+        buildSet {
+            playedBefore.forEachIndexed { i, t -> add("played-${t.id}-$i") }
+            currentAndUpcomingUser.forEachIndexed { i, t -> add("u-${t.id}-${ui.queueIndex + i}") }
+            autoTracks.forEachIndexed { i, t -> add("a-${t.id}-${boundary + i}") }
+        }
+    }
+    val queueKeyToAbs = remember(ui.queue, ui.queueIndex, boundary) {
+        buildMap {
+            playedBefore.forEachIndexed { i, t -> put("played-${t.id}-$i", i) }
+            currentAndUpcomingUser.forEachIndexed { i, t -> put("u-${t.id}-${ui.queueIndex + i}", ui.queueIndex + i) }
+            autoTracks.forEachIndexed { i, t -> put("a-${t.id}-${boundary + i}", boundary + i) }
+        }
+    }
+    LaunchedEffect(queueReorderKeys, queueKeyToAbs) {
+        queueReorder.configure(queueReorderKeys) { queueKeyToAbs[it] }
+    }
+
     var similarTracks by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
     var similarLoading by remember { mutableStateOf(false) }
     var similarLoadingMore by remember { mutableStateOf(false) }
@@ -2618,6 +2722,7 @@ private fun QueueExpandedBody(
                         )
                     }
                     itemsIndexed(playedBefore, key = { i, t -> "played-${t.id}-$i" }) { index, item ->
+                        val key = "played-${item.id}-$index"
                         QueueTrackRow(
                             track = item,
                             index = index,
@@ -2628,6 +2733,9 @@ private fun QueueExpandedBody(
                             onMore = onMore?.let { { it(item) } },
                             onMix = { startMixFor(item) },
                             radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
+                            reorderState = queueReorder,
+                            listState = listState,
+                            itemKey = key,
                         )
                     }
                 }
@@ -2642,6 +2750,7 @@ private fun QueueExpandedBody(
                 }
                 itemsIndexed(currentAndUpcomingUser, key = { i, t -> "u-${t.id}-${ui.queueIndex + i}" }) { i, item ->
                     val abs = ui.queueIndex + i
+                    val key = "u-${item.id}-$abs"
                     QueueTrackRow(
                         track = item,
                         index = abs,
@@ -2653,6 +2762,9 @@ private fun QueueExpandedBody(
                         onMix = { startMixFor(item) },
                         radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
                         offlineUnavailable = unavailable(item),
+                        reorderState = queueReorder,
+                        listState = listState,
+                        itemKey = key,
                     )
                 }
                 item {
@@ -2696,6 +2808,7 @@ private fun QueueExpandedBody(
                 }
                 itemsIndexed(autoTracks, key = { i, t -> "a-${t.id}-${boundary + i}" }) { i, item ->
                     val abs = boundary + i
+                    val key = "a-${item.id}-$abs"
                     QueueTrackRow(
                         track = item,
                         index = abs,
@@ -2707,6 +2820,9 @@ private fun QueueExpandedBody(
                         onMix = { startMixFor(item) },
                         radioActive = ui.sourceKind == "radio" && ui.sourceId == item.id,
                         offlineUnavailable = unavailable(item),
+                        reorderState = queueReorder,
+                        listState = listState,
+                        itemKey = key,
                     )
                 }
                 item { Spacer(Modifier.height(48.dp)) }
@@ -2925,9 +3041,13 @@ private fun QueueTrackRow(
     radioActive: Boolean = false,
     /** Hors-ligne : titre non téléchargé → grisé / non cliquable. */
     offlineUnavailable: Boolean = false,
+    reorderState: ovh.delhomme.ytmusic.ui.components.DragReorderState? = null,
+    listState: LazyListState? = null,
+    itemKey: Any = track.id,
 ) {
-    var dragAccum by remember { mutableFloatStateOf(0f) }
     val enabled = !offlineUnavailable
+    val reorder = reorderState
+    val lazy = listState
     Row(
         Modifier
             .fillMaxWidth()
@@ -2936,10 +3056,25 @@ private fun QueueTrackRow(
                 if (highlighted) SeekRed.copy(alpha = 0.14f)
                 else Color.Transparent,
             )
+            .then(
+                if (reorder != null) {
+                    Modifier.dragReorderItem(reorder, itemKey)
+                } else {
+                    Modifier
+                },
+            )
+            .then(
+                if (reorder != null && lazy != null && enabled) {
+                    Modifier.dragReorderLongPress(reorder, lazy, index, itemKey)
+                } else {
+                    Modifier
+                },
+            )
             .combinedClickable(
-                enabled = enabled,
+                enabled = enabled && reorder?.isDragging != true,
                 onClick = onClick,
-                onLongClick = onLongClick,
+                // Long-press = drag (style YTM) ; options via ⋮ quand le DnD est actif
+                onLongClick = if (reorder != null) null else onLongClick,
             )
             .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -2952,27 +3087,34 @@ private fun QueueTrackRow(
             modifier = Modifier
                 .size(40.dp)
                 .padding(6.dp)
-                .pointerInput(index) {
-                    detectDragGestures(
-                        onDragEnd = { dragAccum = 0f },
-                        onDragCancel = { dragAccum = 0f },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            dragAccum += amount.y
-                            val threshold = 40.dp.toPx()
-                            when {
-                                dragAccum > threshold -> {
-                                    onMove(index, index + 1)
-                                    dragAccum = 0f
-                                }
-                                dragAccum < -threshold -> {
-                                    if (index > 0) onMove(index, index - 1)
-                                    dragAccum = 0f
-                                }
-                            }
-                        },
-                    )
-                },
+                .then(
+                    if (reorder != null && lazy != null && enabled) {
+                        Modifier.dragReorderHandle(reorder, lazy, index, itemKey)
+                    } else {
+                        Modifier.pointerInput(index) {
+                            var dragAccum = 0f
+                            detectDragGestures(
+                                onDragEnd = { dragAccum = 0f },
+                                onDragCancel = { dragAccum = 0f },
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    dragAccum += amount.y
+                                    val threshold = 40.dp.toPx()
+                                    when {
+                                        dragAccum > threshold -> {
+                                            onMove(index, index + 1)
+                                            dragAccum = 0f
+                                        }
+                                        dragAccum < -threshold -> {
+                                            if (index > 0) onMove(index, index - 1)
+                                            dragAccum = 0f
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    },
+                ),
         )
         MediaCover(track, 48.dp)
         Spacer(Modifier.width(12.dp))
