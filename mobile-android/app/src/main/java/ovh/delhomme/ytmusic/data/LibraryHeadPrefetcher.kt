@@ -33,9 +33,9 @@ class LibraryHeadPrefetcher(
         started = true
         scope.launch(Dispatchers.IO) {
             delay(START_DELAY_MS)
-            // Premier passage agressif : chauffe formats API (évite 50–60 s à froid)
+            // Têtes Aléatoire d’abord (ids en prefs) — avant le burst formats qui peut être long
+            runCatching { warmServerShuffleHeads(force = true, warmClient = true) }
             runCatching { warmFormatsBurst() }
-            runCatching { warmServerShuffleHeads(force = true) }
             runCatching { warmServerRecentHeads() }
             while (true) {
                 runCatching { tick(reason = "periodic") }
@@ -50,7 +50,7 @@ class LibraryHeadPrefetcher(
      * Tire le batch serveur (~100 têtes rotatives) et warm léger côté Android.
      * Refresh quand le créneau expire (~30 min, plusieurs dizaines×/jour).
      */
-    private suspend fun warmServerShuffleHeads(force: Boolean) {
+    private suspend fun warmServerShuffleHeads(force: Boolean, warmClient: Boolean = true) {
         if (!NetworkMonitor.isOnline()) return
         if (StreamPrefetcher.isStreamDown()) return
         val now = System.currentTimeMillis()
@@ -66,6 +66,11 @@ class LibraryHeadPrefetcher(
             .putLong(KEY_SHUFFLE_EXPIRES, r.expiresAt ?: (now + 30 * 60_000L))
             .putLong(KEY_SHUFFLE_FETCH, now)
             .apply()
+        AppLog.i(
+            "LibHeads",
+            "shuffle-heads n=${ids.size} slot=${r.slot} expires=${r.expiresAt} pool=${r.poolSize} warmClient=$warmClient",
+        )
+        if (!warmClient) return
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
         // Client : 16 formats + 8 têtes 3s — le gros warm reste serveur (48)
@@ -73,10 +78,6 @@ class LibraryHeadPrefetcher(
         if (!StreamPrefetcher.isQuiet() && !PlaybackService.Holder.isPlaybackActiveSafe()) {
             StreamPrefetcher.warmHeads3s(base, ids.take(8), limit = 8)
         }
-        AppLog.i(
-            "LibHeads",
-            "shuffle-heads n=${ids.size} slot=${r.slot} expires=${r.expiresAt} pool=${r.poolSize}",
-        )
     }
 
     /** Warm ciblé « Enregistré récemment » (scope=recent) — ne remplace pas la tête Aléatoire globale. */
@@ -108,16 +109,29 @@ class LibraryHeadPrefetcher(
         return raw.split(',').map { it.trim() }.filter { it.length == 11 }
     }
 
+    /**
+     * Refresh rapide des ids Aléatoire (prefs) — sans warm client (le lecteur le fait au play).
+     * À appeler juste avant un shuffle froid pour un #0 dans le batch serveur.
+     */
+    suspend fun ensureShuffleHeads(force: Boolean = false) {
+        warmServerShuffleHeads(
+            force = force || cachedShuffleHeadIds().isEmpty(),
+            warmClient = false,
+        )
+    }
+
     /** POST /api/stream/warm pour les 1ers titres biblio (petits comptes inclus). */
     private suspend fun warmFormatsBurst() {
         if (!NetworkMonitor.isOnline()) return
+        if (PlaybackService.Holder.isPlaybackActiveSafe()) return
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
-        val ids = libraryIds().take(36)
+        // Petit burst : assez pour fluidité, pas assez pour saturer radio/batterie
+        val ids = libraryIds().take(16)
         if (ids.isEmpty()) return
         AppLog.i("LibHeads", "format burst ${ids.size}")
         StreamPrefetcher.warmTracks(base, ids)
-        StreamPrefetcher.prefetchLibraryHeads(base, ids, limit = 12)
+        StreamPrefetcher.prefetchLibraryHeads(base, ids, limit = 6)
     }
 
     /** Viewport biblio / pins — priorité haute pour les prochains ticks. */
@@ -137,7 +151,12 @@ class LibraryHeadPrefetcher(
 
     fun requestSoon(reason: String = "manual") {
         scope.launch(Dispatchers.IO) {
-            delay(3_000L)
+            val urgent = reason.contains("urgent") || reason.contains("shuffle-urgent")
+            delay(if (urgent) 40L else 3_000L)
+            if (urgent) {
+                runCatching { warmServerShuffleHeads(force = true) }
+                return@launch
+            }
             runCatching { tick(reason) }
             runCatching { warmServerShuffleHeads(force = reason.contains("shuffle")) }
         }
@@ -246,10 +265,10 @@ class LibraryHeadPrefetcher(
     }
 
     companion object {
-        /** Démarre vite après login — biblio froide = 50–60 s au 1er titre (compte Hélène). */
-        private const val START_DELAY_MS = 1_800L
-        private const val INTERVAL_MS = 60_000L
-        private const val BATCH = 12
+        /** Têtes Aléatoire tôt ; burst formats plus tard / plus léger (batterie). */
+        private const val START_DELAY_MS = 900L
+        private const val INTERVAL_MS = 90_000L
+        private const val BATCH = 8
         private const val KEY_CURSOR = "cursor"
         private const val KEY_LAST = "last_tick"
         private const val KEY_SHUFFLE_IDS = "shuffle_head_ids"

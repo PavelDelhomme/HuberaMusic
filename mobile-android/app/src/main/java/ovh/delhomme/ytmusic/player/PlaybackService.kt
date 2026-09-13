@@ -380,7 +380,7 @@ class PlaybackService : MediaSessionService() {
                 stallPosFrozenSince = android.os.SystemClock.elapsedRealtime()
                 // Libère bande : coupe prefetch / DL pendant recovery.
                 StreamPrefetcher.quietPrefetch(8_000L)
-                StreamPrefetcher.cancelIdle(preserveNext = false)
+                StreamPrefetcher.cancelIdle(preserveNext = true)
                 runCatching { YtMusicApp.instance.container.downloadManager.cancelOpportunistic() }
                 scope.launch {
                     runCatching {
@@ -2737,8 +2737,9 @@ private class YtmForwardingPlayer(
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val api = PlaybackService.Holder.resolvedApiBase()
-        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 12, behind = 1)
-        CoverPrefetcher.warmCovers(queue, index, ahead = 6, behind = 1)
+        // Seek notif/UI : seulement #0+#1 (pas ahead=12 — storm radio au skip)
+        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 2, behind = 0)
+        CoverPrefetcher.warmCovers(queue, index, ahead = 2, behind = 0)
     }
 
     override fun seekToPrevious() = seekToPreviousMediaItem()

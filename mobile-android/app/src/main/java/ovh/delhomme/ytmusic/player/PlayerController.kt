@@ -311,13 +311,20 @@ class PlayerController(
             publishOptimistic(playable, idx)
             val base = streamUrl("_").substringBefore("/api/stream/")
             val firstId = playable[idx].id
-            // Si prepareShuffleLead a déjà mis la tête en SimpleCache, ne pas
-            // bloquer 900 ms de far-prefetch inutile — Exo lit le cache tout de suite.
+            val offlineReady = runCatching {
+                YtMusicApp.instance.container.offlineStore.has(firstId)
+            }.getOrDefault(false)
             val headReady = StreamPrefetcher.wasHeadReadyRecently(firstId)
-            StreamPrefetcher.quietPrefetch(if (headReady) 180L else 900L)
+            // Hors-ligne / tête chaude : zéro quiet. Sinon court (évite 900 ms morts).
+            StreamPrefetcher.quietPrefetch(
+                when {
+                    offlineReady || headReady -> 40L
+                    else -> 350L
+                },
+            )
             val startId = firstId
             scope.launch {
-                delay(if (headReady) 120L else 500L)
+                delay(if (offlineReady || headReady) 60L else 280L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 playable.drop(idx + 1).take(2).forEach { t ->
                     StreamPrefetcher.warmTrackFormatOnly(base, t.id)
@@ -771,7 +778,6 @@ class PlayerController(
             p.mediaItemCount > 1 -> (p.currentMediaItemIndex + 1) % p.mediaItemCount
             else -> p.currentMediaItemIndex
         }
-        warmAround(PlaybackService.Holder.queue, nextIdx)
         val nid = PlaybackService.Holder.queue.getOrNull(nextIdx)?.id
         val skipQueue = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
         if (nextIdx in skipQueue.indices) {
@@ -779,22 +785,28 @@ class PlayerController(
         }
         if (!nid.isNullOrBlank()) {
             val base = streamUrl("_").substringBefore("/api/stream/")
-            // Skip user : coupe le bruit prefetch et chauffe #1–#2 tout de suite
+            // Skip : pas de warmAround(12) avant seek — ça vole la bande à Exo
             StreamPrefetcher.cancelIdle(preserveNext = true)
-            StreamPrefetcher.quietPrefetch(0L)
+            StreamPrefetcher.quietPrefetch(280L)
             StreamPrefetcher.warmTrackFormatOnly(base, nid)
+            StreamPrefetcher.prefetchStartHead(base, nid, StreamPrefetcher.HEAD_3S, priorityNext = true)
             skipQueue.getOrNull(nextIdx + 1)?.id?.takeIf { it.length == 11 }?.let { n2 ->
                 StreamPrefetcher.warmTrackFormatOnly(base, n2)
                 StreamPrefetcher.prefetchStartHead(base, n2, StreamPrefetcher.HEAD_3S)
             }
-            StreamPrefetcher.prefetchStartHead(base, nid, StreamPrefetcher.HEAD_3S, priorityNext = true)
-            StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                base,
-                skipQueue.map { it.id },
-                nextIdx,
-                count = 4,
-                ignoreQuiet = true,
-            )
+            // Far-prefetch après le seek (quand Exo a repris le réseau)
+            scope.launch {
+                delay(450L)
+                if (player()?.currentMediaItem?.mediaId != nid) return@launch
+                StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                    base,
+                    skipQueue.map { it.id },
+                    nextIdx,
+                    count = 2,
+                    ignoreQuiet = false,
+                )
+                CoverPrefetcher.warmCovers(skipQueue, nextIdx, ahead = 2, behind = 0)
+            }
         }
         // REPEAT_MODE_ONE bloque le next ExoPlayer : on le désactive le temps du saut
         val wasOne = repeatMode == RepeatMode.One
@@ -1866,18 +1878,45 @@ class PlayerController(
         publishOptimistic(window, idx, startPositionMs)
         val base = streamUrl("_").substringBefore("/api/stream/")
         val currentId = window.getOrNull(idx)?.id
-        val headReady = !currentId.isNullOrBlank() &&
-            StreamPrefetcher.wasHeadReadyRecently(currentId, withinMs = 60_000L)
-        // Si tête déjà préchargée au restore : quieter court, pas de warm format redondant.
-        StreamPrefetcher.quietPrefetch(if (headReady) 60L else 120L)
+        val offlineReady = !currentId.isNullOrBlank() && runCatching {
+            YtMusicApp.instance.container.offlineStore.has(currentId)
+        }.getOrDefault(false)
+        val cacheReady = !currentId.isNullOrBlank() &&
+            PlayerCache.cachedBytes(context, currentId, StreamPrefetcher.HEAD_3S) >= 180L * 1024L
+        val headReady = !currentId.isNullOrBlank() && (
+            StreamPrefetcher.wasHeadReadyRecently(currentId, withinMs = 60_000L) ||
+                offlineReady ||
+                cacheReady
+            )
+        if (headReady && !currentId.isNullOrBlank()) {
+            StreamPrefetcher.markHeadReady(currentId)
+        }
+        // Si tête déjà là : quiet court. Sinon court aussi — Exo doit gagner la bande.
+        StreamPrefetcher.quietPrefetch(if (headReady) 60L else 200L)
         if (!currentId.isNullOrBlank() && !headReady) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
-            scope.launch(Dispatchers.IO) {
-                StreamPrefetcher.prepareRestoredCurrent(
-                    base,
-                    currentId,
-                    window.drop(idx + 1).map { it.id },
-                )
+            // Restore froid (autoplay=false) : warm bloquant. Play user : FF seulement (évite
+            // prepareRestoredCurrent qui vole 3–4 s à Exo → titres qui « ne chargent pas »).
+            if (!autoplay) {
+                scope.launch(Dispatchers.IO) {
+                    StreamPrefetcher.prepareRestoredCurrent(
+                        base,
+                        currentId,
+                        window.drop(idx + 1).map { it.id },
+                    )
+                }
+            } else {
+                scope.launch(Dispatchers.IO) {
+                    StreamPrefetcher.prefetchStartHead(
+                        base,
+                        currentId,
+                        StreamPrefetcher.HEAD_3S,
+                        priorityNext = true,
+                    )
+                    window.drop(idx + 1).take(2).forEach { t ->
+                        StreamPrefetcher.warmTrackFormatOnly(base, t.id)
+                    }
+                }
             }
         }
         if (autoplay) {
@@ -1960,10 +1999,10 @@ class PlayerController(
             base,
             playable.map { it.id },
             idx,
-            ahead = 12,
+            ahead = 4,
             behind = 1,
         )
-        CoverPrefetcher.warmCovers(playable, idx, ahead = 6, behind = 1)
+        CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)
     }
 
     private fun applyRepeatShuffle(player: Player) {
@@ -2057,6 +2096,19 @@ class PlayerController(
                     else -> "Chargement du flux…"
                 }
                 context.toastMain(msg, Toast.LENGTH_SHORT)
+                // Auto-heal serveur : ce titre est lent → re-warm pour la prochaine fois
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "info",
+                        kind = "android.player.cold_next",
+                        message = "buffering >2.5s id=$trackId",
+                        meta = mapOf(
+                            "trackId" to trackId,
+                            "positionMs" to (_state.value.positionMs),
+                        ),
+                        force = false,
+                    )
+                }
             }
             delay(5_000L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
