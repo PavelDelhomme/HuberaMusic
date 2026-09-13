@@ -3,7 +3,7 @@
  * sur un trackId, on re-chauffe format + disk pour les prochaines lectures.
  * Throttle par id pour ne pas saturer le worker warm.
  */
-import { enqueueStreamWarm, enqueueDiskWarm } from './stream.js';
+import { enqueueStreamWarm, enqueueDiskWarm, bumpWarmPriority } from './stream.js';
 
 const lastHealAt = new Map<string, number>();
 const HEAL_COOLDOWN_MS = 8 * 60_000;
@@ -41,8 +41,9 @@ export function healTrackFromTelemetry(opts: {
   const now = Date.now();
   const prev = lastHealAt.get(id) || 0;
   if (now - prev < HEAL_COOLDOWN_MS) {
-    // Toujours remonter en tête de file warm si déjà en queue
-    enqueueStreamWarm([id], opts.userId);
+    // Pendant cooldown : ne PAS ré-enqueue (saturait la file warm).
+    // Remonte seulement si déjà en queue.
+    bumpWarmPriority(id);
     return;
   }
   lastHealAt.set(id, now);
