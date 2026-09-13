@@ -548,13 +548,21 @@ fun CollectionDetailScreen(
                             onPlay = {
                                 if (tracks.isEmpty()) return@AlbumHeroHeader
                                 recordCollectionPlay()
-                                player?.play(
-                                    tracks,
-                                    0,
-                                    title = title,
-                                    sourceId = id,
-                                    sourceKind = "album",
-                                ) ?: onPlay(tracks, 0)
+                                scope.launch {
+                                    ovh.delhomme.ytmusic.ui.library.playQueueWithLead(
+                                        container,
+                                        tracks,
+                                        0,
+                                    ) { q, i ->
+                                        player?.play(
+                                            q,
+                                            i,
+                                            title = title,
+                                            sourceId = id,
+                                            sourceKind = "album",
+                                        ) ?: onPlay(q, i)
+                                    }
+                                }
                             },
                             onRadio = {
                                 radioBusy = true
