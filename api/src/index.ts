@@ -900,6 +900,17 @@ app.post(
       batteryCharging: typeof b.batteryCharging === 'boolean' ? b.batteryCharging : null,
       perf: b.perf,
     });
+    // Auto-heal : titres lents / stall → re-warm format + disk (file d’attente / prochaine écoute)
+    void import('./media/streamHeal.js')
+      .then(({ healTrackFromTelemetry }) =>
+        healTrackFromTelemetry({
+          kind,
+          level,
+          meta: metaForAlert ?? meta,
+          userId,
+        }),
+      )
+      .catch(() => {});
     // Fire-and-forget : email admin sur error/fatal (throttle côté telemetryAlert)
     // metaForAlert = payload brut (logs complets) pour PDF / corps mail
     void import('./platform/telemetryAlert.js')
@@ -996,6 +1007,16 @@ app.post(
             recentLogs: e.recentLogs,
           },
         });
+        void import('./media/streamHeal.js')
+          .then(({ healTrackFromTelemetry }) =>
+            healTrackFromTelemetry({
+              kind,
+              level,
+              meta: { trackId: e.trackId },
+              userId,
+            }),
+          )
+          .catch(() => {});
         digestItems.push({
           id,
           level,
