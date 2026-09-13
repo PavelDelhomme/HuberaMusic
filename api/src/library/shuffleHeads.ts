@@ -68,6 +68,22 @@ function libraryTrackIds(userId: string, limit = 20_000): string[] {
   }
 }
 
+function likedTrackIds(userId: string, limit = 2_000): string[] {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT track_id FROM liked_tracks
+         WHERE user_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+      )
+      .all(userId, limit) as { track_id: string }[];
+    return rows.map((r) => r.track_id).filter(validId);
+  } catch {
+    return [];
+  }
+}
+
 function seededShuffle<T>(arr: T[], seed: number): T[] {
   const out = arr.slice();
   const rnd = mulberry32(seed);
@@ -126,8 +142,15 @@ export function getShuffleHeads(
     };
   }
 
-  const all = libraryTrackIds(userId);
-  const source = scope === 'recent' ? all.slice(0, Math.min(RECENT_POOL, all.length)) : all;
+  const allLib = libraryTrackIds(userId);
+  const liked = likedTrackIds(userId);
+  // Biais favoris : ~20 % du batch (ou tous les likes s’il y en a peu)
+  const likedBias = Math.max(8, Math.min(24, Math.floor(HEAD_N * 0.2)));
+  const all =
+    scope === 'all'
+      ? [...new Set([...liked.slice(0, likedBias * 3), ...allLib])]
+      : allLib;
+  const source = scope === 'recent' ? allLib.slice(0, Math.min(RECENT_POOL, allLib.length)) : all;
   const excludeN = scope === 'recent' ? 40 : RECENT_EXCLUDE;
   const recent = new Set(
     getHistory(userId, excludeN)
@@ -140,7 +163,13 @@ export function getShuffleHeads(
   }
   const seed = hashSeed(userId, slot, scope);
   const headCap = scope === 'recent' ? Math.min(HEAD_N, 80) : HEAD_N;
-  const ids = seededShuffle(pool, seed).slice(0, headCap);
+  let ids = seededShuffle(pool, seed).slice(0, headCap);
+  // Garantir une fraction d’aimés en tête du batch warm (démarrage Aléatoire chaud)
+  if (scope === 'all' && liked.length) {
+    const likedInPool = liked.filter((id) => pool.includes(id) || allLib.includes(id));
+    const inject = seededShuffle(likedInPool, seed ^ 0x9e3779b9).slice(0, likedBias);
+    ids = [...new Set([...inject, ...ids])].slice(0, headCap);
+  }
   const expiresAt = (slot + 1) * SLOT_MS;
   mem.set(cacheKey, { ids, slot, expiresAt, at: now });
   // Cap mémoire : ~200 users × 2 scopes
