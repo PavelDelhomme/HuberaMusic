@@ -1372,7 +1372,7 @@ async function runWarmWorker() {
   }
 }
 
-function bumpWarmPriority(id: string) {
+export function bumpWarmPriority(id: string) {
   if (!id || !/^[a-zA-Z0-9_-]{11}$/.test(id)) return;
   const i = warmQueue.findIndex((j) => j.id === id);
   if (i > 0) {

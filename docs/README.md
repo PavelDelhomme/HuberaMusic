@@ -1,33 +1,15 @@
 # Documentation PLM
 
-Index des guides du monorepo **YTMusic** (nom Git / infra) — application utilisateur **PLM**.
+| Document | Contenu |
+|----------|---------|
+| [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md) | Backend API : modules, routes, schedulers, télémétrie, tables |
+| [reco/ALGORITHMES.md](reco/ALGORITHMES.md) | Algorithmes de recommandation, ranking, radios, aléatoire, warm |
+| [audits/CHECKLIST-AMELIORATIONS-2026-09-13.md](audits/CHECKLIST-AMELIORATIONS-2026-09-13.md) | Checklist améliorations UI / batterie |
 
-| Fichier | Contenu |
-|---------|---------|
-| [`PLM.md`](./PLM.md) | Identité du projet, nommage PLM vs repo, conventions |
-| [`ROADMAP-CLIENTS.md`](./ROADMAP-CLIENTS.md) | Ordre des clients : Android → Web → Linux → Windows → iOS/macOS |
-| [`DOMAIN-PLM-MIGRATION.md`](./DOMAIN-PLM-MIGRATION.md) | Bascule canonique `plm.delhomme.ovh` + maintenance |
-| [`OPS-BACKUP.md`](./OPS-BACKUP.md) | Secours VPS / Portainer / multi-sites |
-| [`ANDROID.md`](./ANDROID.md) | App Android Kotlin : install, flavors, auth, appareils |
-| [`ANDROID-PLAYER.md`](./ANDROID-PLAYER.md) | Lecteur Media3 : EOS, prefetch, offline, garde-fous réseau |
-| [`TESTS-SESSIONS.md`](./TESTS-SESSIONS.md) | Checklists PROD / DEV / local (Nothing, Samsung) |
-| [`TESTING.md`](./TESTING.md) | Index tests + smoke API |
-| [`DNS-ET-INSTALL.md`](./DNS-ET-INSTALL.md) | DNS, NPM, PWA, installation multi-plateforme |
-| [`STREAM-VPS-OAUTH.md`](./STREAM-VPS-OAUTH.md) | OAuth TV VPS, flux audio sans PC |
-| [`AUTH-EMAIL.md`](./AUTH-EMAIL.md) | Validation email, passkeys |
-| [`SMTP-MAILY.md`](./SMTP-MAILY.md) | Envoi mails (télémétrie, rapports) |
-| [`FEATURES-BACKLOG.md`](./FEATURES-BACKLOG.md) | Backlog UX produit |
-| [`RECOMMANDATIONS.md`](./RECOMMANDATIONS.md) | Pistes d’amélioration |
-| [`UI-MALLEABILITY-PERF.md`](./UI-MALLEABILITY-PERF.md) | Perf UI / skeletons |
+## Digest chargement 12h30
 
-Racine du repo :
+Le serveur envoie chaque jour à **12h30 (Europe/Paris)** un mail listant les titres qui ont stallé / mis longtemps / cold next / prefetch miss (`api/src/platform/playbackDigest.ts`).
 
-| Fichier | Rôle |
-|---------|------|
-| [`../README.md`](../README.md) | Démarrage rapide |
-| [`../STATUS.md`](../STATUS.md) | Suivi features / bugs |
-| [`../ERRORS.md`](../ERRORS.md) | Erreurs à résoudre |
-| [`../DEPLOY.md`](../DEPLOY.md) | CI, GHCR, Portainer |
-| [`../TESTS*.md`](../TESTS.md) | Sessions de test détaillées |
-
-Historique Android natif : [`../mobile-android/HISTORY.md`](../mobile-android/HISTORY.md).
+- Aperçu : `GET /api/admin/playback-digest`
+- Envoi forcé : `POST /api/admin/playback-digest/send`
+- Env : `PLAYBACK_DIGEST_TO`, `PLAYBACK_DIGEST_HOUR`, `PLAYBACK_DIGEST_MINUTE`
