@@ -1,6 +1,16 @@
 {
-  "updatedAt": "2026-09-14",
+  "updatedAt": "2026-09-15",
   "versions": [
+    {
+      "version": "1.3.238",
+      "date": "2026-09-15",
+      "title": "Cache disque : plus de têtes tronquées prises pour un titre complet",
+      "notes": [
+        "Un .m4a partiel (<512 KiB) n’est plus considéré comme téléchargé — re-téléchargement forcé",
+        "Warm Aléatoire : seuil disque porté à 3 MiB (évite de croire qu’1 MiB de tête suffit)",
+        "Complète 1.3.237 (Content-Range) pour la lecture jusqu’au bout des favoris"
+      ]
+    },
     {
       "version": "1.3.237",
       "date": "2026-09-14",
