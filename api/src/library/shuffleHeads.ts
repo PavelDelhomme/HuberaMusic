@@ -191,12 +191,16 @@ export function getShuffleHeads(
 
 function scheduleWarmHeads(userId: string, ids: string[]): void {
   if (!ids.length) return;
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
-      // Priorité absolue : #0–#11 (démarrage Aléatoire) avant le reste du lot
-      enqueueStreamWarm(ids.slice(0, 12), userId);
-      enqueueStreamWarm(ids.slice(12, 48), userId);
-      const disk = ids.filter(needsDisk).slice(0, 16);
+      const { isPlaybackHot } = await import('../media/stream.js');
+      // Pendant une écoute : seulement le lead Aléatoire (#0–#5), pas 48 titres.
+      const hot = isPlaybackHot(90_000);
+      const formatN = hot ? 6 : 48;
+      const diskN = hot ? 2 : 16;
+      enqueueStreamWarm(ids.slice(0, Math.min(12, formatN)), userId);
+      if (!hot && formatN > 12) enqueueStreamWarm(ids.slice(12, formatN), userId);
+      const disk = ids.filter(needsDisk).slice(0, diskN);
       if (disk.length) enqueueDiskWarm(disk);
     } catch {
       /* ignore */

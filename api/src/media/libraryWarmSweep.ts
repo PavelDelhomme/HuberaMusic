@@ -10,7 +10,7 @@
  */
 import { db } from '../library/db.js';
 import { getShuffleHeads } from '../library/shuffleHeads.js';
-import { enqueueStreamWarm, enqueueDiskWarm } from './stream.js';
+import { enqueueStreamWarm, enqueueDiskWarm, isPlaybackHot } from './stream.js';
 import { scheduleUserTasteWarm } from './tasteWarmScheduler.js';
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -47,6 +47,14 @@ function likedIds(userId: string, limit = 40): string[] {
   }
 }
 
+async function waitIfPlaybackHot(): Promise<void> {
+  let spins = 0;
+  while (isPlaybackHot(90_000) && spins < 40) {
+    spins += 1;
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
+}
+
 /** Une passe : shuffle-heads (warm) + likes + taste pour chaque compte. */
 export async function runLibraryWarmSweepOnce(): Promise<{
   users: number;
@@ -57,13 +65,15 @@ export async function runLibraryWarmSweepOnce(): Promise<{
   const seen = new Set<string>();
   let users = 0;
   try {
+    await waitIfPlaybackHot();
     const uids = allUserIds();
     for (const uid of uids) {
       users += 1;
       try {
-        const heads = getShuffleHeads(uid, { warm: true, scope: 'all' });
-        for (const id of heads.ids || []) seen.add(id);
-        for (const id of likedIds(uid, 32)) seen.add(id);
+        // warm:false — on enfile nous-mêmes plus bas (évite 48 ids × N users d’un coup).
+        const heads = getShuffleHeads(uid, { warm: false, scope: 'all' });
+        for (const id of (heads.ids || []).slice(0, 24)) seen.add(id);
+        for (const id of likedIds(uid, 16)) seen.add(id);
         scheduleUserTasteWarm(uid);
       } catch (err) {
         console.warn(
@@ -71,16 +81,16 @@ export async function runLibraryWarmSweepOnce(): Promise<{
           String((err as Error).message || err).slice(0, 100),
         );
       }
-      // Laisse respirer yt-dlp entre comptes
       await new Promise((r) => setTimeout(r, 400));
     }
     const ids = [...seen];
-    // Batch warm (priorité tête de file)
-    for (let i = 0; i < ids.length; i += 24) {
-      const chunk = ids.slice(i, i + 24);
+    // Petits lots + pause si quelqu’un écoute (priorité lecture).
+    for (let i = 0; i < ids.length; i += 8) {
+      await waitIfPlaybackHot();
+      const chunk = ids.slice(i, i + 8);
       enqueueStreamWarm(chunk);
-      enqueueDiskWarm(chunk.slice(0, 12));
-      await new Promise((r) => setTimeout(r, 800));
+      enqueueDiskWarm(chunk.slice(0, 4));
+      await new Promise((r) => setTimeout(r, 1_200));
     }
     lastRunAt = Date.now();
     lastStats = { users, ids: ids.length, at: lastRunAt };
