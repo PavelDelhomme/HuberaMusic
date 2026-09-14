@@ -94,6 +94,11 @@ import {
   sendPlaybackDigestNow,
   buildPlaybackDigest,
 } from './platform/playbackDigest.js';
+import {
+  startLibraryWarmSweep,
+  runLibraryWarmSweepOnce,
+  libraryWarmSweepStatus,
+} from './media/libraryWarmSweep.js';
 import { streamHeadStats } from './media/streamHeadCache.js';
 import { youtubeProxyStats } from './youtube/youtubeProxy.js';
 import { resolveVisualVideo } from './media/visualResolve.js';
@@ -1374,6 +1379,19 @@ app.post('/api/admin/playback-digest/send', requireAdmin, async (req, res) => {
     const force = req.body?.force !== false;
     const r = await sendPlaybackDigestNow({ force });
     res.json(r);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+  }
+});
+
+app.get('/api/admin/library-warm', requireAdmin, (_req, res) => {
+  res.json({ ok: true, ...libraryWarmSweepStatus(), health: libraryHealthStatus() });
+});
+
+app.post('/api/admin/library-warm', requireAdmin, async (_req, res) => {
+  try {
+    const r = await runLibraryWarmSweepOnce();
+    res.json({ ok: true, ...r, status: libraryWarmSweepStatus() });
   } catch (err) {
     res.status(500).json({ ok: false, error: String((err as Error).message || err) });
   }
@@ -3156,4 +3174,5 @@ server.listen(PORT, '0.0.0.0', () => {
   startLibraryHealthScan();
   startGlobalTasteWarmScheduler();
   startPlaybackDigestScheduler();
+  startLibraryWarmSweep();
 });

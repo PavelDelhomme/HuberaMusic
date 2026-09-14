@@ -2153,28 +2153,79 @@ class PlayerController(
                     )
                     return@launch
                 }
-                AppLog.i("PlayerController", "buffer stuck → skipNext id=$trackId cold=$coldStart")
+                AppLog.i("PlayerController", "buffer stuck → rebind (pas de skip) id=$trackId cold=$coldStart")
                 val title = _state.value.track?.title
                 val artist = _state.value.track?.artistLine()
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
                         level = "warn",
-                        kind = "android.player.load_skip",
-                        message = "buffer stuck → skipNext id=$trackId cold=$coldStart " +
-                            "pos=${_state.value.positionMs} title=${title ?: "?"}",
+                        kind = "android.player.load_recover",
+                        message = "buffer stuck → rebind id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
                         meta = mapOf(
                             "trackId" to trackId,
                             "title" to title,
                             "artist" to artist,
                             "positionMs" to _state.value.positionMs,
                             "coldStart" to coldStart,
-                            "action" to "skip_next",
+                            "action" to "rebind",
                             "reason" to "buffer_stuck",
                         ),
                         force = true,
                     )
                 }
-                skipNext()
+                // 1) Rebind URL fraîche (PlaybackService) — on ne saute PLUS ici
+                runCatching {
+                    PlaybackService.Holder.service?.rebindCurrentStream(
+                        reason = "ui-buffer-stuck",
+                        forcePlay = true,
+                        wipeCache = coldStart,
+                    )
+                }
+                // 2) Demande warm serveur immédiat
+                runCatching {
+                    val base = PlaybackService.Holder.resolvedApiBase()
+                    if (base.isNotBlank() && trackId.length == 11) {
+                        StreamPrefetcher.warmTrackFormatOnly(base, trackId)
+                    }
+                }
+                delay(22_000L)
+                if (!_state.value.buffering || _state.value.track?.id != trackId) return@launch
+                if (PlaybackService.Holder.isStreamRecovering(trackId)) return@launch
+                AppLog.w("PlayerController", "buffer stuck → 2e rebind wipe id=$trackId")
+                runCatching {
+                    PlaybackService.Holder.service?.rebindCurrentStream(
+                        reason = "ui-buffer-stuck-2",
+                        forcePlay = true,
+                        wipeCache = true,
+                    )
+                }
+                delay(28_000L)
+                // Dernier recours uniquement si TOUJOURS bloqué après 2 rebinds (~1 min)
+                if (_state.value.buffering &&
+                    _state.value.track?.id == trackId &&
+                    ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
+                    !StreamPrefetcher.isStreamDown() &&
+                    !PlaybackService.Holder.isStreamRecovering(trackId)
+                ) {
+                    AppLog.w("PlayerController", "buffer stuck → skipNext dernier recours id=$trackId")
+                    runCatching {
+                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                            level = "error",
+                            kind = "android.player.load_skip",
+                            message = "buffer stuck → skipNext dernier recours id=$trackId",
+                            meta = mapOf(
+                                "trackId" to trackId,
+                                "title" to title,
+                                "artist" to artist,
+                                "positionMs" to _state.value.positionMs,
+                                "action" to "skip_next",
+                                "reason" to "buffer_stuck_last_resort",
+                            ),
+                            force = true,
+                        )
+                    }
+                    skipNext()
+                }
             }
         }
     }
