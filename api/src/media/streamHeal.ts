@@ -14,6 +14,7 @@ const HEAL_KINDS = new Set([
   'android.player.prefetch_miss',
   'android.player.cold_next',
   'android.player.early_end',
+  'android.player.load_skip',
 ]);
 
 function extractTrackId(meta: unknown): string | null {

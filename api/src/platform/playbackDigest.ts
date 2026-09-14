@@ -2,11 +2,10 @@
  * Digest quotidien (12h30 Europe/Paris) des problèmes de chargement / lecture.
  *
  * Agrège la télémétrie Android des dernières 24 h :
- *  - android.player.stall
- *  - android.player.cold_next
- *  - android.player.prefetch_miss
- *  - android.player.early_end
- *  - android.player (error/fatal)
+ *  - android.player.stall / cold_next / prefetch_miss / early_end
+ *  - android.player.load_skip (auto-skip chargement KO — le plus fréquent)
+ *  - android.player (error/fatal/warn)
+ *  - listen_events skip très tôt (<8 % ou <15 s)
  *
  * Envoie un mail HTML lisible avec titres résolus (oembed) pour savoir
  * quelles musiques ont mis longtemps ou ont échoué.
@@ -33,6 +32,7 @@ const KIND_SET = new Set([
   'android.player.cold_next',
   'android.player.prefetch_miss',
   'android.player.early_end',
+  'android.player.load_skip',
 ]);
 
 type TelemetryRow = {
@@ -54,6 +54,8 @@ type TrackAgg = {
   cold: number;
   prefetchMiss: number;
   earlyEnd: number;
+  loadSkips: number;
+  earlyListenSkips: number;
   playerErrors: number;
   lastAt: number;
   levels: Set<string>;
@@ -156,7 +158,7 @@ export function queryPlaybackProblems(windowMs?: number): TelemetryRow[] {
        FROM telemetry_events
        WHERE created_at > ?
          AND (
-           kind IN ('android.player.stall','android.player.cold_next','android.player.prefetch_miss','android.player.early_end')
+           kind IN ('android.player.stall','android.player.cold_next','android.player.prefetch_miss','android.player.early_end','android.player.load_skip')
            OR (kind LIKE 'android.player%' AND level IN ('warn','error','fatal'))
          )
        ORDER BY created_at DESC
@@ -164,6 +166,36 @@ export function queryPlaybackProblems(windowMs?: number): TelemetryRow[] {
     )
     .all(since) as TelemetryRow[];
   return rows.filter(isPlaybackProblem);
+}
+
+/** Skips d’écoute très tôt = souvent auto-skip silencieux (avant load_skip instrumenté). */
+export function queryEarlyListenSkips(windowMs?: number): Array<{
+  track_id: string;
+  c: number;
+  last_at: number;
+}> {
+  const win = windowMs ?? Number(process.env.PLAYBACK_DIGEST_WINDOW_MS || 24 * 3600_000);
+  const since = Date.now() - win;
+  try {
+    return db
+      .prepare(
+        `SELECT track_id, COUNT(*) AS c, MAX(created_at) AS last_at
+         FROM listen_events
+         WHERE event = 'skip'
+           AND created_at > ?
+           AND (
+             COALESCE(progress_pct, 0) < 8
+             OR (COALESCE(duration_ms, 0) > 0 AND COALESCE(progress_pct, 0) / 100.0 * duration_ms < 15000)
+           )
+         GROUP BY track_id
+         HAVING c >= 1
+         ORDER BY c DESC
+         LIMIT 80`,
+      )
+      .all(since) as Array<{ track_id: string; c: number; last_at: number }>;
+  } catch {
+    return [];
+  }
 }
 
 function bump(
@@ -182,6 +214,8 @@ function bump(
       cold: 0,
       prefetchMiss: 0,
       earlyEnd: 0,
+      loadSkips: 0,
+      earlyListenSkips: 0,
       playerErrors: 0,
       lastAt: at,
       levels: new Set(),
@@ -195,6 +229,8 @@ function bump(
   else if (kind === 'android.player.cold_next') agg.cold += 1;
   else if (kind === 'android.player.prefetch_miss') agg.prefetchMiss += 1;
   else if (kind === 'android.player.early_end') agg.earlyEnd += 1;
+  else if (kind === 'android.player.load_skip') agg.loadSkips += 1;
+  else if (kind === 'listen.early_skip') agg.earlyListenSkips += 1;
   else agg.playerErrors += 1;
   if (message && agg.sampleMessages.length < 3 && !agg.sampleMessages.includes(message)) {
     agg.sampleMessages.push(message.slice(0, 180));
@@ -211,6 +247,10 @@ function kindLabel(kind: string): string {
       return 'Prefetch manqué';
     case 'android.player.early_end':
       return 'Fin prématurée du titre';
+    case 'android.player.load_skip':
+      return 'Auto-skip : chargement KO (passé au suivant)';
+    case 'listen.early_skip':
+      return 'Skip très tôt (<8 % / <15 s) — souvent auto ou abandon';
     default:
       return 'Erreur lecteur';
   }
@@ -256,6 +296,18 @@ export async function buildPlaybackDigest(opts?: {
     }
   }
 
+  const earlySkips = queryEarlyListenSkips(opts?.windowMs);
+  let earlySkipEvents = 0;
+  for (const s of earlySkips) {
+    const id = String(s.track_id || '').trim();
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
+    earlySkipEvents += Number(s.c) || 0;
+    byKind['listen.early_skip'] = (byKind['listen.early_skip'] || 0) + (Number(s.c) || 0);
+    for (let i = 0; i < Math.min(Number(s.c) || 1, 12); i++) {
+      bump(byTrack, id, 'listen.early_skip', 'warn', Number(s.last_at) || Date.now(), 'skip écoute très tôt');
+    }
+  }
+
   const trackIds = [...byTrack.keys()].slice(0, 40);
   let resolved: ResolvedTrack[] = [];
   if (trackIds.length) {
@@ -276,14 +328,20 @@ export async function buildPlaybackDigest(opts?: {
 
   const ranked = [...byTrack.values()].sort((a, b) => {
     const score = (x: TrackAgg) =>
-      x.stalls * 3 + x.cold * 2 + x.prefetchMiss * 2 + x.earlyEnd * 2 + x.playerErrors * 4;
+      x.loadSkips * 5 +
+      x.stalls * 3 +
+      x.earlyListenSkips * 3 +
+      x.cold * 2 +
+      x.prefetchMiss * 2 +
+      x.earlyEnd * 2 +
+      x.playerErrors * 4;
     return score(b) - score(a) || b.lastAt - a.lastAt;
   });
 
   const when = new Date().toLocaleString('fr-FR', {
     timeZone: process.env.PLAYBACK_DIGEST_TZ || 'Europe/Paris',
   });
-  const total = rows.length;
+  const total = rows.length + earlySkipEvents;
   const subject =
     total === 0
       ? `[PLM] Digest lecture 12h30 — aucun problème (24 h)`
@@ -314,7 +372,7 @@ export async function buildPlaybackDigest(opts?: {
         : t.trackId;
       textLines.push(
         `• ${label}`,
-        `  id=${t.trackId}  stall=${t.stalls} cold=${t.cold} miss=${t.prefetchMiss} early=${t.earlyEnd} err=${t.playerErrors}`,
+        `  id=${t.trackId}  loadSkip=${t.loadSkips} stall=${t.stalls} cold=${t.cold} miss=${t.prefetchMiss} early=${t.earlyEnd} listenSkip=${t.earlyListenSkips} err=${t.playerErrors}`,
       );
       if (t.sampleMessages[0]) textLines.push(`  « ${t.sampleMessages[0]} »`);
       textLines.push(`  https://music.youtube.com/watch?v=${t.trackId}`, '');
@@ -341,6 +399,8 @@ export async function buildPlaybackDigest(opts?: {
         ? `<strong>${escapeHtml(t.title)}</strong>${t.artist ? ` <span style="color:#71717a">— ${escapeHtml(t.artist)}</span>` : ''}`
         : `<code>${t.trackId}</code>`;
       const badges = [
+        t.loadSkips ? `<span style="background:#7f1d1d;color:#fef2f2;padding:2px 6px;border-radius:4px;font-size:12px">auto-skip ×${t.loadSkips}</span>` : '',
+        t.earlyListenSkips ? `<span style="background:#9f1239;color:#fff1f2;padding:2px 6px;border-radius:4px;font-size:12px">skip tôt ×${t.earlyListenSkips}</span>` : '',
         t.stalls ? `<span style="background:#fef2f2;color:#991b1b;padding:2px 6px;border-radius:4px;font-size:12px">stall ×${t.stalls}</span>` : '',
         t.cold ? `<span style="background:#fff7ed;color:#9a3412;padding:2px 6px;border-radius:4px;font-size:12px">cold ×${t.cold}</span>` : '',
         t.prefetchMiss ? `<span style="background:#eff6ff;color:#1e40af;padding:2px 6px;border-radius:4px;font-size:12px">miss ×${t.prefetchMiss}</span>` : '',
