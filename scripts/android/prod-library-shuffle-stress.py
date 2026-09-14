@@ -22,6 +22,7 @@ DURATION_MIN = float(os.environ.get("DURATION_MIN", "60"))
 SKIP_EVERY_SECS = float(os.environ.get("SKIP_EVERY_SECS", "45"))
 RESHUFFLE_EVERY_SECS = float(os.environ.get("RESHUFFLE_EVERY_SECS", "480"))
 SAMPLE_SECS = float(os.environ.get("SAMPLE_SECS", "20"))
+SLOW_BUFFER_MS = float(os.environ.get("SLOW_BUFFER_MS", "3500"))
 API = os.environ.get("API_BASE_URL", "https://ytmusic.delhomme.ovh").rstrip("/")
 TOKEN = os.environ.get("API_TOKEN", "")
 
@@ -306,15 +307,43 @@ def main() -> None:
         if now - last_skip >= SKIP_EVERY_SECS:
             before = session()
             log(f"SKIP next from {before['title'][:40]}")
+            t_skip = time.time()
             dispatch("next")
-            time.sleep(2.5)
-            after = session()
+            # Mesure temps jusqu’à PLAYING (pas seulement 2.5 s) — détecte chargements lents
+            after = {"state": "?", "title": "?", "pos": -1, "queue": -1}
+            ready_ms = -1
+            for _ in range(40):  # jusqu’à ~20 s
+                time.sleep(0.5)
+                after = session()
+                if after["state"] == "PLAYING" and after["pos"] >= 0:
+                    ready_ms = int((time.time() - t_skip) * 1000)
+                    break
+                if after["state"] in ("ERROR", "STOPPED", "NONE"):
+                    break
             if after["state"] not in ("PLAYING", "BUFFERING"):
                 dispatch("play")
                 time.sleep(1.5)
                 after = session()
+                if after["state"] == "PLAYING" and ready_ms < 0:
+                    ready_ms = int((time.time() - t_skip) * 1000)
+            if ready_ms < 0:
+                ready_ms = int((time.time() - t_skip) * 1000)
             skips += 1
             last_skip = now
+            slow_row = {
+                "t": round(elapsed),
+                "from": before.get("title"),
+                "to": after.get("title"),
+                "readyMs": ready_ms,
+                "state": after.get("state"),
+                "pos": after.get("pos"),
+                "queue": after.get("queue"),
+            }
+            if ready_ms >= SLOW_BUFFER_MS or after["state"] == "BUFFERING":
+                record_error("slow_buffer", slow_row)
+                log(f"SLOW_BUFFER {ready_ms}ms state={after['state']} → {str(after.get('title'))[:40]}")
+            else:
+                log(f"SKIP_OK {ready_ms}ms → {str(after.get('title'))[:40]}")
             if after["title"] == before["title"] and after["title"] != "?":
                 log("SKIP same title — retry next")
                 dispatch("next")
