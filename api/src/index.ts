@@ -89,6 +89,11 @@ import {
   runGlobalTasteWarmOnce,
 } from './media/tasteWarmScheduler.js';
 import { libraryHealthStatus, startLibraryHealthScan } from './media/libraryHealth.js';
+import {
+  startPlaybackDigestScheduler,
+  sendPlaybackDigestNow,
+  buildPlaybackDigest,
+} from './platform/playbackDigest.js';
 import { streamHeadStats } from './media/streamHeadCache.js';
 import { youtubeProxyStats } from './youtube/youtubeProxy.js';
 import { resolveVisualVideo } from './media/visualResolve.js';
@@ -1345,6 +1350,33 @@ app.get('/api/admin/telemetry', requireAdmin, (req, res) => {
 
 app.get('/api/admin/library-health', requireAdmin, (_req, res) => {
   res.json(libraryHealthStatus());
+});
+
+/** Aperçu / envoi forcé du digest chargement 12h30. */
+app.get('/api/admin/playback-digest', requireAdmin, async (_req, res) => {
+  try {
+    const digest = await buildPlaybackDigest();
+    res.json({
+      ok: true,
+      subject: digest.subject,
+      totalEvents: digest.totalEvents,
+      trackCount: digest.trackCount,
+      byKind: digest.byKind,
+      previewText: digest.text.slice(0, 4000),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+  }
+});
+
+app.post('/api/admin/playback-digest/send', requireAdmin, async (req, res) => {
+  try {
+    const force = req.body?.force !== false;
+    const r = await sendPlaybackDigestNow({ force });
+    res.json(r);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+  }
 });
 
 app.get('/api/admin/mail-outbox', requireAdmin, (_req, res) => {
@@ -3123,4 +3155,5 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`PLM WS  → ws://localhost:${PORT}/ws`);
   startLibraryHealthScan();
   startGlobalTasteWarmScheduler();
+  startPlaybackDigestScheduler();
 });
