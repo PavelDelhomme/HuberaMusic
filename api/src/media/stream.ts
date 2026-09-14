@@ -4,7 +4,15 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import type { Request, Response } from 'express';
-import { getAudioFormat, getAudioFormatViaYtDlpOnly, getVideoFormat, getYT, invalidateAudioFormat, invalidateVideoFormat } from '../youtube/yt.js';
+import {
+  getAudioFormat,
+  getAudioFormatViaYtDlpOnly,
+  getVideoFormat,
+  getYT,
+  hasCachedAudioFormat,
+  invalidateAudioFormat,
+  invalidateVideoFormat,
+} from '../youtube/yt.js';
 import {
   ytDlpCookieArgSets,
   resolveYoutubeCookieHeader,
@@ -41,6 +49,11 @@ let lastStreamAtMs = 0;
 
 export function msSinceLastStream(): number {
   return lastStreamAtMs ? Date.now() - lastStreamAtMs : Number.MAX_SAFE_INTEGER;
+}
+
+/** Écoute récente : les warm de fond doivent s’effacer (yt-dlp / CPU pour le titre courant). */
+export function isPlaybackHot(withinMs = 90_000): boolean {
+  return msSinceLastStream() < withinMs;
 }
 
 const GV_USER_AGENT =
@@ -704,8 +717,10 @@ export async function handleStream(req: Request, res: Response) {
         String(req.query?.client || '') === 'android';
       if (diskBytes <= 1024 * 1024) {
         // Android : attente courte seulement — 45 s bloquait derrière nginx → 504 Exo.
-        // Le pipeline relais/GV prend le relais ; downloadTrack tourne déjà en fond plus bas.
-        const waitMs = isAndroid ? 2_500 : 0;
+        // Si format/tête déjà chauds → ne PAS attendre le .m4a (volait 2.5 s à Exo).
+        const formatHot = hasCachedAudioFormat(videoId, (req as any).userId);
+        const ramHot = Boolean(peekStreamHead(videoId));
+        const waitMs = isAndroid && !formatHot && !ramHot ? 800 : 0;
         if (waitMs > 0) {
           try {
             await Promise.race([
@@ -1306,6 +1321,11 @@ async function runDiskWarmWorker() {
   diskWarmBusy = true;
   try {
     while (diskWarmQueue.length) {
+      // Lecture en cours : pause — yt-dlp doit servir le titre courant, pas la biblio.
+      if (isPlaybackHot(90_000)) {
+        await new Promise((r) => setTimeout(r, 2_500));
+        continue;
+      }
       const id = diskWarmQueue.shift();
       if (!id) break;
       diskWarmQueued.delete(id);
@@ -1350,10 +1370,12 @@ export function enqueueDiskWarm(ids: string[]) {
 }
 
 async function runWarmWorker() {
-  if (warmWorkers >= WARM_CONCURRENCY) return;
+  const maxWorkers = isPlaybackHot(90_000) ? 1 : WARM_CONCURRENCY;
+  if (warmWorkers >= maxWorkers) return;
   warmWorkers += 1;
   try {
     while (warmQueue.length) {
+      if (isPlaybackHot(90_000) && warmWorkers > 1) break;
       const job = warmQueue.shift();
       if (!job) break;
       warmQueued.delete(job.id);
@@ -1378,6 +1400,23 @@ export function bumpWarmPriority(id: string) {
   if (i > 0) {
     const [job] = warmQueue.splice(i, 1);
     if (job) warmQueue.unshift(job);
+  }
+  // Même priorité sur la file disque (sinon lecture attend derrière likes/sweep).
+  const di = diskWarmQueue.indexOf(id);
+  if (di > 0) {
+    diskWarmQueue.splice(di, 1);
+    diskWarmQueue.unshift(id);
+  } else if (di < 0 && !diskWarmQueued.has(id)) {
+    try {
+      const p = cachePath(id);
+      if (!existsSync(p) || statSync(p).size <= 1024 * 1024) {
+        diskWarmQueued.add(id);
+        diskWarmQueue.unshift(id);
+        void runDiskWarmWorker();
+      }
+    } catch {
+      /* ignore */
+    }
   }
 }
 

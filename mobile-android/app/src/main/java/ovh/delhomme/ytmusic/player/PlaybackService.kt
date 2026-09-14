@@ -2445,7 +2445,9 @@ class PlaybackService : MediaSessionService() {
         streamFailStreak.set(0)
         StreamPrefetcher.markStreamOk()
         val bust = System.currentTimeMillis()
-        val retry = retryN.coerceAtLeast(recoverGen.get()).coerceAtLeast(1)
+        // Soft rebind (retryN=0) : garder le cache format serveur — ?r= suffit pour Exo.
+        // retryN>0 seulement sur escalate (403/5xx) pour forcer forceFresh côté API.
+        val retry = retryN.coerceAtLeast(0)
         val rebuilt = mediaItemFor(
             track,
             { tid ->
