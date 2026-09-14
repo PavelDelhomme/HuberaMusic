@@ -141,6 +141,14 @@ export function invalidateAudioFormat(videoId: string) {
   audioFormatInflight.delete(videoId);
 }
 
+/** Format encore utilisable en mémoire (évite d’attendre yt-dlp / disque pour rien). */
+export function hasCachedAudioFormat(videoId: string, userId?: string): boolean {
+  const baseKey = audioCacheKey(videoId);
+  const key = userId ? `${baseKey}:u:${userId.slice(0, 8)}` : baseKey;
+  const cached = audioFormatCache.get(key) || audioFormatCache.get(baseKey);
+  return Boolean(cached && cached.expiresAt > Date.now() + 90_000);
+}
+
 export function clearAudioFormatCache() {
   audioFormatCache.clear();
   audioFormatInflight.clear();
