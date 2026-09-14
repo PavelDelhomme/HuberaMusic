@@ -31,7 +31,7 @@ function allUserIds(): string[] {
   }
 }
 
-function likedIds(userId: string, limit = 40): string[] {
+function likedIds(userId: string, limit = 200): string[] {
   try {
     return (
       db
@@ -75,7 +75,8 @@ export async function runLibraryWarmSweepOnce(): Promise<{
         for (const id of (heads.ids || []).slice(0, 64)) seen.add(id);
         const recent = getShuffleHeads(uid, { warm: false, scope: 'recent' });
         for (const id of (recent.ids || []).slice(0, 40)) seen.add(id);
-        for (const id of likedIds(uid, 32)) seen.add(id);
+        // Favoris : priorité disque complet (évite « 30 s puis reprise »).
+        for (const id of likedIds(uid, 200)) seen.add(id);
         scheduleUserTasteWarm(uid);
       } catch (err) {
         console.warn(
@@ -87,11 +88,12 @@ export async function runLibraryWarmSweepOnce(): Promise<{
     }
     const ids = [...seen];
     // Petits lots + pause si quelqu’un écoute (priorité lecture).
+    // Disk warm sur tout le lot (likes inclus) — pas seulement 6/8.
     for (let i = 0; i < ids.length; i += 8) {
       await waitIfPlaybackHot();
       const chunk = ids.slice(i, i + 8);
       enqueueStreamWarm(chunk);
-      enqueueDiskWarm(chunk.slice(0, 6));
+      enqueueDiskWarm(chunk);
       await new Promise((r) => setTimeout(r, 1_000));
     }
     lastRunAt = Date.now();
