@@ -334,7 +334,7 @@ class PlayerController(
                     base,
                     playable.map { it.id },
                     idx,
-                    count = 3,
+                    count = 12,
                     ignoreQuiet = false,
                 )
             }
@@ -802,10 +802,10 @@ class PlayerController(
                     base,
                     skipQueue.map { it.id },
                     nextIdx,
-                    count = 2,
+                    count = 12,
                     ignoreQuiet = false,
                 )
-                CoverPrefetcher.warmCovers(skipQueue, nextIdx, ahead = 2, behind = 0)
+                CoverPrefetcher.warmCovers(skipQueue, nextIdx, ahead = 4, behind = 0)
             }
         }
         // REPEAT_MODE_ONE bloque le next ExoPlayer : on le désactive le temps du saut
@@ -1479,14 +1479,15 @@ class PlayerController(
         val p = player() ?: return
         if (!p.isPlaying && p.playbackState != Player.STATE_READY) return
         val now = System.currentTimeMillis()
-        if (now - lastRollingMaintainAt < 12_000L) return
+        if (now - lastRollingMaintainAt < 8_000L) return
         lastRollingMaintainAt = now
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val idx = p.currentMediaItemIndex.coerceIn(0, queue.lastIndex)
         val base = streamUrl("_").substringBefore("/api/stream/")
         val ids = queue.map { it.id }
-        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 4)
+        // 16 titres en avant (~10–20 % de tête) pour skip rapide sans BUFFERING
+        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 16)
         if (
             !StreamPrefetcher.isStreamDown() &&
             !ovh.delhomme.ytmusic.data.BatterySaver.isActive()
@@ -1942,7 +1943,7 @@ class PlayerController(
                 delay(80)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
-                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 4)
+                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 16)
                 if (!ovh.delhomme.ytmusic.data.BatterySaver.isActive()) {
                     runCatching {
                         YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
@@ -2016,7 +2017,7 @@ class PlayerController(
             base,
             playable.map { it.id },
             idx,
-            ahead = 4,
+            ahead = 12,
             behind = 1,
         )
         CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)
