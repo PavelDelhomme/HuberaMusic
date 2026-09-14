@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-14",
   "versions": [
     {
+      "version": "1.3.237",
+      "date": "2026-09-14",
+      "title": "Fin de titre complète (plus de coupure ~30 s)",
+      "notes": [
+        "Bug : le cache disque partiel annonçait une taille trop petite → Exo croyait la fin du titre vers ~30 s (reprise / rebind)",
+        "Content-Range : total stable, jamais rétréci pendant le téléchargement .m4a",
+        "Favoris : warm disque jusqu’à 200 J’aime (suite complète, pas seulement la tête)",
+        "L’endurance Blackview continue sans interruption"
+      ]
+    },
+    {
       "version": "1.3.236",
       "date": "2026-09-14",
       "title": "Précharge continue file (10–20 titres) + remplacement avant skip",
