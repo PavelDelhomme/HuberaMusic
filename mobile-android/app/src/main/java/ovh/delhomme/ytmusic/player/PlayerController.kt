@@ -2106,17 +2106,18 @@ class PlayerController(
                     else -> "Chargement du flux…"
                 }
                 context.toastMain(msg, Toast.LENGTH_SHORT)
-                // Auto-heal serveur : ce titre est lent → re-warm pour la prochaine fois
+                // Signal fort : titre lent (pas rate-limité) — digéré dans le mail 12h30
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                        level = "info",
+                        level = "warn",
                         kind = "android.player.cold_next",
                         message = "buffering >2.5s id=$trackId",
                         meta = mapOf(
                             "trackId" to trackId,
                             "positionMs" to (_state.value.positionMs),
+                            "title" to (_state.value.track?.title),
                         ),
-                        force = false,
+                        force = true,
                     )
                 }
             }
@@ -2152,8 +2153,79 @@ class PlayerController(
                     )
                     return@launch
                 }
-                AppLog.i("PlayerController", "buffer stuck → skipNext id=$trackId cold=$coldStart")
-                skipNext()
+                AppLog.i("PlayerController", "buffer stuck → rebind (pas de skip) id=$trackId cold=$coldStart")
+                val title = _state.value.track?.title
+                val artist = _state.value.track?.artistLine()
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "warn",
+                        kind = "android.player.load_recover",
+                        message = "buffer stuck → rebind id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
+                        meta = mapOf(
+                            "trackId" to trackId,
+                            "title" to title,
+                            "artist" to artist,
+                            "positionMs" to _state.value.positionMs,
+                            "coldStart" to coldStart,
+                            "action" to "rebind",
+                            "reason" to "buffer_stuck",
+                        ),
+                        force = true,
+                    )
+                }
+                // 1) Rebind URL fraîche (PlaybackService) — on ne saute PLUS ici
+                runCatching {
+                    PlaybackService.Holder.service?.rebindCurrentStream(
+                        reason = "ui-buffer-stuck",
+                        forcePlay = true,
+                        wipeCache = coldStart,
+                    )
+                }
+                // 2) Demande warm serveur immédiat
+                runCatching {
+                    val base = PlaybackService.Holder.resolvedApiBase()
+                    if (base.isNotBlank() && trackId.length == 11) {
+                        StreamPrefetcher.warmTrackFormatOnly(base, trackId)
+                    }
+                }
+                delay(22_000L)
+                if (!_state.value.buffering || _state.value.track?.id != trackId) return@launch
+                if (PlaybackService.Holder.isStreamRecovering(trackId)) return@launch
+                AppLog.w("PlayerController", "buffer stuck → 2e rebind wipe id=$trackId")
+                runCatching {
+                    PlaybackService.Holder.service?.rebindCurrentStream(
+                        reason = "ui-buffer-stuck-2",
+                        forcePlay = true,
+                        wipeCache = true,
+                    )
+                }
+                delay(28_000L)
+                // Dernier recours uniquement si TOUJOURS bloqué après 2 rebinds (~1 min)
+                if (_state.value.buffering &&
+                    _state.value.track?.id == trackId &&
+                    ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
+                    !StreamPrefetcher.isStreamDown() &&
+                    !PlaybackService.Holder.isStreamRecovering(trackId)
+                ) {
+                    AppLog.w("PlayerController", "buffer stuck → skipNext dernier recours id=$trackId")
+                    runCatching {
+                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                            level = "error",
+                            kind = "android.player.load_skip",
+                            message = "buffer stuck → skipNext dernier recours id=$trackId",
+                            meta = mapOf(
+                                "trackId" to trackId,
+                                "title" to title,
+                                "artist" to artist,
+                                "positionMs" to _state.value.positionMs,
+                                "action" to "skip_next",
+                                "reason" to "buffer_stuck_last_resort",
+                            ),
+                            force = true,
+                        )
+                    }
+                    skipNext()
+                }
             }
         }
     }
