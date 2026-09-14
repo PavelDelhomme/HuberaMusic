@@ -754,9 +754,10 @@ export async function handleStream(req: Request, res: Response) {
       } else {
         // Android open-ended sans .m4a : un GET sans Range fait pendrer le relais /
         // le pipe GV (corps entier) → 10–20 s avant le 1er octet.
-        // On force une tête Range (2 MiB) : même chemin rapide que le prefetch ;
+        // Tête Range = même taille que le prefetch rapide (64 KiB trop juste pour
+        // init MP4 ; 512 KiB ≈ chemin Range client qui répond en <300 ms).
         // Exo enchaîne ensuite avec des Ranges suivants (Content-Range total).
-        req.headers.range = 'bytes=0-2097151';
+        req.headers.range = 'bytes=0-524287';
         skipHomeForOpenAndroid = false;
       }
       // Android sans disque : ne pas forcer 1 MiB — mieux un 502/retry qu’un cache toxique.
