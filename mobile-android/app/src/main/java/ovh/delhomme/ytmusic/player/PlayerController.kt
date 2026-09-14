@@ -1901,12 +1901,10 @@ class PlayerController(
         if (headReady && !currentId.isNullOrBlank()) {
             StreamPrefetcher.markHeadReady(currentId)
         }
-        // Si tête déjà là : quiet court. Sinon court aussi — Exo doit gagner la bande.
+        // Si tête déjà là : quiet court. Sinon kick warm IO immédiat (sans bloquer le UI).
         StreamPrefetcher.quietPrefetch(if (headReady) 60L else 200L)
         if (!currentId.isNullOrBlank() && !headReady) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
-            // Restore froid (autoplay=false) : warm bloquant. Play user : FF seulement (évite
-            // prepareRestoredCurrent qui vole 3–4 s à Exo → titres qui « ne chargent pas »).
             if (!autoplay) {
                 scope.launch(Dispatchers.IO) {
                     StreamPrefetcher.prepareRestoredCurrent(
@@ -1916,16 +1914,25 @@ class PlayerController(
                     )
                 }
             } else {
+                // Play user : format wait + tête en priorité (thread dédié, Exo en parallèle).
                 scope.launch(Dispatchers.IO) {
+                    StreamPrefetcher.warmCurrentBlocking(base, currentId, timeoutMs = 1_800L, wait = true)
                     StreamPrefetcher.prefetchStartHead(
                         base,
                         currentId,
                         StreamPrefetcher.HEAD_3S,
                         priorityNext = true,
                     )
-                    window.drop(idx + 1).take(2).forEach { t ->
-                        StreamPrefetcher.warmTrackFormatOnly(base, t.id)
+                    window.drop(idx + 1).take(2).forEachIndexed { i, t ->
+                        StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
                     }
+                }
+            }
+        } else if (!currentId.isNullOrBlank() && headReady) {
+            // Courant chaud : pousser +1/+2 immédiatement (skip sans 10 s)
+            scope.launch(Dispatchers.IO) {
+                window.drop(idx + 1).take(2).forEachIndexed { i, t ->
+                    StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
                 }
             }
         }
@@ -2173,12 +2180,13 @@ class PlayerController(
                         force = true,
                     )
                 }
-                // 1) Rebind URL fraîche (PlaybackService) — on ne saute PLUS ici
+                // 1) Soft rebind (pas de retry=N → ne pas invalider le format chaud serveur)
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck",
                         forcePlay = true,
-                        wipeCache = coldStart,
+                        retryN = 0,
+                        wipeCache = false,
                     )
                 }
                 // 2) Demande warm serveur immédiat
@@ -2188,15 +2196,16 @@ class PlayerController(
                         StreamPrefetcher.warmTrackFormatOnly(base, trackId)
                     }
                 }
-                delay(22_000L)
+                delay(18_000L)
                 if (!_state.value.buffering || _state.value.track?.id != trackId) return@launch
                 if (PlaybackService.Holder.isStreamRecovering(trackId)) return@launch
-                AppLog.w("PlayerController", "buffer stuck → 2e rebind wipe id=$trackId")
+                AppLog.w("PlayerController", "buffer stuck → 2e rebind soft id=$trackId")
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck-2",
                         forcePlay = true,
-                        wipeCache = true,
+                        retryN = 0,
+                        wipeCache = coldStart,
                     )
                 }
                 delay(28_000L)
