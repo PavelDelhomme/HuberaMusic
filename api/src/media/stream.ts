@@ -31,6 +31,7 @@ import {
   warmStreamHead,
   warmStreamHeadsLazy,
   invalidateStreamHead,
+  getAdvertisedTotal,
   rememberAdvertisedTotal,
   stableContentTotal,
   safeDiskRangeBounds,
@@ -853,22 +854,53 @@ export async function handleStream(req: Request, res: Response) {
     }
     if (existsSync(cached) && statSync(cached).size > 0) {
       const size = statSync(cached).size;
-      // Vérité disque pour les lectures ; total header ≈ stable (mais bounds toujours sur size).
-      const advertised = stableContentTotal(videoId, size);
-      rememberAdvertisedTotal(videoId, advertised);
-      const totalHdr = Math.min(advertised, size);
+      const incomplete = downloadInflight.has(videoId);
+      // Total annoncé = jamais la taille partielle d’un .m4a encore en cours
+      // (sinon Exo coupe à ~30 s = fin du partiel, puis « reprise » au rebind).
+      const advertised = stableContentTotal(videoId, size, { incomplete });
+      if (!incomplete) rememberAdvertisedTotal(videoId, advertised);
+      const knownTotal = getAdvertisedTotal(videoId);
+      const totalHdr =
+        knownTotal && knownTotal > 0
+          ? Math.max(knownTotal, advertised)
+          : incomplete
+            ? Math.max(advertised, size)
+            : advertised;
       const range = req.headers.range;
       if (range) {
-        const bounds = safeDiskRangeBounds(size, String(range));
+        // Mid-range au-delà du partiel : attendre un peu que le fichier grossisse.
+        if (incomplete) {
+          const want = /bytes=(\d+)-(\d*)/.exec(String(range));
+          const needEnd = want
+            ? want[2]
+              ? Number(want[2])
+              : Number(want[1]) + 256 * 1024
+            : 0;
+          if (Number.isFinite(needEnd) && needEnd >= size) {
+            const waitUntil = Date.now() + Math.min(12_000, midRangeWaitMs(videoId) || 8_000);
+            while (Date.now() < waitUntil && downloadInflight.has(videoId)) {
+              await new Promise((r) => setTimeout(r, 400));
+              try {
+                if (existsSync(cached) && statSync(cached).size > needEnd) break;
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
+        const sizeFresh = existsSync(cached) ? statSync(cached).size : size;
+        const bounds = safeDiskRangeBounds(sizeFresh, String(range));
         if (!bounds.ok) {
           res.status(416);
-          res.setHeader('Content-Range', `bytes */${totalHdr}`);
+          // Total *complet* (pas le partiel) pour qu’Exo réessaie plus tard.
+          res.setHeader('Content-Range', `bytes */${Math.max(totalHdr, sizeFresh)}`);
           res.setHeader('Accept-Ranges', 'bytes');
           res.end();
           return;
         }
         const { start, end } = bounds;
         const len = end - start + 1;
+        const totalOut = Math.max(totalHdr, end + 1, sizeFresh);
         if (start === 0 && len > 0 && len <= 1024 * 1024) {
           try {
             const { openSync, readSync, closeSync } = await import('node:fs');
@@ -876,9 +908,17 @@ export async function handleStream(req: Request, res: Response) {
             try {
               const buf = Buffer.alloc(len);
               readSync(fd, buf, 0, len, 0);
-              putStreamHead(videoId, buf, { totalSize: totalHdr, contentType: 'audio/mp4' });
+              putStreamHead(videoId, buf, {
+                totalSize: incomplete ? knownTotal ?? null : totalOut,
+                contentType: 'audio/mp4',
+              });
               res.status(206);
-              res.setHeader('Content-Range', `bytes 0-${len - 1}/${totalHdr}`);
+              res.setHeader(
+                'Content-Range',
+                incomplete && !knownTotal
+                  ? `bytes 0-${len - 1}/*`
+                  : `bytes 0-${len - 1}/${totalOut}`,
+              );
               res.setHeader('Accept-Ranges', 'bytes');
               res.setHeader('Content-Length', len);
               res.setHeader('Content-Type', 'audio/mp4');
@@ -900,7 +940,10 @@ export async function handleStream(req: Request, res: Response) {
           const again = safeDiskRangeBounds(sizeNow, String(range));
           if (!again.ok) {
             res.status(416);
-            res.setHeader('Content-Range', `bytes */${Math.min(totalHdr, Math.max(0, sizeNow))}`);
+            res.setHeader(
+              'Content-Range',
+              `bytes */${Math.max(totalHdr, sizeNow, knownTotal || 0)}`,
+            );
             res.setHeader('Accept-Ranges', 'bytes');
             res.end();
             return;
@@ -908,9 +951,15 @@ export async function handleStream(req: Request, res: Response) {
           const start2 = again.start;
           const end2 = again.end;
           const len2 = end2 - start2 + 1;
-          const totalNow = Math.min(totalHdr, sizeNow);
+          // CRITICAL : ne jamais Math.min(total, sizeNow) — c’était la cause ~30 s.
+          const totalNow = Math.max(totalHdr, end2 + 1, knownTotal || 0);
           res.status(206);
-          res.setHeader('Content-Range', `bytes ${start2}-${end2}/${totalNow}`);
+          res.setHeader(
+            'Content-Range',
+            incomplete && totalNow <= sizeNow && !knownTotal
+              ? `bytes ${start2}-${end2}/*`
+              : `bytes ${start2}-${end2}/${Math.max(totalNow, sizeNow)}`,
+          );
           res.setHeader('Accept-Ranges', 'bytes');
           res.setHeader('Content-Length', len2);
           res.setHeader('Content-Type', 'audio/mp4');
@@ -925,7 +974,7 @@ export async function handleStream(req: Request, res: Response) {
             );
             if (!res.headersSent) {
               res.status(416);
-              res.setHeader('Content-Range', `bytes */${totalNow}`);
+              res.setHeader('Content-Range', `bytes */${Math.max(totalNow, sizeNow)}`);
               res.end();
             } else {
               res.destroy();
@@ -940,7 +989,7 @@ export async function handleStream(req: Request, res: Response) {
           console.warn('[stream] disk range KO:', e.message.slice(0, 160));
           if (!res.headersSent) {
             res.status(416);
-            res.setHeader('Content-Range', `bytes */${totalHdr}`);
+            res.setHeader('Content-Range', `bytes */${Math.max(totalHdr, size)}`);
             res.end();
           }
           return;
