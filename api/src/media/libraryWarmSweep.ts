@@ -55,7 +55,7 @@ async function waitIfPlaybackHot(): Promise<void> {
   }
 }
 
-/** Une passe : shuffle-heads (warm) + likes + taste pour chaque compte. */
+/** Une passe : shuffle-heads + recent + likes + taste pour chaque compte. */
 export async function runLibraryWarmSweepOnce(): Promise<{
   users: number;
   ids: number;
@@ -70,10 +70,12 @@ export async function runLibraryWarmSweepOnce(): Promise<{
     for (const uid of uids) {
       users += 1;
       try {
-        // warm:false — on enfile nous-mêmes plus bas (évite 48 ids × N users d’un coup).
+        // warm:false — on enfile nous-mêmes plus bas (évite spam d’un coup).
         const heads = getShuffleHeads(uid, { warm: false, scope: 'all' });
-        for (const id of (heads.ids || []).slice(0, 24)) seen.add(id);
-        for (const id of likedIds(uid, 16)) seen.add(id);
+        for (const id of (heads.ids || []).slice(0, 64)) seen.add(id);
+        const recent = getShuffleHeads(uid, { warm: false, scope: 'recent' });
+        for (const id of (recent.ids || []).slice(0, 40)) seen.add(id);
+        for (const id of likedIds(uid, 32)) seen.add(id);
         scheduleUserTasteWarm(uid);
       } catch (err) {
         console.warn(
@@ -89,8 +91,8 @@ export async function runLibraryWarmSweepOnce(): Promise<{
       await waitIfPlaybackHot();
       const chunk = ids.slice(i, i + 8);
       enqueueStreamWarm(chunk);
-      enqueueDiskWarm(chunk.slice(0, 4));
-      await new Promise((r) => setTimeout(r, 1_200));
+      enqueueDiskWarm(chunk.slice(0, 6));
+      await new Promise((r) => setTimeout(r, 1_000));
     }
     lastRunAt = Date.now();
     lastStats = { users, ids: ids.length, at: lastRunAt };
@@ -109,11 +111,11 @@ export function startLibraryWarmSweep(): void {
   if (timer) return;
   const everyMs = Math.max(
     60 * 60_000,
-    Math.min(24 * 3600_000, Number(process.env.LIBRARY_WARM_INTERVAL_MS || 6 * 3600_000) || 6 * 3600_000),
+    Math.min(24 * 3600_000, Number(process.env.LIBRARY_WARM_INTERVAL_MS || 3 * 3600_000) || 3 * 3600_000),
   );
   const startDelay = Math.max(
     30_000,
-    Number(process.env.LIBRARY_WARM_START_DELAY_MS || 180_000) || 180_000,
+    Number(process.env.LIBRARY_WARM_START_DELAY_MS || 120_000) || 120_000,
   );
   setTimeout(() => {
     void runLibraryWarmSweepOnce();

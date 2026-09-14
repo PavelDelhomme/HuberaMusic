@@ -329,7 +329,7 @@ class PlaybackService : MediaSessionService() {
                     return@Runnable
                 }
                 if (nextIdx < exo.mediaItemCount) {
-                    runCatching { advanceToQueueIndex(exo, nextIdx) }
+                    runCatching { replaceOrAdvance(exo, curId, nextIdx) }
                 } else {
                     val uiFill = Holder.onSkipAtEnd
                     if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
@@ -1150,7 +1150,7 @@ class PlaybackService : MediaSessionService() {
                         return
                     }
                     if (nextIdx < exo.mediaItemCount) {
-                        runCatching { advanceToQueueIndex(exo, nextIdx) }
+                        runCatching { replaceOrAdvance(exo, id, nextIdx) }
                     } else {
                         val uiFill = Holder.onSkipAtEnd
                         if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
@@ -1277,7 +1277,7 @@ class PlaybackService : MediaSessionService() {
                     toastMain("Fichier illisible — titre suivant", Toast.LENGTH_SHORT)
                 }
                 if (nextIdx < exo.mediaItemCount) {
-                    runCatching { advanceToQueueIndex(exo, nextIdx) }
+                    runCatching { replaceOrAdvance(exo, id, nextIdx) }
                 } else {
                     val uiFill = Holder.onSkipAtEnd
                     if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
@@ -1311,7 +1311,7 @@ class PlaybackService : MediaSessionService() {
                     toastMain("Erreur lecture — titre suivant", Toast.LENGTH_SHORT)
                 }
                 if (nextIdx < exo.mediaItemCount) {
-                    runCatching { advanceToQueueIndex(exo, nextIdx) }
+                    runCatching { replaceOrAdvance(exo, id, nextIdx) }
                 } else {
                     val uiFill = Holder.onSkipAtEnd
                     if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
@@ -1894,6 +1894,74 @@ class PlaybackService : MediaSessionService() {
         warmUpcoming(warmFrom)
         val exoPlayer = exo as? ExoPlayer ?: player
         if (exoPlayer != null) enqueueOfflineAhead(warmFrom)
+    }
+
+    /**
+     * Avant un skip forcé : tenter un remplacement du titre mort pour garder le son
+     * (même index / même métadonnées). Sinon avance au suivant.
+     */
+    private fun replaceOrAdvance(exo: Player, deadId: String, nextIdx: Int) {
+        val track = Holder.queue.firstOrNull { it.id == deadId }
+        val repl = StreamPrefetcher.fetchReplacementId(
+            resolvedApiBase(),
+            deadId,
+            track?.title,
+            track?.artistLine(),
+        )
+        if (repl != null && track != null) {
+            val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+            if (Holder.queue.getOrNull(curIdx)?.id == deadId) {
+                val swapped = track.copy(id = repl)
+                val q = Holder.queue.toMutableList()
+                q[curIdx] = swapped
+                Holder.queue = q
+                if (Holder.fullQueue.isNotEmpty()) {
+                    val fq = Holder.fullQueue.toMutableList()
+                    val fi = fq.indexOfFirst { it.id == deadId }
+                    if (fi >= 0) {
+                        fq[fi] = swapped
+                        Holder.fullQueue = fq
+                    }
+                }
+                AppLog.i("PlaybackService", "replace-before-skip $deadId → $repl")
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "info",
+                        kind = "android.player.load_recover",
+                        message = "replace-before-skip $deadId → $repl",
+                        meta = mapOf(
+                            "trackId" to deadId,
+                            "replacementId" to repl,
+                            "action" to "replace",
+                            "reason" to "dead_before_skip",
+                        ),
+                        force = true,
+                    )
+                }
+                val container = runCatching { YtMusicApp.instance.container }.getOrNull()
+                if (container != null) {
+                    val item = mediaItemFor(swapped, { tid -> container.remoteStreamUrl(tid) }, Holder.queueTitle)
+                    runCatching {
+                        exo.replaceMediaItem(curIdx, item)
+                        exo.seekTo(curIdx, 0L)
+                        exo.prepare()
+                        exo.playWhenReady = true
+                        exo.play()
+                        StreamPrefetcher.warmTrackFormatOnly(resolvedApiBase(), repl)
+                        StreamPrefetcher.prefetchStartHead(
+                            resolvedApiBase(),
+                            repl,
+                            StreamPrefetcher.HEAD_3S,
+                            priorityNext = true,
+                        )
+                    }
+                    return
+                }
+            }
+        }
+        if (nextIdx < exo.mediaItemCount) {
+            advanceToQueueIndex(exo, nextIdx)
+        }
     }
 
     /**
@@ -2801,9 +2869,16 @@ private class YtmForwardingPlayer(
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val api = PlaybackService.Holder.resolvedApiBase()
-        // Seek notif/UI : seulement #0+#1 (pas ahead=12 — storm radio au skip)
-        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 2, behind = 0)
-        CoverPrefetcher.warmCovers(queue, index, ahead = 2, behind = 0)
+        // Seek notif/UI : +1 fort + fenêtre courte (le rolling tick élargit ensuite)
+        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 6, behind = 0)
+        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+            api,
+            queue.map { it.id },
+            index,
+            count = 10,
+            ignoreQuiet = true,
+        )
+        CoverPrefetcher.warmCovers(queue, index, ahead = 3, behind = 0)
     }
 
     override fun seekToPrevious() = seekToPreviousMediaItem()
