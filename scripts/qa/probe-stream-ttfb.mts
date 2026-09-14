@@ -64,7 +64,25 @@ async function probe(
       headers,
       signal: ac.signal,
     });
-    const buf = new Uint8Array(await r.arrayBuffer());
+    // Premier octet / 64 KiB max — ne pas attendre le corps entier (open 200 = morceau complet).
+    const reader = r.body?.getReader();
+    let got = 0;
+    const chunks: Uint8Array[] = [];
+    if (reader) {
+      while (got < 65_536) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value?.byteLength) {
+          chunks.push(value);
+          got += value.byteLength;
+        }
+      }
+      try {
+        await reader.cancel();
+      } catch {
+        /* ignore */
+      }
+    }
     const ms = Date.now() - t0;
     return {
       id,
@@ -73,7 +91,7 @@ async function probe(
       ok: r.ok || r.status === 206,
       status: r.status,
       cache: r.headers.get('x-plm-stream-cache') || undefined,
-      bytes: buf.byteLength,
+      bytes: got,
     };
   } catch (e) {
     return {
