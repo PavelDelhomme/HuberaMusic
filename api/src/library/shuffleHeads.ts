@@ -100,7 +100,8 @@ function needsDisk(id: string): boolean {
   try {
     const p = cachePath(id);
     if (!existsSync(p)) return true;
-    return statSync(p).size < 1024 * 1024;
+    // < 3 MiB ≈ souvent tête seule / téléchargement interrompu — pas un titre jouable bout-en-bout.
+    return statSync(p).size < 3 * 1024 * 1024;
   } catch {
     return true;
   }
