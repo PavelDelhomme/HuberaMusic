@@ -1107,6 +1107,24 @@ class PlaybackService : MediaSessionService() {
                         "PlaybackService",
                         "onPlayerError give-up streak=$streak → next id=$id pos=$pos http=$httpStatus unavailable=$unavailable",
                     )
+                    runCatching {
+                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                            level = "warn",
+                            kind = "android.player.load_skip",
+                            message = "player-error give-up → next id=$id streak=$streak http=$httpStatus code=${error.errorCode}",
+                            meta = mapOf(
+                                "trackId" to id,
+                                "positionMs" to pos,
+                                "streak" to streak,
+                                "httpStatus" to httpStatus,
+                                "errorCode" to error.errorCode,
+                                "unavailable" to unavailable,
+                                "action" to "skip_next",
+                                "reason" to "player_error_give_up",
+                            ),
+                            force = true,
+                        )
+                    }
                     Holder.streamRecoveringId = ""
                     Holder.streamFailStreak = 0
                     streamFailStreak.set(0)
@@ -1236,6 +1254,21 @@ class PlaybackService : MediaSessionService() {
                     (error.cause?.message?.contains("atom with length", ignoreCase = true) == true)
             if (parseMalformed && streak >= 3) {
                 AppLog.w("PlaybackService", "parse malformed give-up → next id=$id streak=$streak")
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "warn",
+                        kind = "android.player.load_skip",
+                        message = "parse malformed give-up → next id=$id streak=$streak",
+                        meta = mapOf(
+                            "trackId" to id,
+                            "streak" to streak,
+                            "errorCode" to error.errorCode,
+                            "action" to "skip_next",
+                            "reason" to "parse_malformed",
+                        ),
+                        force = true,
+                    )
+                }
                 streamFailStreak.set(0)
                 cancelStallWatch()
                 clearStallSession()
@@ -1255,6 +1288,21 @@ class PlaybackService : MediaSessionService() {
             // Autres erreurs : retry sur le même titre ; skip après trop d’échecs.
             if (streak >= 6) {
                 AppLog.w("PlaybackService", "player-error give-up streak=$streak → next id=$id code=${error.errorCode}")
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "warn",
+                        kind = "android.player.load_skip",
+                        message = "player-error give-up streak=$streak → next id=$id code=${error.errorCode}",
+                        meta = mapOf(
+                            "trackId" to id,
+                            "streak" to streak,
+                            "errorCode" to error.errorCode,
+                            "action" to "skip_next",
+                            "reason" to "player_error_streak",
+                        ),
+                        force = true,
+                    )
+                }
                 streamFailStreak.set(0)
                 cancelStallWatch()
                 clearStallSession()
@@ -2053,6 +2101,20 @@ class PlaybackService : MediaSessionService() {
         if (prevId.isBlank() || earlyEndRetries >= 2) {
             if (earlyEndRetries >= 2 && prevId.isNotBlank()) {
                 AppLog.w("PlaybackService", "early_end give-up → next id=$prevId")
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "warn",
+                        kind = "android.player.load_skip",
+                        message = "early_end give-up → next id=$prevId pos=$pos",
+                        meta = mapOf(
+                            "trackId" to prevId,
+                            "positionMs" to pos,
+                            "action" to "skip_next",
+                            "reason" to "early_end_give_up",
+                        ),
+                        force = true,
+                    )
+                }
                 earlyEndRetries = 0
                 recoveringTrackId = ""
                 Holder.onSkipAtEnd?.invoke()

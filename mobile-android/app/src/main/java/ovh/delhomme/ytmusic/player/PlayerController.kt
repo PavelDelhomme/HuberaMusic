@@ -2106,17 +2106,18 @@ class PlayerController(
                     else -> "Chargement du flux…"
                 }
                 context.toastMain(msg, Toast.LENGTH_SHORT)
-                // Auto-heal serveur : ce titre est lent → re-warm pour la prochaine fois
+                // Signal fort : titre lent (pas rate-limité) — digéré dans le mail 12h30
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                        level = "info",
+                        level = "warn",
                         kind = "android.player.cold_next",
                         message = "buffering >2.5s id=$trackId",
                         meta = mapOf(
                             "trackId" to trackId,
                             "positionMs" to (_state.value.positionMs),
+                            "title" to (_state.value.track?.title),
                         ),
-                        force = false,
+                        force = true,
                     )
                 }
             }
@@ -2153,6 +2154,26 @@ class PlayerController(
                     return@launch
                 }
                 AppLog.i("PlayerController", "buffer stuck → skipNext id=$trackId cold=$coldStart")
+                val title = _state.value.track?.title
+                val artist = _state.value.track?.artistLine()
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "warn",
+                        kind = "android.player.load_skip",
+                        message = "buffer stuck → skipNext id=$trackId cold=$coldStart " +
+                            "pos=${_state.value.positionMs} title=${title ?: "?"}",
+                        meta = mapOf(
+                            "trackId" to trackId,
+                            "title" to title,
+                            "artist" to artist,
+                            "positionMs" to _state.value.positionMs,
+                            "coldStart" to coldStart,
+                            "action" to "skip_next",
+                            "reason" to "buffer_stuck",
+                        ),
+                        force = true,
+                    )
+                }
                 skipNext()
             }
         }
