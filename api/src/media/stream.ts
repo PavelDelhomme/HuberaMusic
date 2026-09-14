@@ -697,6 +697,7 @@ export async function handleStream(req: Request, res: Response) {
   // Android : attendre le .m4a disque (jusqu’à 45 s) puis servir entier ; sinon laisser
   // le pipeline normal (relais / GV) sans borne artificielle.
   // Autres clients : tête 1 MiB seulement si disque absent (TTFB web).
+  let skipHomeForOpenAndroid = false;
   if (!wantVideo) {
     const rangeRaw = String(req.headers.range || '').trim();
     const openEnded = !rangeRaw || /^bytes=0-$/i.test(rangeRaw);
@@ -740,6 +741,10 @@ export async function handleStream(req: Request, res: Response) {
         // sans Range → 200 + corps entier plus bas
       } else if (!isAndroid) {
         req.headers.range = 'bytes=0-1048575';
+      } else {
+        // Android open-ended sans .m4a : le relais maison pend souvent 20–50 s
+        // (corps entier). Range local / GV répond en <1 s — on saute le relais.
+        skipHomeForOpenAndroid = true;
       }
       // Android sans disque : ne pas forcer 1 MiB — mieux un 502/retry qu’un cache toxique.
     }
@@ -956,7 +961,8 @@ export async function handleStream(req: Request, res: Response) {
   }
 
   // Relais maison (IP résidentielle) — mid-range déjà tenté en local ci-dessus.
-  if (homeUpstream) {
+  // Android open-ended froid : skip (relais pend sur corps entier → 10–20 s BUFFERING).
+  if (homeUpstream && !skipHomeForOpenAndroid) {
     const proxyTimeoutMs = midNeedsDisk ? 130_000 : 52_000;
     try {
       await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs);
