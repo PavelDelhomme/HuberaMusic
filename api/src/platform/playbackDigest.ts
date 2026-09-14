@@ -33,6 +33,7 @@ const KIND_SET = new Set([
   'android.player.prefetch_miss',
   'android.player.early_end',
   'android.player.load_skip',
+  'android.player.load_recover',
 ]);
 
 type TelemetryRow = {
@@ -249,6 +250,8 @@ function kindLabel(kind: string): string {
       return 'Fin prématurée du titre';
     case 'android.player.load_skip':
       return 'Auto-skip : chargement KO (passé au suivant)';
+    case 'android.player.load_recover':
+      return 'Rebind / recover (évite le skip)';
     case 'listen.early_skip':
       return 'Skip très tôt (<8 % / <15 s) — souvent auto ou abandon';
     default:
