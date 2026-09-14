@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-14",
   "versions": [
     {
+      "version": "1.3.236",
+      "date": "2026-09-14",
+      "title": "Précharge continue file (10–20 titres) + remplacement avant skip",
+      "notes": [
+        "Pendant la lecture : têtes Exo sur ~16 titres suivants (~10–20 %), plus seulement +1/+2",
+        "Serveur : balayage warm Aléatoire+recent+likes tous les 3 h pour chaque compte",
+        "Titre mort : remplacement synchrone avant de passer au suivant (garde le son)",
+        "Skip rapide : la suite reste déjà chaude"
+      ]
+    },
+    {
       "version": "1.3.235",
       "date": "2026-09-14",
       "title": "Open file : tête 512 KiB (plus de hang)",

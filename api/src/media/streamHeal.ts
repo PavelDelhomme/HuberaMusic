@@ -8,9 +8,9 @@ import { getTrackPayload } from '../library/db.js';
 
 const lastHealAt = new Map<string, number>();
 const HEAL_COOLDOWN_MS = 8 * 60_000;
-/** Remplacement : plus rare (évite spam search YT). */
+/** Remplacement : plus fréquent sur load_skip (éviter skip sec). */
 const lastReplaceAt = new Map<string, number>();
-const REPLACE_COOLDOWN_MS = 45 * 60_000;
+const REPLACE_COOLDOWN_MS = 5 * 60_000;
 
 const HEAL_KINDS = new Set([
   'android.player.stall',
