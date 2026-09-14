@@ -2,13 +2,22 @@
   "updatedAt": "2026-09-14",
   "versions": [
     {
+      "version": "1.3.234",
+      "date": "2026-09-14",
+      "title": "Ouverture file : plus de hang 20 s (Range forcé)",
+      "notes": [
+        "Android sans .m4a : GET sans Range transformé en tête 2 MiB (même vitesse que le prefetch)",
+        "Relais maison : abandon si pas de 1er octet en 3,5 s → fallback VPS",
+        "Priorité lecture / soft rebind (1.3.232) conservés"
+      ]
+    },
+    {
       "version": "1.3.233",
       "date": "2026-09-14",
       "title": "Plus de blocage 20 s sur ouverture sans Range",
       "notes": [
-        "Android froid sans .m4a : plus de passage par le relais maison qui pendait 10–20 s",
-        "Ouverture Exo sans Range → resolve local immédiat (comme un Range rapide)",
-        "Conserve les correctifs 1.3.232 (priorité lecture, soft rebind, précharge file)"
+        "Tentative skip relais / timeout (affiné en 1.3.234)",
+        "Correctifs 1.3.232 conservés"
       ]
     },
     {

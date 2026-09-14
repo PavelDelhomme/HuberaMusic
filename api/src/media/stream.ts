@@ -223,6 +223,7 @@ async function proxyStreamToHome(
   homeBase: string,
   videoId: string,
   timeoutMs = 52_000,
+  firstByteTimeoutMs = 20_000,
 ) {
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   const q = wantVideo ? '?type=video' : '';
@@ -233,9 +234,10 @@ async function proxyStreamToHome(
   if (req.headers.range) headers.Range = String(req.headers.range);
   const auth = req.headers.authorization;
   if (auth) headers.Authorization = String(auth);
+  // Timeout global = plafond ; first-byte plus court pour open Android (évite 20 s BUFFERING).
   const upstream = await fetch(url, {
     headers,
-    signal: AbortSignal.timeout(Math.max(15_000, timeoutMs)),
+    signal: AbortSignal.timeout(Math.max(firstByteTimeoutMs + 2_000, timeoutMs)),
   });
   if (upstream.status >= 400) {
     const detail = await upstream.text().catch(() => '');
@@ -243,7 +245,15 @@ async function proxyStreamToHome(
   }
   if (!upstream.body) throw new Error('home stream sans corps');
   const reader = upstream.body.getReader();
-  const first = await reader.read();
+  const first = await Promise.race([
+    reader.read(),
+    new Promise<ReadableStreamReadResult<Uint8Array>>((_, rej) =>
+      setTimeout(
+        () => rej(new Error(`home first-byte timeout ${firstByteTimeoutMs}ms`)),
+        Math.max(800, firstByteTimeoutMs),
+      ),
+    ),
+  ]);
   if (first.done || !first.value?.byteLength) throw new Error('home stream vide');
 
   res.status(upstream.status);
@@ -742,9 +752,12 @@ export async function handleStream(req: Request, res: Response) {
       } else if (!isAndroid) {
         req.headers.range = 'bytes=0-1048575';
       } else {
-        // Android open-ended sans .m4a : le relais maison pend souvent 20–50 s
-        // (corps entier). Range local / GV répond en <1 s — on saute le relais.
-        skipHomeForOpenAndroid = true;
+        // Android open-ended sans .m4a : un GET sans Range fait pendrer le relais /
+        // le pipe GV (corps entier) → 10–20 s avant le 1er octet.
+        // On force une tête Range (2 MiB) : même chemin rapide que le prefetch ;
+        // Exo enchaîne ensuite avec des Ranges suivants (Content-Range total).
+        req.headers.range = 'bytes=0-2097151';
+        skipHomeForOpenAndroid = false;
       }
       // Android sans disque : ne pas forcer 1 MiB — mieux un 502/retry qu’un cache toxique.
     }
@@ -961,11 +974,16 @@ export async function handleStream(req: Request, res: Response) {
   }
 
   // Relais maison (IP résidentielle) — mid-range déjà tenté en local ci-dessus.
-  // Android open-ended froid : skip (relais pend sur corps entier → 10–20 s BUFFERING).
-  if (homeUpstream && !skipHomeForOpenAndroid) {
-    const proxyTimeoutMs = midNeedsDisk ? 130_000 : 52_000;
+  // Android open-ended froid : tentative courte (first-byte 3.5 s) puis fallback VPS/GV.
+  if (homeUpstream) {
+    const proxyTimeoutMs = skipHomeForOpenAndroid
+      ? 10_000
+      : midNeedsDisk
+        ? 130_000
+        : 52_000;
+    const firstByteMs = skipHomeForOpenAndroid ? 3_500 : 20_000;
     try {
-      await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs);
+      await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs, firstByteMs);
       return;
     } catch (err) {
       if (endIfHeadersSent(res)) return;
@@ -978,7 +996,7 @@ export async function handleStream(req: Request, res: Response) {
       const forceHomeOnly =
         process.env.STREAM_UPSTREAM_FALLBACK === '0' ||
         process.env.STREAM_UPSTREAM_FALLBACK === 'false';
-      if (forceHomeOnly && !midNeedsDisk) {
+      if (forceHomeOnly && !midNeedsDisk && !skipHomeForOpenAndroid) {
         const isDown =
           /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
             msg,
