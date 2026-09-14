@@ -544,7 +544,7 @@ fun NowPlayingScreen(
             base,
             ui.queue.map { it.id },
             ui.queueIndex.coerceIn(0, ui.queue.lastIndex),
-            window = 3,
+            window = 16,
         )
     }
 

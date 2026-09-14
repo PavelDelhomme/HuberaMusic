@@ -1998,6 +1998,40 @@ app.get('/api/track/:id', accountRequired, async (req, res) => {
   }
 });
 
+/** Remplacement synchrone (vidéo morte) — client avant skip pour garder le son. */
+app.get('/api/track/:id/replacement', accountRequired, async (req, res) => {
+  try {
+    const id = p(req.params.id);
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) {
+      res.status(400).json({ ok: false, error: 'id invalide' });
+      return;
+    }
+    const { getReplacementId, findReplacementId } = await import('./media/trackReplacement.js');
+    const known = getReplacementId(id);
+    if (known) {
+      res.json({ ok: true, deadId: id, replacementId: known, cached: true });
+      return;
+    }
+    const title = typeof req.query.title === 'string' ? req.query.title : undefined;
+    const artist = typeof req.query.artist === 'string' ? req.query.artist : undefined;
+    const uid = (req as any).userId as string | undefined;
+    const replacement = await Promise.race([
+      findReplacementId(id, { userId: uid, title, artist }),
+      new Promise<string | null>((r) => setTimeout(() => r(null), 2_800)),
+    ]);
+    if (replacement && replacement !== id) {
+      const { enqueueStreamWarm, enqueueDiskWarm } = await import('./media/stream.js');
+      enqueueStreamWarm([replacement], uid);
+      enqueueDiskWarm([replacement]);
+      res.json({ ok: true, deadId: id, replacementId: replacement, cached: false });
+      return;
+    }
+    res.json({ ok: true, deadId: id, replacementId: null });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+  }
+});
+
 /** Clip vidéo pour mode multimédia (même ID ou fallback titre+artiste). */
 app.get('/api/track/:id/visual', accountRequired, async (req, res) => {
   try {
