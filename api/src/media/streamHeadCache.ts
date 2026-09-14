@@ -86,31 +86,61 @@ const advertisedTotals = new Map<string, number>();
 
 export function rememberAdvertisedTotal(videoId: string, total: number | null | undefined): void {
   if (total == null || !Number.isFinite(total) || total <= 0) return;
-  if (!advertisedTotals.has(videoId)) {
-    advertisedTotals.set(videoId, Math.floor(total));
+  const next = Math.floor(total);
+  const prev = advertisedTotals.get(videoId);
+  // Ne jamais rétrécir : un total partiel (.m4a encore en téléchargement) → Exo EOF ~30 s.
+  if (prev == null || next > prev) {
+    advertisedTotals.set(videoId, next);
   }
   const head = heads.get(videoId);
-  if (head && head.totalSize == null) {
-    head.totalSize = Math.floor(total);
+  if (head && (head.totalSize == null || next > head.totalSize)) {
+    head.totalSize = advertisedTotals.get(videoId) ?? next;
   }
 }
 
-/** Total stable à remettre dans Content-Range (préfère le 1ʳᵉ annoncé). */
-export function stableContentTotal(videoId: string, fileSize: number): number {
+/**
+ * Total Content-Range à annoncer.
+ * `incomplete` = fichier disque encore en cours de téléchargement : ne jamais
+ * annoncer la taille partielle (sinon le lecteur coupe à ~30 s puis « reprend »).
+ */
+export function stableContentTotal(
+  videoId: string,
+  fileSize: number,
+  opts?: { incomplete?: boolean },
+): number {
   const remembered = advertisedTotals.get(videoId);
   const headTotal = peekStreamHead(videoId)?.totalSize ?? null;
   const preferred = remembered ?? headTotal;
+  const incomplete = Boolean(opts?.incomplete);
+
+  if (incomplete) {
+    if (preferred != null && preferred > 0) {
+      // Garde le plus grand connu ; n’enregistre pas un partiel plus petit.
+      return Math.max(preferred, fileSize);
+    }
+    // Pas encore de total fiable : on n’ancre pas le partiel comme vérité.
+    return fileSize;
+  }
+
   if (preferred != null && preferred > 0) {
-    // Écart trop grand (home vs yt-dlp) → la vérité disque gagne, sinon Exo seek past EOF.
-    if (Math.abs(fileSize - preferred) > 64 * 1024) {
+    // Fichier final plus grand que l’annonce → upgrade (yt-dlp vs home).
+    if (fileSize > preferred + 64 * 1024) {
       advertisedTotals.set(videoId, fileSize);
       return fileSize;
     }
+    // Fichier final un peu plus petit mais cohérent → garder l’annonce (évite EOF Exo).
     if (fileSize >= preferred) return preferred;
-    return fileSize;
+    // Partiel / race : ne jamais renvoyer un total < déjà annoncé.
+    if (fileSize > 0 && fileSize < preferred) return preferred;
+    return preferred;
   }
   rememberAdvertisedTotal(videoId, fileSize);
   return fileSize;
+}
+
+/** Total déjà annoncé au client (s’il existe). */
+export function getAdvertisedTotal(videoId: string): number | null {
+  return advertisedTotals.get(videoId) ?? null;
 }
 
 /**
