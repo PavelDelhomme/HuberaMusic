@@ -159,6 +159,40 @@ function isDashBrandFile(path: string): boolean {
   }
 }
 
+/**
+ * .m4a utilisable bout-en-bout (pas une tête tronquée).
+ * Seuil bas : une vraie piste AAC 128k ≈ 1 Mo/min — < 512 KiB = quasi sûr partiel.
+ */
+const MIN_COMPLETE_DISK_BYTES = 512 * 1024;
+
+function isCompleteEnoughDisk(path: string): boolean {
+  try {
+    if (!existsSync(path)) return false;
+    const size = statSync(path).size;
+    if (size < MIN_COMPLETE_DISK_BYTES) return false;
+    if (isDashBrandFile(path)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function purgeTinyOrDashCache(videoId: string): void {
+  const p = cachePath(videoId);
+  try {
+    if (!existsSync(p)) return;
+    const size = statSync(p).size;
+    if (size > 0 && size < MIN_COMPLETE_DISK_BYTES) {
+      unlinkSync(p);
+      console.warn(`[stream] purge tiny cache ${videoId} size=${size}`);
+      return;
+    }
+  } catch {
+    /* ignore */
+  }
+  purgeDashCache(videoId);
+}
+
 /** Supprime un .m4a DASH du cache disque pour forcer un re-download progressif. */
 function purgeDashCache(videoId: string): boolean {
   const p = cachePath(videoId);
@@ -1432,7 +1466,7 @@ export function enqueueDiskWarm(ids: string[]) {
     if (diskWarmQueued.has(id)) continue;
     try {
       const p = cachePath(id);
-      if (existsSync(p) && statSync(p).size > 1024 * 1024) continue;
+      if (isCompleteEnoughDisk(p) && statSync(p).size >= 3 * 1024 * 1024) continue;
     } catch {
       /* continue */
     }
@@ -1620,41 +1654,44 @@ export async function downloadTrack(
   const out = cachePath(videoId);
   if (opts?.progressiveOnly) purgeDashCache(videoId);
   else if (isDashBrandFile(out)) purgeDashCache(videoId);
-  if (existsSync(out) && statSync(out).size > 0 && !isDashBrandFile(out)) return out;
+  // Ne pas traiter une tête tronquée comme « déjà téléchargée ».
+  if (isCompleteEnoughDisk(out) && !downloadInflight.has(videoId)) return out;
+  if (existsSync(out) && !isCompleteEnoughDisk(out) && !downloadInflight.has(videoId)) {
+    purgeTinyOrDashCache(videoId);
+  }
 
   const blocked = downloadFailUntil.get(videoId);
   if (blocked && Date.now() < blocked.until) {
     throw new Error(blocked.msg);
   }
   if (existsSync(out)) {
-    const size = statSync(out).size;
-    if (size > 0 && !isDashBrandFile(out)) return out;
-    // Fichier 0 octet ou DASH → ne pas bloquer les retries
-    try {
-      unlinkSync(out);
-    } catch {
-      /* ignore */
+    if (isCompleteEnoughDisk(out) && !downloadInflight.has(videoId)) return out;
+    if (!downloadInflight.has(videoId) && !isCompleteEnoughDisk(out)) {
+      try {
+        unlinkSync(out);
+      } catch {
+        /* ignore */
+      }
     }
   }
   const pending = downloadInflight.get(videoId);
   if (pending) return pending;
 
   const job = (async (): Promise<string> => {
-    if (existsSync(out) && statSync(out).size > 0 && !isDashBrandFile(out)) return out;
+    if (isCompleteEnoughDisk(out)) return out;
 
     // 1) Innertube — sauf si progressiveOnly (DASH fréquent → refuse hors-ligne)
     if (!opts?.progressiveOnly) {
       try {
         await downloadTrackViaInnertube(videoId, out);
-        if (existsSync(out) && statSync(out).size > 0) {
-          if (isDashBrandFile(out)) {
-            try {
-              unlinkSync(out);
-            } catch {
-              /* ignore */
-            }
-          } else {
-            return out;
+        if (isCompleteEnoughDisk(out)) {
+          return out;
+        }
+        if (existsSync(out) && (isDashBrandFile(out) || statSync(out).size < MIN_COMPLETE_DISK_BYTES)) {
+          try {
+            unlinkSync(out);
+          } catch {
+            /* ignore */
           }
         }
       } catch {
@@ -1722,10 +1759,17 @@ export async function downloadTrack(
                 }),
               { bypassCooldown: true, noteFailure: false },
             );
-            if (existsSync(out) && statSync(out).size > 0) {
+            if (isCompleteEnoughDisk(out)) {
               downloadFailUntil.delete(videoId);
               markYoutubeProxySuccess(proxy);
               return out;
+            }
+            if (existsSync(out)) {
+              try {
+                unlinkSync(out);
+              } catch {
+                /* ignore */
+              }
             }
           } catch (err) {
             lastErr = err instanceof Error ? err : new Error(String(err));
@@ -1738,7 +1782,7 @@ export async function downloadTrack(
       }
     }
 
-    if (existsSync(out) && statSync(out).size > 0) {
+    if (isCompleteEnoughDisk(out)) {
       downloadFailUntil.delete(videoId);
       return out;
     }
