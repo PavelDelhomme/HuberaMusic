@@ -6,8 +6,9 @@
  *   # lit SEED_* dans .env
  *
  * Comptes typiques :
- *   SEED_EMAIL=dev@…              → admin / test (ADMIN_EMAILS)
- *   SEED_EMAIL_SECONDARY=pavel@…  → perso prod (mdp distinct via SEED_PASSWORD_SECONDARY)
+ *   SEED_EMAIL=dev@…                       → admin / test (ADMIN_EMAILS)
+ *   SEED_EMAIL_SECONDARY=paul@…            → 2ᵉ compte test (mdp via SEED_PASSWORD_SECONDARY)
+ *   EMAIL_TEST_INSCRIPTION=bin@…           → compte inscription / QA (EMAIL_TEST_INSCRIPTION_PASSWORD)
  */
 import 'dotenv/config';
 import { randomBytes, randomUUID, scryptSync } from 'node:crypto';
@@ -63,6 +64,16 @@ if (secondaryEmail && secondaryEmail !== primaryEmail) {
     );
   }
   users.push({ email: secondaryEmail, name: secondaryName, password: secondaryPassword });
+}
+
+/** Compte d’inscription / QA (optionnel) — évite un 401 local tant que register n’a pas été joué. */
+const inscriptionEmail = (process.env.EMAIL_TEST_INSCRIPTION || '').trim().toLowerCase();
+const inscriptionPassword = (process.env.EMAIL_TEST_INSCRIPTION_PASSWORD || '').trim();
+const inscriptionName = (process.env.EMAIL_TEST_INSCRIPTION_NAME || 'Bin Test').trim() || 'Bin Test';
+if (inscriptionEmail && inscriptionPassword && !users.some((u) => u.email === inscriptionEmail)) {
+  users.push({ email: inscriptionEmail, name: inscriptionName, password: inscriptionPassword });
+} else if (inscriptionEmail && !inscriptionPassword) {
+  console.warn('!! EMAIL_TEST_INSCRIPTION défini mais EMAIL_TEST_INSCRIPTION_PASSWORD absent — skip');
 }
 
 function hashPassword(pw) {
