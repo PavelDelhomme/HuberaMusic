@@ -11,7 +11,7 @@ import { sendMail } from '../../api/src/platform/mail.ts';
 const to =
   process.env.BATTERY_REPORT_TO?.trim() ||
   process.env.REPORT_TO?.trim() ||
-  'dev@delhomme.ovh, paveldelhomme@gmail.com';
+  '';
 
 const OUT_DIR = join(process.cwd(), 'tmp', 'report-2026-09-11-video-battery');
 mkdirSync(OUT_DIR, { recursive: true });

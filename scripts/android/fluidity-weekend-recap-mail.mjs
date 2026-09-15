@@ -25,7 +25,7 @@ const samsung = existsSync(SAMSUNG_REPORT)
 
 const to =
   process.env.BATTERY_REPORT_TO ||
-  'dev@delhomme.ovh,pauldelhomme.pro@gmail.com';
+  '';
 
 const version = 'p+1.3.112';
 const subject = `[PLM] Récap fluidité & erreurs — ${version} — Nothing + Samsung OK`;
