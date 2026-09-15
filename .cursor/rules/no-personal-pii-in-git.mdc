@@ -1,0 +1,29 @@
+---
+description: Interdiction de commit/push d’emails et infos personnelles en clair
+alwaysApply: true
+---
+
+# Pas de PII personnelle dans Git
+
+## Interdit (jamais commit ni push)
+
+- Adresses Gmail personnelles (`*@gmail.com` du porteur, etc.)
+- Listes de destinataires email « en dur » dans docs publiques, scripts, exemples
+- Mots de passe, tokens, secrets (Bitwarden / KeePass uniquement — voir `docs/OPS-BACKUP.md`)
+- Numéros de téléphone perso, adresses postales, identifiants bancaires
+
+## Obligatoire
+
+- Destinataires mail / digests / rapports QA → **uniquement** variables d’env (`MAIL_TO`, `REPORT_TO`, `BATTERY_REPORT_TO`, `AUDIT_MAIL_TO`, `PLAYBACK_DIGEST_TO`, …)
+- Dans `.env.example` / docs : placeholders (`you@example.com`) ou noms de variables — **pas** d’adresses réelles perso
+- Comptes ops domaine produit (`dev@…`, `pavel@…` sur le domaine du projet) : OK **seulement** s’ils sont nécessaires au fonctionnement documenté (seed / allowlist) — jamais mélangés à des Gmail perso dans un doc public
+
+## Avant tout commit / push
+
+1. `rg -n '@gmail\\.com|@proton\\.me|@pm\\.me' --glob '!.git/**' --glob '!node_modules/**' --glob '!tmp/**'`
+2. S’il y a un hit personnel → **corriger le fichier**, ne pas committer, ne pas pusher
+3. Un markdown « pour soi » avec des emails → **hors Git** (ex. `NOTES.md` déjà gitignore) ou redacté
+
+## Docs d’écosystème / rapports
+
+Ne jamais publier une ligne « Destinataires : email1 · email2 » avec de vraies adresses. Écrire « non publiés — env locales uniquement ».
