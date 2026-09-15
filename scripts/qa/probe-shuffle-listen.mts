@@ -21,7 +21,7 @@ const TO =
   process.env.PLAYBACK_DIGEST_TO?.trim() ||
   process.env.BATTERY_REPORT_TO?.trim() ||
   process.env.TELEMETRY_ALERT_TO?.trim() ||
-  'dev@delhomme.ovh, [REDACTED]';
+  '';
 
 const email = process.env.SEED_EMAIL || process.env.ADMIN_EMAIL || '';
 const password =

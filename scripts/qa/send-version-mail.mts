@@ -30,7 +30,7 @@ const notes = notesRaw
   .map((l) => l.replace(/^[-•*]\s*/, '').trim())
   .filter(Boolean);
 
-const to = process.env.MAIL_TO || 'dev@delhomme.ovh, [REDACTED]';
+const to = process.env.MAIL_TO || '';
 const subject = `[PLM] ${version} — ${title}`;
 const when = new Date().toISOString();
 
