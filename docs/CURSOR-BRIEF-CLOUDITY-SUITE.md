@@ -151,3 +151,9 @@ Recommandations Cursor/ops :
 - identity-sdk réel.
 
 **Fin du brief — garder ce fichier à jour si la structure `products/` évolue.**
+
+---
+
+## Mise à jour 15/09/2026
+
+Audit VPS : `ytmusic_ytmusic_data` ≈ **20,6 Go**. Décisions porteur : repo Cloudity `EMAIL-PORTEUR-DECISIONS-SUITE-2026-09-15.md`. Submodule cible `products/music/`.
