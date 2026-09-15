@@ -47,7 +47,7 @@ const ok = report.ok ? 'OK' : 'FAIL';
 const sum = report.summary || {};
 const to =
   process.env.BATTERY_REPORT_TO ||
-  'dev@delhomme.ovh,[REDACTED]';
+  '';
 
 const subject = `[PLM] Samsung DEV marathon media — ${ok} — ${sum.passed || 0}/${sum.total || 0}`;
 
