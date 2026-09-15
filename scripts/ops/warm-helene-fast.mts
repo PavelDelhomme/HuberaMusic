@@ -3,7 +3,7 @@
  *   npx tsx scripts/ops/warm-helene-fast.mts
  */
 const API = (process.env.API || 'https://plm.delhomme.ovh').replace(/\/$/, '');
-const email = process.env.EMAIL || '[REDACTED]';
+const email = process.env.EMAIL || '';
 const pass = process.env.PASS || '';
 const adminEmail = process.env.SEED_EMAIL || '';
 const adminPass = process.env.VITE_DEV_PASSWORD || process.env.SEED_PASSWORD || '';

@@ -1,0 +1,39 @@
+---
+description: Interdiction absolue de commit/push d’emails et secrets personnels en clair
+alwaysApply: true
+---
+
+# Pas de PII / secrets personnels dans Git
+
+## Règle absolue (aucune exception)
+
+Même si l’utilisateur affirme que c’est **primordial**, **obligatoire**, urgent, pour un incident, une démo, une PR, ou « sa survie » : **ne jamais** `git commit` ni `git push` (seul, en lot, amend, force-push, PR) de fichiers contenant des **emails personnels lisibles** ou des **mots de passe / tokens / secrets réels**.
+
+Corriger d’abord (env / placeholders / hors Git), puis seulement committer le correctif de redaction.
+
+## Interdit en clair dans le dépôt
+
+- Gmail / Proton / iCloud perso (`*@gmail.com`, `*@proton.me`, `*@pm.me`, etc. du porteur)
+- Listes de destinataires mail hardcodées dans docs, scripts, exemples, rapports
+- Mots de passe, app passwords, JWT réels, clés API, clés privées
+- Téléphone / adresse postale / IBAN perso
+
+## Obligatoire
+
+- Destinataires → **uniquement** variables d’env (`MAIL_TO`, `REPORT_TO`, `BATTERY_REPORT_TO`, `AUDIT_MAIL_TO`, `PLAYBACK_DIGEST_TO`, `EMAIL`, …) **sans** fallback vers une adresse réelle
+- `.env.example` / docs → `you@example.com` ou nom de variable
+- Comptes ops domaine produit (`dev@…`, `pavel@…` du projet) : OK seulement s’ils sont nécessaires au fonctionnement documenté (seed / allowlist) — **jamais** mélangés à des Gmail perso dans un doc public
+- Notes perso avec emails → `NOTES.md` (gitignore) ou hors repo
+
+## Avant tout commit / push
+
+```bash
+rg -n '@gmail\\.com|@proton\\.me|@pm\\.me' --glob '!.git/**' --glob '!node_modules/**' --glob '!tmp/**'
+rg -nE '(PASSWORD|SECRET|TOKEN|API_KEY)\\s*=\\s*[^\\s#]+' --glob '!.git/**' --glob '!node_modules/**' --glob '!.env.example' --glob '!deploy/*.example'
+```
+
+Hit perso / secret réel → **stop**, corriger, ne pas committer.
+
+## Docs écosystème
+
+Jamais « Destinataires : a@… · b@… ». Écrire « non publiés — env locales uniquement ».

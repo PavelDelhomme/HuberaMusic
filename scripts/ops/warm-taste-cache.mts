@@ -2,7 +2,7 @@
  * Précharge cache disque serveur (.m4a déjà compressé) + warm formats
  * pour les goûts d’un compte + seeds artistes + (option) tous les comptes SQL.
  *
- *   EMAIL=[REDACTED] PASS='…' \
+ *   EMAIL=<email> PASS='…' \
  *     SEEDS='(G)I-DLE,LiSA,ReawakeR,Céline Dion,Aitana,Bad Bunny' \
  *     MAX=120 npx tsx scripts/ops/warm-taste-cache.mts
  *
