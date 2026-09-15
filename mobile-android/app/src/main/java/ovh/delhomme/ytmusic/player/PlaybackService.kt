@@ -1897,8 +1897,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Avant un skip forcé : tenter un remplacement du titre mort pour garder le son
-     * (même index / même métadonnées). Sinon avance au suivant.
+     * Avant d’abandonner un titre : remplacement synchrone, sinon rebind + warm disque.
+     * Ne passe PAS au suivant automatiquement — le titre doit rester disponible / réparé.
      */
     private fun replaceOrAdvance(exo: Player, deadId: String, nextIdx: Int) {
         val track = Holder.queue.firstOrNull { it.id == deadId }
@@ -1923,17 +1923,17 @@ class PlaybackService : MediaSessionService() {
                         Holder.fullQueue = fq
                     }
                 }
-                AppLog.i("PlaybackService", "replace-before-skip $deadId → $repl")
+                AppLog.i("PlaybackService", "resolve-replace $deadId → $repl (pas de skip)")
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
                         level = "info",
                         kind = "android.player.load_recover",
-                        message = "replace-before-skip $deadId → $repl",
+                        message = "resolve-replace $deadId → $repl",
                         meta = mapOf(
                             "trackId" to deadId,
                             "replacementId" to repl,
                             "action" to "replace",
-                            "reason" to "dead_before_skip",
+                            "reason" to "resolve_not_skip",
                         ),
                         force = true,
                     )
@@ -1959,8 +1959,35 @@ class PlaybackService : MediaSessionService() {
                 }
             }
         }
-        if (nextIdx < exo.mediaItemCount) {
-            advanceToQueueIndex(exo, nextIdx)
+        // Pas de remplacement : réparer le titre courant (warm + rebind), jamais auto-next.
+        AppLog.w(
+            "PlaybackService",
+            "resolve-keep id=$deadId (pas de remplacement) → rebind+warm — nextIdx=$nextIdx ignoré",
+        )
+        runCatching {
+            ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                level = "warn",
+                kind = "android.player.load_recover",
+                message = "resolve-keep id=$deadId (no replacement, no auto-skip)",
+                meta = mapOf(
+                    "trackId" to deadId,
+                    "action" to "rebind_keep",
+                    "reason" to "resolve_not_skip",
+                ),
+                force = true,
+            )
+        }
+        Holder.streamRecoveringId = deadId
+        runCatching {
+            StreamPrefetcher.requestServerDiskCache(resolvedApiBase(), deadId)
+        }
+        runCatching {
+            rebindCurrentStream(
+                reason = "resolve-keep",
+                forcePlay = true,
+                retryN = 0,
+                wipeCache = true,
+            )
         }
     }
 
@@ -2168,16 +2195,16 @@ class PlaybackService : MediaSessionService() {
         val pos = snapPrevPos.coerceAtLeast(0L)
         if (prevId.isBlank() || earlyEndRetries >= 2) {
             if (earlyEndRetries >= 2 && prevId.isNotBlank()) {
-                AppLog.w("PlaybackService", "early_end give-up → next id=$prevId")
+                AppLog.w("PlaybackService", "early_end give-up → resolve keep id=$prevId (pas de skip)")
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
                         level = "warn",
-                        kind = "android.player.load_skip",
-                        message = "early_end give-up → next id=$prevId pos=$pos",
+                        kind = "android.player.load_recover",
+                        message = "early_end give-up → resolve keep id=$prevId pos=$pos",
                         meta = mapOf(
                             "trackId" to prevId,
                             "positionMs" to pos,
-                            "action" to "skip_next",
+                            "action" to "resolve_keep",
                             "reason" to "early_end_give_up",
                         ),
                         force = true,
@@ -2185,7 +2212,8 @@ class PlaybackService : MediaSessionService() {
                 }
                 earlyEndRetries = 0
                 recoveringTrackId = ""
-                Holder.onSkipAtEnd?.invoke()
+                val nextIdx = (exo.currentMediaItemIndex + 1).coerceAtLeast(0)
+                runCatching { replaceOrAdvance(exo, prevId, nextIdx) }
             }
             return
         }
@@ -2465,6 +2493,17 @@ class PlaybackService : MediaSessionService() {
                 exo.play()
             }
         }
+    }
+
+    /**
+     * Répare le titre courant depuis l’UI (buffer stuck) — replace ou rebind, jamais skip.
+     */
+    fun resolveCurrentKeep(reason: String = "ui-resolve") {
+        val exo = player ?: return
+        val id = exo.currentMediaItem?.mediaId?.takeIf { it.length == 11 } ?: return
+        val nextIdx = (exo.currentMediaItemIndex + 1).coerceAtLeast(0)
+        replaceOrAdvance(exo, id, nextIdx)
+        AppLog.i("PlaybackService", "resolveCurrentKeep reason=$reason id=$id")
     }
 
     /**

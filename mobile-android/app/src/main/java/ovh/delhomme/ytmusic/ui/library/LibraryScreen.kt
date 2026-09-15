@@ -111,6 +111,7 @@ fun LibraryScreen(
     var downloadMeta by remember { mutableStateOf<Map<String, TrackDto>>(emptyMap()) }
     var downloadsEnriching by remember { mutableStateOf(false) }
     var homeMixes by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
+    var lastSeenLibraryEpoch by remember { mutableStateOf(0L) }
 
     LaunchedEffect(Unit) {
         LibraryFilter.pendingSelect?.let { pending ->
@@ -123,7 +124,13 @@ fun LibraryScreen(
 
     val libraryEpoch by container.libraryEpoch.collectAsState()
     LaunchedEffect(libraryEpoch) {
-        if (libraryEpoch > 0L) repo.ensureLoaded(force = true)
+        // Remount Compte→Biblio : epoch déjà >0 ne doit PAS forcer un reload.
+        if (libraryEpoch > 0L && libraryEpoch != lastSeenLibraryEpoch) {
+            lastSeenLibraryEpoch = libraryEpoch
+            repo.ensureLoaded(force = true)
+        } else if (libraryEpoch > 0L && lastSeenLibraryEpoch == 0L) {
+            lastSeenLibraryEpoch = libraryEpoch
+        }
     }
 
     LaunchedEffect(Unit) {

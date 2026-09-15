@@ -159,7 +159,7 @@ class LibraryRepository(
         )
     }
 
-    /** Cache mémoire / disque tout de suite ; refresh si stale (>45 s) ou force. */
+    /** Cache mémoire / disque tout de suite ; refresh si stale (>10 min) ou force. */
     fun ensureLoaded(force: Boolean = false) {
         // Relance lecture disque si encore vide (init async peut être en cours)
         if (_library.value == null) {
@@ -169,7 +169,8 @@ class LibraryRepository(
             }
         }
         val now = System.currentTimeMillis()
-        if (!force && now - lastFetchAt < 45_000L && _library.value != null) return
+        // 10 min : retour Compte→Biblio ne doit pas recharger si rien n’a changé.
+        if (!force && now - lastFetchAt < 600_000L && _library.value != null) return
         refreshJob?.cancel()
         refreshJob = scope.launch {
             val haveFull = (_library.value?.songs?.size ?: 0) >= 50 && _library.value?.partial != true
@@ -185,7 +186,7 @@ class LibraryRepository(
     private suspend fun refreshInternal(force: Boolean, lightFirst: Boolean) {
         mutex.withLock {
             val now = System.currentTimeMillis()
-            if (!force && now - lastFetchAt < 45_000L && _library.value != null) return
+            if (!force && now - lastFetchAt < 600_000L && _library.value != null) return
             _refreshing.value = _library.value != null
             // Scan offline hors Main (déjà sur scope IO) — ne pas bloquer l’UI.
             val localTracks = withContext(Dispatchers.IO) { container.offlineStore.listTracks() }
