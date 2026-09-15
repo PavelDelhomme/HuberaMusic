@@ -10,7 +10,7 @@ import { sendMail } from '../../api/src/platform/mail.ts';
 const to =
   process.env.BATTERY_REPORT_TO?.trim() ||
   process.env.REPORT_TO?.trim() ||
-  'dev@delhomme.ovh, paveldelhomme@gmail.com';
+  '';
 
 const ROOT = process.cwd();
 const ENDURANCE = join(ROOT, 'logs/endurance/bv-5h-20260914-200128');
