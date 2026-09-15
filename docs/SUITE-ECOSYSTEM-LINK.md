@@ -5,7 +5,7 @@
 ## Identité
 
 - Repo GitHub : `PavelDelhomme/YTMusic`
-- Sous Cloudity : `products/music` (submodule, branche `dev`)
+- Sous Cloudity : `products/YTMusic` (submodule, branche `dev`)
 - Clone Perso : `…/Perso/YTMusic` (même remote Git)
 - Marque produit : **PLM** (`plm.delhomme.ovh` + alias `ytmusic.delhomme.ovh`)
 
@@ -23,7 +23,7 @@ SSO Cloudity ID futur = **opt-in** en parallèle du login actuel.
 # Suite
 cursor /home/pactivisme/Documents/Dev/Perso/Cloudity/Cloudity/Cloudity.code-workspace
 # Unitaire
-cd …/Cloudity/Cloudity/products/music && cursor .
+cd …/Cloudity/Cloudity/products/YTMusic && cursor .
 ```
 
 ## Déploiement
