@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-15",
   "versions": [
     {
+      "version": "1.3.239",
+      "date": "2026-09-15",
+      "title": "Résoudre sans skip + warm J’aime disque + hors-ligne album",
+      "notes": [
+        "Plus d’auto-skip en dernier recours : remplacement ou rebind+warm disque pour garder le titre",
+        "File disque dédiée aux J’aime (jusqu’à ~1500 / compte) — plus seulement des têtes RAM",
+        "Retour Compte → Biblio : plus de reload forcé si rien n’a changé (TTL 10 min)",
+        "Album : bouton mise hors ligne dans le hero (playlist déjà disponible)"
+      ]
+    },
+    {
       "version": "1.3.238",
       "date": "2026-09-15",
       "title": "Cache disque : plus de têtes tronquées prises pour un titre complet",
