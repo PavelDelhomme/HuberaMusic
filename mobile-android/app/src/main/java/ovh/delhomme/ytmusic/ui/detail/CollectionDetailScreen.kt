@@ -589,6 +589,52 @@ fun CollectionDetailScreen(
                                     }
                                 }
                             },
+                            downloadProgress = offlineProgress,
+                            downloaded = offlineDone,
+                            onDownload = {
+                                val playable = tracks.filter { it.isPlayable() }
+                                if (playable.isEmpty()) {
+                                    Toast.makeText(context, "Aucun titre à télécharger", Toast.LENGTH_SHORT).show()
+                                    return@AlbumHeroHeader
+                                }
+                                if (offlineDone) {
+                                    scope.launch {
+                                        playable.forEach { t ->
+                                            runCatching {
+                                                container.downloadManager.cancel(t.id)
+                                                container.offlineStore.remove(t.id)
+                                            }
+                                        }
+                                        offlineDone = false
+                                        offlineProgress = null
+                                        container.bumpLibraryEpoch()
+                                        Toast.makeText(context, "Supprimé de l'appareil", Toast.LENGTH_SHORT).show()
+                                    }
+                                    return@AlbumHeroHeader
+                                }
+                                if (offlineProgress != null) {
+                                    val n = container.downloadManager.cancelMany(playable.map { it.id })
+                                    offlineProgress = null
+                                    Toast.makeText(context, "Téléchargement annulé ($n)", Toast.LENGTH_SHORT).show()
+                                    return@AlbumHeroHeader
+                                }
+                                offlineProgress = 0.02f
+                                val started = container.downloadManager.enqueueMany(playable)
+                                if (started == 0 && playable.all { container.offlineStore.has(it.id) }) {
+                                    offlineDone = true
+                                    offlineProgress = null
+                                    Toast.makeText(context, "Album déjà hors-ligne", Toast.LENGTH_SHORT).show()
+                                } else if (started == 0) {
+                                    offlineProgress = null
+                                    Toast.makeText(context, "Téléchargement déjà en cours", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        "Mise hors ligne de $started titres…",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            },
                             onMore = { showAlbumMenu = true },
                         )
                     }
@@ -1164,7 +1210,7 @@ private fun PlaylistHeroActions(
                             downloaded -> "Sur l'appareil"
                             downloadProgress != null ->
                                 "Annuler (${((downloadProgress) * 100).toInt()} %)"
-                            else -> "Télécharger la playlist"
+                            else -> "Mise hors ligne (playlist)"
                         },
                     )
                 }
@@ -1252,7 +1298,7 @@ private fun PlaylistOverflowSheet(
                         if (downloadProgress != null) {
                             "Annuler le téléchargement (${(downloadProgress * 100).toInt()} %)"
                         } else {
-                            "Télécharger toute la playlist"
+                            "Mise hors ligne — toute la playlist"
                         },
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -1291,6 +1337,8 @@ private fun AlbumHeroHeader(
     inLibrary: Boolean,
     pinned: Boolean = false,
     radioBusy: Boolean,
+    downloadProgress: Float? = null,
+    downloaded: Boolean = false,
     onBack: () -> Unit,
     onTogglePin: (() -> Unit)? = null,
     onArtistClick: () -> Unit,
@@ -1298,6 +1346,7 @@ private fun AlbumHeroHeader(
     onToggleLibrary: () -> Unit,
     onPlay: () -> Unit,
     onRadio: () -> Unit,
+    onDownload: () -> Unit = {},
     onMore: () -> Unit,
 ) {
     val screenW = LocalConfiguration.current.screenWidthDp.dp
@@ -1383,6 +1432,37 @@ private fun AlbumHeroHeader(
                 enabled = !radioBusy,
                 tint = Color(0xFFFF0033),
             )
+            TooltipBox(
+                positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+                tooltip = {
+                    PlainTooltip {
+                        Text(
+                            when {
+                                downloaded -> "Sur l'appareil"
+                                downloadProgress != null ->
+                                    "Annuler (${((downloadProgress) * 100).toInt()} %)"
+                                else -> "Mise hors ligne (album)"
+                            },
+                        )
+                    }
+                },
+                state = rememberTooltipState(),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onDownload),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    DownloadStatusIcon(
+                        downloaded = downloaded,
+                        progress = downloadProgress,
+                        size = 28.dp,
+                        accent = Color(0xFFFF0033),
+                    )
+                }
+            }
             if (onTogglePin != null) {
                 RoundIconAction(
                     icon = if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,
@@ -1598,7 +1678,7 @@ private fun AlbumOverflowSheet(
                         downloaded -> "Supprimer de l'appareil"
                         downloadProgress != null ->
                             "Annuler (${(downloadProgress * 100).toInt()} %)"
-                        else -> "Télécharger l'album"
+                        else -> "Mise hors ligne (album)"
                     },
                     style = MaterialTheme.typography.bodyLarge,
                 )
