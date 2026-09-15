@@ -5,27 +5,27 @@
 ## Identité
 
 - Repo GitHub : `PavelDelhomme/YTMusic`
-- Marque produit : **PLM** (domaines `plm.delhomme.ovh` + alias `ytmusic.delhomme.ovh`)
-- Branche de travail habituelle : `dev`
-
-## Rapport complet
-
-Voir dans Cloudity : `ECOSYSTEME-SUITE-MODULAIRE.md` (v2) —
-https://github.com/PavelDelhomme/Cloudity/blob/dev/ECOSYSTEME-SUITE-MODULAIRE.md
+- Sous Cloudity : `products/music` (submodule, branche `dev`)
+- Clone Perso : `…/Perso/YTMusic` (même remote Git)
+- Marque produit : **PLM** (`plm.delhomme.ovh` + alias `ytmusic.delhomme.ovh`)
 
 ## Données utilisateurs (critique)
 
-Volume VPS **`ytmusic_ytmusic_data` ≈ 20,6 Go** (monté `/app/data`).
+Volume VPS **`ytmusic_ytmusic_data` ≈ 20,6 Go**.
 
-**Interdit** : Remove volumes / `down -v` / migration monorepo qui recrée un volume vide.
+**Interdit** : Remove volumes / `down -v` / fusion monorepo des données.
 
 SSO Cloudity ID futur = **opt-in** en parallèle du login actuel.
 
-## Cursor / déploiement
+## Cursor
 
-- Unitaire : ouvrir `…/Perso/YTMusic` seul.
-- Portainer / compose : stack `ytmusic` indépendante de Cloudity.
+```bash
+# Suite
+cursor /home/pactivisme/Documents/Dev/Perso/Cloudity/Cloudity/Cloudity.code-workspace
+# Unitaire
+cd …/Cloudity/Cloudity/products/music && cursor .
+```
 
-## Décisions
+## Déploiement
 
-Voir §17 du rapport Cloudity avant toute implémentation cross-suite.
+Stack Portainer **`ytmusic`** indépendante — inchangée par le meta-repo Cloudity.
