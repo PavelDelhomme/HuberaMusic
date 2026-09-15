@@ -1419,51 +1419,62 @@ let warmWorkers = 0;
 const WARM_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.STREAM_WARM_CONCURRENCY || 4) || 4));
 const WARM_BATCH_CAP = Math.max(4, Math.min(32, Number(process.env.STREAM_WARM_BATCH_CAP || 16) || 16));
 
-/** File .m4a disque (basse priorité, concurrence 1) — partagée entre tous les comptes. */
+/** File .m4a disque (basse priorité) — partagée + file J’aime prioritaire séparée. */
 const diskWarmQueue: string[] = [];
 const diskWarmQueued = new Set<string>();
+/** Priorité haute : favoris / lecture — ne pas dropper quand la file générique est pleine. */
+const likesDiskWarmQueue: string[] = [];
+const likesDiskWarmQueued = new Set<string>();
 let diskWarmBusy = false;
+
+function diskWarmCap(): number {
+  return Math.max(40, Math.min(400, Number(process.env.TASTE_WARM_DISK_QUEUE || 200) || 200));
+}
+
+function likesDiskWarmCap(): number {
+  return Math.max(80, Math.min(2000, Number(process.env.LIKES_DISK_WARM_QUEUE || 800) || 800));
+}
 
 async function runDiskWarmWorker() {
   if (diskWarmBusy) return;
   diskWarmBusy = true;
   try {
-    while (diskWarmQueue.length) {
-      // Lecture en cours : pause — yt-dlp doit servir le titre courant, pas la biblio.
+    while (likesDiskWarmQueue.length || diskWarmQueue.length) {
+      // Lecture en cours : ralentir mais ne pas bloquer les likes déjà en tête.
       if (isPlaybackHot(90_000)) {
-        await new Promise((r) => setTimeout(r, 2_500));
-        continue;
+        await new Promise((r) => setTimeout(r, 1_800));
+        // Pendant lecture : seulement le titre courant (déjà unshifted via bump) + 1 like.
       }
-      const id = diskWarmQueue.shift();
+      const id = likesDiskWarmQueue.shift() || diskWarmQueue.shift();
       if (!id) break;
+      likesDiskWarmQueued.delete(id);
       diskWarmQueued.delete(id);
       try {
         const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
         if (isYtDlpCoolingDown()) {
-          // Remettre plus tard
-          diskWarmQueue.push(id);
-          diskWarmQueued.add(id);
-          break;
+          likesDiskWarmQueue.unshift(id);
+          likesDiskWarmQueued.add(id);
+          await new Promise((r) => setTimeout(r, 8_000));
+          continue;
         }
         await downloadTrack(id);
       } catch {
-        /* best-effort */
+        /* best-effort — le titre reste candidate au prochain sweep */
       }
-      // Petite pause pour ne pas saturer CPU/réseau
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, isPlaybackHot(90_000) ? 900 : 350));
     }
   } finally {
     diskWarmBusy = false;
-    if (diskWarmQueue.length) void runDiskWarmWorker();
+    if (likesDiskWarmQueue.length || diskWarmQueue.length) void runDiskWarmWorker();
   }
 }
 
-/** Enfile des téléchargements .m4a (cap file). */
+/** Enfile des téléchargements .m4a (cap file générique). */
 export function enqueueDiskWarm(ids: string[]) {
-  const cap = Math.max(20, Math.min(120, Number(process.env.TASTE_WARM_DISK_QUEUE || 60) || 60));
+  const cap = diskWarmCap();
   for (const id of ids) {
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
-    if (diskWarmQueued.has(id)) continue;
+    if (diskWarmQueued.has(id) || likesDiskWarmQueued.has(id)) continue;
     try {
       const p = cachePath(id);
       if (isCompleteEnoughDisk(p) && statSync(p).size >= 3 * 1024 * 1024) continue;
@@ -1474,7 +1485,47 @@ export function enqueueDiskWarm(ids: string[]) {
     diskWarmQueued.add(id);
     diskWarmQueue.push(id);
   }
-  if (diskWarmQueue.length) void runDiskWarmWorker();
+  if (diskWarmQueue.length || likesDiskWarmQueue.length) void runDiskWarmWorker();
+}
+
+/**
+ * Warm disque prioritaire pour les J’aime (et titres critiques).
+ * File séparée + cap élevé — ne doit pas être écrasée par le taste warm générique.
+ */
+export function enqueueLikesDiskWarm(ids: string[]) {
+  const cap = likesDiskWarmCap();
+  for (const id of ids) {
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
+    if (likesDiskWarmQueued.has(id)) continue;
+    try {
+      const p = cachePath(id);
+      if (isCompleteEnoughDisk(p) && statSync(p).size >= 3 * 1024 * 1024) continue;
+    } catch {
+      /* continue */
+    }
+    // Retirer de la file générique si présent → priorité likes.
+    const gi = diskWarmQueue.indexOf(id);
+    if (gi >= 0) {
+      diskWarmQueue.splice(gi, 1);
+      diskWarmQueued.delete(id);
+    }
+    if (likesDiskWarmQueue.length >= cap) break;
+    likesDiskWarmQueued.add(id);
+    likesDiskWarmQueue.push(id);
+  }
+  if (likesDiskWarmQueue.length || diskWarmQueue.length) void runDiskWarmWorker();
+}
+
+export function diskWarmQueueStats(): {
+  generic: number;
+  likes: number;
+  busy: boolean;
+} {
+  return {
+    generic: diskWarmQueue.length,
+    likes: likesDiskWarmQueue.length,
+    busy: diskWarmBusy,
+  };
 }
 
 async function runWarmWorker() {
@@ -1509,18 +1560,25 @@ export function bumpWarmPriority(id: string) {
     const [job] = warmQueue.splice(i, 1);
     if (job) warmQueue.unshift(job);
   }
-  // Même priorité sur la file disque (sinon lecture attend derrière likes/sweep).
-  const di = diskWarmQueue.indexOf(id);
-  if (di > 0) {
-    diskWarmQueue.splice(di, 1);
-    diskWarmQueue.unshift(id);
-  } else if (di < 0 && !diskWarmQueued.has(id)) {
+  // Priorité absolue sur files disque (likes puis générique).
+  const li = likesDiskWarmQueue.indexOf(id);
+  if (li > 0) {
+    likesDiskWarmQueue.splice(li, 1);
+    likesDiskWarmQueue.unshift(id);
+  } else if (li < 0) {
+    const di = diskWarmQueue.indexOf(id);
+    if (di >= 0) {
+      diskWarmQueue.splice(di, 1);
+      diskWarmQueued.delete(id);
+    }
     try {
       const p = cachePath(id);
-      if (!existsSync(p) || statSync(p).size <= 1024 * 1024) {
-        diskWarmQueued.add(id);
-        diskWarmQueue.unshift(id);
-        void runDiskWarmWorker();
+      if (!isCompleteEnoughDisk(p) || statSync(p).size < 3 * 1024 * 1024) {
+        if (!likesDiskWarmQueued.has(id)) {
+          likesDiskWarmQueued.add(id);
+          likesDiskWarmQueue.unshift(id);
+          void runDiskWarmWorker();
+        }
       }
     } catch {
       /* ignore */

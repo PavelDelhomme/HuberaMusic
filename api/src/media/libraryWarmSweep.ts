@@ -10,13 +10,19 @@
  */
 import { db } from '../library/db.js';
 import { getShuffleHeads } from '../library/shuffleHeads.js';
-import { enqueueStreamWarm, enqueueDiskWarm, isPlaybackHot } from './stream.js';
+import {
+  enqueueStreamWarm,
+  enqueueDiskWarm,
+  enqueueLikesDiskWarm,
+  isPlaybackHot,
+  diskWarmQueueStats,
+} from './stream.js';
 import { scheduleUserTasteWarm } from './tasteWarmScheduler.js';
 
 let timer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 let lastRunAt = 0;
-let lastStats = { users: 0, ids: 0, at: 0 };
+let lastStats = { users: 0, ids: 0, likes: 0, at: 0 };
 
 function enabled(): boolean {
   return String(process.env.LIBRARY_WARM_SWEEP || '1').trim() !== '0';
@@ -31,7 +37,11 @@ function allUserIds(): string[] {
   }
 }
 
-function likedIds(userId: string, limit = 200): string[] {
+function likesLimit(): number {
+  return Math.max(50, Math.min(5000, Number(process.env.LIBRARY_WARM_LIKES_LIMIT || 1500) || 1500));
+}
+
+function likedIds(userId: string, limit = likesLimit()): string[] {
   try {
     return (
       db
@@ -55,28 +65,33 @@ async function waitIfPlaybackHot(): Promise<void> {
   }
 }
 
-/** Une passe : shuffle-heads + recent + likes + taste pour chaque compte. */
+/** Une passe : shuffle-heads + recent + likes (disque prioritaire) + taste. */
 export async function runLibraryWarmSweepOnce(): Promise<{
   users: number;
   ids: number;
+  likes: number;
 }> {
-  if (running) return { users: 0, ids: lastStats.ids };
+  if (running) return { users: 0, ids: lastStats.ids, likes: lastStats.likes };
   running = true;
   const seen = new Set<string>();
+  const likesAll: string[] = [];
   let users = 0;
   try {
     await waitIfPlaybackHot();
     const uids = allUserIds();
+    const lim = likesLimit();
     for (const uid of uids) {
       users += 1;
       try {
-        // warm:false — on enfile nous-mêmes plus bas (évite spam d’un coup).
         const heads = getShuffleHeads(uid, { warm: false, scope: 'all' });
         for (const id of (heads.ids || []).slice(0, 64)) seen.add(id);
         const recent = getShuffleHeads(uid, { warm: false, scope: 'recent' });
         for (const id of (recent.ids || []).slice(0, 40)) seen.add(id);
-        // Favoris : priorité disque complet (évite « 30 s puis reprise »).
-        for (const id of likedIds(uid, 200)) seen.add(id);
+        // Favoris : file disque dédiée (pas seulement têtes RAM).
+        for (const id of likedIds(uid, lim)) {
+          seen.add(id);
+          likesAll.push(id);
+        }
         scheduleUserTasteWarm(uid);
       } catch (err) {
         console.warn(
@@ -86,9 +101,15 @@ export async function runLibraryWarmSweepOnce(): Promise<{
       }
       await new Promise((r) => setTimeout(r, 400));
     }
+    // Likes d’abord (priorité) — une file dédiée qui ne droppe pas derrière le taste.
+    const uniqueLikes = [...new Set(likesAll)];
+    for (let i = 0; i < uniqueLikes.length; i += 16) {
+      await waitIfPlaybackHot();
+      enqueueLikesDiskWarm(uniqueLikes.slice(i, i + 16));
+      enqueueStreamWarm(uniqueLikes.slice(i, i + 16));
+      await new Promise((r) => setTimeout(r, 600));
+    }
     const ids = [...seen];
-    // Petits lots + pause si quelqu’un écoute (priorité lecture).
-    // Disk warm sur tout le lot (likes inclus) — pas seulement 6/8.
     for (let i = 0; i < ids.length; i += 8) {
       await waitIfPlaybackHot();
       const chunk = ids.slice(i, i + 8);
@@ -97,9 +118,12 @@ export async function runLibraryWarmSweepOnce(): Promise<{
       await new Promise((r) => setTimeout(r, 1_000));
     }
     lastRunAt = Date.now();
-    lastStats = { users, ids: ids.length, at: lastRunAt };
-    console.info(`[libraryWarm] sweep users=${users} uniqueIds=${ids.length}`);
-    return { users, ids: ids.length };
+    lastStats = { users, ids: ids.length, likes: uniqueLikes.length, at: lastRunAt };
+    const q = diskWarmQueueStats();
+    console.info(
+      `[libraryWarm] sweep users=${users} uniqueIds=${ids.length} likes=${uniqueLikes.length} diskQ likes=${q.likes} gen=${q.generic}`,
+    );
+    return { users, ids: ids.length, likes: uniqueLikes.length };
   } finally {
     running = false;
   }
@@ -141,5 +165,7 @@ export function libraryWarmSweepStatus() {
     running,
     lastRunAt,
     ...lastStats,
+    diskQueue: diskWarmQueueStats(),
+    likesLimit: likesLimit(),
   };
 }

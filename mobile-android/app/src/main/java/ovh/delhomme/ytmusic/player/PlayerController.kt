@@ -2210,31 +2210,36 @@ class PlayerController(
                     )
                 }
                 delay(28_000L)
-                // Dernier recours uniquement si TOUJOURS bloqué après 2 rebinds (~1 min)
+                // Dernier recours : RÉSOUDRE (replace ou rebind+disque) — jamais skip auto
                 if (_state.value.buffering &&
                     _state.value.track?.id == trackId &&
                     ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
                     !StreamPrefetcher.isStreamDown() &&
                     !PlaybackService.Holder.isStreamRecovering(trackId)
                 ) {
-                    AppLog.w("PlayerController", "buffer stuck → skipNext dernier recours id=$trackId")
+                    AppLog.w(
+                        "PlayerController",
+                        "buffer stuck → resolve (pas de skip) id=$trackId",
+                    )
                     runCatching {
                         ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
                             level = "error",
-                            kind = "android.player.load_skip",
-                            message = "buffer stuck → skipNext dernier recours id=$trackId",
+                            kind = "android.player.load_recover",
+                            message = "buffer stuck → resolve keep id=$trackId",
                             meta = mapOf(
                                 "trackId" to trackId,
                                 "title" to title,
                                 "artist" to artist,
                                 "positionMs" to _state.value.positionMs,
-                                "action" to "skip_next",
+                                "action" to "resolve_keep",
                                 "reason" to "buffer_stuck_last_resort",
                             ),
                             force = true,
                         )
                     }
-                    skipNext()
+                    runCatching {
+                        PlaybackService.Holder.service?.resolveCurrentKeep("ui-buffer-stuck-last")
+                    }
                 }
             }
         }
