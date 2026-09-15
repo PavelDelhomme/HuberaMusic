@@ -4,7 +4,7 @@
  */
 import { sendMail } from '../../api/src/platform/mail.ts';
 
-const to = 'dev@delhomme.ovh, paveldelhomme@gmail.com';
+const to = process.env.MAIL_TO || process.env.REPORT_TO || process.env.BATTERY_REPORT_TO || '';
 const subject = '[PLM] Récapitulatif — 1.3.193 → 1.3.195 (lecteur, UX, polish)';
 
 const versions = [
