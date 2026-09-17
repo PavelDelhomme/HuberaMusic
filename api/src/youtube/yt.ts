@@ -1,7 +1,7 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Innertube, UniversalCache, ClientType, YTNodes, Parser, Log } from 'youtubei.js';
-import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, ytDlpExtractorArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES, ytDlpRuntimeArgs } from './youtubeCookies.js';
+import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, ytDlpExtractorArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES, ytDlpRuntimeArgs, ytDlpProxyCliArgs } from './youtubeCookies.js';
 import { getSignedStreamYT } from './streamAuth.js';
 import { installYoutubeJsEvaluator } from './youtubeiEval.js';
 import {
@@ -2469,7 +2469,7 @@ async function ytDlpGetUrl(
           ...ytDlpRuntimeArgs(),
           ...extractorArgs,
           ...cookieArgs,
-          ...(proxy ? ['--proxy', proxy] : []),
+          ...ytDlpProxyCliArgs(proxy),
           `https://www.youtube.com/watch?v=${videoId}`,
         ];
         const proc = spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -2535,10 +2535,11 @@ async function audioFormatViaYtDlp(
   const cookieSets = ytDlpCookieArgSets();
   // Direct puis proxies (bypass bot IP) — cooldown VPS ≠ stop proxies
   const proxies = await youtubeProxyAttempts({
-    max: 5,
+    max: proxyOpts?.directLast ? 8 : 5,
     includeDirect: true,
     shuffle: proxyOpts?.shuffle,
     directLast: proxyOpts?.directLast,
+    probe: Boolean(proxyOpts?.directLast),
   });
 
   let lastErr: Error | null = null;
@@ -2761,7 +2762,7 @@ async function videoFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
               ...ytDlpRuntimeArgs(),
               ...extractorArgs,
               ...ytDlpCookieArgs(),
-              ...(proxy ? ['--proxy', proxy] : []),
+              ...ytDlpProxyCliArgs(proxy),
               `https://www.youtube.com/watch?v=${videoId}`,
             ],
             { stdio: ['ignore', 'pipe', 'pipe'] },

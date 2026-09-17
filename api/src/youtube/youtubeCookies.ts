@@ -176,6 +176,17 @@ export function ytDlpRuntimeArgs(): string[] {
   return ['--js-runtimes', 'node'];
 }
 
+/** Args proxy yt-dlp — free proxies MITM souvent → no-check-certificates. */
+export function ytDlpProxyCliArgs(proxy: string | null | undefined): string[] {
+  if (!proxy) return [];
+  const insecure =
+    process.env.YTDLP_NO_CHECK_CERT !== '0' &&
+    process.env.YTDLP_NO_CHECK_CERT !== 'false';
+  return insecure
+    ? ['--proxy', proxy, '--no-check-certificates']
+    : ['--proxy', proxy];
+}
+
 /**
  * Stratégies `--extractor-args youtube:player_client=…`.
  *

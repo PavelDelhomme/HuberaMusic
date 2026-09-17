@@ -172,6 +172,23 @@ export function diagnoseTelemetryEvent(ev: {
     };
   }
 
+  if (player && (is403 || /Source error.*403|HTTP.*403|Response code: 403/i.test(core))) {
+    return {
+      family: 'stream-midrange-403',
+      title: '403 googlevideo / mid-range (pas une session PLM)',
+      summary:
+        'Exo a reçu un 403 sur le flux audio (souvent Range mid après ~1 Mo). Ce n’est en général pas un logout PLM : YouTube coupe le relais googlevideo ; le correctif est le cache progressif / proxies.',
+      likelyCause:
+        'URL googlevideo expirée, IP datacenter, ou seek mid-range sans .m4a disque.',
+      actions: [
+        'Vérifier que le titre a un .m4a progressif (itag 140) en cache',
+        'Confirmer YOUTUBE_HTTP_PROXY_FREE + skip maison offline',
+        'Ne pas traiter comme « reconnecte-toi » — rejouer le titre après warm disque',
+      ],
+      surface,
+    };
+  }
+
   if (is403 || is401) {
     return {
       family: 'auth-or-blocked',
