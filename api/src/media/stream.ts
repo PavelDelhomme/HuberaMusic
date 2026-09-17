@@ -15,6 +15,7 @@ import {
 } from '../youtube/yt.js';
 import {
   ytDlpCookieArgSets,
+  ytDlpExtractorArgSets,
   resolveYoutubeCookieHeader,
   YTDLP_AUDIO_FORMAT_CANDIDATES,
   ytDlpRuntimeArgs,
@@ -146,17 +147,30 @@ function isDashBrandFile(path: string): boolean {
     try {
       const buf = Buffer.alloc(64);
       const n = readSync(fd, buf, 0, 64, 0);
-      const slice = buf.subarray(0, n);
-      const idx = slice.indexOf(Buffer.from('ftyp'));
-      if (idx < 0 || idx + 8 > slice.length) return false;
-      const brand = slice.subarray(idx + 4, idx + 8).toString('ascii');
-      return brand.toLowerCase() === 'dash';
+      return isDashBrandBuffer(buf.subarray(0, n));
     } finally {
       closeSync(fd);
     }
   } catch {
     return false;
   }
+}
+
+/** Détecte ftyp=dash dans les premiers octets (relais googlevideo / tête RAM). */
+function isDashBrandBuffer(buf: Buffer): boolean {
+  if (!buf?.byteLength || buf.byteLength < 12) return false;
+  const idx = buf.indexOf(Buffer.from('ftyp'));
+  if (idx < 0 || idx + 8 > buf.length) return false;
+  const brand = buf.subarray(idx + 4, idx + 8).toString('ascii').toLowerCase();
+  return brand === 'dash';
+}
+
+function isAndroidClient(req: Request): boolean {
+  return (
+    String(req.headers['x-ytm-client'] || '') === 'android' ||
+    /PLM-Android/i.test(String(req.headers['user-agent'] || '')) ||
+    String(req.query?.client || '') === 'android'
+  );
 }
 
 /**
@@ -408,8 +422,9 @@ function spawnYtDlpAudioPipe(
   cookieArgs: string[],
   res: Response,
   proxy: string | null = null,
+  extractorArgs: string[] = [],
 ): Promise<void> {
-  return spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'audio/mp4', proxy);
+  return spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'audio/mp4', proxy, extractorArgs);
 }
 
 async function spawnYtDlpMediaPipe(
@@ -419,6 +434,7 @@ async function spawnYtDlpMediaPipe(
   res: Response,
   contentType: string,
   proxy: string | null = null,
+  extractorArgs: string[] = [],
 ): Promise<void> {
   const { withYtDlpSlot } = await import('./ytDlpGate.js');
   // Proxy / IP alternate : on tente même si le direct VPS est en cooldown bot
@@ -445,8 +461,7 @@ async function spawnYtDlpMediaPipe(
             '--quiet',
             '--no-warnings',
             ...ytDlpRuntimeArgs(),
-            '--extractor-args',
-            'youtube:player_client=android_vr,tv,ios,web_embedded',
+            ...extractorArgs,
             '--user-agent',
             GV_USER_AGENT,
             '--referer',
@@ -531,8 +546,9 @@ async function streamViaYtDlp(videoId: string, res: Response) {
   const { noteYtDlpFailure, isYtDlpCoolingDown } = await import('./ytDlpGate.js');
   // Anonyme d’abord — cookies optionnels (jamais Premium requis)
   const cookieSets = ytDlpCookieArgSets();
+  const extractorSets = ytDlpExtractorArgSets();
   // Peu de formats : chaque spawn peut coûter ~10 s (first-byte timeout)
-  const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, 2);
+  const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, 3);
   // Direct VPS puis proxies (bypass bot IP datacenter) — PC maison = STREAM_UPSTREAM
   const proxies = await youtubeProxyAttempts({ max: 5, includeDirect: true });
 
@@ -541,20 +557,22 @@ async function streamViaYtDlp(videoId: string, res: Response) {
   for (const proxy of proxies) {
     // Pendant cooldown : saute l’IP VPS directe, tente les proxies / autres IP
     if (!proxy && isYtDlpCoolingDown()) continue;
-    for (const cookieArgs of cookieSets) {
-      for (const format of formats) {
-        if (res.headersSent) throw new Error('headers already sent');
-        try {
-          await spawnYtDlpAudioPipe(videoId, format, cookieArgs, res, proxy);
-          markYoutubeProxySuccess(proxy);
-          return;
-        } catch (err) {
-          lastErr = err instanceof Error ? err : new Error(String(err));
-          if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
-            sawBot = true;
+    for (const extractorArgs of extractorSets) {
+      for (const cookieArgs of cookieSets) {
+        for (const format of formats) {
+          if (res.headersSent) throw new Error('headers already sent');
+          try {
+            await spawnYtDlpAudioPipe(videoId, format, cookieArgs, res, proxy, extractorArgs);
+            markYoutubeProxySuccess(proxy);
+            return;
+          } catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
+            if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
+              sawBot = true;
+            }
+            if (res.headersSent) throw lastErr;
+            if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
           }
-          if (res.headersSent) throw lastErr;
-          if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
         }
       }
     }
@@ -573,6 +591,7 @@ async function streamViaYtDlp(videoId: string, res: Response) {
 async function streamViaYtDlpVideo(videoId: string, res: Response) {
   const { noteYtDlpFailure, isYtDlpCoolingDown } = await import('./ytDlpGate.js');
   const cookieSets = ytDlpCookieArgSets();
+  const extractorSets = ytDlpExtractorArgSets();
   const formats = [
     '18',
     '22',
@@ -584,20 +603,30 @@ async function streamViaYtDlpVideo(videoId: string, res: Response) {
   let sawBot = false;
   for (const proxy of proxies) {
     if (!proxy && isYtDlpCoolingDown()) continue;
-    for (const cookieArgs of cookieSets) {
-      for (const format of formats) {
-        if (res.headersSent) throw new Error('headers already sent');
-        try {
-          await spawnYtDlpMediaPipe(videoId, format, cookieArgs, res, 'video/mp4', proxy);
-          markYoutubeProxySuccess(proxy);
-          return;
-        } catch (err) {
-          lastErr = err instanceof Error ? err : new Error(String(err));
-          if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
-            sawBot = true;
+    for (const extractorArgs of extractorSets) {
+      for (const cookieArgs of cookieSets) {
+        for (const format of formats) {
+          if (res.headersSent) throw new Error('headers already sent');
+          try {
+            await spawnYtDlpMediaPipe(
+              videoId,
+              format,
+              cookieArgs,
+              res,
+              'video/mp4',
+              proxy,
+              extractorArgs,
+            );
+            markYoutubeProxySuccess(proxy);
+            return;
+          } catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
+            if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
+              sawBot = true;
+            }
+            if (res.headersSent) throw lastErr;
+            if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
           }
-          if (res.headersSent) throw lastErr;
-          if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
         }
       }
     }
@@ -610,6 +639,11 @@ async function streamViaYtDlpVideo(videoId: string, res: Response) {
 function tryServeRamHead(req: Request, res: Response, videoId: string): boolean {
   const head = peekStreamHead(videoId);
   if (!head) return false;
+  // Tête DASH empoisonne Exo (stall mid-range) — jeter et retomber sur progressif.
+  if (isDashBrandBuffer(head.buf)) {
+    invalidateStreamHead(videoId);
+    return false;
+  }
   const rangeHdr = req.headers.range ? String(req.headers.range) : '';
   if (!rangeHdr) return false;
   const m = /bytes=(\d+)-(\d*)/.exec(rangeHdr);
@@ -766,11 +800,12 @@ export async function handleStream(req: Request, res: Response) {
         // Si format/tête déjà chauds → ne PAS attendre le .m4a (volait 2.5 s à Exo).
         const formatHot = hasCachedAudioFormat(videoId, (req as any).userId);
         const ramHot = Boolean(peekStreamHead(videoId));
-        const waitMs = isAndroid && !formatHot && !ramHot ? 800 : 0;
+        // Android : un peu plus long pour obtenir un .m4a progressif (anti-DASH).
+        const waitMs = isAndroid && !formatHot && !ramHot ? 4_000 : 0;
         if (waitMs > 0) {
           try {
             await Promise.race([
-              downloadTrack(videoId).then(() => true),
+              downloadTrack(videoId, { progressiveOnly: true }).then(() => true),
               new Promise<boolean>((r) => setTimeout(() => r(false), waitMs)),
             ]);
           } catch {
@@ -808,7 +843,8 @@ export async function handleStream(req: Request, res: Response) {
   if (!wantVideo && audioRangeStart === 0) {
     const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
     if (!isYtDlpCoolingDown()) {
-      void downloadTrack(videoId).catch((err) => {
+      const progressive = isAndroidClient(req);
+      void downloadTrack(videoId, progressive ? { progressiveOnly: true } : undefined).catch((err) => {
         const msg = String((err as Error).message || err);
         if (/cooling down|bot\/rate-limit|Sign in to confirm|rate-limited/i.test(msg)) return;
         console.warn('[stream] prefetch downloadTrack KO:', msg.slice(0, 120));
@@ -844,13 +880,28 @@ export async function handleStream(req: Request, res: Response) {
   // Tête RAM (lazy warm) — avant disque / upstream
   if (!wantVideo && tryServeRamHead(req, res, videoId)) return;
 
+  const androidClient = !wantVideo && isAndroidClient(req);
+
+  // Android : démarrer tôt un .m4a progressif (yt-dlp) — le DASH Innertube
+  // provoque stalls Exo → mails « auth-or-blocked / android.player.stall ».
+  if (androidClient) {
+    purgeDashCache(videoId);
+    const cachedEarly = cachePath(videoId);
+    if (!isCompleteEnoughDisk(cachedEarly)) {
+      downloadTrack(videoId, { progressiveOnly: true }).catch(() => {
+        /* fond */
+      });
+    }
+  }
+
   // Cache disque AVANT relais maison — mid-range seek (GV coupe souvent après ~1 Mo).
   if (!wantVideo) {
     const cached = cachePath(videoId);
-    if (existsSync(cached) && !statSync(cached).size) {
+    if (existsSync(cached) && (isDashBrandFile(cached) || !statSync(cached).size)) {
       try {
-        const { unlinkSync } = await import('node:fs');
+        const wasDash = isDashBrandFile(cached);
         unlinkSync(cached);
+        if (wasDash) console.warn(`[stream] purge DASH avant serve ${videoId}`);
       } catch {
         /* ignore */
       }
@@ -860,7 +911,7 @@ export async function handleStream(req: Request, res: Response) {
       // et le fallback relais/googlevideo n’avait plus de temps → 502/504 garanti.
       // Le téléchargement continue en fond (downloadInflight) pour la requête suivante.
       const budget = midRangeWaitMs(videoId);
-      const dl = downloadTrack(videoId);
+      const dl = downloadTrack(videoId, { progressiveOnly: androidClient });
       dl.catch(() => {
         /* poursuivi en fond — l’erreur est traitée par le await borné ci-dessous */
       });
@@ -886,7 +937,7 @@ export async function handleStream(req: Request, res: Response) {
         }
       }
     }
-    if (existsSync(cached) && statSync(cached).size > 0) {
+    if (existsSync(cached) && statSync(cached).size > 0 && !isDashBrandFile(cached)) {
       const size = statSync(cached).size;
       const incomplete = downloadInflight.has(videoId);
       // Total annoncé = jamais la taille partielle d’un .m4a encore en cours
@@ -1110,8 +1161,17 @@ export async function handleStream(req: Request, res: Response) {
     ensureTime('format');
     let format = wantVideo
       ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
-      : wantOffline
-        ? await withDeadline('getAudioFormatOffline', getAudioFormatViaYtDlpOnly(videoId))
+      : wantOffline || androidClient
+        ? await withDeadline(
+            'getAudioFormatProgressive',
+            getAudioFormatViaYtDlpOnly(videoId).catch(() =>
+              getAudioFormat(videoId, {
+                userId: (req as any).userId,
+                forceFresh: true,
+                retryN,
+              }),
+            ),
+          )
         : await withDeadline(
             'getAudioFormat',
             getAudioFormat(videoId, {
@@ -1193,6 +1253,23 @@ export async function handleStream(req: Request, res: Response) {
       if (first.done || !first.value?.byteLength) {
         throw new Error('upstream vide');
       }
+      const firstBuf = Buffer.from(first.value);
+      // DASH fragmenté → Exo stalle (403 mid-range / buf figé) → mails stall.
+      // Forcer le chemin progressif yt-dlp / disque.
+      if (!wantVideo && isDashBrandBuffer(firstBuf)) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* ignore */
+        }
+        invalidateStreamHead(videoId);
+        invalidateAudioFormat(videoId);
+        downloadTrack(videoId, { progressiveOnly: true }).catch(() => {
+          /* fond */
+        });
+        console.warn(`[stream] reject DASH googlevideo ${videoId} → progressif`);
+        throw new Error('upstream audio DASH (ftypdash)');
+      }
       if (res.headersSent) return;
       noteStreamSource(res, 'relais googlevideo');
       res.status(upstream.status);
@@ -1219,14 +1296,14 @@ export async function handleStream(req: Request, res: Response) {
             const tm = /\/(\d+)\s*$/.exec(cr);
             if (tm) totalSize = Number(tm[1]);
           }
-          putStreamHead(videoId, Buffer.from(first.value), {
+          putStreamHead(videoId, firstBuf, {
             totalSize,
             contentType: ct || 'audio/mp4',
           });
           if (totalSize != null) rememberAdvertisedTotal(videoId, totalSize);
         }
       }
-      if (!res.write(Buffer.from(first.value))) {
+      if (!res.write(firstBuf)) {
         await new Promise((r) => res.once('drain', r));
       }
       while (true) {
@@ -1245,8 +1322,61 @@ export async function handleStream(req: Request, res: Response) {
     if (endIfHeadersSent(res)) return;
     // Soft : les fallbacks yt-dlp suivent souvent — évite de spammer les logs
     const msg = String((err as Error).message || err);
-    if (!/upstream audio 403|upstream audio 401/.test(msg)) {
+    if (!/upstream audio 403|upstream audio 401|upstream audio DASH/i.test(msg)) {
       console.warn('[stream] format/proxy KO:', msg.slice(0, 160));
+    }
+  }
+
+  // Après rejet DASH / 403 : laisser le téléchargement progressif aboutir, puis servir disque.
+  if (!wantVideo && !res.headersSent && !midNeedsDisk) {
+    const cachedProg = cachePath(videoId);
+    if (!isCompleteEnoughDisk(cachedProg)) {
+      try {
+        await Promise.race([
+          downloadTrack(videoId, { progressiveOnly: true }),
+          new Promise<void>((r) => setTimeout(r, 14_000)),
+        ]);
+      } catch {
+        /* yt-dlp pipe ci-dessous */
+      }
+    }
+    if (isCompleteEnoughDisk(cachedProg)) {
+      try {
+        const size = statSync(cachedProg).size;
+        const rangeHdr = req.headers.range ? String(req.headers.range) : '';
+        rememberAdvertisedTotal(videoId, size);
+        if (rangeHdr) {
+          const bounds = safeDiskRangeBounds(size, rangeHdr);
+          if (bounds.ok) {
+            const { createReadStream } = await import('node:fs');
+            const len = bounds.end - bounds.start + 1;
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${bounds.start}-${bounds.end}/${size}`);
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Content-Length', len);
+            res.setHeader('Content-Type', 'audio/mp4');
+            res.setHeader('X-PLM-Stream-Cache', 'disk-progressive');
+            noteStreamSource(res, 'disque progressif (anti-DASH)');
+            createReadStream(cachedProg, { start: bounds.start, end: bounds.end }).pipe(res);
+            return;
+          }
+        } else {
+          const { createReadStream } = await import('node:fs');
+          res.status(200);
+          res.setHeader('Accept-Ranges', 'bytes');
+          res.setHeader('Content-Length', size);
+          res.setHeader('Content-Type', 'audio/mp4');
+          res.setHeader('X-PLM-Stream-Cache', 'disk-progressive');
+          noteStreamSource(res, 'disque progressif (anti-DASH)');
+          createReadStream(cachedProg).pipe(res);
+          return;
+        }
+      } catch (e) {
+        console.warn(
+          '[stream] progressive disk serve KO:',
+          String((e as Error).message || e).slice(0, 120),
+        );
+      }
     }
   }
 
@@ -1761,6 +1891,16 @@ export async function downloadTrack(
       throw new Error('Audio download indisponible (innertube + yt-dlp)');
     }
 
+    // Innertube a pu laisser un .m4a vide / fd ouvert — purge avant yt-dlp
+    // sinon yt-dlp exit 0 puis le close late tronque le fichier → « yt-dlp 0 ».
+    if (existsSync(out) && !isCompleteEnoughDisk(out)) {
+      try {
+        unlinkSync(out);
+      } catch {
+        /* ignore */
+      }
+    }
+
     const { withYtDlpSlot, isYtDlpCoolingDown, noteYtDlpFailure, ytDlpCooldownRemainingMs } =
       await import('./ytDlpGate.js');
 
@@ -1768,73 +1908,80 @@ export async function downloadTrack(
     let lastErr: Error | null = null;
     let sawBot = false;
     const cookieSets = ytDlpCookieArgSets({ forDownload: true });
+    const extractorSets = ytDlpExtractorArgSets();
     const proxies = await youtubeProxyAttempts({ max: 5, includeDirect: true });
     for (const proxy of proxies) {
       if (!proxy && isYtDlpCoolingDown()) continue;
-      for (const cookieArgs of cookieSets) {
-        for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
-          try {
-            await withYtDlpSlot(
-              () =>
-                new Promise<void>((resolve, reject) => {
-                  const proc = spawn(
-                    YTDLP,
-                    [
-                      '-f',
-                      format,
-                      '-o',
-                      out,
-                      '--no-playlist',
-                      '--no-warnings',
-                      '--newline',
-                      ...ytDlpRuntimeArgs(),
-                      '--extractor-args',
-                      'youtube:player_client=android_vr,tv,ios,web_embedded,web',
-                      ...cookieArgs,
-                      ...(proxy ? ['--proxy', proxy] : []),
-                      `https://www.youtube.com/watch?v=${videoId}`,
-                    ],
-                    { stdio: ['ignore', 'ignore', 'pipe'] },
-                  );
-                  let err = '';
-                  proc.stderr?.on('data', (c) => {
-                    err += String(c);
-                    if (err.length > 4_000) err = err.slice(-4_000);
-                  });
-                  proc.on('error', reject);
-                  proc.on('close', (code) => {
-                    if (code === 0 && existsSync(out) && statSync(out).size > 0) {
-                      resolve();
-                      return;
-                    }
-                    const tip = err
-                      .split('\n')
-                      .map((l) => l.trim())
-                      .filter((l) => /^ERROR:/i.test(l))
-                      .pop();
-                    reject(new Error(tip || `yt-dlp ${code}`));
-                  });
-                }),
-              { bypassCooldown: true, noteFailure: false },
-            );
-            if (isCompleteEnoughDisk(out)) {
-              downloadFailUntil.delete(videoId);
-              markYoutubeProxySuccess(proxy);
-              return out;
-            }
-            if (existsSync(out)) {
-              try {
-                unlinkSync(out);
-              } catch {
-                /* ignore */
+      for (const extractorArgs of extractorSets) {
+        for (const cookieArgs of cookieSets) {
+          for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
+            try {
+              const extractAudio =
+                format.startsWith('18/') || format === '18'
+                  ? (['-x', '--audio-format', 'm4a'] as const)
+                  : ([] as const);
+              await withYtDlpSlot(
+                () =>
+                  new Promise<void>((resolve, reject) => {
+                    const proc = spawn(
+                      YTDLP,
+                      [
+                        '-f',
+                        format,
+                        '-o',
+                        out,
+                        '--no-playlist',
+                        '--no-warnings',
+                        '--newline',
+                        ...extractAudio,
+                        ...ytDlpRuntimeArgs(),
+                        ...extractorArgs,
+                        ...cookieArgs,
+                        ...(proxy ? ['--proxy', proxy] : []),
+                        `https://www.youtube.com/watch?v=${videoId}`,
+                      ],
+                      { stdio: ['ignore', 'ignore', 'pipe'] },
+                    );
+                    let err = '';
+                    proc.stderr?.on('data', (c) => {
+                      err += String(c);
+                      if (err.length > 4_000) err = err.slice(-4_000);
+                    });
+                    proc.on('error', reject);
+                    proc.on('close', (code) => {
+                      if (code === 0 && existsSync(out) && statSync(out).size > 0) {
+                        resolve();
+                        return;
+                      }
+                      const tip = err
+                        .split('\n')
+                        .map((l) => l.trim())
+                        .filter((l) => /^ERROR:/i.test(l))
+                        .pop();
+                      reject(new Error(tip || `yt-dlp ${code}`));
+                    });
+                  }),
+                { bypassCooldown: true, noteFailure: false },
+              );
+              if (isCompleteEnoughDisk(out)) {
+                downloadFailUntil.delete(videoId);
+                markYoutubeProxySuccess(proxy);
+                return out;
               }
+              if (existsSync(out)) {
+                try {
+                  unlinkSync(out);
+                } catch {
+                  /* ignore */
+                }
+              }
+            } catch (err) {
+              lastErr = err instanceof Error ? err : new Error(String(err));
+              if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
+                sawBot = true;
+              }
+              if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
             }
-          } catch (err) {
-            lastErr = err instanceof Error ? err : new Error(String(err));
-            if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
-              sawBot = true;
-            }
-            if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
           }
         }
       }
@@ -1876,7 +2023,7 @@ async function downloadTrackViaInnertube(videoId: string, out: string): Promise<
   const innertube = (await getSignedStreamYT().catch(() => null)) || (await getYT());
   let stream: ReadableStream<Uint8Array> | null = null;
   let lastErr: unknown;
-  for (const client of ['ANDROID_VR', 'TV', 'IOS', 'WEB_EMBEDDED', 'MWEB'] as const) {
+  for (const client of ['TV', 'WEB_EMBEDDED', 'MWEB', 'IOS', 'ANDROID_VR'] as const) {
     try {
       stream = await innertube.download(videoId, {
         type: 'audio',
@@ -1894,19 +2041,33 @@ async function downloadTrackViaInnertube(videoId: string, out: string): Promise<
   }
   const file = createWriteStream(out);
   const reader = stream.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      if (!file.write(Buffer.from(value))) {
-        await new Promise<void>((r) => file.once('drain', () => r()));
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        if (!file.write(Buffer.from(value))) {
+          await new Promise<void>((r) => file.once('drain', () => r()));
+        }
       }
     }
+    await new Promise<void>((resolve, reject) => {
+      file.end(() => resolve());
+      file.on('error', reject);
+    });
+  } catch (err) {
+    try {
+      file.destroy();
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (existsSync(out)) unlinkSync(out);
+    } catch {
+      /* ignore */
+    }
+    throw err;
   }
-  await new Promise<void>((resolve, reject) => {
-    file.end(() => resolve());
-    file.on('error', reject);
-  });
 }
 
 void pipeline;

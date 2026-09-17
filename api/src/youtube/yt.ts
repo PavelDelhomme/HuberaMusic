@@ -1,7 +1,7 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Innertube, UniversalCache, ClientType, YTNodes, Parser, Log } from 'youtubei.js';
-import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES, ytDlpRuntimeArgs } from './youtubeCookies.js';
+import { resolveYoutubeCookieHeader, youtubeCookiesFingerprint, ytDlpCookieArgs, ytDlpCookieArgSets, ytDlpExtractorArgSets, YTDLP_AUDIO_FORMAT_CANDIDATES, ytDlpRuntimeArgs } from './youtubeCookies.js';
 import { getSignedStreamYT } from './streamAuth.js';
 import { installYoutubeJsEvaluator } from './youtubeiEval.js';
 import {
@@ -2452,6 +2452,7 @@ async function ytDlpGetUrl(
   format: string,
   cookieArgs: string[],
   proxy: string | null = null,
+  extractorArgs: string[] = [],
 ): Promise<string> {
   const { spawn } = await import('node:child_process');
   const { withYtDlpSlot } = await import('../media/ytDlpGate.js');
@@ -2466,9 +2467,7 @@ async function ytDlpGetUrl(
           '--no-playlist',
           '--no-warnings',
           ...ytDlpRuntimeArgs(),
-          // Clients anonymes connus pour éviter LOGIN_REQUIRED / botcheck VPS
-          '--extractor-args',
-          'youtube:player_client=android_vr,tv,ios,web_embedded,web',
+          ...extractorArgs,
           ...cookieArgs,
           ...(proxy ? ['--proxy', proxy] : []),
           `https://www.youtube.com/watch?v=${videoId}`,
@@ -2507,15 +2506,24 @@ async function audioFormatViaYtDlpFast(videoId: string): Promise<AudioFormat> {
   const { isYtDlpCoolingDown } = await import('../media/ytDlpGate.js');
   if (isYtDlpCoolingDown()) throw new Error('yt-dlp cooling');
   const format = YTDLP_AUDIO_FORMAT_CANDIDATES[0] || 'bestaudio[ext=m4a]/bestaudio/best';
-  const url = await ytDlpGetUrl(videoId, format, [], null);
-  markYoutubeProxySuccess(null);
-  return {
-    url,
-    mimeType: 'audio/mp4',
-    bitrate: 128_000,
-    contentLength: undefined,
-    expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
-  };
+  const extractorSets = ytDlpExtractorArgSets();
+  let lastErr: Error | null = null;
+  for (const extractorArgs of extractorSets) {
+    try {
+      const url = await ytDlpGetUrl(videoId, format, [], null, extractorArgs);
+      markYoutubeProxySuccess(null);
+      return {
+        url,
+        mimeType: 'audio/mp4',
+        bitrate: 128_000,
+        contentLength: undefined,
+        expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+      };
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+  throw lastErr || new Error('yt-dlp -g fast KO');
 }
 
 async function audioFormatViaYtDlp(
@@ -2535,41 +2543,44 @@ async function audioFormatViaYtDlp(
 
   let lastErr: Error | null = null;
   let sawBot = false;
+  const extractorSets = ytDlpExtractorArgSets();
   for (const proxy of proxies) {
     if (!proxy && isYtDlpCoolingDown()) continue;
-    for (const cookieArgs of cookieSets) {
-      for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
-        try {
-          const url = await ytDlpGetUrl(videoId, format, cookieArgs, proxy);
-          markYoutubeProxySuccess(proxy);
-          const abr = (() => {
-            try {
-              const itag = new URL(url).searchParams.get('itag');
-              if (itag === '141' || itag === '774') return 256_000;
-              if (itag === '140') return 128_000;
-              if (itag === '251') return 160_000;
-              if (itag === '250') return 70_000;
-              if (itag === '249' || itag === '139') return 50_000;
-            } catch {
-              /* ignore */
+    for (const extractorArgs of extractorSets) {
+      for (const cookieArgs of cookieSets) {
+        for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
+          try {
+            const url = await ytDlpGetUrl(videoId, format, cookieArgs, proxy, extractorArgs);
+            markYoutubeProxySuccess(proxy);
+            const abr = (() => {
+              try {
+                const itag = new URL(url).searchParams.get('itag');
+                if (itag === '141' || itag === '774') return 256_000;
+                if (itag === '140') return 128_000;
+                if (itag === '251') return 160_000;
+                if (itag === '250') return 70_000;
+                if (itag === '249' || itag === '139') return 50_000;
+              } catch {
+                /* ignore */
+              }
+              return undefined;
+            })();
+            return {
+              url,
+              mimeType:
+                url.includes('mime=audio%2Fmp4') || /[?&]itag=(140|141|139)\b/.test(url)
+                  ? 'audio/mp4'
+                  : 'audio/webm',
+              bitrate: abr,
+              expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+            };
+          } catch (err) {
+            lastErr = err instanceof Error ? err : new Error(String(err));
+            if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
+              sawBot = true;
             }
-            return undefined;
-          })();
-          return {
-            url,
-            mimeType:
-              url.includes('mime=audio%2Fmp4') || /[?&]itag=(140|141|139)\b/.test(url)
-                ? 'audio/mp4'
-                : 'audio/webm',
-            bitrate: abr,
-            expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
-          };
-        } catch (err) {
-          lastErr = err instanceof Error ? err : new Error(String(err));
-          if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
-            sawBot = true;
+            if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
           }
-          if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
         }
       }
     }
@@ -2610,7 +2621,7 @@ export async function getAudioFormat(
       const innertube = signed || (await getYT());
       const clients = signed
         ? (['MWEB', 'TV', 'ANDROID'] as const)
-        : (['ANDROID_VR', 'TV', 'IOS'] as const);
+        : (['TV', 'IOS', 'WEB_EMBEDDED', 'MWEB'] as const);
       const ms = signed ? 9_000 : 5_500;
       const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
         const format = await Promise.race([
@@ -2733,54 +2744,56 @@ async function videoFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
   const ytdlp = join(ROOT, 'bin', 'yt-dlp');
   if (!existsSync(ytdlp)) throw new Error('yt-dlp introuvable');
   const proxies = await youtubeProxyAttempts({ max: 3, includeDirect: true });
+  const extractorSets = ytDlpExtractorArgSets();
   let lastErr: Error | null = null;
   for (const proxy of proxies) {
-    try {
-      const url = await new Promise<string>((resolve, reject) => {
-        const proc = spawn(
-          ytdlp,
-          [
-            '-f',
-            '18/22/best[height<=720][acodec!=none][vcodec!=none]/best[height<=480][acodec!=none]/best',
-            '-g',
-            '--no-playlist',
-            '--no-warnings',
-            ...ytDlpRuntimeArgs(),
-            '--extractor-args',
-            'youtube:player_client=android_vr,tv,ios,web_embedded',
-            ...ytDlpCookieArgs(),
-            ...(proxy ? ['--proxy', proxy] : []),
-            `https://www.youtube.com/watch?v=${videoId}`,
-          ],
-          { stdio: ['ignore', 'pipe', 'pipe'] },
-        );
-        let out = '';
-        let err = '';
-        proc.stdout.on('data', (d) => {
-          out += String(d);
+    for (const extractorArgs of extractorSets) {
+      try {
+        const url = await new Promise<string>((resolve, reject) => {
+          const proc = spawn(
+            ytdlp,
+            [
+              '-f',
+              '18/22/best[height<=720][acodec!=none][vcodec!=none]/best[height<=480][acodec!=none]/best',
+              '-g',
+              '--no-playlist',
+              '--no-warnings',
+              ...ytDlpRuntimeArgs(),
+              ...extractorArgs,
+              ...ytDlpCookieArgs(),
+              ...(proxy ? ['--proxy', proxy] : []),
+              `https://www.youtube.com/watch?v=${videoId}`,
+            ],
+            { stdio: ['ignore', 'pipe', 'pipe'] },
+          );
+          let out = '';
+          let err = '';
+          proc.stdout.on('data', (d) => {
+            out += String(d);
+          });
+          proc.stderr.on('data', (d) => {
+            err += String(d);
+          });
+          proc.on('error', reject);
+          proc.on('close', (code) => {
+            const line = out
+              .split('\n')
+              .map((l) => l.trim())
+              .find((l) => /^https?:\/\//.test(l));
+            if (code === 0 && line) resolve(line);
+            else reject(new Error(err.trim() || `yt-dlp -g video exit ${code}`));
+          });
         });
-        proc.stderr.on('data', (d) => {
-          err += String(d);
-        });
-        proc.on('error', reject);
-        proc.on('close', (code) => {
-          const line = out
-            .split('\n')
-            .map((l) => l.trim())
-            .find((l) => /^https?:\/\//.test(l));
-          if (code === 0 && line) resolve(line);
-          else reject(new Error(err.trim() || `yt-dlp -g video exit ${code}`));
-        });
-      });
-      markYoutubeProxySuccess(proxy);
-      return {
-        url,
-        mimeType: 'video/mp4',
-        expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
-      };
-    } catch (err) {
-      lastErr = err instanceof Error ? err : new Error(String(err));
-      if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
+        markYoutubeProxySuccess(proxy);
+        return {
+          url,
+          mimeType: 'video/mp4',
+          expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+        };
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
+      }
     }
   }
   throw lastErr || new Error('yt-dlp video URL indisponible');

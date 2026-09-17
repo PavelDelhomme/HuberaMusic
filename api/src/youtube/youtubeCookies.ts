@@ -177,6 +177,27 @@ export function ytDlpRuntimeArgs(): string[] {
 }
 
 /**
+ * Stratégies `--extractor-args youtube:player_client=…`.
+ *
+ * Depuis yt-dlp 2026.08, `android_vr` exige un GVS PO Token : sans token les
+ * itags 140/251 disparaissent → « Requested format is not available ».
+ * Ordre : défaut yt-dlp (visionos / web) d’abord, puis clients legacy en secours.
+ * Override : `YTDLP_PLAYER_CLIENT=tv,web` ou `default` / `0` pour forcer le défaut seul.
+ */
+export function ytDlpExtractorArgSets(): string[][] {
+  const override = (process.env.YTDLP_PLAYER_CLIENT || '').trim();
+  if (override === '0' || override.toLowerCase() === 'default') return [[]];
+  if (override) {
+    return [['--extractor-args', `youtube:player_client=${override}`], []];
+  }
+  return [
+    [], // défaut yt-dlp → itag 140 OK (reproduit 2026-09-15)
+    ['--extractor-args', 'youtube:player_client=web_embedded,web'],
+    ['--extractor-args', 'youtube:player_client=android_vr,tv,ios,web_embedded,web'],
+  ];
+}
+
+/**
  * Args cookies pour yt-dlp.
  * Fichier Netscape uniquement par défaut.
  * `--cookies-from-browser` est opt-in (`YTDLP_COOKIES_FROM_BROWSER=1`) :
@@ -219,6 +240,8 @@ export const YTDLP_AUDIO_FORMAT_CANDIDATES = [
   '140/139/bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]',
   '251/250/249/bestaudio[ext=webm]/bestaudio',
   '140/251/250/249/139/bestaudio[acodec!=none]/bestaudio',
+  // Progressive mp4 (souvent le seul itag sous clients PO-token / SABR)
+  '18/bestaudio/best',
 ] as const;
 
 export function youtubeCookiesFingerprint(): string {
