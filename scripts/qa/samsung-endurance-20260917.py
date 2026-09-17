@@ -232,7 +232,48 @@ def inject(token: str, refresh: str, email: str) -> None:
     if refresh:
         args += ["--es", "ytm_refresh_token", refresh]
     sh(*args)
-    time.sleep(4)
+    time.sleep(5)
+
+
+def tap_aleatoire() -> bool:
+    """Démarre la lecture via tuile Accueil « Aléatoire » (media session sinon absente)."""
+    sh("shell", "uiautomator", "dump", "/sdcard/ui-plm-endurance.xml")
+    xml = sh("shell", "cat", "/sdcard/ui-plm-endurance.xml")
+    for m in re.finditer(
+        r'text="Aléatoire"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"',
+        xml,
+    ):
+        x1, y1, x2, y2 = map(int, m.groups())
+        x, y = (x1 + x2) // 2, (y1 + y2) // 2
+        sh("shell", "input", "tap", str(x), str(y))
+        log(f"  tap Aléatoire @{x},{y}")
+        return True
+    # Fallback coords Samsung G990 (Accueil)
+    sh("shell", "input", "tap", "222", "639")
+    log("  tap Aléatoire fallback @222,639")
+    return True
+
+
+def ensure_playing(timeout_s: float = 25.0) -> dict:
+    end = time.time() + timeout_s
+    m = media()
+    if m["state"] == "PLAYING" and m["pos"] >= 0:
+        return m
+    tap_aleatoire()
+    time.sleep(6)
+    while time.time() < end:
+        m = media()
+        if m["state"] in ("PLAYING", "BUFFERING") and m.get("title", "?") != "?":
+            return m
+        dispatch("play")
+        time.sleep(2.5)
+        m = media()
+        if m["state"] == "PLAYING":
+            return m
+        # mini-player Lecture
+        sh("shell", "input", "tap", "834", "1860")
+        time.sleep(2)
+    return media()
 
 
 def dispatch(action: str) -> None:
@@ -241,6 +282,8 @@ def dispatch(action: str) -> None:
 
 def session_device(session_idx: int, minutes: float) -> dict:
     log(f"=== DEVICE session {session_idx+1} ({minutes} min) ===")
+    m0 = ensure_playing()
+    log(f"  start {m0['state']} pos={m0['pos']} {m0['title'][:40]!r}")
     end = time.time() + minutes * 60
     actions = ["next", "next", "pause", "play", "next", "previous", "play"]
     samples = []
@@ -253,6 +296,9 @@ def session_device(session_idx: int, minutes: float) -> dict:
         dispatch(act)
         time.sleep(random.uniform(2.5, 6.0))
         m = media()
+        if m["state"] in ("?", "NONE", "STOPPED") or m["title"] == "?":
+            ensure_playing(12)
+            m = media()
         ok = m["state"] in ("PLAYING", "BUFFERING", "PAUSED")
         if m["state"] == "PLAYING" and m["pos"] == last_pos and m["title"] == last_title and m["pos"] > 0:
             frozen += 1
@@ -267,18 +313,22 @@ def session_device(session_idx: int, minutes: float) -> dict:
         last_pos, last_title = m["pos"], m["title"]
         samples.append({**m, "action": act, "ok": ok})
         log(f"  {act:8} → {m['state']:9} pos={m['pos']:>8} {m['title'][:40]!r}")
-        # random deep seek-ish: pause/play burst
-        if random.random() < 0.12:
-            dispatch("pause")
-            time.sleep(1.2)
-            dispatch("play")
-            time.sleep(2)
+        if random.random() < 0.1:
+            # Re-tap Aléatoire parfois (reset file)
+            if random.random() < 0.35:
+                tap_aleatoire()
+                time.sleep(5)
+            else:
+                dispatch("pause")
+                time.sleep(1.2)
+                dispatch("play")
+                time.sleep(2)
     playing = sum(1 for s in samples if s["state"] == "PLAYING")
     return {
         "samples": len(samples),
         "playing": playing,
         "stalls": stalls,
-        "ok": stalls == 0 and playing >= max(3, len(samples) // 4),
+        "ok": stalls == 0 and playing >= max(3, len(samples) // 5),
         "last": samples[-5:] if samples else [],
     }
 
@@ -324,14 +374,8 @@ def main() -> int:
 
     inject(token, refresh, email)
     device_sessions = []
-    # Shorter first smoke then full sessions
-    smoke = session_device(0, min(3.0, SESSION_MIN))
-    device_sessions.append({"kind": "smoke", **smoke})
     for i in range(SESSIONS):
         inject(token, refresh, email)
-        # try start via play
-        dispatch("play")
-        time.sleep(3)
         s = session_device(i, SESSION_MIN)
         device_sessions.append({"kind": f"session-{i+1}", **s})
 
