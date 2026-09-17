@@ -102,6 +102,13 @@ async function refreshFreeProxies(): Promise<string[]> {
     'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=all&anonymity=all',
     'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=3000&country=all',
     'https://www.proxy-list.download/api/v1/get?type=http',
+    // Sources additionnelles (VPS autonome sans PC maison)
+    'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+    'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt',
+    'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
+    'https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt',
   ];
 
   const urls: string[] = [];
@@ -135,7 +142,7 @@ async function refreshFreeProxies(): Promise<string[]> {
     [uniq[i], uniq[j]] = [uniq[j], uniq[i]];
   }
   // Cap pour éviter un pool monstrueux
-  const capped = uniq.slice(0, 80);
+  const capped = uniq.slice(0, 180);
   cachedFree = { at: Date.now(), urls: capped };
   if (capped.length > 0) {
     console.info(`[youtubeProxy] free pool refreshed n=${capped.length}`);
@@ -145,9 +152,13 @@ async function refreshFreeProxies(): Promise<string[]> {
 
 export function youtubeProxyFreeEnabled(): boolean {
   const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || '').toLowerCase();
-  const isProd = appEnv === 'production' || appEnv === 'prod';
-  // Prod : ON par défaut (contourne 50x DC). Dev : OFF sauf opt-in.
-  return envTruthy(process.env.YOUTUBE_HTTP_PROXY_FREE, isProd);
+  // VPS (prod / preprod / intégration :dev) → ON par défaut. Local PC → OFF.
+  const isVps =
+    appEnv === 'production' ||
+    appEnv === 'prod' ||
+    appEnv === 'preprod' ||
+    appEnv === 'dev';
+  return envTruthy(process.env.YOUTUBE_HTTP_PROXY_FREE, isVps);
 }
 
 export async function ensureYoutubeProxyPool(): Promise<void> {

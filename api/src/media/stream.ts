@@ -19,12 +19,14 @@ import {
   resolveYoutubeCookieHeader,
   YTDLP_AUDIO_FORMAT_CANDIDATES,
   ytDlpRuntimeArgs,
+  ytDlpProxyCliArgs,
 } from '../youtube/youtubeCookies.js';
 import {
   isProxyWorthRetry,
   markYoutubeProxyFailure,
   markYoutubeProxySuccess,
   youtubeProxyAttempts,
+  youtubeProxyFreeEnabled,
 } from '../youtube/youtubeProxy.js';
 import {
   peekStreamHead,
@@ -266,6 +268,35 @@ export function isStreamUpstreamAllowed(): boolean {
 }
 
 /** Relais stream vers l’API maison (évite le blocage IP datacenter YouTube). */
+let homeAliveCache: { at: number; ok: boolean; base: string } | null = null;
+
+/**
+ * Sonde rapide : si le PC maison est éteint, on skip le relais immédiatement
+ * (sinon 20–52 s de BUFFERING avant les backends VPS/proxies).
+ */
+async function isHomeUpstreamReachable(homeBase: string): Promise<boolean> {
+  const base = homeBase.replace(/\/$/, '');
+  if (
+    homeAliveCache &&
+    homeAliveCache.base === base &&
+    Date.now() - homeAliveCache.at < 45_000
+  ) {
+    return homeAliveCache.ok;
+  }
+  try {
+    const r = await fetch(`${base}/api/health`, {
+      signal: AbortSignal.timeout(1_400),
+      headers: { Accept: 'application/json' },
+    });
+    const ok = r.ok;
+    homeAliveCache = { at: Date.now(), ok, base };
+    return ok;
+  } catch {
+    homeAliveCache = { at: Date.now(), ok: false, base };
+    return false;
+  }
+}
+
 async function proxyStreamToHome(
   req: Request,
   res: Response,
@@ -304,6 +335,15 @@ async function proxyStreamToHome(
     ),
   ]);
   if (first.done || !first.value?.byteLength) throw new Error('home stream vide');
+  const firstHome = Buffer.from(first.value);
+  if (!wantVideo && isDashBrandBuffer(firstHome)) {
+    try {
+      await reader.cancel();
+    } catch {
+      /* ignore */
+    }
+    throw new Error('home stream DASH (ftypdash)');
+  }
 
   res.status(upstream.status);
   const ct = upstream.headers.get('content-type');
@@ -329,7 +369,7 @@ async function proxyStreamToHome(
   res.setHeader('Cache-Control', 'private, max-age=60');
   res.setHeader('X-YTM-Stream-Via', 'home');
 
-  if (!res.write(Buffer.from(first.value))) {
+  if (!res.write(firstHome)) {
     await new Promise((r) => res.once('drain', r));
   }
   while (true) {
@@ -383,6 +423,15 @@ async function streamViaInnertube(videoId: string, res: Response) {
   if (first.done || !first.value?.byteLength) {
     throw new Error('Innertube stream vide');
   }
+  const firstBuf = Buffer.from(first.value);
+  if (isDashBrandBuffer(firstBuf)) {
+    try {
+      await reader.cancel();
+    } catch {
+      /* ignore */
+    }
+    throw new Error('Innertube audio DASH (ftypdash)');
+  }
 
   if (res.headersSent) throw new Error('headers already sent');
   res.status(200);
@@ -391,7 +440,7 @@ async function streamViaInnertube(videoId: string, res: Response) {
   res.setHeader('Cache-Control', 'public, max-age=3600');
 
   try {
-    if (!res.write(Buffer.from(first.value))) {
+    if (!res.write(firstBuf)) {
       await new Promise((r) => res.once('drain', r));
     }
     while (true) {
@@ -467,7 +516,7 @@ async function spawnYtDlpMediaPipe(
             '--referer',
             'https://www.youtube.com/',
             ...cookieArgs,
-            ...(proxy ? ['--proxy', proxy] : []),
+            ...ytDlpProxyCliArgs(proxy),
             `https://www.youtube.com/watch?v=${videoId}`,
           ],
           { stdio: ['ignore', 'pipe', 'pipe'] },
@@ -542,15 +591,20 @@ async function spawnYtDlpMediaPipe(
   );
 }
 
-async function streamViaYtDlp(videoId: string, res: Response) {
+async function streamViaYtDlp(videoId: string, res: Response, preferProxies = false) {
   const { noteYtDlpFailure, isYtDlpCoolingDown } = await import('./ytDlpGate.js');
   // Anonyme d’abord — cookies optionnels (jamais Premium requis)
   const cookieSets = ytDlpCookieArgSets();
   const extractorSets = ytDlpExtractorArgSets();
   // Peu de formats : chaque spawn peut coûter ~10 s (first-byte timeout)
-  const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, 3);
-  // Direct VPS puis proxies (bypass bot IP datacenter) — PC maison = STREAM_UPSTREAM
-  const proxies = await youtubeProxyAttempts({ max: 5, includeDirect: true });
+  const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, preferProxies ? 2 : 3);
+  // Maison offline → proxies d’abord (IP VPS souvent bot-bloquée)
+  const proxies = await youtubeProxyAttempts({
+    max: preferProxies ? 7 : 5,
+    includeDirect: true,
+    directLast: preferProxies,
+    shuffle: preferProxies,
+  });
 
   let lastErr: Error | null = null;
   let sawBot = false;
@@ -588,7 +642,7 @@ async function streamViaYtDlp(videoId: string, res: Response) {
 }
 
 /** Pipe progressif vidéo (fallback quand googlevideo 403 depuis le VPS). */
-async function streamViaYtDlpVideo(videoId: string, res: Response) {
+async function streamViaYtDlpVideo(videoId: string, res: Response, preferProxies = false) {
   const { noteYtDlpFailure, isYtDlpCoolingDown } = await import('./ytDlpGate.js');
   const cookieSets = ytDlpCookieArgSets();
   const extractorSets = ytDlpExtractorArgSets();
@@ -598,7 +652,12 @@ async function streamViaYtDlpVideo(videoId: string, res: Response) {
     'best[height<=480][acodec!=none][vcodec!=none]',
     'best[height<=720][acodec!=none][vcodec!=none]/best',
   ];
-  const proxies = await youtubeProxyAttempts({ max: 4, includeDirect: true });
+  const proxies = await youtubeProxyAttempts({
+    max: preferProxies ? 6 : 4,
+    includeDirect: true,
+    directLast: preferProxies,
+    shuffle: preferProxies,
+  });
   let lastErr: Error | null = null;
   let sawBot = false;
   for (const proxy of proxies) {
@@ -705,6 +764,13 @@ export async function handleStream(req: Request, res: Response) {
   }
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
+
+  // Maison offline / VPS sans relais → proxies gratuits avant IP datacenter.
+  const homeUpstream = resolveStreamUpstream();
+  const preferProxies = homeUpstream
+    ? !(await isHomeUpstreamReachable(homeUpstream))
+    : youtubeProxyFreeEnabled();
+
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   const wantOffline =
     String(req.query.offline || '') === '1' ||
@@ -722,7 +788,7 @@ export async function handleStream(req: Request, res: Response) {
     const waitMs = 75_000;
     try {
       await Promise.race([
-        downloadTrack(videoId, { progressiveOnly: true }).then(() => true),
+        downloadTrack(videoId, { progressiveOnly: true, preferProxies }).then(() => true),
         new Promise<boolean>((r) => setTimeout(() => r(false), waitMs)),
       ]);
     } catch {
@@ -805,7 +871,7 @@ export async function handleStream(req: Request, res: Response) {
         if (waitMs > 0) {
           try {
             await Promise.race([
-              downloadTrack(videoId, { progressiveOnly: true }).then(() => true),
+              downloadTrack(videoId, { progressiveOnly: true, preferProxies }).then(() => true),
               new Promise<boolean>((r) => setTimeout(() => r(false), waitMs)),
             ]);
           } catch {
@@ -828,7 +894,7 @@ export async function handleStream(req: Request, res: Response) {
         // init MP4 ; 512 KiB ≈ chemin Range client qui répond en <300 ms).
         // Exo enchaîne ensuite avec des Ranges suivants (Content-Range total).
         req.headers.range = 'bytes=0-524287';
-        skipHomeForOpenAndroid = false;
+        skipHomeForOpenAndroid = true;
       }
       // Android sans disque : ne pas forcer 1 MiB — mieux un 502/retry qu’un cache toxique.
     }
@@ -844,7 +910,10 @@ export async function handleStream(req: Request, res: Response) {
     const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
     if (!isYtDlpCoolingDown()) {
       const progressive = isAndroidClient(req);
-      void downloadTrack(videoId, progressive ? { progressiveOnly: true } : undefined).catch((err) => {
+      void downloadTrack(videoId, {
+        ...(progressive ? { progressiveOnly: true } : {}),
+        preferProxies,
+      }).catch((err) => {
         const msg = String((err as Error).message || err);
         if (/cooling down|bot\/rate-limit|Sign in to confirm|rate-limited/i.test(msg)) return;
         console.warn('[stream] prefetch downloadTrack KO:', msg.slice(0, 120));
@@ -875,7 +944,7 @@ export async function handleStream(req: Request, res: Response) {
     ]);
   };
 
-  const homeUpstream = resolveStreamUpstream();
+  // preferProxies + homeUpstream déjà calculés en tête de handleStream.
 
   // Tête RAM (lazy warm) — avant disque / upstream
   if (!wantVideo && tryServeRamHead(req, res, videoId)) return;
@@ -888,7 +957,7 @@ export async function handleStream(req: Request, res: Response) {
     purgeDashCache(videoId);
     const cachedEarly = cachePath(videoId);
     if (!isCompleteEnoughDisk(cachedEarly)) {
-      downloadTrack(videoId, { progressiveOnly: true }).catch(() => {
+      downloadTrack(videoId, { progressiveOnly: true, preferProxies }).catch(() => {
         /* fond */
       });
     }
@@ -911,7 +980,7 @@ export async function handleStream(req: Request, res: Response) {
       // et le fallback relais/googlevideo n’avait plus de temps → 502/504 garanti.
       // Le téléchargement continue en fond (downloadInflight) pour la requête suivante.
       const budget = midRangeWaitMs(videoId);
-      const dl = downloadTrack(videoId, { progressiveOnly: androidClient });
+      const dl = downloadTrack(videoId, { progressiveOnly: androidClient, preferProxies });
       dl.catch(() => {
         /* poursuivi en fond — l’erreur est traitée par le await borné ci-dessous */
       });
@@ -937,7 +1006,30 @@ export async function handleStream(req: Request, res: Response) {
         }
       }
     }
-    if (existsSync(cached) && statSync(cached).size > 0 && !isDashBrandFile(cached)) {
+    if (existsSync(cached) && !isDashBrandFile(cached)) {
+      const size = (() => {
+        try {
+          return statSync(cached).size;
+        } catch {
+          return 0;
+        }
+      })();
+      const incomplete = downloadInflight.has(videoId);
+      // Partiel mort (échec yt-dlp) : ne pas servir à Exo (EOF / stall).
+      if (size > 0 && !incomplete && !isCompleteEnoughDisk(cached)) {
+        try {
+          unlinkSync(cached);
+          console.warn(`[stream] purge partiel mort ${videoId} (${size} o)`);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (
+      existsSync(cached) &&
+      !isDashBrandFile(cached) &&
+      (isCompleteEnoughDisk(cached) || downloadInflight.has(videoId))
+    ) {
       const size = statSync(cached).size;
       const incomplete = downloadInflight.has(videoId);
       // Total annoncé = jamais la taille partielle d’un .m4a encore en cours
@@ -1108,50 +1200,61 @@ export async function handleStream(req: Request, res: Response) {
     }
   }
 
-  // Relais maison (IP résidentielle) — mid-range déjà tenté en local ci-dessus.
+  // Relais maison (IP résidentielle) — optionnel.
+  // Si le PC est éteint : skip immédiat → VPS + proxies gratuits (pas de 20–52 s morts).
   // Android open-ended froid : tentative courte (first-byte 3.5 s) puis fallback VPS/GV.
   if (homeUpstream) {
-    const proxyTimeoutMs = skipHomeForOpenAndroid
-      ? 10_000
-      : midNeedsDisk
-        ? 130_000
-        : 52_000;
-    const firstByteMs = skipHomeForOpenAndroid ? 3_500 : 20_000;
-    try {
-      await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs, firstByteMs);
-      return;
-    } catch (err) {
-      if (endIfHeadersSent(res)) return;
-      const msg = String((err as Error).message || err);
-      console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
-      // Toujours tenter les backends VPS (OAuth / cookies / yt-dlp) après un relais maison KO.
-      // Avant : sans STREAM_UPSTREAM_FALLBACK=1 on renvoyait 503 → erreurs player sur plein de titres
-      // dès que le PC/tunnel était coupé, alors que l’OAuth TV pouvait encore servir le flux.
-      // Opt-out explicite : STREAM_UPSTREAM_FALLBACK=0
-      const forceHomeOnly =
-        process.env.STREAM_UPSTREAM_FALLBACK === '0' ||
-        process.env.STREAM_UPSTREAM_FALLBACK === 'false';
-      if (forceHomeOnly && !midNeedsDisk && !skipHomeForOpenAndroid) {
-        const isDown =
-          /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
-            msg,
-          );
-        const homeStatus = /home stream (\d{3})/.exec(msg);
-        const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
-        res.status(status).json({
-          error: 'Impossible de streamer audio',
-          detail: msg.slice(0, 240),
-          hint: isDown
-            ? 'Relais maison KO — sur le PC : bash scripts/deploy/link-home-stream.sh (laisser allumé).'
-            : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
-        });
-        return;
-      }
+    const homeUp = await isHomeUpstreamReachable(homeUpstream);
+    if (!homeUp) {
       console.warn(
-        midNeedsDisk
-          ? '[stream] mid-range : relais KO — fallback backends locaux'
-          : '[stream] STREAM_UPSTREAM KO — fallback backends locaux VPS',
+        '[stream] STREAM_UPSTREAM offline (maison) — VPS + proxies gratuits',
       );
+    } else {
+      const proxyTimeoutMs = skipHomeForOpenAndroid
+        ? 10_000
+        : midNeedsDisk
+          ? 18_000
+          : 20_000;
+      const firstByteMs = skipHomeForOpenAndroid ? 3_500 : 8_000;
+      try {
+        await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs, firstByteMs);
+        return;
+      } catch (err) {
+        if (endIfHeadersSent(res)) return;
+        const msg = String((err as Error).message || err);
+        console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
+        homeAliveCache = {
+          at: Date.now(),
+          ok: false,
+          base: homeUpstream.replace(/\/$/, ''),
+        };
+        // Toujours tenter les backends VPS (OAuth / cookies / yt-dlp / proxies) après KO maison.
+        // Opt-out explicite : STREAM_UPSTREAM_FALLBACK=0
+        const forceHomeOnly =
+          process.env.STREAM_UPSTREAM_FALLBACK === '0' ||
+          process.env.STREAM_UPSTREAM_FALLBACK === 'false';
+        if (forceHomeOnly && !midNeedsDisk && !skipHomeForOpenAndroid) {
+          const isDown =
+            /fetch failed|AbortError|aborted|timeout|ECONNREFUSED|ECONNRESET|ENOTFOUND|network/i.test(
+              msg,
+            );
+          const homeStatus = /home stream (\d{3})/.exec(msg);
+          const status = homeStatus ? Number(homeStatus[1]) : isDown ? 503 : 502;
+          res.status(status).json({
+            error: 'Impossible de streamer audio',
+            detail: msg.slice(0, 240),
+            hint: isDown
+              ? 'Relais maison KO — le VPS utilise proxies YouTube (YOUTUBE_HTTP_PROXY_FREE). Ou : bash scripts/deploy/link-home-stream.sh'
+              : 'Titre indisponible côté YouTube, ou relais saturé — réessaie dans un instant.',
+          });
+          return;
+        }
+        console.warn(
+          midNeedsDisk
+            ? '[stream] mid-range : relais KO — fallback backends locaux'
+            : '[stream] STREAM_UPSTREAM KO — fallback backends locaux VPS',
+        );
+      }
     }
   }
 
@@ -1264,7 +1367,7 @@ export async function handleStream(req: Request, res: Response) {
         }
         invalidateStreamHead(videoId);
         invalidateAudioFormat(videoId);
-        downloadTrack(videoId, { progressiveOnly: true }).catch(() => {
+        downloadTrack(videoId, { progressiveOnly: true, preferProxies }).catch(() => {
           /* fond */
         });
         console.warn(`[stream] reject DASH googlevideo ${videoId} → progressif`);
@@ -1278,7 +1381,20 @@ export async function handleStream(req: Request, res: Response) {
       const ar = upstream.headers.get('accept-ranges');
       if (ct) res.setHeader('Content-Type', ct);
       else res.setHeader('Content-Type', wantVideo ? 'video/mp4' : 'audio/mp4');
-      if (cr) res.setHeader('Content-Range', cr);
+      if (cr) {
+        const tm = /\/(\d+)\s*$/.exec(cr);
+        if (tm) {
+          const upstreamTotal = Number(tm[1]);
+          rememberAdvertisedTotal(videoId, upstreamTotal);
+          const stable = stableContentTotal(videoId, upstreamTotal);
+          res.setHeader(
+            'Content-Range',
+            stable !== upstreamTotal ? cr.replace(/\/\d+\s*$/, `/${stable}`) : cr,
+          );
+        } else {
+          res.setHeader('Content-Range', cr);
+        }
+      }
       const cl = upstream.headers.get('content-length');
       if (cl) res.setHeader('Content-Length', cl);
       if (ar) res.setHeader('Accept-Ranges', ar);
@@ -1333,7 +1449,7 @@ export async function handleStream(req: Request, res: Response) {
     if (!isCompleteEnoughDisk(cachedProg)) {
       try {
         await Promise.race([
-          downloadTrack(videoId, { progressiveOnly: true }),
+          downloadTrack(videoId, { progressiveOnly: true, preferProxies }),
           new Promise<void>((r) => setTimeout(r, 14_000)),
         ]);
       } catch {
@@ -1385,7 +1501,7 @@ export async function handleStream(req: Request, res: Response) {
     try {
       ensureTime('ytdlpVideo');
       noteStreamSource(res, 'yt-dlp vidéo (flux direct)');
-      await withDeadline('ytdlpVideoPipe', streamViaYtDlpVideo(videoId, res));
+      await withDeadline('ytdlpVideoPipe', streamViaYtDlpVideo(videoId, res, preferProxies));
       return;
     } catch (err) {
       if (endIfHeadersSent(res)) return;
@@ -1416,7 +1532,7 @@ export async function handleStream(req: Request, res: Response) {
   try {
     ensureTime('ytdlp');
     noteStreamSource(res, 'yt-dlp (flux direct)');
-    await withDeadline('ytdlpPipe', streamViaYtDlp(videoId, res));
+    await withDeadline('ytdlpPipe', streamViaYtDlp(videoId, res, preferProxies));
     return;
   } catch (err) {
     if (endIfHeadersSent(res)) return;
@@ -1480,28 +1596,31 @@ export async function handleStreamUrl(req: Request, res: Response) {
   // Les URLs googlevideo sont liées à l’IP du PC maison → 403 depuis navigateur/téléphone.
   const homeUpstream = resolveStreamUpstream();
   if (homeUpstream) {
-    try {
-      const q = wantVideo ? '?type=video' : '';
-      const headers: Record<string, string> = {
-        'X-YTM-Stream-Relay': '1',
-      };
-      const relayTok = (process.env.STREAM_RELAY_TOKEN || '').trim();
-      if (relayTok) headers['X-YTM-Stream-Relay-Token'] = relayTok;
-      const auth = req.headers.authorization;
-      if (auth) headers.Authorization = String(auth);
-      const upstream = await fetch(`${homeUpstream}/api/stream/${videoId}/url${q}`, {
-        headers,
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (!upstream.ok) {
-        const detail = await upstream.text().catch(() => '');
-        console.warn(
-          `[stream-url] STREAM_UPSTREAM warm ${upstream.status}:`,
-          detail.slice(0, 160),
-        );
+    const homeUp = await isHomeUpstreamReachable(homeUpstream);
+    if (homeUp) {
+      try {
+        const q = wantVideo ? '?type=video' : '';
+        const headers: Record<string, string> = {
+          'X-YTM-Stream-Relay': '1',
+        };
+        const relayTok = (process.env.STREAM_RELAY_TOKEN || '').trim();
+        if (relayTok) headers['X-YTM-Stream-Relay-Token'] = relayTok;
+        const auth = req.headers.authorization;
+        if (auth) headers.Authorization = String(auth);
+        const upstream = await fetch(`${homeUpstream}/api/stream/${videoId}/url${q}`, {
+          headers,
+          signal: AbortSignal.timeout(3_000),
+        });
+        if (!upstream.ok) {
+          const detail = await upstream.text().catch(() => '');
+          console.warn(
+            `[stream-url] STREAM_UPSTREAM warm ${upstream.status}:`,
+            detail.slice(0, 160),
+          );
+        }
+      } catch (err) {
+        console.warn('[stream-url] STREAM_UPSTREAM warm KO:', (err as Error).message);
       }
-    } catch (err) {
-      console.warn('[stream-url] STREAM_UPSTREAM warm KO:', (err as Error).message);
     }
     res.json({
       url: `/api/stream/${videoId}${wantVideo ? '?type=video' : ''}`,
@@ -1836,7 +1955,7 @@ function midRangeWaitMs(videoId: string): number {
 
 export async function downloadTrack(
   videoId: string,
-  opts?: { progressiveOnly?: boolean },
+  opts?: { progressiveOnly?: boolean; preferProxies?: boolean },
 ): Promise<string> {
   ensureCache();
   const out = cachePath(videoId);
@@ -1909,7 +2028,12 @@ export async function downloadTrack(
     let sawBot = false;
     const cookieSets = ytDlpCookieArgSets({ forDownload: true });
     const extractorSets = ytDlpExtractorArgSets();
-    const proxies = await youtubeProxyAttempts({ max: 5, includeDirect: true });
+    const proxies = await youtubeProxyAttempts({
+      max: opts?.preferProxies ? 7 : 5,
+      includeDirect: true,
+      directLast: Boolean(opts?.preferProxies),
+      shuffle: Boolean(opts?.preferProxies),
+    });
     for (const proxy of proxies) {
       if (!proxy && isYtDlpCoolingDown()) continue;
       for (const extractorArgs of extractorSets) {
@@ -1917,7 +2041,7 @@ export async function downloadTrack(
           for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
             try {
               const extractAudio =
-                format.startsWith('18/') || format === '18'
+                format.startsWith('18/') || format.startsWith('18')
                   ? (['-x', '--audio-format', 'm4a'] as const)
                   : ([] as const);
               await withYtDlpSlot(
@@ -1937,7 +2061,7 @@ export async function downloadTrack(
                         ...ytDlpRuntimeArgs(),
                         ...extractorArgs,
                         ...cookieArgs,
-                        ...(proxy ? ['--proxy', proxy] : []),
+                        ...ytDlpProxyCliArgs(proxy),
                         `https://www.youtube.com/watch?v=${videoId}`,
                       ],
                       { stdio: ['ignore', 'ignore', 'pipe'] },
@@ -1993,6 +2117,13 @@ export async function downloadTrack(
     }
     if (sawBot && lastErr) noteYtDlpFailure(lastErr);
     const failMsg = lastErr?.message || 'Audio download KO';
+    if (existsSync(out) && !isCompleteEnoughDisk(out)) {
+      try {
+        unlinkSync(out);
+      } catch {
+        /* ignore */
+      }
+    }
     // Quand YouTube nous prend pour un robot, réessayer quinze secondes plus tard
     // relance des minutes de tentatives vouées à l'échec pendant que le lecteur
     // attend. Le relais googlevideo sert très bien le morceau en attendant.

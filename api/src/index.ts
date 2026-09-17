@@ -3209,4 +3209,10 @@ server.listen(PORT, '0.0.0.0', () => {
   startGlobalTasteWarmScheduler();
   startPlaybackDigestScheduler();
   startLibraryWarmSweep();
+  void import('./youtube/youtubeProxy.js')
+    .then((m) => m.ensureYoutubeProxyPool())
+    .then(() => console.log('[youtubeProxy] pool warm OK'))
+    .catch((err) =>
+      console.warn('[youtubeProxy] pool warm KO', String((err as Error).message || err).slice(0, 80)),
+    );
 });

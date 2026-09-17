@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-17",
   "versions": [
     {
+      "version": "1.3.241",
+      "date": "2026-09-17",
+      "title": "VPS autonome : proxies gratuits si PC maison éteint",
+      "notes": [
+        "Si le tunnel maison est offline : skip immédiat + proxies HTTP/SOCKS gratuits avant l’IP datacenter",
+        "yt-dlp : --no-check-certificates sur proxies (MITM fréquent) + pool élargi + warm au démarrage",
+        "Anti-stall : rejet DASH aussi via relais maison / Innertube ; plus de partiels morts servis à Exo",
+        "Timeouts maison plafonnés (~20 s) ; warm /url sans attendre 30 s un PC éteint",
+        "Mails : 403 mid-range Exo classés stream (plus « auth-or-blocked » à tort)"
+      ]
+    },
+    {
       "version": "1.3.240",
       "date": "2026-09-17",
       "title": "Lecture stable : plus de DASH / stalls YouTube",
