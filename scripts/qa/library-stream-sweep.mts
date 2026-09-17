@@ -5,7 +5,7 @@
  *
  *   API=https://ytmusic.delhomme.ovh SAMPLE=200 npx tsx scripts/qa/library-stream-sweep.mts
  */
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,8 +24,24 @@ type Result = Track & {
   detail: string;
 };
 
+function loadDotEnv(): void {
+  try {
+    const raw = readFileSync(join(ROOT, '.env'), 'utf8');
+    for (const line of raw.split('\n')) {
+      const m = line.match(/^(SEED_EMAIL|SEED_PASSWORD|VITE_DEV_PASSWORD)=(.*)$/);
+      if (!m) continue;
+      const key = m[1];
+      if (process.env[key]) continue;
+      process.env[key] = m[2].trim().replace(/^['"]|['"]$/g, '');
+    }
+  } catch {
+    /* .env optionnel */
+  }
+}
+
 async function login(): Promise<string> {
-  const email = process.env.SEED_EMAIL;
+  loadDotEnv();
+  const email = process.env.SEED_EMAIL || 'dev@delhomme.ovh';
   const passwords = [process.env.VITE_DEV_PASSWORD, process.env.SEED_PASSWORD].filter(Boolean);
   for (const password of passwords) {
     const r = await fetch(`${API}/api/auth/login`, {
@@ -33,8 +49,9 @@ async function login(): Promise<string> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const j = (await r.json().catch(() => ({}))) as { token?: string };
-    if (r.ok && j.token) return j.token;
+    const j = (await r.json().catch(() => ({}))) as { token?: string; accessToken?: string };
+    const token = j.token || j.accessToken;
+    if (r.ok && token) return token;
   }
   throw new Error('login KO');
 }

@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-17",
   "versions": [
     {
+      "version": "1.3.243",
+      "date": "2026-09-17",
+      "title": "Auto-guérison stream : proxies + remplacement pour tous",
+      "notes": [
+        "Si tous les backends échouent (non 2xx / CDN) : dernier essai yt-dlp via proxies forcés, puis remplacement d’id automatique",
+        "Plus de ping-pong A↔B : les remplaçants non vérifiés ne sont plus mémorisés à tort",
+        "Écoute jusqu’à la fin validée sur titres longs (hors biblio) — Thunderstruck, Paranoid, Hotel California",
+        "Android : recovery silencieuse (plus de toast « Reprise du flux… ») + warm anticipé buffer avant le spinner",
+        "Serveur : heal télémétrie plus réactif (re-warm + remplacement aussi sur stall warn)"
+      ]
+    },
+    {
       "version": "1.3.242",
       "date": "2026-09-17",
       "title": "Proxies vivants en boucle + écoute continue",
