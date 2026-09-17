@@ -1458,6 +1458,25 @@ export async function handleStream(req: Request, res: Response) {
     if (!/upstream audio 403|upstream audio 401|upstream audio DASH/i.test(msg)) {
       console.warn('[stream] format/proxy KO:', msg.slice(0, 160));
     }
+    // Titre mort : remplacer tout de suite (évite 60–100 s de proxies inutiles).
+    if (!wantVideo && looksUnavailable(msg)) {
+      try {
+        const replacement =
+          getReplacementId(videoId) ||
+          (await findReplacementId(videoId, { userId: (req as any).userId }));
+        if (replacement && !res.headersSent) {
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('X-PLM-Replaced-From', videoId);
+          res.redirect(302, streamPathFor(req, replacement));
+          return;
+        }
+      } catch (replErr) {
+        console.warn(
+          '[stream] remplacement early KO:',
+          String((replErr as Error).message || replErr).slice(0, 140),
+        );
+      }
+    }
   }
 
   // Après rejet DASH / 403 : laisser le téléchargement progressif aboutir, puis servir disque.
@@ -1566,13 +1585,15 @@ export async function handleStream(req: Request, res: Response) {
     if (!res.headersSent) {
       const detail = String(err);
       console.warn('[stream] all backends KO:', String((err as Error).message || err).slice(0, 160));
-      // Vidéo réellement supprimée / privée : rejouer le même morceau sous un autre
-      // identifiant plutôt que de renvoyer une erreur définitive au lecteur.
-      if (!wantVideo && looksUnavailable(detail)) {
+      // Toujours tenter un id de remplacement (même si le message n’est pas « unavailable » —
+      // une course concurrente a pu déjà trouver le mapping).
+      if (!wantVideo) {
         try {
-          const replacement = await findReplacementId(videoId, {
-            userId: (req as any).userId,
-          });
+          const replacement =
+            getReplacementId(videoId) ||
+            (looksUnavailable(detail)
+              ? await findReplacementId(videoId, { userId: (req as any).userId })
+              : null);
           if (replacement && !res.headersSent) {
             res.setHeader('Cache-Control', 'no-store');
             res.setHeader('X-PLM-Replaced-From', videoId);

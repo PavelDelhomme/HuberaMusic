@@ -91,8 +91,7 @@ def login() -> tuple[str, str, str]:
 def library_ids(token: str) -> list[dict]:
     ids: list[dict] = []
     for path in (
-        "/api/library/liked?limit=80",
-        "/api/library?limit=80",
+        "/api/library",
         "/api/home",
     ):
         try:
@@ -100,31 +99,36 @@ def library_ids(token: str) -> list[dict]:
         except Exception as e:
             log(f"library {path} ERR {e}")
             continue
-        if st >= 400:
+        if st >= 400 or not isinstance(d, dict):
             continue
         bag = []
-        if isinstance(d, dict):
-            for k in ("tracks", "songs", "items", "liked", "results", "sections", "shelves"):
-                v = d.get(k)
-                if isinstance(v, list):
-                    bag.extend(v)
-                elif isinstance(v, dict):
-                    for vv in v.values():
-                        if isinstance(vv, list):
-                            bag.extend(vv)
-            # home shelves
-            for sec in d.get("sections") or d.get("shelves") or []:
-                if isinstance(sec, dict):
-                    bag.extend(sec.get("items") or sec.get("tracks") or [])
+        for k in (
+            "songs",
+            "liked",
+            "tracks",
+            "items",
+            "history",
+            "downloaded",
+            "mixes",
+            "albums",
+        ):
+            v = d.get(k)
+            if isinstance(v, list):
+                bag.extend(v)
+        for sec in d.get("shelves") or d.get("sections") or []:
+            if isinstance(sec, dict):
+                bag.extend(sec.get("items") or sec.get("tracks") or sec.get("songs") or [])
+        for pl in d.get("playlists") or d.get("likedPlaylists") or []:
+            if isinstance(pl, dict):
+                bag.extend(pl.get("tracks") or pl.get("songs") or pl.get("items") or [])
         for it in bag:
             if not isinstance(it, dict):
                 continue
             vid = it.get("videoId") or it.get("id") or it.get("trackId")
             if isinstance(vid, str) and len(vid) == 11:
-                ids.append({"id": vid, "title": it.get("title") or it.get("name") or vid})
+                ids.append({"id": vid, "title": str(it.get("title") or it.get("name") or vid)})
         if len(ids) >= TRACKS_API:
             break
-    # dedup
     seen = set()
     out = []
     for x in ids:
@@ -138,6 +142,14 @@ def library_ids(token: str) -> list[dict]:
 def stream_probe(token: str, video_id: str) -> dict:
     t0 = time.time()
     try:
+        # Suit les 302 de remplacement (titres morts → nouvel id)
+        class Redir(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: N802
+                return urllib.request.HTTPRedirectHandler.redirect_request(
+                    self, req, fp, code, msg, headers, newurl
+                )
+
+        opener = urllib.request.build_opener(Redir)
         req = urllib.request.Request(
             f"{API}/api/stream/{video_id}",
             headers={
@@ -148,7 +160,7 @@ def stream_probe(token: str, video_id: str) -> dict:
             },
             method="GET",
         )
-        with urllib.request.urlopen(req, timeout=55) as r:
+        with opener.open(req, timeout=55) as r:
             buf = r.read(2048)
             brand = "?"
             i = buf.find(b"ftyp")
