@@ -27,6 +27,7 @@ import {
   markYoutubeProxySuccess,
   youtubeProxyAttempts,
   youtubeProxyFreeEnabled,
+  ensureYoutubeProxyPool,
 } from '../youtube/youtubeProxy.js';
 import {
   peekStreamHead,
@@ -1578,6 +1579,23 @@ export async function handleStream(req: Request, res: Response) {
     }
   }
 
+  // Sous charge / IP bloquée : « non 2xx » sans proxies → un dernier passage forcé via pool.
+  if (!preferProxies && !res.headersSent) {
+    try {
+      await ensureYoutubeProxyPool(true);
+      ensureTime('ytdlpProxyForce');
+      noteStreamSource(res, 'yt-dlp (proxies forcés)');
+      await withDeadline('ytdlpPipeProxy', streamViaYtDlp(videoId, res, true));
+      return;
+    } catch (err) {
+      if (endIfHeadersSent(res)) return;
+      console.warn(
+        '[stream] yt-dlp proxies forcés KO:',
+        String((err as Error).message || err).slice(0, 140),
+      );
+    }
+  }
+
   try {
     noteStreamSource(res, 'Innertube (dernier recours)');
     await streamViaInnertube(videoId, res);
@@ -1585,15 +1603,13 @@ export async function handleStream(req: Request, res: Response) {
     if (!res.headersSent) {
       const detail = String(err);
       console.warn('[stream] all backends KO:', String((err as Error).message || err).slice(0, 160));
-      // Toujours tenter un id de remplacement (même si le message n’est pas « unavailable » —
-      // une course concurrente a pu déjà trouver le mapping).
+      // Remplacement : toujours tenter (unavailable OU transient CDN). Un mapping
+      // déjà connu court-circuite ; sinon findReplacementId pour tout le monde.
       if (!wantVideo) {
         try {
           const replacement =
             getReplacementId(videoId) ||
-            (looksUnavailable(detail)
-              ? await findReplacementId(videoId, { userId: (req as any).userId })
-              : null);
+            (await findReplacementId(videoId, { userId: (req as any).userId }));
           if (replacement && !res.headersSent) {
             res.setHeader('Cache-Control', 'no-store');
             res.setHeader('X-PLM-Replaced-From', videoId);
