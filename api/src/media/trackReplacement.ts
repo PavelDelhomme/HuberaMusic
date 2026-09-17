@@ -268,20 +268,15 @@ export async function findReplacementId(
       return t.id;
     }
 
-    // La sonde ne dispose que de la résolution de format, là où le pipeline de
-    // stream complet a bien plus de recours : « Ave Maria païen - NOA » y échouait
-    // alors qu'il se lit sans accroc. Le score ayant déjà garanti la
-    // correspondance, un candidat non vérifié vaut mieux qu'un échec certain.
+    // Un candidat non vérifié sous charge crée des ping-pong A↔B (Wonderwall).
+    // On ne mémorise que si la sonde playable a réussi ; sinon on sert une fois
+    // sans persister pour laisser le pipeline stream retenter l’original plus tard.
     const best = unique[0];
     if (best) {
       console.log(
-        `[replacement] ${deadId} → ${best.t.id} (score ${best.s}, non vérifié) ` +
+        `[replacement] ${deadId} → ${best.t.id} (score ${best.s}, non vérifié, non mémorisé) ` +
           `« ${best.t.title} — ${artistLine(best.t)} »`,
       );
-      // Mémorisé au même seuil que celui qui autorise à le servir : sans cela
-      // chaque lecture repaie la recherche (~40 s). Si ce remplaçant est mort à
-      // son tour, il déclenchera sa propre substitution.
-      saveReplacement(deadId, best.t.id, title, artist, best.s);
       return best.t.id;
     }
 
@@ -308,7 +303,14 @@ export async function findReplacementId(
 
 /** Signature d'une erreur « vidéo réellement morte » (par opposition à un souci réseau). */
 export function looksUnavailable(message: string): boolean {
-  return /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available/i.test(
+  return /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|violating|copyright claim|members?.only/i.test(
+    message,
+  );
+}
+
+/** Erreurs CDN / rate-limit / googlevideo — souvent guéries par proxies ou un autre id. */
+export function looksTransientStreamError(message: string): boolean {
+  return /non 2xx|http error 40[03]|status code 40[03]|403:|401:|429|too many requests|timed out|timeout|econnreset|econnrefused|socket hang up|tls|certificate|proxy/i.test(
     message,
   );
 }

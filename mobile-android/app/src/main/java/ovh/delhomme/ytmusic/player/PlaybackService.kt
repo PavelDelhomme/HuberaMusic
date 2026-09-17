@@ -141,28 +141,37 @@ class PlaybackService : MediaSessionService() {
 
     /**
      * Détecte une marge buffer qui fond **avant** STATE_BUFFERING :
-     * coupe le prefetch concurrent et warm le titre courant.
+     * coupe le prefetch concurrent et warm le titre courant + suivant.
+     * Objectif : guérir avant le spinner / « reprise du flux ».
      */
     private fun foresightBufferGuard(exo: Player) {
         val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastForesightMs < 1_800L) return
+        if (now - lastForesightMs < 1_200L) return
         val pos = exo.currentPosition.coerceAtLeast(0L)
         val buf = bufferedPositionSafe(exo)
         val ahead = buf - pos
-        if (ahead < 0L || ahead > 14_000L) return
-        if (pos < 3_000L) return // début de piste : buffer encore en construction
+        // Seuil plus tôt (22 s) pour laisser le temps au warm disque / URL.
+        if (ahead < 0L || ahead > 22_000L) return
+        if (pos < 2_000L) return // début de piste : buffer encore en construction
         lastForesightMs = now
         val id = exo.currentMediaItem?.mediaId.orEmpty()
         AppLog.i(
             "PlaybackService",
             "foresight buffer-low ahead=${ahead}ms id=$id → quiet+warm",
         )
-        StreamPrefetcher.quietPrefetch(8_000L)
-        if (id.length == 11) {
-            val base = resolvedApiBase()
-            if (base.isNotBlank()) {
-                StreamPrefetcher.warmTrackFormatOnly(base, id)
-                StreamPrefetcher.requestServerDiskCache(base, id)
+        StreamPrefetcher.quietPrefetch(10_000L)
+        val base = resolvedApiBase()
+        if (base.isNotBlank() && id.length == 11) {
+            StreamPrefetcher.warmTrackFormatOnly(base, id)
+            StreamPrefetcher.requestServerDiskCache(base, id)
+            // Warm le suivant aussi (évite cold_next → BUFFERING au skip naturel).
+            val nextIdx = exo.currentMediaItemIndex + 1
+            if (nextIdx in 0 until exo.mediaItemCount) {
+                val nextId = exo.getMediaItemAt(nextIdx).mediaId.orEmpty()
+                if (nextId.length == 11) {
+                    StreamPrefetcher.warmTrackFormatOnly(base, nextId)
+                    StreamPrefetcher.requestServerDiskCache(base, nextId)
+                }
             }
         }
     }
@@ -403,11 +412,9 @@ class PlaybackService : MediaSessionService() {
                         retryN = stallRebindCount.coerceAtLeast(1),
                         wipeCache = wipe,
                     )
+                    // Guérison silencieuse : pas de toast « Reprise du flux… »
+                    // (l’utilisateur ne doit pas voir d’erreur / spinner de recovery).
                     android.os.Handler(mainLooper).post {
-                        if (streakToastDue()) {
-                            lastStallRecoverToastMs = android.os.SystemClock.elapsedRealtime()
-                            toastMain("Reprise du flux…", Toast.LENGTH_SHORT)
-                        }
                         armStallWatch(exo)
                     }
                 }
@@ -1230,17 +1237,11 @@ class PlaybackService : MediaSessionService() {
                     }.getOrDefault(false)
                     android.os.Handler(mainLooper).post {
                         armStallWatch(exo)
-                        if (rebuilt && resolveOk && streakToastDue()) {
+                        // Recovery silencieuse — pas de toast « Reprise du flux / nouvel essai »
+                        // sauf panne réseau prolongée (utilisateur peut agir : Wi‑Fi / data).
+                        if (rebuilt && resolveOk && transientNetwork && streak >= 3 && streakToastDue()) {
                             lastStallRecoverToastMs = android.os.SystemClock.elapsedRealtime()
-                            toastMain(
-                                when {
-                                    httpStatus != null && httpStatus >= 500 ->
-                                        "Flux serveur ($httpStatus) — nouvel essai…"
-                                    transientNetwork -> "Réseau faible — nouvel essai…"
-                                    else -> "Reprise du flux…"
-                                },
-                                Toast.LENGTH_SHORT,
-                            )
+                            toastMain("Réseau faible — nouvel essai…", Toast.LENGTH_SHORT)
                         }
                     }
                 }

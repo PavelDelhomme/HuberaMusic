@@ -7,10 +7,10 @@ import { findReplacementId } from './trackReplacement.js';
 import { getTrackPayload } from '../library/db.js';
 
 const lastHealAt = new Map<string, number>();
-const HEAL_COOLDOWN_MS = 8 * 60_000;
+const HEAL_COOLDOWN_MS = 2 * 60_000;
 /** Remplacement : plus fréquent sur load_skip (éviter skip sec). */
 const lastReplaceAt = new Map<string, number>();
-const REPLACE_COOLDOWN_MS = 5 * 60_000;
+const REPLACE_COOLDOWN_MS = 3 * 60_000;
 
 const HEAL_KINDS = new Set([
   'android.player.stall',
@@ -67,11 +67,13 @@ export function healTrackFromTelemetry(opts: {
   enqueueStreamWarm([id], opts.userId);
   enqueueDiskWarm([id]);
 
-  // load_skip / stall error → tenter remplacement si la vidéo est morte
+  // load_skip / stall (warn ou error) → tenter remplacement si la vidéo est morte
+  // ou si le CDN refuse en boucle (évite spinner / toast côté client).
   const wantReplace =
     kind === 'android.player.load_skip' ||
-    (kind === 'android.player.stall' && opts.level === 'error') ||
-    /unavailable|not available|private|removed/i.test(String(opts.message || ''));
+    kind === 'android.player.stall' ||
+    kind === 'android.player.load_recover' ||
+    /unavailable|not available|private|removed|non 2xx|502|403/i.test(String(opts.message || ''));
   if (!wantReplace) return;
 
   const lastR = lastReplaceAt.get(id) || 0;
