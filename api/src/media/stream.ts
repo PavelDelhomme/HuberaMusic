@@ -600,14 +600,16 @@ async function streamViaYtDlp(videoId: string, res: Response, preferProxies = fa
   const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, preferProxies ? 2 : 3);
   // Maison offline → proxies d’abord (IP VPS souvent bot-bloquée)
   const proxies = await youtubeProxyAttempts({
-    max: preferProxies ? 7 : 5,
+    max: preferProxies ? 10 : 5,
     includeDirect: true,
     directLast: preferProxies,
     shuffle: preferProxies,
+    probe: preferProxies,
   });
 
   let lastErr: Error | null = null;
   let sawBot = false;
+  let proxyHardFails = 0;
   for (const proxy of proxies) {
     // Pendant cooldown : saute l’IP VPS directe, tente les proxies / autres IP
     if (!proxy && isYtDlpCoolingDown()) continue;
@@ -631,10 +633,16 @@ async function streamViaYtDlp(videoId: string, res: Response, preferProxies = fa
       }
     }
     if (proxy && lastErr) {
+      proxyHardFails += 1;
       console.warn(
         `[stream] yt-dlp via ${proxy.slice(0, 40)} KO → suivant:`,
         lastErr.message.slice(0, 100),
       );
+      // Trop de proxies morts d’affilée → recharge pool et continue (continuité)
+      if (proxyHardFails >= 3 && proxyHardFails % 3 === 0) {
+        const { ensureYoutubeProxyPool } = await import('../youtube/youtubeProxy.js');
+        await ensureYoutubeProxyPool(true);
+      }
     }
   }
   if (sawBot && lastErr) noteYtDlpFailure(lastErr);
@@ -653,10 +661,11 @@ async function streamViaYtDlpVideo(videoId: string, res: Response, preferProxies
     'best[height<=720][acodec!=none][vcodec!=none]/best',
   ];
   const proxies = await youtubeProxyAttempts({
-    max: preferProxies ? 6 : 4,
+    max: preferProxies ? 8 : 4,
     includeDirect: true,
     directLast: preferProxies,
     shuffle: preferProxies,
+    probe: preferProxies,
   });
   let lastErr: Error | null = null;
   let sawBot = false;
@@ -865,7 +874,15 @@ export async function handleStream(req: Request, res: Response) {
         // Android : attente courte seulement — 45 s bloquait derrière nginx → 504 Exo.
         // Si format/tête déjà chauds → ne PAS attendre le .m4a (volait 2.5 s à Exo).
         const formatHot = hasCachedAudioFormat(videoId, (req as any).userId);
-        const ramHot = Boolean(peekStreamHead(videoId));
+        const head = peekStreamHead(videoId);
+        let ramHot = false;
+        if (head) {
+          if (isDashBrandBuffer(head.buf)) {
+            invalidateStreamHead(videoId);
+          } else {
+            ramHot = true;
+          }
+        }
         // Android : un peu plus long pour obtenir un .m4a progressif (anti-DASH).
         const waitMs = isAndroid && !formatHot && !ramHot ? 4_000 : 0;
         if (waitMs > 0) {
@@ -988,12 +1005,12 @@ export async function handleStream(req: Request, res: Response) {
         // Budget épuisé par les Ranges précédents : au relais sans attendre.
         if (budget < 1_000) throw new Error('budget disque épuisé');
         await withDeadline('downloadTrack', dl, budget);
-        noteMidRangeDownload(true);
+        noteMidRangeDownload(true, videoId);
       } catch (err) {
         const msg = String((err as Error).message || err);
         // Un budget déjà consommé par les Ranges précédents ne dit rien de la
         // santé des téléchargements : il ne doit pas peser sur le budget.
-        if (!msg.includes('budget disque épuisé')) noteMidRangeDownload(false);
+        if (!msg.includes('budget disque épuisé')) noteMidRangeDownload(false, videoId);
         // Cooldown bot : Exo retry Mid-Range × N — 1 log / 60 s max
         if (/cooling down|bot\/rate-limit|Sign in to confirm|rate-limited/i.test(msg)) {
           const now = Date.now();
@@ -1918,22 +1935,16 @@ let lastMidRangeCoolingLog = 0;
 
 const MID_RANGE_BUDGET_MAX_MS = 35_000;
 const MID_RANGE_BUDGET_MIN_MS = 3_000;
-let midRangeBudgetMs = MID_RANGE_BUDGET_MAX_MS;
+/** Budget mid-range par titre (un bot sur A ne doit pas couper le seek de B). */
+const midRangeBudgetById = new Map<string, number>();
 
-/**
- * Le budget se réduit de moitié à chaque téléchargement manqué et repart au
- * maximum dès qu'un aboutit.
- *
- * Quand YouTube nous prend pour un robot, aucun téléchargement ne passe :
- * attendre trente-cinq secondes le cache disque ne fait que couper le son,
- * alors que le relais googlevideo répond dans la foulée. Renoncer une fois
- * pour toutes au cache serait tout aussi mauvais — il rend les déplacements
- * dans le morceau instantanés — d'où ce retour automatique au budget plein.
- */
-function noteMidRangeDownload(ok: boolean) {
-  midRangeBudgetMs = ok
-    ? MID_RANGE_BUDGET_MAX_MS
-    : Math.max(MID_RANGE_BUDGET_MIN_MS, Math.floor(midRangeBudgetMs / 2));
+function noteMidRangeDownload(ok: boolean, videoId?: string) {
+  if (!videoId) return;
+  const cur = midRangeBudgetById.get(videoId) ?? MID_RANGE_BUDGET_MAX_MS;
+  midRangeBudgetById.set(
+    videoId,
+    ok ? MID_RANGE_BUDGET_MAX_MS : Math.max(MID_RANGE_BUDGET_MIN_MS, Math.floor(cur / 2)),
+  );
 }
 
 /**
@@ -1948,9 +1959,10 @@ function noteMidRangeDownload(ok: boolean) {
  * téléchargement, pas depuis l'arrivée de la requête.
  */
 function midRangeWaitMs(videoId: string): number {
+  const budget = midRangeBudgetById.get(videoId) ?? MID_RANGE_BUDGET_MAX_MS;
   const started = downloadStartedAt.get(videoId);
-  if (!started) return midRangeBudgetMs;
-  return Math.max(0, midRangeBudgetMs - (Date.now() - started));
+  if (!started) return budget;
+  return Math.max(0, budget - (Date.now() - started));
 }
 
 export async function downloadTrack(
@@ -2029,10 +2041,11 @@ export async function downloadTrack(
     const cookieSets = ytDlpCookieArgSets({ forDownload: true });
     const extractorSets = ytDlpExtractorArgSets();
     const proxies = await youtubeProxyAttempts({
-      max: opts?.preferProxies ? 7 : 5,
+      max: opts?.preferProxies ? 10 : 5,
       includeDirect: true,
       directLast: Boolean(opts?.preferProxies),
       shuffle: Boolean(opts?.preferProxies),
+      probe: Boolean(opts?.preferProxies),
     });
     for (const proxy of proxies) {
       if (!proxy && isYtDlpCoolingDown()) continue;

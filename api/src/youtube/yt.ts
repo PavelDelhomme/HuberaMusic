@@ -2535,10 +2535,11 @@ async function audioFormatViaYtDlp(
   const cookieSets = ytDlpCookieArgSets();
   // Direct puis proxies (bypass bot IP) — cooldown VPS ≠ stop proxies
   const proxies = await youtubeProxyAttempts({
-    max: 5,
+    max: proxyOpts?.directLast ? 8 : 5,
     includeDirect: true,
     shuffle: proxyOpts?.shuffle,
     directLast: proxyOpts?.directLast,
+    probe: Boolean(proxyOpts?.directLast),
   });
 
   let lastErr: Error | null = null;

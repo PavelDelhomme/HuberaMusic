@@ -130,6 +130,11 @@ export function stableContentTotal(
     }
     // Fichier final un peu plus petit mais cohérent → garder l’annonce (évite EOF Exo).
     if (fileSize >= preferred) return preferred;
+    // Complet mais nettement plus petit que l’annonce GV → l’annonce ment ; ancrer le vrai fichier.
+    if (!incomplete && fileSize > 0 && fileSize < preferred - 64 * 1024) {
+      advertisedTotals.set(videoId, fileSize);
+      return fileSize;
+    }
     // Partiel / race : ne jamais renvoyer un total < déjà annoncé.
     if (fileSize > 0 && fileSize < preferred) return preferred;
     return preferred;
@@ -187,6 +192,14 @@ export async function warmStreamHead(
       throw new Error(`head warm ${upstream.status}`);
     }
     const buf = Buffer.from(await upstream.arrayBuffer());
+    // Ne jamais cacher une tête DASH (empoisonne Exo + skip wait progressif).
+    const ftyp = buf.indexOf(Buffer.from('ftyp'));
+    if (ftyp >= 0 && ftyp + 8 <= buf.length) {
+      const brand = buf.subarray(ftyp + 4, ftyp + 8).toString('ascii');
+      if (/^dash$/i.test(brand) || brand.toLowerCase().startsWith('dash')) {
+        throw new Error('head warm DASH rejected');
+      }
+    }
     let totalSize: number | null = null;
     const cr = upstream.headers.get('content-range');
     if (cr) {
