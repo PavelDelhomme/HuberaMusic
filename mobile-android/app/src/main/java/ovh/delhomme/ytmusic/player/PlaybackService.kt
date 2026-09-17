@@ -448,12 +448,12 @@ class PlaybackService : MediaSessionService() {
                     toastMain("Fichier local KO — reprise en streaming…", Toast.LENGTH_SHORT)
                 }
             } else {
-                // Soft rebind : URL fraîche, position conservée, cache Exo gardé.
+                // Soft rebind : URL fraîche + wipe cache Exo (partiel poisonné → stalls en boucle).
                 rebindCurrentStream(
                     reason = "stall-buffer",
                     forcePlay = true,
                     seekPos = pos.coerceAtLeast(0L),
-                    wipeCache = false,
+                    wipeCache = true,
                 )
                 armStallWatch(exo)
             }

@@ -3122,6 +3122,13 @@ process.on('uncaughtException', (err) => {
     console.error('[soft-fatal] ERR_HTTP_HEADERS_SENT — process conservé:', err.message);
     return;
   }
+  // Double démarrage API (ensure-api / nohup) — pas un crash produit, pas de mail fatal.
+  if (code === 'EADDRINUSE') {
+    console.error(
+      `[soft-fatal] EADDRINUSE :${(err as NodeJS.ErrnoException).port || PORT} — instance déjà UP, sortie silencieuse`,
+    );
+    process.exit(0);
+  }
   console.error('[fatal] uncaughtException', err);
   try {
     const id = insertTelemetry({
@@ -3196,6 +3203,17 @@ process.on('unhandledRejection', (reason) => {
   }
 });
 
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(
+      `[soft-fatal] listen EADDRINUSE 0.0.0.0:${PORT} — API déjà en écoute, pas de mail fatal`,
+    );
+    process.exit(0);
+  }
+  console.error('[fatal] server.listen', err);
+  process.exit(1);
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   try {
     syncSeedCredentials();
@@ -3209,4 +3227,13 @@ server.listen(PORT, '0.0.0.0', () => {
   startGlobalTasteWarmScheduler();
   startPlaybackDigestScheduler();
   startLibraryWarmSweep();
+  void import('./youtube/youtubeProxy.js')
+    .then((m) => {
+      m.startYoutubeProxyBackgroundRefresh();
+      return m.ensureYoutubeProxyPool(true);
+    })
+    .then(() => console.log('[youtubeProxy] pool warm OK'))
+    .catch((err) =>
+      console.warn('[youtubeProxy] pool warm KO', String((err as Error).message || err).slice(0, 80)),
+    );
 });

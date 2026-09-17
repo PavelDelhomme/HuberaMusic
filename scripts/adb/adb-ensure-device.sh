@@ -99,15 +99,22 @@ adb_ensure_device() {
       fi
     fi
 
-    # 2) Autre appareil déjà autorisé → on bascule
+    # 2) Autre appareil déjà autorisé → on bascule (sauf STRICT_DEVICE=1)
     local other
     other="$(adb_first_authorized || true)"
     if [[ -n "$other" ]]; then
       if [[ -n "$want" && "$other" != "$want" ]]; then
-        echo "==> ADB : $want indisponible → utilisation de $other" >&2
+        if [[ "${STRICT_DEVICE:-0}" == "1" || "${STRICT_DEVICE:-}" == "true" ]]; then
+          printf "\r==> ADB : STRICT — attente de %s (pas %s)… %ds/%ds   " "$want" "$other" "$waited" "$ADB_WAIT_SECS" >&2
+        else
+          echo "==> ADB : $want indisponible → utilisation de $other" >&2
+          echo "$other"
+          return 0
+        fi
+      else
+        echo "$other"
+        return 0
       fi
-      echo "$other"
-      return 0
     fi
 
     # 3) Unauthorized sans device OK → aide + attente
