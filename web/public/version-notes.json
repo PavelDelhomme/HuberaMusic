@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-18",
   "versions": [
     {
+      "version": "1.3.249",
+      "date": "2026-09-18",
+      "title": "Pré-validation flux avant écoute (anti-coupure)",
+      "notes": [
+        "Avant play Android : le serveur assure un .m4a complet (proxies + contrôle ftyp) ou un remplaçant jouable",
+        "Warm / heal stall : téléchargement intégral disque, plus seulement une tête RAM",
+        "Réduit les 502 / coupures mid-piste quand le VPS est bot-bloqué"
+      ]
+    },
+    {
       "version": "1.3.248",
       "date": "2026-09-18",
       "title": "Slim Shady sans PC maison + remplacements sains",
