@@ -2,6 +2,15 @@
   "updatedAt": "2026-09-18",
   "versions": [
     {
+      "version": "1.3.253",
+      "date": "2026-09-18",
+      "title": "Maison : un DASH ne coupe plus tout le tunnel",
+      "notes": [
+        "Relais maison : un titre en DASH ne marque plus le PC hors-ligne 45 s (évite file entière en 502)",
+        "Reprise après appel (1.3.252) : soft rebind + toast « Reprise du flux… »"
+      ]
+    },
+    {
       "version": "1.3.252",
       "date": "2026-09-18",
       "title": "Reprise après appel sans faux « Serveur audio indisponible »",
