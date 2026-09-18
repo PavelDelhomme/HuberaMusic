@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-18",
   "versions": [
     {
+      "version": "1.3.246",
+      "date": "2026-09-18",
+      "title": "Seek fluide + yt-dlp rapide + warm qui cède la place",
+      "notes": [
+        "Appui long next/prev : avance dans le titre uniquement (plus de saute de 5–10 titres)",
+        "yt-dlp : timeout 12 s + stop immédiat si vidéo unavailable (vise 410 <5–15 s)",
+        "Warm biblio : pause yt-dlp pendant une écoute active (Aléatoire ne timeout plus derrière la file likes)"
+      ]
+    },
+    {
       "version": "1.3.245",
       "date": "2026-09-18",
       "title": "Skip immédiat des titres YouTube morts (410)",
