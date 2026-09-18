@@ -10,7 +10,7 @@ import { existsSync, statSync } from 'node:fs';
 import { listWarmCandidates } from '../platform/adminUsers.js';
 import { getHistory, getTopListened } from '../library/library.js';
 import { db } from '../library/db.js';
-import { cachePath, enqueueStreamWarm, enqueueDiskWarm } from './stream.js';
+import { cachePath, enqueueStreamWarm, enqueueDiskWarm, isPlaybackHot } from './stream.js';
 
 const enabled = () => {
   const v = String(process.env.TASTE_WARM_ENABLED ?? '').trim().toLowerCase();
@@ -83,6 +83,8 @@ export function scheduleUserTasteWarm(
   opts?: { force?: boolean; disk?: number },
 ): void {
   if (!enabled() || !userId) return;
+  // Pendant une écoute : formats RAM ok, mais PAS de .m4a (slots yt-dlp).
+  const playbackHot = isPlaybackHot(90_000);
   const now = Date.now();
   if (!opts?.force) {
     const last = userCooldown.get(userId) || 0;
@@ -103,6 +105,7 @@ export function scheduleUserTasteWarm(
       ].filter((id, i, a) => a.indexOf(id) === i);
       if (!ids.length) return;
       enqueueStreamWarm(ids.slice(0, 28), userId);
+      if (playbackHot) return;
       const diskN = Math.max(0, Math.min(16, opts?.disk ?? 10));
       const needDisk = ids.filter(needsDisk).slice(0, diskN);
       if (needDisk.length) enqueueDiskWarm(needDisk);
@@ -119,6 +122,7 @@ export function scheduleUserTasteWarm(
 export async function runGlobalTasteWarmOnce(): Promise<{ warmed: number; disk: number }> {
   if (!enabled()) return { warmed: 0, disk: 0 };
   if (globalRunning) return { warmed: 0, disk: 0 };
+  if (isPlaybackHot(90_000)) return { warmed: 0, disk: 0 };
   globalRunning = true;
   try {
     const maxPerUser = Math.max(15, Math.min(80, Number(process.env.TASTE_WARM_PER_USER || 40) || 40));
@@ -130,6 +134,11 @@ export async function runGlobalTasteWarmOnce(): Promise<{ warmed: number; disk: 
     // Lots pour ne pas saturer la file warm
     for (let i = 0; i < ids.length; i += 20) {
       enqueueStreamWarm(ids.slice(i, i + 20));
+    }
+    // Disque seulement hors écoute
+    if (isPlaybackHot(90_000)) {
+      console.info(`[tasteWarm] global warm=${ids.length} diskQueue=0 (playback hot)`);
+      return { warmed: ids.length, disk: 0 };
     }
     const diskCap = Math.max(8, Math.min(80, Number(process.env.TASTE_WARM_DISK || 36) || 36));
     const needDisk = ids.filter(needsDisk).slice(0, diskCap);

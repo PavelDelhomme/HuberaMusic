@@ -7,6 +7,11 @@
  * On ne pose le cooldown qu’après épuisement des tentatives (noteYtDlpFailure explicite).
  */
 const MAX = Math.max(1, Math.min(12, Number(process.env.YTDLP_MAX_CONCURRENT || 4) || 4));
+/** Garde ≥1 slot pour l’écoute live — le warm ne doit jamais saturer yt-dlp. */
+const LIVE_RESERVED = Math.max(
+  1,
+  Math.min(MAX - 1, Number(process.env.YTDLP_LIVE_RESERVED || 1) || 1),
+);
 const BOT_COOLDOWN_MS = Math.max(
   30_000,
   Math.min(3_600_000, Number(process.env.YTDLP_BOT_COOLDOWN_MS || 300_000) || 300_000),
@@ -14,6 +19,8 @@ const BOT_COOLDOWN_MS = Math.max(
 
 let active = 0;
 const waiters: Array<() => void> = [];
+/** File prioritaire pour les requêtes stream live (passe devant le warm). */
+const liveWaiters: Array<() => void> = [];
 let cooldownUntil = 0;
 let lastCooldownLog = 0;
 
@@ -23,6 +30,10 @@ export function ytDlpActiveCount(): number {
 
 export function ytDlpMaxConcurrent(): number {
   return MAX;
+}
+
+export function ytDlpLiveReserved(): number {
+  return LIVE_RESERVED;
 }
 
 export function isYtDlpCoolingDown(): boolean {
@@ -59,7 +70,13 @@ export type YtDlpSlotOpts = {
   bypassCooldown?: boolean;
   /** Si false, ne pas armé le cooldown sur erreur (la boucle appelante décide). */
   noteFailure?: boolean;
+  /** Priorité stream live — passe devant le warm/prefetch en file d’attente. */
+  live?: boolean;
 };
+
+function warmCap(): number {
+  return Math.max(1, MAX - LIVE_RESERVED);
+}
 
 export async function withYtDlpSlot<T>(
   fn: () => Promise<T>,
@@ -67,18 +84,27 @@ export async function withYtDlpSlot<T>(
 ): Promise<T> {
   const bypass = opts.bypassCooldown === true;
   const noteFailure = opts.noteFailure !== false;
+  const live = opts.live === true;
   if (!bypass && isYtDlpCoolingDown()) {
     throw new Error(
       `yt-dlp cooling down ${Math.ceil(ytDlpCooldownRemainingMs() / 1000)}s (bot/rate-limit)`,
     );
   }
-  if (active >= MAX) {
+  const cap = live ? MAX : warmCap();
+  if (active >= cap) {
+    await new Promise<void>((resolve) => {
+      if (live) liveWaiters.push(resolve);
+      else waiters.push(resolve);
+    });
+  }
+  if (!bypass && isYtDlpCoolingDown()) {
+    throw new Error(
+      `yt-dlp cooling down ${Math.ceil(ytDlpCooldownRemainingMs() / 1000)}s (bot/rate-limit)`,
+    );
+  }
+  // Re-check cap after wait (autre live a pu prendre le slot réservé).
+  if (!live && active >= warmCap()) {
     await new Promise<void>((resolve) => waiters.push(resolve));
-  }
-  if (!bypass && isYtDlpCoolingDown()) {
-    throw new Error(
-      `yt-dlp cooling down ${Math.ceil(ytDlpCooldownRemainingMs() / 1000)}s (bot/rate-limit)`,
-    );
   }
   active += 1;
   try {
@@ -88,7 +114,7 @@ export async function withYtDlpSlot<T>(
     throw err;
   } finally {
     active -= 1;
-    const next = waiters.shift();
+    const next = liveWaiters.shift() || waiters.shift();
     if (next) next();
   }
 }

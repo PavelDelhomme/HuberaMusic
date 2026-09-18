@@ -588,7 +588,7 @@ async function spawnYtDlpMediaPipe(
           }
         });
       }),
-    { bypassCooldown: true, noteFailure: false },
+    { bypassCooldown: true, noteFailure: false, live: true },
   );
 }
 
@@ -756,6 +756,8 @@ function streamPathFor(req: Request, videoId: string): string {
 export async function handleStream(req: Request, res: Response) {
   const videoId = String(req.params.id || '');
   lastStreamAtMs = Date.now();
+  // Libère yt-dlp : le warm de fond ne doit pas timeout l’écoute Nothing.
+  suspendBackgroundDiskWarm(videoId);
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     res.status(400).json({ error: 'ID invalide' });
     return;
@@ -1287,11 +1289,15 @@ export async function handleStream(req: Request, res: Response) {
       : await withDeadline(
           // Progressif pour web + Android (DASH Innertube rejeté → silence navigateur).
           'getAudioFormatProgressive',
-          getAudioFormatViaYtDlpOnly(videoId).catch(() =>
+          getAudioFormatViaYtDlpOnly(videoId, {
+            live: true,
+            preferProxies,
+          }).catch(() =>
             getAudioFormat(videoId, {
               userId: (req as any).userId,
               forceFresh: true,
               retryN,
+              live: true,
             }),
           ),
         );
@@ -1316,7 +1322,7 @@ export async function handleStream(req: Request, res: Response) {
           ? await withDeadline('getVideoFormat2', getVideoFormat(videoId))
           : await withDeadline(
               'getAudioFormat2',
-              getAudioFormat(videoId, { userId: (req as any).userId }),
+              getAudioFormat(videoId, { userId: (req as any).userId, live: true }),
             );
         if (!format.url) throw new Error(`upstream ${wantVideo ? 'video' : 'audio'} ${upstream.status}`);
         upstream = await withDeadline('fetchGV2', fetchGooglevideo(format.url, rangeHdr));
@@ -1327,7 +1333,7 @@ export async function handleStream(req: Request, res: Response) {
         (upstream.status === 403 || upstream.status === 401 || upstream.status === 404)
       ) {
         try {
-          format = await withDeadline('ytDlpUrl', getAudioFormatViaYtDlpOnly(videoId));
+          format = await withDeadline('ytDlpUrl', getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies }));
           upstream = await withDeadline('fetchGV3', fetchGooglevideo(format.url, rangeHdr));
         } catch {
           /* fallback pipe plus bas */
@@ -1340,7 +1346,7 @@ export async function handleStream(req: Request, res: Response) {
         try {
           format = await withDeadline(
             'getAudioFormat5xx',
-            getAudioFormat(videoId, { userId: (req as any).userId }),
+            getAudioFormat(videoId, { userId: (req as any).userId, live: true }),
           );
           if (format.url) {
             await new Promise((r) => setTimeout(r, 200));
@@ -1846,6 +1852,26 @@ export function diskWarmQueueStats(): {
     likes: likesDiskWarmQueue.length,
     busy: diskWarmBusy,
   };
+}
+
+/** Pendant une écoute : vider le warm générique pour libérer yt-dlp (Aléatoire / cold). */
+export function suspendBackgroundDiskWarm(keepCurrentId?: string) {
+  const keep = keepCurrentId && /^[a-zA-Z0-9_-]{11}$/.test(keepCurrentId) ? keepCurrentId : '';
+  while (diskWarmQueue.length) {
+    const id = diskWarmQueue.shift()!;
+    diskWarmQueued.delete(id);
+  }
+  // Likes : ne garder que le titre courant (sinon la file likes monopolise aussi).
+  const keptLikes: string[] = [];
+  while (likesDiskWarmQueue.length) {
+    const id = likesDiskWarmQueue.shift()!;
+    likesDiskWarmQueued.delete(id);
+    if (id === keep && keptLikes.length === 0) keptLikes.push(id);
+  }
+  for (const id of keptLikes) {
+    likesDiskWarmQueued.add(id);
+    likesDiskWarmQueue.push(id);
+  }
 }
 
 async function runWarmWorker() {

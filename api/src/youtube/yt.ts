@@ -2453,6 +2453,7 @@ async function ytDlpGetUrl(
   cookieArgs: string[],
   proxy: string | null = null,
   extractorArgs: string[] = [],
+  live = false,
 ): Promise<string> {
   const { spawn } = await import('node:child_process');
   const { withYtDlpSlot } = await import('../media/ytDlpGate.js');
@@ -2516,35 +2517,63 @@ async function ytDlpGetUrl(
           }
         });
       }),
-    { bypassCooldown: true, noteFailure: false },
+    { bypassCooldown: true, noteFailure: false, live },
   );
 }
 
-async function audioFormatViaYtDlpFast(videoId: string): Promise<AudioFormat> {
+async function audioFormatViaYtDlpFast(
+  videoId: string,
+  opts?: { live?: boolean },
+): Promise<AudioFormat> {
   const { isYtDlpCoolingDown } = await import('../media/ytDlpGate.js');
   if (isYtDlpCoolingDown()) throw new Error('yt-dlp cooling');
   const format = YTDLP_AUDIO_FORMAT_CANDIDATES[0] || 'bestaudio[ext=m4a]/bestaudio/best';
   const extractorSets = ytDlpExtractorArgSets();
   let lastErr: Error | null = null;
-  for (const extractorArgs of extractorSets) {
-    try {
-      const url = await ytDlpGetUrl(videoId, format, [], null, extractorArgs);
-      markYoutubeProxySuccess(null);
-      return {
-        url,
-        mimeType: 'audio/mp4',
-        bitrate: 128_000,
-        contentLength: undefined,
-        expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
-      };
-    } catch (err) {
-      lastErr = err instanceof Error ? err : new Error(String(err));
-      if (
-        /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
-          lastErr.message,
-        )
-      ) {
-        throw lastErr;
+  const live = opts?.live === true;
+  // Live sur VPS : 1–2 proxies d’abord (IP directe = bot).
+  const proxies = live
+    ? await youtubeProxyAttempts({
+        max: 3,
+        includeDirect: false,
+        shuffle: true,
+        probe: true,
+      })
+    : [null as string | null];
+  if (!live) {
+    /* keep [null] */
+  } else if (!proxies.length) {
+    proxies.push(null);
+  }
+  for (const proxy of proxies) {
+    for (const extractorArgs of extractorSets) {
+      try {
+        const url = await ytDlpGetUrl(
+          videoId,
+          format,
+          [],
+          proxy,
+          extractorArgs,
+          live,
+        );
+        markYoutubeProxySuccess(proxy);
+        return {
+          url,
+          mimeType: 'audio/mp4',
+          bitrate: 128_000,
+          contentLength: undefined,
+          expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+        };
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        if (
+          /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
+            lastErr.message,
+          )
+        ) {
+          throw lastErr;
+        }
+        if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
       }
     }
   }
@@ -2553,30 +2582,35 @@ async function audioFormatViaYtDlpFast(videoId: string): Promise<AudioFormat> {
 
 async function audioFormatViaYtDlp(
   videoId: string,
-  proxyOpts?: { shuffle?: boolean; directLast?: boolean },
+  proxyOpts?: { shuffle?: boolean; directLast?: boolean; live?: boolean },
 ): Promise<AudioFormat> {
   const { isYtDlpCoolingDown, noteYtDlpFailure } = await import('../media/ytDlpGate.js');
   // Anonyme d’abord — cookies optionnels (jamais Premium requis)
   const cookieSets = ytDlpCookieArgSets();
+  const live = proxyOpts?.live === true;
   // Direct puis proxies (bypass bot IP) — cooldown VPS ≠ stop proxies
+  // Live écoute : proxies d’abord + peu de formats (budget stream ~35 s).
   const proxies = await youtubeProxyAttempts({
-    max: proxyOpts?.directLast ? 8 : 5,
+    max: proxyOpts?.directLast || live ? 8 : 5,
     includeDirect: true,
-    shuffle: proxyOpts?.shuffle,
-    directLast: proxyOpts?.directLast,
-    probe: Boolean(proxyOpts?.directLast),
+    shuffle: proxyOpts?.shuffle || live,
+    directLast: proxyOpts?.directLast || live,
+    probe: Boolean(proxyOpts?.directLast || live),
   });
 
   let lastErr: Error | null = null;
   let sawBot = false;
   const extractorSets = ytDlpExtractorArgSets();
+  const formats = live
+    ? YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, 1)
+    : YTDLP_AUDIO_FORMAT_CANDIDATES;
   for (const proxy of proxies) {
     if (!proxy && isYtDlpCoolingDown()) continue;
     for (const extractorArgs of extractorSets) {
       for (const cookieArgs of cookieSets) {
-        for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
+        for (const format of formats) {
           try {
-            const url = await ytDlpGetUrl(videoId, format, cookieArgs, proxy, extractorArgs);
+            const url = await ytDlpGetUrl(videoId, format, cookieArgs, proxy, extractorArgs, live);
             markYoutubeProxySuccess(proxy);
             const abr = (() => {
               try {
@@ -2625,12 +2659,15 @@ async function audioFormatViaYtDlp(
 
 export async function getAudioFormat(
   videoId: string,
-  opts?: { userId?: string; forceFresh?: boolean; retryN?: number },
+  opts?: { userId?: string; forceFresh?: boolean; retryN?: number; live?: boolean },
 ): Promise<AudioFormat> {
   const forceFresh = Boolean(opts?.forceFresh || (opts?.retryN ?? 0) > 0);
+  const live = opts?.live === true;
   const proxyRetry = forceFresh
-    ? { shuffle: true, directLast: true }
-    : undefined;
+    ? { shuffle: true, directLast: true, live }
+    : live
+      ? { live: true }
+      : undefined;
 
   const baseKey = audioCacheKey(videoId);
   const key = opts?.userId ? `${baseKey}:u:${opts.userId.slice(0, 8)}` : baseKey;
@@ -2685,7 +2722,7 @@ export async function getAudioFormat(
       try {
         return await Promise.any([
           tryInnertubeFast(),
-          audioFormatViaYtDlpFast(videoId),
+          audioFormatViaYtDlpFast(videoId, { live }),
         ]);
       } catch {
         return null;
@@ -2701,7 +2738,7 @@ export async function getAudioFormat(
       // Chemin lent : yt-dlp complet (proxies) puis Innertube élargi
       try {
         entry = await Promise.race([
-          audioFormatViaYtDlp(videoId, proxyRetry),
+          audioFormatViaYtDlp(videoId, proxyRetry || { live }),
           new Promise<never>((_, rej) =>
             setTimeout(() => rej(new Error('yt-dlp format timeout')), 12_000),
           ),
@@ -2756,10 +2793,19 @@ export async function getAudioFormat(
 }
 
 /** Force une URL via yt-dlp (après 403 Innertube / cache pourri). */
-export async function getAudioFormatViaYtDlpOnly(videoId: string): Promise<AudioFormat> {
+export async function getAudioFormatViaYtDlpOnly(
+  videoId: string,
+  opts?: { live?: boolean; preferProxies?: boolean },
+): Promise<AudioFormat> {
   invalidateAudioFormat(videoId);
   const key = audioCacheKey(videoId);
-  const entry = await audioFormatViaYtDlp(videoId);
+  const preferProxies = opts?.preferProxies === true;
+  const entry = await audioFormatViaYtDlp(videoId, {
+    live: opts?.live === true,
+    // VPS bot-bloqué : ne pas brûler le budget sur l’IP directe.
+    shuffle: preferProxies,
+    directLast: preferProxies,
+  });
   audioFormatCache.set(key, entry);
   return entry;
 }
