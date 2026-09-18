@@ -2720,9 +2720,18 @@ export async function getAudioFormat(
 
     const resolveFast = async (): Promise<AudioFormat | null> => {
       try {
+        // Live écoute : OAuth/Innertube d’abord (VPS ~1 s, sans PC maison).
+        // yt-dlp (+proxies) seulement si Innertube échoue — évite timeout 35 s.
+        if (live) {
+          try {
+            return await tryInnertubeFast();
+          } catch {
+            return await audioFormatViaYtDlpFast(videoId, { live: true });
+          }
+        }
         return await Promise.any([
           tryInnertubeFast(),
-          audioFormatViaYtDlpFast(videoId, { live }),
+          audioFormatViaYtDlpFast(videoId),
         ]);
       } catch {
         return null;

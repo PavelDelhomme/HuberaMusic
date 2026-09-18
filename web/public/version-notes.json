@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-18",
   "versions": [
     {
+      "version": "1.3.248",
+      "date": "2026-09-18",
+      "title": "Slim Shady sans PC maison + remplacements sains",
+      "notes": [
+        "Cache disque servi avant les redirections de remplacement (fin des chaînes vers titres morts)",
+        "Plus de remplacement « non vérifié » qui redirige vers un medley/live KO",
+        "Écoute live : Innertube/OAuth prioritaire sur yt-dlp (VPS sans tunnel maison)",
+        "Warm : slot yt-dlp réservé à l’écoute ; taste/library ne saturent plus le lecteur"
+      ]
+    },
+    {
       "version": "1.3.247",
       "date": "2026-09-18",
       "title": "Écoute prioritaire vs warm + proxies VPS",
