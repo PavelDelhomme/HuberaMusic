@@ -1471,6 +1471,16 @@ export async function handleStream(req: Request, res: Response) {
           String((replErr as Error).message || replErr).slice(0, 140),
         );
       }
+      // Pas de remplaçant : 410 immédiat — le client skip sans 6× retries / 50 s.
+      if (!res.headersSent) {
+        res.status(410).json({
+          error: 'Impossible de streamer audio',
+          code: 'VIDEO_UNAVAILABLE',
+          detail: msg.slice(0, 240),
+          hint: 'Titre retiré / privé — passage au suivant côté app',
+        });
+        return;
+      }
     }
   }
 
@@ -1619,6 +1629,15 @@ export async function handleStream(req: Request, res: Response) {
       }
       const cookies = resolveYoutubeCookieHeader();
       noteStreamNote(res, `tous les backends KO : ${detail.slice(0, 200)}`);
+      if (!wantVideo && looksUnavailable(detail)) {
+        res.status(410).json({
+          error: 'Impossible de streamer audio',
+          code: 'VIDEO_UNAVAILABLE',
+          detail: detail.slice(0, 240),
+          hint: 'Titre retiré / privé — passage au suivant côté app',
+        });
+        return;
+      }
       res.status(502).json({
         error: 'Impossible de streamer audio',
         detail,
