@@ -98,14 +98,26 @@ export default defineConfig(({ mode }) => {
             handler: 'NetworkOnly',
           },
           {
+            // Accueil / auth : NetworkOnly — NetworkFirst 5s renvoyait un cache 401/vide
+            // pendant que /api/home mettait 17–40s → Accueil bloqué sur « Chargement… ».
+            urlPattern: ({ url }) =>
+              url.pathname === '/api/home' ||
+              url.pathname.startsWith('/api/home/') ||
+              url.pathname.startsWith('/api/auth/'),
+            handler: 'NetworkOnly',
+          },
+          {
             urlPattern: ({ url }) =>
               url.pathname.startsWith('/api/') &&
               !url.pathname.startsWith('/api/stream/') &&
-              !url.pathname.startsWith('/api/search'),
+              !url.pathname.startsWith('/api/search') &&
+              url.pathname !== '/api/home' &&
+              !url.pathname.startsWith('/api/home/') &&
+              !url.pathname.startsWith('/api/auth/'),
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
-              networkTimeoutSeconds: 5,
+              networkTimeoutSeconds: 8,
               expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
             },
           },
