@@ -289,6 +289,19 @@ class PlayerController(
             AppLog.w("player", "play bloqué MODE_IN_CALL/COMM mode=$mode")
             return
         }
+        // Après un titre KO (ERROR Exo) : ne pas laisser streamDown / playerError bloquer
+        // le deeplink / skip suivant (vu en multi-skip Samsung sur titres froids).
+        StreamPrefetcher.markStreamOk()
+        PlaybackService.Holder.streamRecoveringId = ""
+        PlaybackService.Holder.streamFailStreak = 0
+        runCatching {
+            val p = player()
+            if (p != null && p.playerError != null) {
+                AppLog.i("player", "play après ERROR → stop/clear avant nouvelle file")
+                p.stop()
+                p.clearMediaItems()
+            }
+        }
         if (title != null) {
             queueTitle = title.ifBlank { "File d'attente" }
         } else {
@@ -315,17 +328,23 @@ class PlayerController(
                 YtMusicApp.instance.container.offlineStore.has(firstId)
             }.getOrDefault(false)
             val headReady = StreamPrefetcher.wasHeadReadyRecently(firstId)
-            // Hors-ligne / tête chaude : zéro quiet. Sinon court (évite 900 ms morts).
+            // Laisser le 1er titre prendre la bande (VPS froid ~15–40 s).
             StreamPrefetcher.quietPrefetch(
                 when {
-                    offlineReady || headReady -> 40L
-                    else -> 350L
+                    offlineReady || headReady -> 80L
+                    else -> 12_000L
                 },
             )
             val startId = firstId
             scope.launch {
-                delay(if (offlineReady || headReady) 60L else 280L)
+                delay(if (offlineReady || headReady) 60L else 8_000L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
+                // Suivants seulement après que le courant ait vraiment démarré.
+                val pos = player()?.currentPosition ?: 0L
+                if (pos < 1_500L && !headReady && !offlineReady) {
+                    delay(8_000L)
+                    if (player()?.currentMediaItem?.mediaId != startId) return@launch
+                }
                 playable.drop(idx + 1).take(2).forEach { t ->
                     StreamPrefetcher.warmTrackFormatOnly(base, t.id)
                 }
@@ -334,7 +353,7 @@ class PlayerController(
                     base,
                     playable.map { it.id },
                     idx,
-                    count = 12,
+                    count = 6,
                     ignoreQuiet = false,
                 )
             }
@@ -2253,7 +2272,7 @@ class PlayerController(
                     )
                     runCatching {
                         ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                            level = "error",
+                            level = "warn",
                             kind = "android.player.load_recover",
                             message = "buffer stuck → resolve keep id=$trackId",
                             meta = mapOf(
@@ -2264,7 +2283,7 @@ class PlayerController(
                                 "action" to "resolve_keep",
                                 "reason" to "buffer_stuck_last_resort",
                             ),
-                            force = true,
+                            force = false,
                         )
                     }
                     runCatching {

@@ -53,8 +53,8 @@ object StreamPrefetcher {
 
     private const val MAX_WARM = 16
     /** Fenêtre avant sur Wi‑Fi (file / aléatoire / rolling). */
-    private const val AHEAD_WIFI = 16
-    private const val AHEAD_METERED = 8
+    private const val AHEAD_WIFI = 6
+    private const val AHEAD_METERED = 4
     private const val DISK_CACHE_MB = 48L
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
@@ -72,14 +72,14 @@ object StreamPrefetcher {
         streamDownUntil = 0L
     }
 
-    fun markStreamDown(pauseMs: Long = 45_000L) {
+    fun markStreamDown(pauseMs: Long = 25_000L) {
         streamDownUntil = System.currentTimeMillis() + pauseMs
         cancelIdle()
     }
 
     private fun noteNetworkFailure() {
         streamFailStreak += 1
-        if (streamFailStreak >= 4) markStreamDown()
+        if (streamFailStreak >= 5) markStreamDown()
     }
 
     private val client: OkHttpClient by lazy {

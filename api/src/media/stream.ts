@@ -278,6 +278,27 @@ export function isStreamUpstreamAllowed(): boolean {
 
 /** Relais stream vers l’API maison (évite le blocage IP datacenter YouTube). */
 let homeAliveCache: { at: number; ok: boolean; base: string } | null = null;
+/** Timeouts / abort d’un seul titre ≠ PC éteint — streak avant poison court. */
+let homeSoftFailStreak = 0;
+let homeSoftFailAt = 0;
+
+function markHomeAlive(homeBase: string) {
+  homeAliveCache = {
+    at: Date.now(),
+    ok: true,
+    base: homeBase.replace(/\/$/, ''),
+  };
+  homeSoftFailStreak = 0;
+}
+
+function markHomeDead(homeBase: string, ttlMs = 12_000) {
+  // ttl via `at` dans le passé relatif : isHomeUpstreamReachable re-sonde après ttlMs
+  homeAliveCache = {
+    at: Date.now() - (45_000 - Math.max(3_000, ttlMs)),
+    ok: false,
+    base: homeBase.replace(/\/$/, ''),
+  };
+}
 
 /**
  * Sonde rapide : si le PC maison est éteint, on skip le relais immédiatement
@@ -298,10 +319,15 @@ async function isHomeUpstreamReachable(homeBase: string): Promise<boolean> {
       headers: { Accept: 'application/json' },
     });
     const ok = r.ok;
-    homeAliveCache = { at: Date.now(), ok, base };
+    if (ok) {
+      markHomeAlive(base);
+    } else {
+      // Health 5xx ponctuel ≠ PC éteint — re-sonde vite (8 s).
+      markHomeDead(base, 8_000);
+    }
     return ok;
   } catch {
-    homeAliveCache = { at: Date.now(), ok: false, base };
+    markHomeDead(base, 8_000);
     return false;
   }
 }
@@ -323,26 +349,56 @@ async function proxyStreamToHome(
   if (req.headers.range) headers.Range = String(req.headers.range);
   const auth = req.headers.authorization;
   if (auth) headers.Authorization = String(auth);
-  // Timeout global = plafond ; first-byte plus court pour open Android (évite 20 s BUFFERING).
-  const upstream = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(Math.max(firstByteTimeoutMs + 2_000, timeoutMs)),
-  });
+  // CRITIQUE : ne PAS AbortSignal.timeout() sur tout le fetch.
+  // Open-ended Android pipe pendant des minutes — un timeout global 45 s coupait
+  // le flux mid-titre → stalls Exo + poison « maison offline » + avalanche mails.
+  // Abort uniquement jusqu’au 1er octet (headers + first chunk).
+  // 50 s : sous charge (Nothing + warm + prefetch) le PC maison peut
+  // mettre 20–40 s avant le 1er octet — 28 s abortait trop tôt → file KO.
+  const ac = new AbortController();
+  const openMs = Math.max(firstByteTimeoutMs + 5_000, Math.min(timeoutMs, 50_000));
+  const openTimer = setTimeout(() => ac.abort(), openMs);
+  let upstream: Response;
+  try {
+    upstream = await fetch(url, {
+      headers,
+      signal: ac.signal,
+    });
+  } catch (err) {
+    clearTimeout(openTimer);
+    throw err;
+  }
   if (upstream.status >= 400) {
+    clearTimeout(openTimer);
     const detail = await upstream.text().catch(() => '');
     throw new Error(`home stream ${upstream.status}: ${detail.slice(0, 180)}`);
   }
-  if (!upstream.body) throw new Error('home stream sans corps');
+  if (!upstream.body) {
+    clearTimeout(openTimer);
+    throw new Error('home stream sans corps');
+  }
   const reader = upstream.body.getReader();
-  const first = await Promise.race([
-    reader.read(),
-    new Promise<ReadableStreamReadResult<Uint8Array>>((_, rej) =>
-      setTimeout(
-        () => rej(new Error(`home first-byte timeout ${firstByteTimeoutMs}ms`)),
-        Math.max(800, firstByteTimeoutMs),
+  let first: ReadableStreamReadResult<Uint8Array>;
+  try {
+    first = await Promise.race([
+      reader.read(),
+      new Promise<ReadableStreamReadResult<Uint8Array>>((_, rej) =>
+        setTimeout(
+          () => rej(new Error(`home first-byte timeout ${firstByteTimeoutMs}ms`)),
+          Math.max(800, firstByteTimeoutMs),
+        ),
       ),
-    ),
-  ]);
+    ]);
+  } catch (err) {
+    clearTimeout(openTimer);
+    try {
+      ac.abort();
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+  clearTimeout(openTimer);
   if (first.done || !first.value?.byteLength) throw new Error('home stream vide');
   const firstHome = Buffer.from(first.value);
   if (!wantVideo && isDashBrandBuffer(firstHome)) {
@@ -353,6 +409,9 @@ async function proxyStreamToHome(
     }
     throw new Error('home stream DASH (ftypdash)');
   }
+
+  // Maison vivante : 1er octet OK — ne plus rester « offline » après un timeout voisin.
+  markHomeAlive(homeBase);
 
   res.status(upstream.status);
   const ct = upstream.headers.get('content-type');
@@ -779,7 +838,49 @@ export async function handleStream(req: Request, res: Response) {
     if (!wantVideoEarly) {
       const cachedEarly = cachePath(videoId);
       if (isCompleteEnoughDisk(cachedEarly) && !isDashBrandFile(cachedEarly)) {
-        // Servir tout de suite — pas de redirect remplacement.
+        // Servir IMMÉDIATEMENT (surtout relais maison) — avant bumpWarm / ensure /
+        // open-ended wait qui bloquent l’event loop et font abort le VPS à 2 s.
+        try {
+          const size = statSync(cachedEarly).size;
+          rememberAdvertisedTotal(videoId, size);
+          const range = req.headers.range ? String(req.headers.range) : '';
+          const { createReadStream } = await import('node:fs');
+          if (range) {
+            const bounds = safeDiskRangeBounds(size, range);
+            if (bounds.ok) {
+              const len = bounds.end - bounds.start + 1;
+              res.status(206);
+              res.setHeader(
+                'Content-Range',
+                `bytes ${bounds.start}-${bounds.end}/${size}`,
+              );
+              res.setHeader('Accept-Ranges', 'bytes');
+              res.setHeader('Content-Length', len);
+              res.setHeader('Content-Type', 'audio/mp4');
+              res.setHeader('X-PLM-Stream-Cache', 'disk-early');
+              noteStreamSource(res, 'cache disque (early)');
+              createReadStream(cachedEarly, {
+                start: bounds.start,
+                end: bounds.end,
+              }).pipe(res);
+              return;
+            }
+          } else {
+            res.status(200);
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Content-Length', size);
+            res.setHeader('Content-Type', 'audio/mp4');
+            res.setHeader('X-PLM-Stream-Cache', 'disk-early');
+            noteStreamSource(res, 'cache disque (early)');
+            createReadStream(cachedEarly).pipe(res);
+            return;
+          }
+        } catch (e) {
+          console.warn(
+            '[stream] early disk serve KO:',
+            String((e as Error).message || e).slice(0, 120),
+          );
+        }
       } else {
         const known = getReplacementId(videoId);
         if (known) {
@@ -1099,7 +1200,7 @@ export async function handleStream(req: Request, res: Response) {
   // Offline : budget large pour downloadTrack / yt-dlp 140.
   const deadlineAt =
     Date.now() +
-    (wantOffline ? 95_000 : wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 35_000);
+    (wantOffline ? 95_000 : wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 55_000);
   const ensureTime = (label: string) => {
     if (Date.now() >= deadlineAt) throw new Error(`stream deadline (${label})`);
   };
@@ -1381,33 +1482,75 @@ export async function handleStream(req: Request, res: Response) {
         '[stream] STREAM_UPSTREAM offline (maison) — VPS + proxies gratuits',
       );
     } else {
+      // Android : first-byte maison COURT puis fallback VPS.
+      // Avant 28–35 s : sous charge (Nothing+prefetch) chaque titre brûlait
+      // 35 s maison AVANT le VPS → timeouts client 40 s / stalls / skip auto.
       const proxyTimeoutMs = skipHomeForOpenAndroid
-        ? 45_000
+        ? 22_000
         : midNeedsDisk
-          ? 18_000
-          : 45_000;
-      // Maison résidentielle : first-byte souvent 8–20 s (format+yt-dlp). 3.5 s = faux offline.
-      const firstByteMs = skipHomeForOpenAndroid ? 22_000 : 18_000;
+          ? 14_000
+          : 28_000;
+      const firstByteMs = skipHomeForOpenAndroid
+        ? 10_000
+        : midNeedsDisk
+          ? 8_000
+          : 12_000;
+      // Soft-fail récent : ne PAS skipper la maison (elle a souvent le .m4a disque
+      // en 0.05 s — skip → VPS DASH/yt-dlp = BUFFERING 40 s sur Brisa etc.).
+      // À la place : first-byte très court, puis VPS.
+      const softFailHome =
+        homeSoftFailStreak >= 1 && Date.now() - homeSoftFailAt < 25_000;
+      if (softFailHome) {
+        console.warn(
+          '[stream] STREAM_UPSTREAM soft-fail — maison first-byte court puis VPS',
+        );
+      }
       try {
-        await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs, firstByteMs);
+        const fb = softFailHome
+          ? 2_000
+          : skipHomeForOpenAndroid
+            ? 10_000
+            : midNeedsDisk
+              ? 8_000
+              : 12_000;
+        const pt = softFailHome
+          ? 8_000
+          : skipHomeForOpenAndroid
+            ? 22_000
+            : midNeedsDisk
+              ? 14_000
+              : 28_000;
+        await proxyStreamToHome(req, res, homeUpstream, videoId, pt, fb);
         return;
       } catch (err) {
         if (endIfHeadersSent(res)) return;
         const msg = String((err as Error).message || err);
         console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
-        // Ne poisonner le cache « maison offline » QUE sur panne réseau / timeout.
-        // Un DASH / 410 / corps vide = ce titre seulement — sinon Nothing tombe
-        // en « Serveur audio » 45 s pour TOUTE la file après un seul ftypdash.
-        const homeUnreachable =
-          /fetch failed|AbortError|aborted|ECONNREFUSED|ECONNRESET|ENOTFOUND|network|first-byte timeout|home first-byte timeout/i.test(
+        // Ne poisonner « maison offline » QUE sur panne réseau réelle (PC/tunnel down).
+        // Timeout / abort / first-byte / DASH / 410 = CE titre (ou saturation) —
+        // sinon 1 titre lent → 45 s offline → fallback VPS → stalls → avalanche mails.
+        const homeHardDown =
+          /fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|network/i.test(msg) &&
+          !/home stream \d{3}|DASH|ftypdash|first-byte timeout|home first-byte timeout/i.test(
             msg,
           );
-        if (homeUnreachable) {
-          homeAliveCache = {
-            at: Date.now(),
-            ok: false,
-            base: homeUpstream.replace(/\/$/, ''),
-          };
+        const homeSoftSlow =
+          /AbortError|aborted|timeout|first-byte timeout|home first-byte timeout/i.test(msg);
+        if (homeHardDown) {
+          markHomeDead(homeUpstream, 12_000);
+          homeSoftFailStreak = 0;
+        } else if (homeSoftSlow) {
+          const now = Date.now();
+          if (now - homeSoftFailAt > 40_000) homeSoftFailStreak = 0;
+          homeSoftFailAt = now;
+          homeSoftFailStreak += 1;
+          // Ne plus markHomeDead ici : ça coupait le relais 15 s alors que le
+          // disque maison servait d’autres titres en 50 ms (Brisa BUFFERING).
+          if (homeSoftFailStreak >= 3) {
+            console.warn(
+              '[stream] STREAM_UPSTREAM soft-fail streak — first-byte maison court',
+            );
+          }
         }
         // Toujours tenter les backends VPS (OAuth / cookies / yt-dlp / proxies) après KO maison.
         // Opt-out explicite : STREAM_UPSTREAM_FALLBACK=0
@@ -1706,13 +1849,75 @@ export async function handleStream(req: Request, res: Response) {
       }
     }
     if (isAndroidClient(req) && !res.headersSent) {
+      // Budget dédié hors deadline globale (souvent déjà mangée par maison+DASH).
+      const antiDashRace = async <T>(label: string, p: Promise<T>, ms: number): Promise<T> =>
+        Promise.race([
+          p,
+          new Promise<T>((_, rej) =>
+            setTimeout(() => rej(new Error(`timeout ${label}`)), ms),
+          ),
+        ]);
       try {
-        ensureTime('ytdlpAntiDash');
-        noteStreamSource(res, 'yt-dlp pipe (anti-DASH)');
-        await withDeadline(
-          'ytdlpPipeAntiDash',
-          streamViaYtDlp(videoId, res, true),
+        // 1) URL itag 140 (yt-dlp -g) + fetch GV — souvent <10 s, vs pipe qui
+        // timeout à 12 s sous charge (Brisa / fail-mail).
+        const rangeHdr = req.headers.range ? String(req.headers.range) : undefined;
+        const fmt = await antiDashRace(
+          'ytdlpUrlAntiDash',
+          getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true }),
+          18_000,
         );
+        if (fmt?.url && !res.headersSent) {
+          const upstream = await antiDashRace(
+            'fetchGVAntiDash',
+            fetchGooglevideo(fmt.url, rangeHdr),
+            12_000,
+          );
+          if (upstream.status < 400 && upstream.body) {
+            const reader = upstream.body.getReader();
+            const first = await antiDashRace('readGVAntiDash', reader.read(), 8_000);
+            if (!first.done && first.value?.byteLength) {
+              const firstBuf = Buffer.from(first.value);
+              if (!isDashBrandBuffer(firstBuf)) {
+                noteStreamSource(res, 'yt-dlp URL (anti-DASH)');
+                res.status(upstream.status);
+                const ct = upstream.headers.get('content-type');
+                if (ct) res.setHeader('Content-Type', ct);
+                else res.setHeader('Content-Type', 'audio/mp4');
+                const cr = upstream.headers.get('content-range');
+                if (cr) res.setHeader('Content-Range', cr);
+                const cl = upstream.headers.get('content-length');
+                if (cl) res.setHeader('Content-Length', cl);
+                res.setHeader('Accept-Ranges', 'bytes');
+                res.setHeader('Cache-Control', 'public, max-age=1800');
+                if (!res.write(firstBuf)) await new Promise((r) => res.once('drain', r));
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  if (value && !res.write(Buffer.from(value))) {
+                    await new Promise((r) => res.once('drain', r));
+                  }
+                }
+                res.end();
+                return;
+              }
+              try {
+                await reader.cancel();
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn(
+          '[stream] yt-dlp URL anti-DASH KO:',
+          String((e as Error).message || e).slice(0, 140),
+        );
+      }
+      try {
+        // 2) Pipe progressif — budget un peu plus large, hors deadline globale.
+        noteStreamSource(res, 'yt-dlp pipe (anti-DASH)');
+        await antiDashRace('ytdlpPipeAntiDash', streamViaYtDlp(videoId, res, true), 22_000);
         return;
       } catch (e) {
         console.warn(
@@ -1720,6 +1925,20 @@ export async function handleStream(req: Request, res: Response) {
           String((e as Error).message || e).slice(0, 140),
         );
         if (!res.headersSent) {
+          // Remplacement rapide si possible, sinon 502 court.
+          try {
+            const replacement =
+              getReplacementId(videoId) ||
+              (await findReplacementId(videoId, { userId: (req as any).userId }));
+            if (replacement && !res.headersSent) {
+              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader('X-PLM-Replaced-From', videoId);
+              res.redirect(302, streamPathFor(req, replacement));
+              return;
+            }
+          } catch {
+            /* ignore */
+          }
           res.status(502).json({
             error: 'Impossible de streamer audio',
             code: 'STREAM_TEMP_UNAVAILABLE',

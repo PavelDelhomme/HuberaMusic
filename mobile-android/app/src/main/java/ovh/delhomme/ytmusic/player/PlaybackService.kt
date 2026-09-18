@@ -267,7 +267,7 @@ class PlaybackService : MediaSessionService() {
             // Un titre absent du cache serveur demande une résolution yt-dlp (jusqu’à ~35 s) :
             // rebinder à 11 s relançait la requête sans jamais lui laisser aboutir.
             val headWarmed = StreamPrefetcher.wasHeadReadyRecently(curId, withinMs = 90_000L)
-            val coldGraceMs = if (headWarmed) 12_000L else 22_000L
+            val coldGraceMs = if (headWarmed) 18_000L else 42_000L
             if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < coldGraceMs) {
                 armStallWatch(exo)
                 return@Runnable
@@ -299,7 +299,8 @@ class PlaybackService : MediaSessionService() {
             val stuckHard =
                 samePos &&
                     (
-                        (coldStuck && stallSessionCount >= 2) ||
+                        // Cold : laisser plusieurs rebinds (VPS yt-dlp 30–50 s) avant skip.
+                        (coldStuck && stallSessionCount >= 5) ||
                             (!coldStuck && stallSessionCount >= 4)
                     )
             if (stuckHard) {
@@ -310,7 +311,7 @@ class PlaybackService : MediaSessionService() {
                 )
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                        level = "error",
+                        level = "warn",
                         kind = "android.player.stall",
                         message = "stall give-up → next id=$curId pos=$pos " +
                             "rebinds=$stallRebindCount episodes=$stallSessionCount",
@@ -321,7 +322,7 @@ class PlaybackService : MediaSessionService() {
                             "episodes" to stallSessionCount,
                             "action" to "skip_next",
                         ),
-                        force = true,
+                        force = false,
                     )
                 }
                 cancelStallWatch()
@@ -343,9 +344,9 @@ class PlaybackService : MediaSessionService() {
                 // wipeCache après plusieurs escalate (cache / atom MP4 corrompu, code 3003).
                 // Cold start : wipe dès le 2ᵉ escalate (tête poison / 502).
                 val wipe =
-                    stallSessionCount >= 4 ||
-                        stallRebindCount >= 5 ||
-                        (pos <= 1_000L && stallSessionCount >= 2)
+                    stallSessionCount >= 5 ||
+                        stallRebindCount >= 6 ||
+                        (pos <= 1_000L && stallSessionCount >= 4)
                 AppLog.w(
                     "PlaybackService",
                     "stall-buffer escalate-recover ${waited}ms frozen=${posFrozenFor}ms " +
@@ -2983,7 +2984,7 @@ fun ExoPlayer.playTracks(baseStreamUrl: (String) -> String, tracks: List<TrackDt
     PlaybackService.Holder.queue = window
     PlaybackService.Holder.index = idx
     PlaybackService.Holder.rememberFullQueue(playable, loadedUpTo)
-    StreamPrefetcher.quietPrefetch(120L)
+    StreamPrefetcher.quietPrefetch(10_000L)
     val current = window.getOrNull(idx)
     if (current != null && current.id.length == 11) {
         StreamPrefetcher.warmTrackFormatOnly(PlaybackService.Holder.resolvedApiBase(), current.id)
