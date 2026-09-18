@@ -2466,6 +2466,8 @@ async function ytDlpGetUrl(
           '-g',
           '--no-playlist',
           '--no-warnings',
+          '--socket-timeout',
+          '8',
           ...ytDlpRuntimeArgs(),
           ...extractorArgs,
           ...cookieArgs,
@@ -2475,26 +2477,42 @@ async function ytDlpGetUrl(
         const proc = spawn(ytdlp, args, { stdio: ['ignore', 'pipe', 'pipe'] });
         let out = '';
         let err = '';
+        let settled = false;
+        const finish = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(killTimer);
+          fn();
+        };
+        // Cap dur : une vidéo morte ne doit pas monopoliser le slot 50 s.
+        const killTimer = setTimeout(() => {
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            /* ignore */
+          }
+          finish(() => reject(new Error('yt-dlp -g timeout 12s')));
+        }, 12_000);
         proc.stdout.on('data', (c) => {
           out += String(c);
         });
         proc.stderr.on('data', (c) => {
           err += String(c);
         });
-        proc.on('error', reject);
+        proc.on('error', (e) => finish(() => reject(e)));
         proc.on('close', (code) => {
           const line = out
             .split('\n')
             .map((l) => l.trim())
             .find((l) => /^https?:\/\//.test(l));
-          if (code === 0 && line) resolve(line);
+          if (code === 0 && line) finish(() => resolve(line));
           else {
             const tip = err
               .split('\n')
               .map((l) => l.trim())
               .filter((l) => /^ERROR:/i.test(l))
               .pop();
-            reject(new Error(tip || err.trim() || `yt-dlp -g exit ${code}`));
+            finish(() => reject(new Error(tip || err.trim() || `yt-dlp -g exit ${code}`)));
           }
         });
       }),
@@ -2521,6 +2539,13 @@ async function audioFormatViaYtDlpFast(videoId: string): Promise<AudioFormat> {
       };
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
+      if (
+        /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
+          lastErr.message,
+        )
+      ) {
+        throw lastErr;
+      }
     }
   }
   throw lastErr || new Error('yt-dlp -g fast KO');
@@ -2579,6 +2604,14 @@ async function audioFormatViaYtDlp(
             lastErr = err instanceof Error ? err : new Error(String(err));
             if (/Sign in to confirm|not a bot|rate-limited|LOGIN_REQUIRED/i.test(lastErr.message)) {
               sawBot = true;
+            }
+            // Vidéo morte : inutile de brûler proxies × extractors × formats (~50 s).
+            if (
+              /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
+                lastErr.message,
+              )
+            ) {
+              throw lastErr;
             }
             if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
           }

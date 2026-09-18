@@ -37,7 +37,7 @@ fun HoldSeekIconButton(
         suppressClick = true
         while (isActive) {
             onHoldTick()
-            delay(160)
+            delay(280)
         }
     }
 

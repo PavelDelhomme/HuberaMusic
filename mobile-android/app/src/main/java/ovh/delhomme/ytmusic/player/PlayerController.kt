@@ -1117,16 +1117,44 @@ class PlayerController(
         _state.value = _state.value.copy(positionMs = target)
     }
 
-    /** Avance / recule dans le titre courant (appui long next/prev). */
+    /** Avance / recule dans le titre courant (appui long next/prev).
+     * Ne doit JAMAIS enchaîner au titre suivant : sinon un hold saute 5–10 titres
+     * (durée Exo stale / trop courte → seek en fin → STATE_ENDED → next). */
     fun seekBy(deltaMs: Long) {
         val p = player() ?: PlaybackService.Holder.player
+        val mediaId = p?.currentMediaItem?.mediaId
+            ?: _state.value.track?.id
         val cur = p?.currentPosition?.takeIf { it >= 0L } ?: _state.value.positionMs
-        val dur = when {
-            p != null && p.duration > 0L && p.duration != androidx.media3.common.C.TIME_UNSET -> p.duration
-            _state.value.durationMs > 0L -> _state.value.durationMs
-            else -> Long.MAX_VALUE / 4
+        // Catalogue du titre courant en priorité (évite durée du titre précédent).
+        val catalog = PlaybackService.Holder.queue
+            .firstOrNull { it.id == mediaId }
+            ?.durationMsOrNull()
+            ?.takeIf { it >= 5_000L }
+        val exo = p?.duration?.takeIf {
+            it > 0L && it != androidx.media3.common.C.TIME_UNSET && it >= 5_000L
         }
-        seek((cur + deltaMs).coerceIn(0L, dur))
+        val ui = _state.value.durationMs.takeIf { it >= 5_000L }
+        val dur = when {
+            catalog != null && exo != null -> maxOf(catalog, exo)
+            catalog != null -> catalog
+            exo != null -> exo
+            ui != null -> ui
+            else -> return // pas de durée fiable → ne pas seeker (évite skip en chaîne)
+        }
+        // Garde 2 s avant la fin : un seek en coda déclencherait EOS → next.
+        val maxPos = (dur - 2_000L).coerceAtLeast(0L)
+        if (deltaMs > 0L && cur >= maxPos) return
+        val target = (cur + deltaMs).coerceIn(0L, maxPos)
+        if (target == cur) return
+        // Seek in-place uniquement (même mediaItemIndex).
+        if (p != null) {
+            val idx = p.currentMediaItemIndex.coerceAtLeast(0)
+            runCatching { p.seekTo(idx, target) }
+            if (!p.playWhenReady && userWantsPlaying == true) {
+                p.playWhenReady = true
+            }
+        }
+        _state.value = _state.value.copy(positionMs = target, durationMs = dur)
     }
 
     /** Position UI seule (miroir remote sans forcément seek Exo si non préparé). */
