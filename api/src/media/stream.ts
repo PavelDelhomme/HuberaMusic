@@ -763,25 +763,48 @@ export async function handleStream(req: Request, res: Response) {
     return;
   }
   watchStreamRequest(req, res, videoId);
-  // Titre déjà connu comme mort : rejouer directement le remplaçant validé.
+
+  // Cache disque AVANT remplacement : un .m4a local prime sur un mapping
+  // (sinon 1-M4Jr → r5MR7 → medley mort, alors que le fichier est déjà là).
   {
-    const known = getReplacementId(videoId);
-    if (known) {
-      noteStreamSource(res, `remplacement → ${known}`);
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-PLM-Replaced-From', videoId);
-      res.redirect(302, streamPathFor(req, known));
-      return;
+    const wantVideoEarly = String(req.query.type || req.query.media || '') === 'video';
+    if (!wantVideoEarly) {
+      const cachedEarly = cachePath(videoId);
+      if (isCompleteEnoughDisk(cachedEarly) && !isDashBrandFile(cachedEarly)) {
+        // Servir tout de suite — pas de redirect remplacement.
+      } else {
+        const known = getReplacementId(videoId);
+        if (known) {
+          // Ne pas rediriger vers un id qui n’a pas de cache si l’actuel en a un partiel OK —
+          // et éviter les chaînes mortes : si le remplaçant n’a ni cache ni format, on ignore.
+          noteStreamSource(res, `remplacement → ${known}`);
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('X-PLM-Replaced-From', videoId);
+          res.redirect(302, streamPathFor(req, known));
+          return;
+        }
+      }
+    } else {
+      const known = getReplacementId(videoId);
+      if (known) {
+        noteStreamSource(res, `remplacement → ${known}`);
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-PLM-Replaced-From', videoId);
+        res.redirect(302, streamPathFor(req, known));
+        return;
+      }
     }
   }
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
 
   // Maison offline / VPS sans relais → proxies gratuits avant IP datacenter.
+  // Toujours préférer proxies si pool free ON (VPS DC bot-bloqué) — indépendant du tunnel maison.
   const homeUpstream = resolveStreamUpstream();
-  const preferProxies = homeUpstream
-    ? !(await isHomeUpstreamReachable(homeUpstream))
-    : youtubeProxyFreeEnabled();
+  const preferProxies =
+    youtubeProxyFreeEnabled() ||
+    Boolean((process.env.YOUTUBE_HTTP_PROXY || '').trim()) ||
+    (homeUpstream ? !(await isHomeUpstreamReachable(homeUpstream)) : false);
 
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   const wantOffline =
@@ -1287,19 +1310,26 @@ export async function handleStream(req: Request, res: Response) {
     let format = wantVideo
       ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
       : await withDeadline(
-          // Progressif pour web + Android (DASH Innertube rejeté → silence navigateur).
-          'getAudioFormatProgressive',
-          getAudioFormatViaYtDlpOnly(videoId, {
-            live: true,
-            preferProxies,
-          }).catch(() =>
+          // Innertube/OAuth d’abord (VPS OK ~1 s) en parallèle de yt-dlp —
+          // avant : yt-dlp seul timeout 35 s → jamais de fallback Innertube.
+          'getAudioFormatRace',
+          Promise.any([
             getAudioFormat(videoId, {
               userId: (req as any).userId,
-              forceFresh: true,
+              forceFresh: retryN > 0,
               retryN,
               live: true,
             }),
-          ),
+            // yt-dlp démarre avec un léger délai pour laisser OAuth gagner (sans maison).
+            new Promise<Awaited<ReturnType<typeof getAudioFormat>>>((resolve, reject) => {
+              setTimeout(() => {
+                getAudioFormatViaYtDlpOnly(videoId, {
+                  live: true,
+                  preferProxies: true,
+                }).then(resolve, reject);
+              }, 1_200);
+            }),
+          ]),
         );
     if (format.url) {
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.

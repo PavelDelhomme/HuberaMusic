@@ -268,20 +268,8 @@ export async function findReplacementId(
       return t.id;
     }
 
-    // Un candidat non vérifié sous charge crée des ping-pong A↔B (Wonderwall).
-    // On ne mémorise que si la sonde playable a réussi ; sinon on sert une fois
-    // sans persister pour laisser le pipeline stream retenter l’original plus tard.
-    const best = unique[0];
-    if (best) {
-      console.log(
-        `[replacement] ${deadId} → ${best.t.id} (score ${best.s}, non vérifié, non mémorisé) ` +
-          `« ${best.t.title} — ${artistLine(best.t)} »`,
-      );
-      return best.t.id;
-    }
-
-    // Sans le détail des candidats écartés, impossible de savoir si le seuil est
-    // trop strict ou si le morceau a réellement disparu du catalogue.
+    // Ne jamais renvoyer un candidat non vérifié : le handleStream ferait un 302
+    // vers un id mort (ex. medley MTV) avant même le cache disque.
     const rejected = candidates
       .slice(0, 4)
       .map((t) => `${t.id}:${scoreCandidate(t, title, artist, durationSec)} « ${t.title} — ${artistLine(t)} »`)
