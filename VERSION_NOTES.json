@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-18",
   "versions": [
     {
+      "version": "1.3.247",
+      "date": "2026-09-18",
+      "title": "Écoute prioritaire vs warm + proxies VPS",
+      "notes": [
+        "Stream live : priorité yt-dlp (slot réservé) + vidage warm pendant l’écoute",
+        "VPS bot-bloqué : proxies YouTube d’abord pour Slim Shady / Aléatoire (plus de timeout 40 s sur IP directe)",
+        "Taste/library warm : pas de téléchargement .m4a pendant une lecture active"
+      ]
+    },
+    {
       "version": "1.3.246",
       "date": "2026-09-18",
       "title": "Seek fluide + yt-dlp rapide + warm qui cède la place",

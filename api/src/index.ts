@@ -82,7 +82,7 @@ import {
   scheduleLibraryRepair,
   libraryMembership,
 } from './library/library.js';
-import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed } from './media/stream.js';
+import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm } from './media/stream.js';
 import {
   scheduleUserTasteWarm,
   startGlobalTasteWarmScheduler,
@@ -1395,6 +1395,12 @@ app.post('/api/admin/library-warm', requireAdmin, async (_req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: String((err as Error).message || err) });
   }
+});
+
+/** Vide les files warm disque (urgence : écoute Nothing/Samsung timeout). */
+app.post('/api/admin/library-warm/clear', requireAdmin, (_req, res) => {
+  suspendBackgroundDiskWarm();
+  res.json({ ok: true, ...libraryWarmSweepStatus(), health: libraryHealthStatus() });
 });
 
 app.get('/api/admin/mail-outbox', requireAdmin, (_req, res) => {
