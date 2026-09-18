@@ -74,6 +74,25 @@ export function healTrackFromTelemetry(opts: {
     kind === 'android.player.stall' ||
     kind === 'android.player.load_recover' ||
     /unavailable|not available|private|removed|non 2xx|502|403/i.test(String(opts.message || ''));
+
+  // Pré-télécharge le .m4a intégral (proxies) avant la prochaine écoute.
+  void import('./ensurePlayable.js')
+    .then(({ ensurePlayableOnDisk }) =>
+      ensurePlayableOnDisk(id, {
+        userId: opts.userId,
+        waitMs: 35_000,
+        preferProxies: true,
+        allowReplace: wantReplace,
+        title: extractMetaString(opts.meta, 'title'),
+        artist: extractMetaString(opts.meta, 'artist'),
+      }),
+    )
+    .then((r) => {
+      if (r?.ok) console.log(`[stream-heal] ensure OK ${id} → ${r.playId} via=${r.via} bytes=${r.bytes}`);
+      else if (r) console.warn(`[stream-heal] ensure KO ${id}: ${r.detail || r.via}`);
+    })
+    .catch(() => {});
+
   if (!wantReplace) return;
 
   const lastR = lastReplaceAt.get(id) || 0;

@@ -159,6 +159,10 @@ function isDashBrandFile(path: string): boolean {
   }
 }
 
+export function isDashBrandFilePath(path: string): boolean {
+  return isDashBrandFile(path);
+}
+
 /** Détecte ftyp=dash dans les premiers octets (relais googlevideo / tête RAM). */
 function isDashBrandBuffer(buf: Buffer): boolean {
   if (!buf?.byteLength || buf.byteLength < 12) return false;
@@ -192,6 +196,10 @@ function isCompleteEnoughDisk(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function isCompleteEnoughDiskFile(path: string): boolean {
+  return isCompleteEnoughDisk(path);
 }
 
 function purgeTinyOrDashCache(videoId: string): void {
@@ -797,6 +805,35 @@ export async function handleStream(req: Request, res: Response) {
   }
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
+
+  // Pré-validation Android : .m4a intégral avant relais (évite 502 / EOS mid-piste).
+  {
+    const wantVideoEarly = String(req.query.type || req.query.media || '') === 'video';
+    if (!wantVideoEarly && isAndroidClient(req)) {
+      const cached = cachePath(videoId);
+      if (!isCompleteEnoughDisk(cached)) {
+        try {
+          const { ensurePlayableOnDisk } = await import('./ensurePlayable.js');
+          const ensured = await ensurePlayableOnDisk(videoId, {
+            userId: (req as any).userId,
+            waitMs: 18_000,
+            preferProxies: true,
+            allowReplace: true,
+          });
+          if (ensured.ok && ensured.playId !== videoId) {
+            noteStreamSource(res, `ensure → ${ensured.playId}`);
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('X-PLM-Replaced-From', videoId);
+            res.setHeader('X-PLM-Ensure', ensured.via);
+            res.redirect(302, streamPathFor(req, ensured.playId));
+            return;
+          }
+        } catch {
+          /* fallback pipeline ci-dessous */
+        }
+      }
+    }
+  }
 
   // Maison offline / VPS sans relais → proxies gratuits avant IP datacenter.
   // Toujours préférer proxies si pool free ON (VPS DC bot-bloqué) — indépendant du tunnel maison.
@@ -2018,11 +2055,19 @@ export async function handleStreamWarm(req: Request, res: Response) {
     return;
   }
   enqueueStreamWarm(ids, uid);
+  // Prépare aussi le .m4a intégral (suite de file) — pas seulement la tête RAM.
+  try {
+    const { ensurePlayableQueueAhead } = await import('./ensurePlayable.js');
+    ensurePlayableQueueAhead(ids, { userId: uid });
+  } catch {
+    /* ignore */
+  }
   res.json({
     ok: true,
     requested: ids.length,
     queued: true,
     pending: warmQueue.length + warmWorkers,
+    ensure: true,
   });
 }
 
