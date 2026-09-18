@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-18",
   "versions": [
     {
+      "version": "1.3.255",
+      "date": "2026-09-18",
+      "title": "Moins de coupures maison + moins de mails stall",
+      "notes": [
+        "Relais maison : le timeout ne coupe plus le flux mid-titre (AbortSignal limité au 1er octet)",
+        "Un titre lent / 410 ne marque plus le PC hors-ligne 45 s — pause courte seulement après série de soft-fails",
+        "Android : prefetch un peu moins agressif ; stalls / recover en warn (plus d’avalanche d’emails)",
+        "Alertes serveur : 1 mail stall/recover max toutes les 4 min"
+      ]
+    },
+    {
       "version": "1.3.254",
       "date": "2026-09-18",
       "title": "Web : lecture rétablie + Accueil rapide",

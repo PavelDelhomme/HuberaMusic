@@ -19,8 +19,10 @@ import {
 } from './telemetryTracks.js';
 
 const THROTTLE_MS = Number(process.env.TELEMETRY_ALERT_THROTTLE_MS || 90_000);
-/** Erreurs player / crash Android : mail quasi immédiat (demande produit). */
-const THROTTLE_PLAYER_MS = Number(process.env.TELEMETRY_ALERT_PLAYER_THROTTLE_MS || 12_000);
+/** Erreurs player / crash Android : mail rapide mais pas une rafale. */
+const THROTTLE_PLAYER_MS = Number(process.env.TELEMETRY_ALERT_PLAYER_THROTTLE_MS || 45_000);
+/** Stalls / load_recover : 1 mail / fenêtre (même cause = home saturé). */
+const THROTTLE_STALL_MS = Number(process.env.TELEMETRY_ALERT_STALL_THROTTLE_MS || 240_000);
 const lastSent = new Map<string, number>();
 /** Occurrences écrasées par le throttle — rappelées dans le prochain mail. */
 const suppressed = new Map<string, number>();
@@ -43,6 +45,14 @@ function alertRecipients(): string {
 function fingerprint(level: string, kind: string, message: string, stack?: string): string {
   const msg = message || '';
   const blob = msg + (stack || '');
+  // Stalls / recover : une seule empreinte (sinon 1 mail / titre en file = avalanche).
+  if (
+    kind.includes('android.player.stall') ||
+    kind.includes('android.player.load_recover') ||
+    /stall give-up|stall escalate|buffer stuck/i.test(msg)
+  ) {
+    return `${level}|android.player.stall-burst`;
+  }
   if (/Response code:\s*502|HTTP 502|home stream 502|STREAM_UPSTREAM/i.test(blob)) {
     return `${level}|${kind}|stream-502`;
   }
@@ -203,11 +213,13 @@ export async function maybeAlertTelemetryError(ev: {
   const kind = String(ev.kind || '');
   const gapPlayer = Math.max(THROTTLE_PLAYER_MS, 45_000);
   const gap =
-    /\|exo-eof\|/.test(fp) || /\|exo-\d+\|/.test(fp)
-      ? Math.max(gapPlayer, 180_000) // même piste / code : 3 min
-      : kind.startsWith('android.') || kind.includes('player') || kind.includes('crash')
-        ? gapPlayer
-        : THROTTLE_MS;
+    /stall-burst/.test(fp)
+      ? THROTTLE_STALL_MS // 4 min — file qui skip ≠ 20 mails
+      : /\|exo-eof\|/.test(fp) || /\|exo-\d+\|/.test(fp)
+        ? Math.max(gapPlayer, 180_000) // même piste / code : 3 min
+        : kind.startsWith('android.') || kind.includes('player') || kind.includes('crash')
+          ? gapPlayer
+          : THROTTLE_MS;
   if (now - prev < gap) {
     suppressed.set(fp, (suppressed.get(fp) || 0) + 1);
     return { sent: false, reason: 'throttled' };

@@ -310,7 +310,7 @@ class PlaybackService : MediaSessionService() {
                 )
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                        level = "error",
+                        level = "warn",
                         kind = "android.player.stall",
                         message = "stall give-up → next id=$curId pos=$pos " +
                             "rebinds=$stallRebindCount episodes=$stallSessionCount",
@@ -321,7 +321,7 @@ class PlaybackService : MediaSessionService() {
                             "episodes" to stallSessionCount,
                             "action" to "skip_next",
                         ),
-                        force = true,
+                        force = false,
                     )
                 }
                 cancelStallWatch()

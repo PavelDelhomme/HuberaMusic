@@ -278,6 +278,27 @@ export function isStreamUpstreamAllowed(): boolean {
 
 /** Relais stream vers l’API maison (évite le blocage IP datacenter YouTube). */
 let homeAliveCache: { at: number; ok: boolean; base: string } | null = null;
+/** Timeouts / abort d’un seul titre ≠ PC éteint — streak avant poison court. */
+let homeSoftFailStreak = 0;
+let homeSoftFailAt = 0;
+
+function markHomeAlive(homeBase: string) {
+  homeAliveCache = {
+    at: Date.now(),
+    ok: true,
+    base: homeBase.replace(/\/$/, ''),
+  };
+  homeSoftFailStreak = 0;
+}
+
+function markHomeDead(homeBase: string, ttlMs = 12_000) {
+  // ttl via `at` dans le passé relatif : isHomeUpstreamReachable re-sonde après ttlMs
+  homeAliveCache = {
+    at: Date.now() - (45_000 - Math.max(3_000, ttlMs)),
+    ok: false,
+    base: homeBase.replace(/\/$/, ''),
+  };
+}
 
 /**
  * Sonde rapide : si le PC maison est éteint, on skip le relais immédiatement
@@ -298,10 +319,15 @@ async function isHomeUpstreamReachable(homeBase: string): Promise<boolean> {
       headers: { Accept: 'application/json' },
     });
     const ok = r.ok;
-    homeAliveCache = { at: Date.now(), ok, base };
+    if (ok) {
+      markHomeAlive(base);
+    } else {
+      // Health 5xx ponctuel ≠ PC éteint — re-sonde vite (8 s).
+      markHomeDead(base, 8_000);
+    }
     return ok;
   } catch {
-    homeAliveCache = { at: Date.now(), ok: false, base };
+    markHomeDead(base, 8_000);
     return false;
   }
 }
@@ -323,26 +349,54 @@ async function proxyStreamToHome(
   if (req.headers.range) headers.Range = String(req.headers.range);
   const auth = req.headers.authorization;
   if (auth) headers.Authorization = String(auth);
-  // Timeout global = plafond ; first-byte plus court pour open Android (évite 20 s BUFFERING).
-  const upstream = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(Math.max(firstByteTimeoutMs + 2_000, timeoutMs)),
-  });
+  // CRITIQUE : ne PAS AbortSignal.timeout() sur tout le fetch.
+  // Open-ended Android pipe pendant des minutes — un timeout global 45 s coupait
+  // le flux mid-titre → stalls Exo + poison « maison offline » + avalanche mails.
+  // Abort uniquement jusqu’au 1er octet (headers + first chunk).
+  const ac = new AbortController();
+  const openMs = Math.max(firstByteTimeoutMs + 2_000, Math.min(timeoutMs, 28_000));
+  const openTimer = setTimeout(() => ac.abort(), openMs);
+  let upstream: Response;
+  try {
+    upstream = await fetch(url, {
+      headers,
+      signal: ac.signal,
+    });
+  } catch (err) {
+    clearTimeout(openTimer);
+    throw err;
+  }
   if (upstream.status >= 400) {
+    clearTimeout(openTimer);
     const detail = await upstream.text().catch(() => '');
     throw new Error(`home stream ${upstream.status}: ${detail.slice(0, 180)}`);
   }
-  if (!upstream.body) throw new Error('home stream sans corps');
+  if (!upstream.body) {
+    clearTimeout(openTimer);
+    throw new Error('home stream sans corps');
+  }
   const reader = upstream.body.getReader();
-  const first = await Promise.race([
-    reader.read(),
-    new Promise<ReadableStreamReadResult<Uint8Array>>((_, rej) =>
-      setTimeout(
-        () => rej(new Error(`home first-byte timeout ${firstByteTimeoutMs}ms`)),
-        Math.max(800, firstByteTimeoutMs),
+  let first: ReadableStreamReadResult<Uint8Array>;
+  try {
+    first = await Promise.race([
+      reader.read(),
+      new Promise<ReadableStreamReadResult<Uint8Array>>((_, rej) =>
+        setTimeout(
+          () => rej(new Error(`home first-byte timeout ${firstByteTimeoutMs}ms`)),
+          Math.max(800, firstByteTimeoutMs),
+        ),
       ),
-    ),
-  ]);
+    ]);
+  } catch (err) {
+    clearTimeout(openTimer);
+    try {
+      ac.abort();
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+  clearTimeout(openTimer);
   if (first.done || !first.value?.byteLength) throw new Error('home stream vide');
   const firstHome = Buffer.from(first.value);
   if (!wantVideo && isDashBrandBuffer(firstHome)) {
@@ -353,6 +407,9 @@ async function proxyStreamToHome(
     }
     throw new Error('home stream DASH (ftypdash)');
   }
+
+  // Maison vivante : 1er octet OK — ne plus rester « offline » après un timeout voisin.
+  markHomeAlive(homeBase);
 
   res.status(upstream.status);
   const ct = upstream.headers.get('content-type');
@@ -1395,19 +1452,30 @@ export async function handleStream(req: Request, res: Response) {
         if (endIfHeadersSent(res)) return;
         const msg = String((err as Error).message || err);
         console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
-        // Ne poisonner le cache « maison offline » QUE sur panne réseau / timeout.
-        // Un DASH / 410 / corps vide = ce titre seulement — sinon Nothing tombe
-        // en « Serveur audio » 45 s pour TOUTE la file après un seul ftypdash.
-        const homeUnreachable =
-          /fetch failed|AbortError|aborted|ECONNREFUSED|ECONNRESET|ENOTFOUND|network|first-byte timeout|home first-byte timeout/i.test(
+        // Ne poisonner « maison offline » QUE sur panne réseau réelle (PC/tunnel down).
+        // Timeout / abort / first-byte / DASH / 410 = CE titre (ou saturation) —
+        // sinon 1 titre lent → 45 s offline → fallback VPS → stalls → avalanche mails.
+        const homeHardDown =
+          /fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|network/i.test(msg) &&
+          !/home stream \d{3}|DASH|ftypdash|first-byte timeout|home first-byte timeout/i.test(
             msg,
           );
-        if (homeUnreachable) {
-          homeAliveCache = {
-            at: Date.now(),
-            ok: false,
-            base: homeUpstream.replace(/\/$/, ''),
-          };
+        const homeSoftSlow =
+          /AbortError|aborted|timeout|first-byte timeout|home first-byte timeout/i.test(msg);
+        if (homeHardDown) {
+          markHomeDead(homeUpstream, 12_000);
+          homeSoftFailStreak = 0;
+        } else if (homeSoftSlow) {
+          const now = Date.now();
+          if (now - homeSoftFailAt > 25_000) homeSoftFailStreak = 0;
+          homeSoftFailAt = now;
+          homeSoftFailStreak += 1;
+          // 4 titres lents d’affilée → pause courte (re-sonde health), pas 45 s.
+          if (homeSoftFailStreak >= 4) {
+            markHomeDead(homeUpstream, 8_000);
+            homeSoftFailStreak = 0;
+            console.warn('[stream] STREAM_UPSTREAM soft-fail streak → pause maison 8s');
+          }
         }
         // Toujours tenter les backends VPS (OAuth / cookies / yt-dlp / proxies) après KO maison.
         // Opt-out explicite : STREAM_UPSTREAM_FALLBACK=0
