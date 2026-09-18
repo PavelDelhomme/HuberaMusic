@@ -1760,10 +1760,10 @@ async function runDiskWarmWorker() {
   diskWarmBusy = true;
   try {
     while (likesDiskWarmQueue.length || diskWarmQueue.length) {
-      // Lecture en cours : ralentir mais ne pas bloquer les likes déjà en tête.
-      if (isPlaybackHot(90_000)) {
-        await new Promise((r) => setTimeout(r, 1_800));
-        // Pendant lecture : seulement le titre courant (déjà unshifted via bump) + 1 like.
+      // Lecture utilisateur : ne PAS consommer de slots yt-dlp (sinon Aléatoire timeout).
+      if (isPlaybackHot(60_000)) {
+        await new Promise((r) => setTimeout(r, 4_000));
+        continue;
       }
       const id = likesDiskWarmQueue.shift() || diskWarmQueue.shift();
       if (!id) break;
@@ -1781,7 +1781,7 @@ async function runDiskWarmWorker() {
       } catch {
         /* best-effort — le titre reste candidate au prochain sweep */
       }
-      await new Promise((r) => setTimeout(r, isPlaybackHot(90_000) ? 900 : 350));
+      await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 2_000 : 400));
     }
   } finally {
     diskWarmBusy = false;
