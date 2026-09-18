@@ -1458,7 +1458,11 @@ export async function handleStream(req: Request, res: Response) {
       try {
         const replacement =
           getReplacementId(videoId) ||
-          (await findReplacementId(videoId, { userId: (req as any).userId }));
+          (await Promise.race([
+            findReplacementId(videoId, { userId: (req as any).userId }),
+            // Cap court : l’app doit recevoir 410 vite pour skipper (Nothing).
+            new Promise<null>((r) => setTimeout(() => r(null), 2_500)),
+          ]));
         if (replacement && !res.headersSent) {
           res.setHeader('Cache-Control', 'no-store');
           res.setHeader('X-PLM-Replaced-From', videoId);
