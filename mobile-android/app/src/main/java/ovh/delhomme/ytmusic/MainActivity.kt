@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -1395,10 +1397,16 @@ private fun MainTabs(
     }
 
     Scaffold(
-        contentWindowInsets = if (showBottomChrome || isDetailRoute) {
-            WindowInsets.safeDrawing
-        } else {
-            WindowInsets(0, 0, 0, 0)
+        // Compte / Historique / Aide ont déjà un TopAppBar (status bar).
+        // Si seul le mini-lecteur est visible, ne pas re-appliquer l’inset top
+        // sinon la flèche retour est trop basse.
+        contentWindowInsets = when {
+            showNavBar || isDetailRoute -> WindowInsets.safeDrawing
+            showMiniPlayer ->
+                WindowInsets.safeDrawing.only(
+                    WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                )
+            else -> WindowInsets(0, 0, 0, 0)
         },
         bottomBar = {
             if (showBottomChrome) {

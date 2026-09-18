@@ -925,7 +925,8 @@ class PlaybackService : MediaSessionService() {
             if (httpStatus != null && httpStatus >= 500) {
                 // Ne coupe le prefetch / offline qu’après plusieurs 5xx — un seul 502
                 // (getAudioFormat deadline) ne doit pas bloquer 2 min toute la file.
-                if (streak >= 3) {
+                // Après appel : sockets/DNS en train de revenir — ne pas geler le flux.
+                if (streak >= 3 && !Holder.isWithinCallResumeGrace()) {
                     StreamPrefetcher.markStreamDown(90_000L)
                     StreamPrefetcher.cancelIdle()
                     runCatching {
@@ -1046,6 +1047,15 @@ class PlaybackService : MediaSessionService() {
                         rematerializeOfflineFrom(exo, nextOfflineIdx, container)
                         android.os.Handler(mainLooper).post {
                             this@PlaybackService.toastMain("Hors ligne — suite sur titres téléchargés", Toast.LENGTH_SHORT)
+                        }
+                        return
+                    }
+                    // Fausse « offline » juste après un appel (DNS / link flip) : soft rebind, pas markDown.
+                    if (Holder.isWithinCallResumeGrace()) {
+                        AppLog.i("PlaybackService", "offline ignoré (grace post-appel) → rebind id=$id")
+                        StreamPrefetcher.markStreamOk()
+                        android.os.Handler(mainLooper).post {
+                            rebindCurrentStream(reason = "after-call-offline-grace", forcePlay = true, wipeCache = false)
                         }
                         return
                     }
@@ -2688,6 +2698,14 @@ class PlaybackService : MediaSessionService() {
         /** Titre en recovery 5xx / réseau — l’UI ne doit pas auto-skip (buffer stuck). */
         @Volatile var streamRecoveringId: String = ""
         @Volatile var streamFailStreak: Int = 0
+        /** Horodatage reprise post-appel — évite toast « Serveur audio » / markStreamDown faux. */
+        @Volatile var lastCallResumeAtMs: Long = 0L
+
+        fun isWithinCallResumeGrace(graceMs: Long = 20_000L): Boolean {
+            val t = lastCallResumeAtMs
+            if (t <= 0L) return false
+            return System.currentTimeMillis() - t < graceMs
+        }
 
         fun isPlaybackActiveSafe(): Boolean = playbackActive
 

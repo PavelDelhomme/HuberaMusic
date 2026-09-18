@@ -533,7 +533,7 @@ fun TrackActionsSheet(
                     if (downloaded) Icons.Default.DownloadDone else Icons.Default.Download,
                     when {
                         downloaded -> "Sur l'appareil"
-                        downloadProgress != null && downloadProgress!! < 0.08f -> "Préparation…"
+                        downloadProgress != null && downloadProgress!! < 0.15f -> "Préparation serveur…"
                         downloadProgress != null -> "${(downloadProgress!! * 100).toInt()} %"
                         else -> "Télécharger"
                     },

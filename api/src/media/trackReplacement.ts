@@ -26,7 +26,7 @@ const CACHE_DIR = join(
 );
 
 const VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/;
-const PROBE_MS = 40_000;
+const PROBE_MS = 8_000;
 /** Score minimal pour accepter un remplaçant — au-dessous, mieux vaut échouer que jouer un autre morceau. */
 const MIN_SCORE = 75;
 
@@ -114,7 +114,7 @@ async function playable(id: string): Promise<boolean> {
   }
   try {
     const fmt = await Promise.race([
-      getAudioFormat(id),
+      getAudioFormat(id, { live: true }),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), PROBE_MS)),
     ]);
     return Boolean(fmt?.url);
@@ -291,7 +291,7 @@ export async function findReplacementId(
 
 /** Signature d'une erreur « vidéo réellement morte » (par opposition à un souci réseau). */
 export function looksUnavailable(message: string): boolean {
-  return /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|violating|copyright claim|members?.only/i.test(
+  return /video unavailable|this video is unavailable|streaming data not available|private video|removed by the uploader|no longer available|has been removed|violating|copyright claim|members?.only|login[_ ]required|sign in to confirm you.re not a bot/i.test(
     message,
   );
 }

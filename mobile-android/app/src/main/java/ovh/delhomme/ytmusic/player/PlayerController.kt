@@ -2137,6 +2137,8 @@ class PlayerController(
                 val msg = when {
                     !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() ->
                         "Hors ligne — reconnecte le Wi‑Fi ou les données"
+                    PlaybackService.Holder.isWithinCallResumeGrace() ->
+                        "Reprise du flux après l’appel…"
                     StreamPrefetcher.isStreamDown() ->
                         "Serveur audio temporairement indisponible"
                     else -> "Chargement du flux…"
