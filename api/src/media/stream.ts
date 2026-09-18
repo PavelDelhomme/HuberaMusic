@@ -904,7 +904,9 @@ export async function handleStream(req: Request, res: Response) {
         }
         // sans Range → 200 + corps entier plus bas
       } else if (!isAndroid) {
-        req.headers.range = 'bytes=0-1048575';
+        // Web <audio> : même tête Range que Android — évite un GET open-ended
+        // qui pend / reçoit du DASH puis silence après rejet.
+        req.headers.range = 'bytes=0-524287';
       } else {
         // Android open-ended sans .m4a : un GET sans Range fait pendrer le relais /
         // le pipe GV (corps entier) → 10–20 s avant le 1er octet.
@@ -927,9 +929,9 @@ export async function handleStream(req: Request, res: Response) {
   if (!wantVideo && audioRangeStart === 0) {
     const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
     if (!isYtDlpCoolingDown()) {
-      const progressive = isAndroidClient(req);
+      // Progressif pour TOUS (web + Android) — rejet DASH universel depuis 1.3.240.
       void downloadTrack(videoId, {
-        ...(progressive ? { progressiveOnly: true } : {}),
+        progressiveOnly: true,
         preferProxies,
       }).catch((err) => {
         const msg = String((err as Error).message || err);
@@ -1282,25 +1284,17 @@ export async function handleStream(req: Request, res: Response) {
     ensureTime('format');
     let format = wantVideo
       ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
-      : wantOffline || androidClient
-        ? await withDeadline(
-            'getAudioFormatProgressive',
-            getAudioFormatViaYtDlpOnly(videoId).catch(() =>
-              getAudioFormat(videoId, {
-                userId: (req as any).userId,
-                forceFresh: true,
-                retryN,
-              }),
-            ),
-          )
-        : await withDeadline(
-            'getAudioFormat',
+      : await withDeadline(
+          // Progressif pour web + Android (DASH Innertube rejeté → silence navigateur).
+          'getAudioFormatProgressive',
+          getAudioFormatViaYtDlpOnly(videoId).catch(() =>
             getAudioFormat(videoId, {
               userId: (req as any).userId,
-              forceFresh: retryN > 0,
+              forceFresh: true,
               retryN,
             }),
-          );
+          ),
+        );
     if (format.url) {
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).

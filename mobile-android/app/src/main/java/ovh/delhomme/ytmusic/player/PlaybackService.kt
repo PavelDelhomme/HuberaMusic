@@ -300,7 +300,7 @@ class PlaybackService : MediaSessionService() {
                 samePos &&
                     (
                         (coldStuck && stallSessionCount >= 3) ||
-                            (!coldStuck && stallSessionCount >= 6)
+                            (!coldStuck && stallSessionCount >= 4)
                     )
             if (stuckHard) {
                 AppLog.w(
@@ -328,21 +328,10 @@ class PlaybackService : MediaSessionService() {
                 clearStallSession()
                 streamFailStreak.set(0)
                 val nextIdx = exo.currentMediaItemIndex + 1
-                val end = userQueueEndAfterExtend(nextIdx)
-                android.os.Handler(mainLooper).post {
-                    toastMain("Flux bloqué — titre suivant", Toast.LENGTH_SHORT)
-                }
-                if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
-                    exo.playWhenReady = false
-                    runCatching { exo.pause() }
-                    return@Runnable
-                }
-                if (nextIdx < exo.mediaItemCount) {
-                    runCatching { replaceOrAdvance(exo, curId, nextIdx) }
-                } else {
-                    val uiFill = Holder.onSkipAtEnd
-                    if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
-                }
+                // Remplacement d’abord ; sinon VRAI passage au suivant.
+                // Ne PAS appeler replaceOrAdvance() ici : en échec il rebind le même id
+                // (« resolve-keep ») → boucle escalate/mails « Reprise / Flux bloqué ».
+                runCatching { skipDeadTrackOrAdvance(exo, curId, nextIdx) }
                 return@Runnable
             }
             // Escalade = URL fraîche + proxy, JAMAIS seek(0) (utilisateur entendait reprise au début).
@@ -1104,8 +1093,8 @@ class PlaybackService : MediaSessionService() {
                         ).containsMatchIn(errBlobEarly)
                 val giveUpStreak = when {
                     unavailable -> 2
-                    // 503/502 mid-piste : retenter longtemps (proxy YT) — ne pas skip après 1–2 essais.
-                    httpStatus != null && httpStatus >= 500 -> 12
+                    // 503/502 mid-piste : quelques retries puis skip réel (pas 12× mails).
+                    httpStatus != null && httpStatus >= 500 -> 6
                     transientNetwork -> Int.MAX_VALUE
                     else -> 8
                 }
@@ -1138,30 +1127,8 @@ class PlaybackService : MediaSessionService() {
                     cancelStallWatch()
                     clearStallSession()
                     val nextIdx = exo.currentMediaItemIndex + 1
-                    val end = userQueueEndAfterExtend(nextIdx)
-                    android.os.Handler(mainLooper).post {
-                        toastMain(
-                            when {
-                                unavailable -> "Titre indisponible — suivant"
-                                httpStatus != null && httpStatus >= 500 ->
-                                    "Flux serveur ($httpStatus) — titre suivant"
-                                transientNetwork -> "Réseau instable — titre suivant"
-                                else -> "Flux KO — titre suivant"
-                            },
-                            Toast.LENGTH_SHORT,
-                        )
-                    }
-                    if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
-                        exo.playWhenReady = false
-                        runCatching { exo.pause() }
-                        return
-                    }
-                    if (nextIdx < exo.mediaItemCount) {
-                        runCatching { replaceOrAdvance(exo, id, nextIdx) }
-                    } else {
-                        val uiFill = Holder.onSkipAtEnd
-                        if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
-                    }
+                    // Silencieux + vrai skip (pas replaceOrAdvance → resolve-keep)
+                    runCatching { skipDeadTrackOrAdvance(exo, id, nextIdx) }
                     return
                 }
                 val attempt = recoverGen.incrementAndGet()
@@ -1274,15 +1241,7 @@ class PlaybackService : MediaSessionService() {
                 cancelStallWatch()
                 clearStallSession()
                 val nextIdx = exo.currentMediaItemIndex + 1
-                android.os.Handler(mainLooper).post {
-                    toastMain("Fichier illisible — titre suivant", Toast.LENGTH_SHORT)
-                }
-                if (nextIdx < exo.mediaItemCount) {
-                    runCatching { replaceOrAdvance(exo, id, nextIdx) }
-                } else {
-                    val uiFill = Holder.onSkipAtEnd
-                    if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
-                }
+                runCatching { skipDeadTrackOrAdvance(exo, id, nextIdx) }
                 return
             }
 
@@ -1308,15 +1267,7 @@ class PlaybackService : MediaSessionService() {
                 cancelStallWatch()
                 clearStallSession()
                 val nextIdx = exo.currentMediaItemIndex + 1
-                android.os.Handler(mainLooper).post {
-                    toastMain("Erreur lecture — titre suivant", Toast.LENGTH_SHORT)
-                }
-                if (nextIdx < exo.mediaItemCount) {
-                    runCatching { replaceOrAdvance(exo, id, nextIdx) }
-                } else {
-                    val uiFill = Holder.onSkipAtEnd
-                    if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
-                }
+                runCatching { skipDeadTrackOrAdvance(exo, id, nextIdx) }
                 return
             }
             val attempt = recoverGen.incrementAndGet()
@@ -1898,6 +1849,60 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
+     * Give-up après stall / player-error : tenter un remplacement d’id, sinon **vraiment**
+     * passer au suivant. Contrairement à [replaceOrAdvance], ne rebind JAMAIS le même id
+     * mort (évite la boucle escalate → resolve-keep → mails).
+     */
+    private fun skipDeadTrackOrAdvance(exo: Player, deadId: String, nextIdx: Int) {
+        val track = Holder.queue.firstOrNull { it.id == deadId }
+        val repl = if (track != null) {
+            StreamPrefetcher.fetchReplacementId(
+                resolvedApiBase(),
+                deadId,
+                track.title,
+                track.artistLine(),
+            )
+        } else {
+            null
+        }
+        if (repl != null && track != null) {
+            val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
+            val swapped = track.copy(id = repl)
+            val q = Holder.queue.toMutableList()
+            if (curIdx in q.indices && q[curIdx].id == deadId) q[curIdx] = swapped
+            Holder.queue = q
+            AppLog.i("PlaybackService", "skipDead → remplacé $deadId → $repl")
+            runCatching {
+                val container = YtMusicApp.instance.container
+                val item = mediaItemFor(
+                    swapped,
+                    { tid -> container.remoteStreamUrl(tid) },
+                    Holder.queueTitle,
+                )
+                exo.replaceMediaItem(curIdx, item)
+                exo.seekTo(curIdx, 0L)
+                exo.prepare()
+                exo.playWhenReady = true
+                exo.play()
+            }
+            return
+        }
+        val end = userQueueEndAfterExtend(nextIdx)
+        if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
+            exo.playWhenReady = false
+            runCatching { exo.pause() }
+            return
+        }
+        AppLog.w("PlaybackService", "skipDead → advance nextIdx=$nextIdx (pas de remplace pour $deadId)")
+        if (nextIdx < exo.mediaItemCount) {
+            advanceToQueueIndex(exo, nextIdx)
+        } else {
+            val uiFill = Holder.onSkipAtEnd
+            if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
+        }
+    }
+
+    /**
      * Avant d’abandonner un titre : remplacement synchrone, sinon rebind + warm disque.
      * Ne passe PAS au suivant automatiquement — le titre doit rester disponible / réparé.
      */
@@ -2214,7 +2219,7 @@ class PlaybackService : MediaSessionService() {
                 earlyEndRetries = 0
                 recoveringTrackId = ""
                 val nextIdx = (exo.currentMediaItemIndex + 1).coerceAtLeast(0)
-                runCatching { replaceOrAdvance(exo, prevId, nextIdx) }
+                runCatching { skipDeadTrackOrAdvance(exo, prevId, nextIdx) }
             }
             return
         }
