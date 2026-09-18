@@ -176,16 +176,17 @@ object TelemetryReporter {
                 !local &&
                 (http == null || http < 400)
         // Local KO / EOF récupérable : warn tant que streak bas (évite avalanche mails).
+        // 5xx / Source error : UN mail au 1er coup, puis warn pendant les retries ;
+        // le give-up (skip) envoie déjà un rapport dédié.
         val level = when {
-            // 5xx / Source error mid-song : mail dès le 1er (sinon boucle silent)
-            serious && !local && (http != null && http >= 500) -> "error"
-            serious && !local && streak >= 2 -> "error"
+            serious && !local && (http != null && http >= 500) ->
+                if (streak <= 1) "error" else "warn"
+            serious && !local && streak >= 4 -> "error"
             serious && local && streak >= 3 -> "error"
             local && streak < 3 -> "warn"
             eofMid && streak < 3 -> "warn"
-            // IO / Source error (2001) répété mid-piste → error pour mail
-            !local && streak >= 2 && (code == 2001 || code == 2004) -> "error"
-            serious || streak >= 3 -> "error"
+            !local && streak >= 4 && (code == 2001 || code == 2004) -> "error"
+            serious || streak >= 5 -> "error"
             else -> "warn"
         }
         val diag = diagnosePlayerError(code, trackId, networkish, local, streak, http, blob)
