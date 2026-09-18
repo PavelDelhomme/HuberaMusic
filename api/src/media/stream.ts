@@ -1151,7 +1151,7 @@ export async function handleStream(req: Request, res: Response) {
       // et le fallback relais/googlevideo n’avait plus de temps → 502/504 garanti.
       // Le téléchargement continue en fond (downloadInflight) pour la requête suivante.
       const budget = midRangeWaitMs(videoId);
-      const dl = downloadTrack(videoId, { progressiveOnly: androidClient, preferProxies });
+      const dl = downloadTrack(videoId, { progressiveOnly: true, preferProxies });
       dl.catch(() => {
         /* poursuivi en fond — l’erreur est traitée par le await borné ci-dessous */
       });

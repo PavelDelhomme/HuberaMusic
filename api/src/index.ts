@@ -1769,26 +1769,43 @@ app.get('/api/home', accountRequired, async (req, res) => {
     const localPl = listPlaylists(userId, { includeTracks: false });
 
     // reco perso + home YT + similar en parallèle (gros gain cold start)
-    // YT home : budget borné — si lent, on sert le perso tout de suite (suite via /home/more).
+    // Budgets stricts : sans ça homeReco (N×search) + similarForUser(getRelated/hydrate)
+    // saturent facilement 17–40s sur prod. Shelves utiles locales d’abord ; suite via /home/more.
+    const HOME_YT_MS = 3_000;
+    const HOME_RECO_MS = 3_000;
+    const HOME_SIM_MS = 2_000;
+
     const similarPromise =
       top[0] && /^[a-zA-Z0-9_-]{11}$/.test(top[0].id)
-        ? similarForUser(userId, top[0].id, top[0], { full: false }).catch(() => null)
+        ? // Fast = upNext léger ; similarForUser({full:false}) appelle encore getRelated+hydrate~40
+          Promise.race([
+            similarForUserFast(userId, top[0].id, top[0]).catch(() => null),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), HOME_SIM_MS)),
+          ])
         : Promise.resolve(null);
 
     const ytHomePromise = Promise.race([
       getHome().catch(() => [] as Awaited<ReturnType<typeof getHome>>),
       new Promise<Awaited<ReturnType<typeof getHome>>>((resolve) =>
-        setTimeout(() => resolve([]), 4_000),
+        setTimeout(() => resolve([]), HOME_YT_MS),
       ),
     ]);
 
-    const [reco, ytHome, sim] = await Promise.all([homeReco(userId), ytHomePromise, similarPromise]);
+    const [reco, ytHome, sim] = await Promise.all([
+      homeReco(userId, { budgetMs: HOME_RECO_MS }),
+      ytHomePromise,
+      similarPromise,
+    ]);
 
     // Préchauffe async des mixes catégorie (ne bloque pas la réponse home)
     warmCategoryMixes(userId, 3);
     // Si le budget YT a sauté, relance en fond pour le cache suivant
     if (!ytHome.length) {
       void getHome().catch(() => undefined);
+    }
+    // Enrichit « Rapide · pour toi » en fond (cache mix) sans bloquer Accueil
+    if (top[0] && /^[a-zA-Z0-9_-]{11}$/.test(top[0].id) && !sim?.tracks?.length) {
+      void similarForUser(userId, top[0].id, top[0], { full: false }).catch(() => undefined);
     }
 
     const personal: Awaited<ReturnType<typeof getHome>> = [

@@ -118,8 +118,11 @@ export function authOptional(req: Request, _res: Response, next: NextFunction) {
       : typeof req.query?.token === 'string'
         ? req.query.token
         : undefined;
-  // Query token : lecteurs média (ExoPlayer / <audio>) qui n’envoient pas Authorization
-  const token = header?.startsWith('Bearer ') ? header.slice(7) : cookie || q;
+  // Ordre : Bearer > query (média <audio>/Exo) > cookie.
+  // Avant : cookie avant query → cookie HttpOnly périmé faisait ignorer access_token
+  // → 401 JSON dans <audio> → MEDIA_ELEMENT_ERROR Format error sur tout le site web.
+  const bearer = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+  const token = bearer || q || cookie;
   if (!token) return next();
   verifyToken(token)
     .then((user) => {
@@ -127,7 +130,23 @@ export function authOptional(req: Request, _res: Response, next: NextFunction) {
       req.userId = user.id;
       next();
     })
-    .catch(() => next());
+    .catch(() => {
+      // Token primaire KO : retenter query/cookie restants (ex. cookie mort + access_token OK)
+      const fallbacks = [bearer, q, cookie].filter(
+        (t): t is string => Boolean(t) && t !== token,
+      );
+      const tryNext = (i: number) => {
+        if (i >= fallbacks.length) return next();
+        verifyToken(fallbacks[i]!)
+          .then((user) => {
+            req.user = publicUser(user);
+            req.userId = user.id;
+            next();
+          })
+          .catch(() => tryNext(i + 1));
+      };
+      tryNext(0);
+    });
 }
 
 export function authRequired(req: Request, res: Response, next: NextFunction) {
