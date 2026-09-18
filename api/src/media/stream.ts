@@ -1395,11 +1395,20 @@ export async function handleStream(req: Request, res: Response) {
         if (endIfHeadersSent(res)) return;
         const msg = String((err as Error).message || err);
         console.warn('[stream] STREAM_UPSTREAM KO:', msg.slice(0, 180));
-        homeAliveCache = {
-          at: Date.now(),
-          ok: false,
-          base: homeUpstream.replace(/\/$/, ''),
-        };
+        // Ne poisonner le cache « maison offline » QUE sur panne réseau / timeout.
+        // Un DASH / 410 / corps vide = ce titre seulement — sinon Nothing tombe
+        // en « Serveur audio » 45 s pour TOUTE la file après un seul ftypdash.
+        const homeUnreachable =
+          /fetch failed|AbortError|aborted|ECONNREFUSED|ECONNRESET|ENOTFOUND|network|first-byte timeout|home first-byte timeout/i.test(
+            msg,
+          );
+        if (homeUnreachable) {
+          homeAliveCache = {
+            at: Date.now(),
+            ok: false,
+            base: homeUpstream.replace(/\/$/, ''),
+          };
+        }
         // Toujours tenter les backends VPS (OAuth / cookies / yt-dlp / proxies) après KO maison.
         // Opt-out explicite : STREAM_UPSTREAM_FALLBACK=0
         const forceHomeOnly =
