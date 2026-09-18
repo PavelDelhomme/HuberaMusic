@@ -1077,10 +1077,10 @@ class PlaybackService : MediaSessionService() {
                 val httpBody = httpResponseBodyOf(error)
                 val unavailable =
                     Regex(
-                        "unavailable|not available|private video|copyright|Impossible de streamer",
+                        "unavailable|VIDEO_UNAVAILABLE|not available|private video|copyright|Impossible de streamer",
                         RegexOption.IGNORE_CASE,
                     ).containsMatchIn(errBlobEarly + "\n" + httpBody) ||
-                        (httpStatus != null && httpStatus == 404)
+                        (httpStatus != null && (httpStatus == 404 || httpStatus == 410))
                 // DNS / connexion data qui saute (code 2001) : le titre n’a rien à se reprocher,
                 // c’est le réseau. On retente indéfiniment avec backoff au lieu de passer au
                 // suivant — un creux de 4G ne doit jamais faire changer de musique.
@@ -1091,10 +1091,14 @@ class PlaybackService : MediaSessionService() {
                             "UnknownHost|Unable to resolve host|ECONNRESET|SocketTimeout",
                             RegexOption.IGNORE_CASE,
                         ).containsMatchIn(errBlobEarly)
+                val coldStart = pos < 8_000L
                 val giveUpStreak = when {
-                    unavailable -> 2
-                    // 503/502 mid-piste : quelques retries puis skip réel (pas 12× mails).
-                    httpStatus != null && httpStatus >= 500 -> 6
+                    // Titre mort (410 / unavailable) : skip dès le 1er échec confirmé.
+                    unavailable -> 1
+                    // Cold start + 5xx : 2 retries max (évite 2 min bloqué sur remix mort).
+                    coldStart && httpStatus != null && httpStatus >= 500 -> 2
+                    // 503/502 mid-piste : quelques retries puis skip réel.
+                    httpStatus != null && httpStatus >= 500 -> 4
                     transientNetwork -> Int.MAX_VALUE
                     else -> 8
                 }
