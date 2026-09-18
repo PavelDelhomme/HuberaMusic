@@ -328,17 +328,23 @@ class PlayerController(
                 YtMusicApp.instance.container.offlineStore.has(firstId)
             }.getOrDefault(false)
             val headReady = StreamPrefetcher.wasHeadReadyRecently(firstId)
-            // Hors-ligne / tête chaude : zéro quiet. Sinon court (évite 900 ms morts).
+            // Laisser le 1er titre prendre la bande (VPS froid ~15–40 s).
             StreamPrefetcher.quietPrefetch(
                 when {
-                    offlineReady || headReady -> 40L
-                    else -> 350L
+                    offlineReady || headReady -> 80L
+                    else -> 12_000L
                 },
             )
             val startId = firstId
             scope.launch {
-                delay(if (offlineReady || headReady) 60L else 280L)
+                delay(if (offlineReady || headReady) 60L else 8_000L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
+                // Suivants seulement après que le courant ait vraiment démarré.
+                val pos = player()?.currentPosition ?: 0L
+                if (pos < 1_500L && !headReady && !offlineReady) {
+                    delay(8_000L)
+                    if (player()?.currentMediaItem?.mediaId != startId) return@launch
+                }
                 playable.drop(idx + 1).take(2).forEach { t ->
                     StreamPrefetcher.warmTrackFormatOnly(base, t.id)
                 }
@@ -347,7 +353,7 @@ class PlayerController(
                     base,
                     playable.map { it.id },
                     idx,
-                    count = 12,
+                    count = 6,
                     ignoreQuiet = false,
                 )
             }

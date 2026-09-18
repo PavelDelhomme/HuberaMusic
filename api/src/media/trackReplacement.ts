@@ -28,7 +28,7 @@ const CACHE_DIR = join(
 const VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/;
 const PROBE_MS = 8_000;
 /** Score minimal pour accepter un remplaçant — au-dessous, mieux vaut échouer que jouer un autre morceau. */
-const MIN_SCORE = 75;
+const MIN_SCORE = 70;
 
 let schemaReady = false;
 const inflight = new Map<string, Promise<string | null>>();
@@ -73,18 +73,18 @@ function saveReplacement(
   artist: string,
   score: number,
 ) {
-  // Garde-fou anti-boucle : jamais A → B si B → A est déjà enregistré.
-  // Si l’ancien mapping inverse existe, on le retire (souvent un faux positif).
+  // Anti-boucle : si B → A existe déjà, ne PAS créer A → B (sinon ping-pong
+  // Brisa ↔ Brisa Salada et BUFFERING 50 s).
   if (getReplacementId(replacementId) === deadId) {
-    try {
-      ensureTrackReplacementSchema();
-      db.prepare('DELETE FROM track_id_replacements WHERE dead_id = ?').run(replacementId);
-      console.warn(`[replacement] mapping inverse retiré ${replacementId} → ${deadId}`);
-    } catch {
-      console.warn(`[replacement] boucle évitée ${deadId} ↔ ${replacementId}`);
-      return;
-    }
+    console.warn(`[replacement] refuse boucle ${deadId} ↔ ${replacementId}`);
+    return;
   }
+  // Suivre la chaîne si le remplaçant est lui-même redirigé.
+  const hop = getReplacementId(replacementId);
+  if (hop && hop !== deadId && VIDEO_ID.test(hop)) {
+    replacementId = hop;
+  }
+  if (replacementId === deadId) return;
   try {
     ensureTrackReplacementSchema();
     const now = Date.now();
@@ -260,7 +260,8 @@ export async function findReplacementId(
     const unique = ranked.filter(({ t }) => (seen.has(t.id) ? false : seen.add(t.id)));
 
     for (const { t, s } of unique.slice(0, 6)) {
-      if (!(await playable(t.id))) continue;
+      // Ne pas proposer un id qui pointe déjà vers deadId (boucle).
+      if (getReplacementId(t.id) === deadId) continue;
       console.log(
         `[replacement] ${deadId} → ${t.id} (score ${s}) « ${t.title} — ${artistLine(t)} »`,
       );

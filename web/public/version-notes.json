@@ -2,6 +2,29 @@
   "updatedAt": "2026-09-18",
   "versions": [
     {
+      "version": "1.3.258",
+      "date": "2026-09-18",
+      "title": "Streams fluides : disque early + proxies sans PC maison",
+      "notes": [
+        "Serveur autonome : proxies HTTP gratuits — écoute OK même PC éteint",
+        "Cache disque servi immédiatement (early) — moins de « Chargement… » interminable",
+        "Anti-DASH Android : URL yt-dlp progressive ; soft-fail ne bloque plus les titres déjà en cache",
+        "Remplacements : fini le ping-pong A↔B (ex. Brisa) ; seuil score 70",
+        "Prefetch / cold start adoucis (suite 1.3.256)"
+      ]
+    },
+    {
+      "version": "1.3.256",
+      "date": "2026-09-18",
+      "title": "1er titre : plus de skip trop tôt + charge prioritaire",
+      "notes": [
+        "Cold start : jusqu’à ~42 s avant abandon (yt-dlp VPS), plus de skip au 2e stall",
+        "Prefetch des suivants bloqué ~12 s pour laisser le 1er titre charger",
+        "Serveur : budget format audio 55 s (moins de 502 sur titres froids)",
+        "Fenêtre prefetch Wi‑Fi réduite (6) pour ne pas saturer"
+      ]
+    },
+    {
       "version": "1.3.255",
       "date": "2026-09-18",
       "title": "Moins de coupures maison + moins de mails stall",

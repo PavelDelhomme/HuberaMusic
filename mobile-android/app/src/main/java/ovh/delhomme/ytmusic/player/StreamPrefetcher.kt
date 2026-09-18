@@ -53,8 +53,8 @@ object StreamPrefetcher {
 
     private const val MAX_WARM = 16
     /** Fenêtre avant sur Wi‑Fi (file / aléatoire / rolling). */
-    private const val AHEAD_WIFI = 10
-    private const val AHEAD_METERED = 6
+    private const val AHEAD_WIFI = 6
+    private const val AHEAD_METERED = 4
     private const val DISK_CACHE_MB = 48L
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
