@@ -6,9 +6,10 @@
       "date": "2026-09-18",
       "title": "Skip immédiat des titres YouTube morts (410)",
       "notes": [
-        "API : titre unavailable → 410 VIDEO_UNAVAILABLE (plus 50 s de proxies puis 502)",
-        "Android : skip dès le 1er 410 / unavailable ; cold start 5xx après 2 essais",
-        "Corrige le plantage Save Your Tears remix (et autres ids retirés) sur Nothing"
+        "API : titre unavailable → 410 VIDEO_UNAVAILABLE en <3 s (remplacement plafonné)",
+        "Android : skip dès le 1er 410 ; cold start grace réduite (22 s) + give-up plus tôt",
+        "Corrige le plantage Save Your Tears remix (et autres ids retirés) sur Nothing",
+        "Web : flux audio progressif (1.3.244) — son rétabli après rejet DASH"
       ]
     },
     {
