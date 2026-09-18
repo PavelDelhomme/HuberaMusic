@@ -104,8 +104,15 @@ export function scheduleUserTasteWarm(
         ...userTrackIds(userId, 40),
       ].filter((id, i, a) => a.indexOf(id) === i);
       if (!ids.length) return;
+      // Écoute en cours : ne pas saturer getAudioFormat (stall Blue / stream-5xx).
+      // Uniquement les extras (titre courant / +1), zéro disk.
+      const hotNow = isPlaybackHot(120_000);
+      if (hotNow || playbackHot) {
+        const focus = extraIds.filter(validId).slice(0, 4);
+        if (focus.length) enqueueStreamWarm(focus, userId);
+        return;
+      }
       enqueueStreamWarm(ids.slice(0, 28), userId);
-      if (playbackHot) return;
       const diskN = Math.max(0, Math.min(16, opts?.disk ?? 10));
       const needDisk = ids.filter(needsDisk).slice(0, diskN);
       if (needDisk.length) enqueueDiskWarm(needDisk);

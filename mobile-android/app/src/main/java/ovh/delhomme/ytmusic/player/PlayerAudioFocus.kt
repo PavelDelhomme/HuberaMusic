@@ -220,13 +220,35 @@ class PlayerAudioFocus(
                 }
                 callWatch = null
                 val p = player() ?: return
-                AppLog.i("audio-focus", "appel terminé → reprise")
+                AppLog.i("audio-focus", "appel terminé → reprise (rebind différé)")
+                // Après appel : DNS/socket souvent morts → play() à l’aveugle → toast
+                // « Serveur audio indisponible ». Soft rebind + délai réseau.
+                StreamPrefetcher.markStreamOk()
                 held = false
                 request = null
-                if (requestIfNeeded()) {
-                    runCatching {
-                        p.playWhenReady = true
-                        p.play()
+                handler.postDelayed({
+                    if (inCall()) return@postDelayed
+                    if (!requestIfNeeded()) return@postDelayed
+                    PlaybackService.Holder.lastCallResumeAtMs = System.currentTimeMillis()
+                    val svc = PlaybackService.Holder.service
+                    if (svc != null) {
+                        runCatching {
+                            svc.rebindCurrentStream(
+                                reason = "after-call",
+                                forcePlay = true,
+                                wipeCache = false,
+                            )
+                        }.onFailure {
+                            runCatching {
+                                p.playWhenReady = true
+                                p.play()
+                            }
+                        }
+                    } else {
+                        runCatching {
+                            p.playWhenReady = true
+                            p.play()
+                        }
                     }
                     val now = System.currentTimeMillis()
                     if (now - lastDuckToastAt > 6_000L) {
@@ -239,7 +261,7 @@ class PlayerAudioFocus(
                             ).show()
                         }
                     }
-                }
+                }, 750L)
             }
         }
         callWatch = task

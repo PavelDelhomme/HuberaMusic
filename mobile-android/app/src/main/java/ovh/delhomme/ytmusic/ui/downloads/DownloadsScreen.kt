@@ -181,8 +181,11 @@ fun DownloadsScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             Text(
-                                track?.artistLine()?.takeIf { it.isNotBlank() && it != "Artiste" }
-                                    ?: "Préparation du fichier…",
+                                when {
+                                    pct < 0.15f -> "Préparation serveur…"
+                                    else -> track?.artistLine()?.takeIf { it.isNotBlank() && it != "Artiste" }
+                                        ?: "Téléchargement…"
+                                },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,
@@ -195,7 +198,8 @@ fun DownloadsScreen(
                                     .padding(top = 6.dp),
                             )
                             Text(
-                                "${(pct * 100).toInt().coerceIn(0, 99)} %",
+                                if (pct < 0.15f) "Préparation…"
+                                else "${(pct * 100).toInt().coerceIn(0, 99)} %",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 2.dp),

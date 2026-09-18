@@ -2,6 +2,36 @@
   "updatedAt": "2026-09-18",
   "versions": [
     {
+      "version": "1.3.252",
+      "date": "2026-09-18",
+      "title": "Reprise après appel sans faux « Serveur audio indisponible »",
+      "notes": [
+        "Fin d’appel : soft rebind du flux (plus de play() à l’aveugle sur sockets morts)",
+        "Pendant ~20 s après l’appel : toast « Reprise du flux… » au lieu de « Serveur audio indisponible »",
+        "DNS / fausse hors-ligne juste après un appel : retente le titre, ne gèle plus le prefetch"
+      ]
+    },
+    {
+      "version": "1.3.251",
+      "date": "2026-09-18",
+      "title": "Compte : retour remis en place + DL offline plus fluide",
+      "notes": [
+        "Écran Compte : flèche retour réalignée (plus de double inset avec le mini-lecteur)",
+        "Téléchargement offline : plus de faux 12 % figé — « Préparation serveur… » puis vraie progression",
+        "Serveur : offline saute le gate Exo 410 et ne bloque plus sur le probe Range 0-0"
+      ]
+    },
+    {
+      "version": "1.3.250",
+      "date": "2026-09-18",
+      "title": "Anti-stall Blue : remux OAuth + 410 rapide",
+      "notes": [
+        "Titres morts (Blue / unavailable) : 410 immédiat côté Android — plus de stall / mail stream-5xx après 40 s",
+        "Téléchargement progressif : OAuth googlevideo + remux ffmpeg si DASH (cookies yt-dlp morts)",
+        "Taste warm : plus de saturation getAudioFormat pendant une écoute"
+      ]
+    },
+    {
       "version": "1.3.249",
       "date": "2026-09-18",
       "title": "Pré-validation flux avant écoute (anti-coupure)",

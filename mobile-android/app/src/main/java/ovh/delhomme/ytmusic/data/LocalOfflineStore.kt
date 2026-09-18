@@ -235,7 +235,7 @@ class LocalOfflineStore(
             ) {
                 return@withContext Result.failure(lastError ?: Exception("stream down"))
             }
-            val forceSequential = attempt > 0
+            val forceSequential = attempt > 0 || streamUrl.contains("offline=1")
             // Retry DASH : force bust cache format côté API (?retry=N déjà dans l’URL appelant).
             val url = if (attempt == 0) {
                 streamUrl
@@ -350,6 +350,16 @@ class LocalOfflineStore(
         val part = partFile(track.id)
         return runCatching {
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            // Offline : le serveur prépare le .m4a (remux) avant d’envoyer des octets.
+            // Un probe Range 0-0 bloque alors toute la durée (UI figée ~12 %).
+            // On saute le probe → GET séquentiel direct.
+            val offlinePrep = streamUrl.contains("offline=1") ||
+                streamUrl.contains("offline%3D1")
+            if (offlinePrep) {
+                onProgress?.invoke(0.06f)
+                downloadSequential(track, streamUrl, part, dest, onProgress, attempt, 0L)
+                return@runCatching dest
+            }
             val probe = streamRange(streamUrl, "bytes=0-0")
             val (total, ranged) = http.newCall(probe).execute().use { resp ->
                 if (resp.code == 502 || resp.code == 503 || resp.code == 504) {
@@ -452,9 +462,10 @@ class LocalOfflineStore(
                                 lastPct = pct
                                 onProgress?.invoke(pct / 100f)
                             }
-                        } else if (readTotal - lastByteReport >= 256 * 1024L) {
+                        } else if (readTotal - lastByteReport >= 128 * 1024L) {
                             lastByteReport = readTotal
-                            val soft = (0.08f + (readTotal / (1024f * 1024f)) * 0.04f).coerceAtMost(0.92f)
+                            // Soft : monte vite au début (évite faux « 12 % » figé à 1 MiB).
+                            val soft = (0.15f + (readTotal / (1024f * 1024f)) * 0.08f).coerceAtMost(0.92f)
                             onProgress?.invoke(soft)
                         }
                         // Mobile : pause légère (~12 ms / 256 Ko) — respire sans trop ralentir.

@@ -75,12 +75,13 @@ export function healTrackFromTelemetry(opts: {
     kind === 'android.player.load_recover' ||
     /unavailable|not available|private|removed|non 2xx|502|403/i.test(String(opts.message || ''));
 
-  // Pré-télécharge le .m4a intégral (proxies) avant la prochaine écoute.
+  // Pré-télécharge le .m4a intégral (OAuth remux / proxies) avant la prochaine écoute.
+  // Remplacement APRÈS ensure — sinon playable() × 6 saturaient getAudioFormat (stall Blue).
   void import('./ensurePlayable.js')
     .then(({ ensurePlayableOnDisk }) =>
       ensurePlayableOnDisk(id, {
         userId: opts.userId,
-        waitMs: 35_000,
+        waitMs: 45_000,
         preferProxies: true,
         allowReplace: wantReplace,
         title: extractMetaString(opts.meta, 'title'),
@@ -88,39 +89,42 @@ export function healTrackFromTelemetry(opts: {
       }),
     )
     .then((r) => {
-      if (r?.ok) console.log(`[stream-heal] ensure OK ${id} → ${r.playId} via=${r.via} bytes=${r.bytes}`);
-      else if (r) console.warn(`[stream-heal] ensure KO ${id}: ${r.detail || r.via}`);
+      if (r?.ok) {
+        console.log(`[stream-heal] ensure OK ${id} → ${r.playId} via=${r.via} bytes=${r.bytes}`);
+        return;
+      }
+      if (r) console.warn(`[stream-heal] ensure KO ${id}: ${r.detail || r.via}`);
+      if (!wantReplace) return;
+      const lastR = lastReplaceAt.get(id) || 0;
+      if (Date.now() - lastR < REPLACE_COOLDOWN_MS) return;
+      lastReplaceAt.set(id, Date.now());
+      void (async () => {
+        try {
+          const payload = getTrackPayload(id) as {
+            title?: string;
+            artists?: Array<{ name?: string }>;
+          } | null;
+          const title = extractMetaString(opts.meta, 'title') || payload?.title;
+          const artist =
+            extractMetaString(opts.meta, 'artist') ||
+            payload?.artists?.map((a) => a?.name).filter(Boolean).join(', ');
+          const replacement = await findReplacementId(id, {
+            userId: opts.userId,
+            title,
+            artist,
+          });
+          if (replacement && replacement !== id) {
+            console.log(`[stream-heal] remplacement ${id} → ${replacement}`);
+            enqueueStreamWarm([replacement], opts.userId);
+            enqueueDiskWarm([replacement]);
+          }
+        } catch (err) {
+          console.warn(
+            `[stream-heal] replace KO ${id}:`,
+            String((err as Error).message || err).slice(0, 120),
+          );
+        }
+      })();
     })
     .catch(() => {});
-
-  if (!wantReplace) return;
-
-  const lastR = lastReplaceAt.get(id) || 0;
-  if (now - lastR < REPLACE_COOLDOWN_MS) return;
-  lastReplaceAt.set(id, now);
-
-  void (async () => {
-    try {
-      const payload = getTrackPayload(id) as { title?: string; artists?: Array<{ name?: string }> } | null;
-      const title = extractMetaString(opts.meta, 'title') || payload?.title;
-      const artist =
-        extractMetaString(opts.meta, 'artist') ||
-        payload?.artists?.map((a) => a?.name).filter(Boolean).join(', ');
-      const replacement = await findReplacementId(id, {
-        userId: opts.userId,
-        title,
-        artist,
-      });
-      if (replacement && replacement !== id) {
-        console.log(`[stream-heal] remplacement ${id} → ${replacement}`);
-        enqueueStreamWarm([replacement], opts.userId);
-        enqueueDiskWarm([replacement]);
-      }
-    } catch (err) {
-      console.warn(
-        `[stream-heal] replace KO ${id}:`,
-        String((err as Error).message || err).slice(0, 120),
-      );
-    }
-  })();
 }

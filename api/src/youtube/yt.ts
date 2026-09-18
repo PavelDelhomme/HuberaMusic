@@ -2770,7 +2770,8 @@ export async function getAudioFormat(
     }
 
     if (!entry) {
-      throw new Error('Audio format indisponible (innertube/yt-dlp)');
+      // Remonter unavailable explicite (Android 410 rapide) plutôt qu’un message générique.
+      throw new Error('Audio format indisponible (innertube/yt-dlp) — streaming data not available');
     }
 
     audioFormatCache.set(key, entry);
@@ -2786,10 +2787,12 @@ export async function getAudioFormat(
 
   // Important : le promise exposé (et l’inflight) doit aussi expirer,
   // sinon un 1er appel « abandonné » bloque tous les suivants sur la même clé.
+  // Live écoute : budget plus large (warm concurrent ne doit pas faire échouer Blue).
+  const deadlineMs = live ? 28_000 : 16_000;
   const capped = Promise.race([
     job,
     new Promise<AudioFormat>((_, rej) =>
-      setTimeout(() => rej(new Error('getAudioFormat deadline')), 16_000),
+      setTimeout(() => rej(new Error('getAudioFormat deadline')), deadlineMs),
     ),
   ]).finally(() => {
     audioFormatInflight.delete(key);

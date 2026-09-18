@@ -806,30 +806,91 @@ export async function handleStream(req: Request, res: Response) {
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
 
+  const wantOfflineEarly =
+    String(req.query.offline || '') === '1' ||
+    String(req.headers['x-ytm-offline'] || '') === '1';
+  const isHomeRelay =
+    String(req.headers['x-ytm-stream-relay'] || '') === '1';
+
   // Pré-validation Android : .m4a intégral avant relais (évite 502 / EOS mid-piste).
+  // 410 UNIQUEMENT si le titre est vraiment mort (unavailable).
+  // Relais maison (X-YTM-Stream-Relay) : skip — le VPS a déjà un first-byte court.
+  // Offline DL : sauter ce gate (le client attend des octets).
   {
     const wantVideoEarly = String(req.query.type || req.query.media || '') === 'video';
-    if (!wantVideoEarly && isAndroidClient(req)) {
+    if (!wantVideoEarly && !wantOfflineEarly && !isHomeRelay && isAndroidClient(req)) {
       const cached = cachePath(videoId);
       if (!isCompleteEnoughDisk(cached)) {
+        let formatOk = false;
+        let unavailable = false;
         try {
-          const { ensurePlayableOnDisk } = await import('./ensurePlayable.js');
-          const ensured = await ensurePlayableOnDisk(videoId, {
-            userId: (req as any).userId,
-            waitMs: 18_000,
-            preferProxies: true,
-            allowReplace: true,
-          });
-          if (ensured.ok && ensured.playId !== videoId) {
-            noteStreamSource(res, `ensure → ${ensured.playId}`);
-            res.setHeader('Cache-Control', 'no-store');
-            res.setHeader('X-PLM-Replaced-From', videoId);
-            res.setHeader('X-PLM-Ensure', ensured.via);
-            res.redirect(302, streamPathFor(req, ensured.playId));
-            return;
+          const fmt = await Promise.race([
+            getAudioFormat(videoId, { live: true, userId: (req as any).userId }),
+            new Promise<null>((r) => setTimeout(() => r(null), 4_000)),
+          ]);
+          formatOk = Boolean(fmt?.url);
+        } catch (probeErr) {
+          const pmsg = String((probeErr as Error).message || probeErr);
+          if (looksUnavailable(pmsg)) {
+            unavailable = true;
+            try {
+              const replacement =
+                getReplacementId(videoId) ||
+                (await Promise.race([
+                  findReplacementId(videoId, { userId: (req as any).userId }),
+                  new Promise<null>((r) => setTimeout(() => r(null), 1_200)),
+                ]));
+              if (replacement && !res.headersSent) {
+                res.setHeader('Cache-Control', 'no-store');
+                res.setHeader('X-PLM-Replaced-From', videoId);
+                res.redirect(302, streamPathFor(req, replacement));
+                return;
+              }
+            } catch {
+              /* fallthrough 410 */
+            }
+            if (!res.headersSent) {
+              res.status(410).json({
+                error: 'Impossible de streamer audio',
+                code: 'VIDEO_UNAVAILABLE',
+                detail: pmsg.slice(0, 240),
+                hint: 'Titre retiré / privé — passage au suivant côté app',
+              });
+              return;
+            }
           }
-        } catch {
-          /* fallback pipeline ci-dessous */
+        }
+        // Titre mort confirmé sans format : 410. Sinon (timeout / contention) → pipeline.
+        if (!formatOk && unavailable && !res.headersSent) {
+          res.status(410).json({
+            error: 'Impossible de streamer audio',
+            code: 'VIDEO_UNAVAILABLE',
+            detail: 'audio format unavailable',
+            hint: 'Titre inaccessible — passage au suivant côté app',
+          });
+          return;
+        }
+        // Best-effort ensure court — échec ≠ 410, on continue vers relais/yt-dlp.
+        if (formatOk) {
+          try {
+            const { ensurePlayableOnDisk } = await import('./ensurePlayable.js');
+            const ensured = await ensurePlayableOnDisk(videoId, {
+              userId: (req as any).userId,
+              waitMs: 4_000,
+              preferProxies: true,
+              allowReplace: true,
+            });
+            if (ensured.ok && ensured.playId !== videoId) {
+              noteStreamSource(res, `ensure → ${ensured.playId}`);
+              res.setHeader('Cache-Control', 'no-store');
+              res.setHeader('X-PLM-Replaced-From', videoId);
+              res.setHeader('X-PLM-Ensure', ensured.via);
+              res.redirect(302, streamPathFor(req, ensured.playId));
+              return;
+            }
+          } catch {
+            /* pipeline */
+          }
         }
       }
     }
@@ -857,6 +918,34 @@ export async function handleStream(req: Request, res: Response) {
   if (wantOffline && !wantVideo) {
     purgeDashCache(videoId);
     const cached = cachePath(videoId);
+    const rangeHdrEarly = req.headers.range ? String(req.headers.range) : '';
+    // Probe client Range 0-0 : ne pas bloquer 75 s — le DL démarre en fond, 503 rapide.
+    if (/^bytes=0-0$/i.test(rangeHdrEarly.trim())) {
+      if (existsSync(cached) && isCompleteEnoughDisk(cached) && !isDashBrandFile(cached)) {
+        const size = statSync(cached).size;
+        res.status(206);
+        res.setHeader('Content-Range', `bytes 0-0/${size}`);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Content-Length', '1');
+        res.setHeader('Content-Type', 'audio/mp4');
+        res.setHeader('X-PLM-Stream-Cache', 'disk-offline-probe');
+        const { createReadStream } = await import('node:fs');
+        createReadStream(cached, { start: 0, end: 0 }).pipe(res);
+        return;
+      }
+      downloadTrack(videoId, { progressiveOnly: true, preferProxies }).catch(() => {});
+      if (!res.headersSent) {
+        res.status(503);
+        res.setHeader('Retry-After', '2');
+        res.setHeader('Cache-Control', 'no-store');
+        res.json({
+          error: 'Offline file preparing',
+          code: 'OFFLINE_PREPARING',
+          hint: 'Réessayer dans 2 s — remux en cours',
+        });
+      }
+      return;
+    }
     const waitMs = 75_000;
     try {
       await Promise.race([
@@ -1293,11 +1382,12 @@ export async function handleStream(req: Request, res: Response) {
       );
     } else {
       const proxyTimeoutMs = skipHomeForOpenAndroid
-        ? 10_000
+        ? 45_000
         : midNeedsDisk
           ? 18_000
-          : 20_000;
-      const firstByteMs = skipHomeForOpenAndroid ? 3_500 : 8_000;
+          : 45_000;
+      // Maison résidentielle : first-byte souvent 8–20 s (format+yt-dlp). 3.5 s = faux offline.
+      const firstByteMs = skipHomeForOpenAndroid ? 22_000 : 18_000;
       try {
         await proxyStreamToHome(req, res, homeUpstream, videoId, proxyTimeoutMs, firstByteMs);
         return;
@@ -1561,18 +1651,12 @@ export async function handleStream(req: Request, res: Response) {
     }
   }
 
-  // Après rejet DASH / 403 : laisser le téléchargement progressif aboutir, puis servir disque.
+  // Après rejet DASH / 403 : préparer le disque en fond, puis pipe yt-dlp immédiat
+  // (Android). Avant : wait 14 s silencieux sur remux→403 → Nothing « charge… » infini.
   if (!wantVideo && !res.headersSent && !midNeedsDisk) {
     const cachedProg = cachePath(videoId);
     if (!isCompleteEnoughDisk(cachedProg)) {
-      try {
-        await Promise.race([
-          downloadTrack(videoId, { progressiveOnly: true, preferProxies }),
-          new Promise<void>((r) => setTimeout(r, 14_000)),
-        ]);
-      } catch {
-        /* yt-dlp pipe ci-dessous */
-      }
+      downloadTrack(videoId, { progressiveOnly: true, preferProxies }).catch(() => {});
     }
     if (isCompleteEnoughDisk(cachedProg)) {
       try {
@@ -1610,6 +1694,31 @@ export async function handleStream(req: Request, res: Response) {
           '[stream] progressive disk serve KO:',
           String((e as Error).message || e).slice(0, 120),
         );
+      }
+    }
+    if (isAndroidClient(req) && !res.headersSent) {
+      try {
+        ensureTime('ytdlpAntiDash');
+        noteStreamSource(res, 'yt-dlp pipe (anti-DASH)');
+        await withDeadline(
+          'ytdlpPipeAntiDash',
+          streamViaYtDlp(videoId, res, true),
+        );
+        return;
+      } catch (e) {
+        console.warn(
+          '[stream] yt-dlp anti-DASH KO:',
+          String((e as Error).message || e).slice(0, 140),
+        );
+        if (!res.headersSent) {
+          res.status(502).json({
+            error: 'Impossible de streamer audio',
+            code: 'STREAM_TEMP_UNAVAILABLE',
+            detail: String((e as Error).message || e).slice(0, 200),
+            hint: 'Progressif indisponible (VPS) — skip / retry',
+          });
+          return;
+        }
       }
     }
   }
@@ -2154,12 +2263,40 @@ export async function downloadTrack(
   const job = (async (): Promise<string> => {
     if (isCompleteEnoughDisk(out)) return out;
 
+    // progressiveOnly : yt-dlp+proxies d’abord.
+    // Remux OAuth (fetch GV) depuis le VPS = quasi toujours 403 → ne plus le mettre
+    // en tête (sinon ensure/warm bloquent et Nothing reste en « charge… »).
+
     // 1) Innertube — sauf si progressiveOnly (DASH fréquent → refuse hors-ligne)
     if (!opts?.progressiveOnly) {
       try {
         await downloadTrackViaInnertube(videoId, out);
         if (isCompleteEnoughDisk(out)) {
           return out;
+        }
+        // DASH écrit par Innertube → remux plutôt que jeter
+        if (existsSync(out) && isDashBrandFile(out) && statSync(out).size >= MIN_COMPLETE_DISK_BYTES) {
+          const tmp = `${out}.dash.tmp`;
+          try {
+            const { renameSync } = await import('node:fs');
+            renameSync(out, tmp);
+            await remuxToProgressiveM4a(tmp, out);
+            try {
+              unlinkSync(tmp);
+            } catch {
+              /* ignore */
+            }
+            if (isCompleteEnoughDisk(out) && !isDashBrandFile(out)) {
+              downloadFailUntil.delete(videoId);
+              return out;
+            }
+          } catch {
+            try {
+              if (existsSync(tmp)) unlinkSync(tmp);
+            } catch {
+              /* ignore */
+            }
+          }
         }
         if (existsSync(out) && (isDashBrandFile(out) || statSync(out).size < MIN_COMPLETE_DISK_BYTES)) {
           try {
@@ -2174,6 +2311,15 @@ export async function downloadTrack(
     }
 
     if (!existsSync(YTDLP)) {
+      // Dernier recours sans binaire yt-dlp
+      if (!opts?.progressiveOnly) {
+        try {
+          await downloadTrackViaFormatRemux(videoId, out);
+          if (isCompleteEnoughDisk(out) && !isDashBrandFile(out)) return out;
+        } catch {
+          /* ignore */
+        }
+      }
       throw new Error('Audio download indisponible (innertube + yt-dlp)');
     }
 
@@ -2283,6 +2429,21 @@ export async function downloadTrack(
       downloadFailUntil.delete(videoId);
       return out;
     }
+
+    // Après yt-dlp bot-bloqué : encore une chance OAuth+remux (cookies fichier souvent morts).
+    try {
+      await downloadTrackViaFormatRemux(videoId, out);
+      if (isCompleteEnoughDisk(out) && !isDashBrandFile(out)) {
+        downloadFailUntil.delete(videoId);
+        return out;
+      }
+    } catch (err) {
+      console.warn(
+        `[stream] format-remux post-ytdlp KO ${videoId}:`,
+        String((err as Error).message || err).slice(0, 120),
+      );
+    }
+
     if (sawBot && lastErr) noteYtDlpFailure(lastErr);
     const failMsg = lastErr?.message || 'Audio download KO';
     if (existsSync(out) && !isCompleteEnoughDisk(out)) {
@@ -2295,9 +2456,10 @@ export async function downloadTrack(
     // Quand YouTube nous prend pour un robot, réessayer quinze secondes plus tard
     // relance des minutes de tentatives vouées à l'échec pendant que le lecteur
     // attend. Le relais googlevideo sert très bien le morceau en attendant.
+    // Remux OAuth a déjà été tenté : cooldown court (pas 3 min) pour ne pas bloquer ensure.
     if (/cooling down|Sign in to confirm|rate-limited|not a bot|LOGIN_REQUIRED/i.test(failMsg)) {
       downloadFailUntil.set(videoId, {
-        until: Date.now() + Math.max(180_000, ytDlpCooldownRemainingMs()),
+        until: Date.now() + Math.max(45_000, Math.min(120_000, ytDlpCooldownRemainingMs())),
         msg: failMsg.slice(0, 160),
       });
     } else {
@@ -2366,6 +2528,90 @@ async function downloadTrackViaInnertube(videoId: string, out: string): Promise<
       /* ignore */
     }
     throw err;
+  }
+}
+
+/**
+ * Cookies yt-dlp souvent morts sur VPS ; OAuth Innertube donne encore une URL googlevideo
+ * (souvent ftyp=dash). On télécharge puis remux ffmpeg → .m4a progressif jouable Exo.
+ */
+async function remuxToProgressiveM4a(src: string, dest: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn(
+      'ffmpeg',
+      ['-y', '-i', src, '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', dest],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    let err = '';
+    proc.stderr?.on('data', (c) => {
+      err += String(c);
+      if (err.length > 3_000) err = err.slice(-3_000);
+    });
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0 && existsSync(dest) && statSync(dest).size > 0) resolve();
+      else reject(new Error(`ffmpeg remux ${code}: ${err.slice(-200)}`));
+    });
+  });
+}
+
+/** OAuth/format URL → fichier progressif (remux si DASH). Indépendant des cookies yt-dlp. */
+async function downloadTrackViaFormatRemux(videoId: string, out: string): Promise<void> {
+  const format = await getAudioFormat(videoId, { live: true, forceFresh: false });
+  if (!format?.url) throw new Error('format remux: pas d’URL');
+  const tmp = `${out}.dash.tmp`;
+  try {
+    if (existsSync(tmp)) unlinkSync(tmp);
+    const upstream = await fetchGooglevideo(format.url);
+    if (!upstream.ok || !upstream.body) {
+      throw new Error(`format remux gv ${upstream.status}`);
+    }
+    const file = createWriteStream(tmp);
+    const reader = upstream.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        if (!file.write(Buffer.from(value))) {
+          await new Promise<void>((r) => file.once('drain', () => r()));
+        }
+      }
+    }
+    await new Promise<void>((resolve, reject) => {
+      file.end(() => resolve());
+      file.on('error', reject);
+    });
+    if (!existsSync(tmp) || statSync(tmp).size < MIN_COMPLETE_DISK_BYTES) {
+      throw new Error('format remux: téléchargement trop petit');
+    }
+    if (isDashBrandFile(tmp)) {
+      if (existsSync(out)) {
+        try {
+          unlinkSync(out);
+        } catch {
+          /* ignore */
+        }
+      }
+      await remuxToProgressiveM4a(tmp, out);
+    } else {
+      // Déjà progressif : déplacer
+      try {
+        if (existsSync(out)) unlinkSync(out);
+      } catch {
+        /* ignore */
+      }
+      const { renameSync } = await import('node:fs');
+      renameSync(tmp, out);
+    }
+    if (isDashBrandFile(out) || !isCompleteEnoughDisk(out)) {
+      throw new Error('format remux: sortie encore DASH / incomplète');
+    }
+  } finally {
+    try {
+      if (existsSync(tmp)) unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
