@@ -290,16 +290,6 @@ fun AccountScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             }
 
-            item {
-                Text(
-                    updater.lastHuberaMessage()
-                        ?: "PLM fait partie de Hubera Music. Tes données et ton compte restent. Nouveau domaine : music.hubera.cloud — plm.delhomme.ovh continue.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                )
-            }
-
             // MAJ en haut : visible sur petits écrans sans scroller toute la liste
             item {
                 val accentRed = Color(0xFFE53935)
@@ -461,7 +451,7 @@ fun AccountScreen(
                 AccountRow(
                     icon = { Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null) },
                     title = "Aide & limites",
-                    subtitle = "Pourquoi un titre charge lentement, hors-ligne, versions…",
+                    subtitle = "Hubera, hors-ligne, versions, lecture…",
                     onClick = {
                         onOpenHelp?.invoke()
                             ?: context.toastMain("Ouvre Compte depuis Accueil")

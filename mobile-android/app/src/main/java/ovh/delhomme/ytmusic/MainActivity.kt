@@ -895,6 +895,7 @@ private fun MainTabs(
     var forceOnboarding by remember { mutableStateOf(false) }
     var onboardingChecked by remember { mutableStateOf(false) }
     var showGoogleLink by remember { mutableStateOf(false) }
+    var showHuberaNotice by remember { mutableStateOf(false) }
 
     var sessionHydrated by remember { mutableStateOf(false) }
     var pendingRemoteLabel by remember { mutableStateOf<String?>(null) }
@@ -970,6 +971,10 @@ private fun MainTabs(
             // Dialog opt-in seulement — jamais de navigation auto vers OAuth (écran bloquant)
             if (me != null && !guest && !streamReady && !cool && !forceOnboarding) {
                 showGoogleLink = true
+            }
+            val huberaPrefs = container.sharedPrefs("hubera_notice")
+            if (me != null && !guest && !huberaPrefs.getBoolean("seen_v1", false)) {
+                showHuberaNotice = true
             }
         }
         if (!sessionHydrated) {
@@ -1657,6 +1662,7 @@ private fun MainTabs(
             composable("help_limits") {
                 ovh.delhomme.ytmusic.ui.components.HelpLimitsScreen(
                     onBack = { nav.popBackStack() },
+                    huberaMessage = container.apkUpdateManager.lastHuberaMessage(),
                 )
             }
             composable("history") {
@@ -1910,6 +1916,35 @@ private fun MainTabs(
 
     if (showCast) {
         CastSheet(container = container, player = player, onDismiss = { showCast = false })
+    }
+
+    if (showHuberaNotice && !forceOnboarding) {
+        AlertDialog(
+            onDismissRequest = {
+                container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                showHuberaNotice = false
+            },
+            title = { Text("Hubera Music") },
+            text = {
+                Text(
+                    "PLM fait partie de Hubera Music. Ton compte et tes playlists restent. " +
+                        "Détails dans Compte → Aide & limites. Le login local continue : rien n’est fusionné.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                    showHuberaNotice = false
+                    nav.navigate("help_limits")
+                }) { Text("Aide & limites") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                    showHuberaNotice = false
+                }) { Text("OK") }
+            },
+        )
     }
 
     if (showGoogleLink && !forceOnboarding) {

@@ -32,7 +32,10 @@ import androidx.compose.ui.unit.dp
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HelpLimitsScreen(onBack: () -> Unit) {
+fun HelpLimitsScreen(
+    onBack: () -> Unit,
+    huberaMessage: String? = null,
+) {
     BackHandler(onBack = onBack)
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -62,6 +65,17 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            item { SectionTitle("Hubera Music") }
+            item {
+                Bullet(
+                    huberaMessage?.takeIf { it.isNotBlank() }
+                        ?: "PLM fait partie de Hubera Music. Ton compte, tes playlists et tes données restent. " +
+                        "Nouveau domaine : music.hubera.cloud — plm.delhomme.ovh et ytmusic.delhomme.ovh continuent. " +
+                        "Même application (package inchangé), pas de réinstallation Play Store. " +
+                        "Lier Hubera ID est optionnel : le login local continue pour tout le monde.",
+                )
+            }
+            item { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)) }
             item { SectionTitle("Comment marche la lecture") }
             item {
                 Bullet(
