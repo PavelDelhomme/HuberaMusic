@@ -115,6 +115,7 @@ import {
   startApkBuild,
   startBuild,
 } from './platform/admin.js';
+import { huberaLegacyStatus, huberaNotice, pingFromRequest } from './platform/huberaLegacy.js';
 import {
   allowPublicApkTicket,
   consumeApkTicket,
@@ -1569,7 +1570,12 @@ app.get('/api/install/apk-info', (_req, res) => {
     builtAt: info.builtAt,
     package: 'ovh.delhomme.ytmusic',
     installPath: '/install',
+    hubera: huberaNotice(),
   });
+});
+
+app.get('/api/hubera/legacy-status', (_req, res) => {
+  res.json(huberaLegacyStatus());
 });
 
 /**
@@ -1728,6 +1734,7 @@ app.get('/api/deploy/apk/info', authOptional, (req, res) => {
     res.status(401).json({ error: 'Lien APK protégé — clé manquante ou invalide' });
     return;
   }
+  pingFromRequest(req.query as Record<string, unknown>, String(req.headers['user-agent'] || ''));
   const info = deployInfo(PORT).apk;
   res.json({
     ready: info.ready,
@@ -1740,6 +1747,7 @@ app.get('/api/deploy/apk/info', authOptional, (req, res) => {
     downloadUrl: info.downloadUrl,
     // Toujours le paquet PLM prod — Dev/Preprod ne doivent pas croire que c’est « leur » APK.
     package: info.package ?? 'ovh.delhomme.ytmusic',
+    hubera: huberaNotice(),
   });
 });
 
