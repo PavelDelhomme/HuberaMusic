@@ -89,6 +89,19 @@ data class DeviceLoginInviteResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class HuberaNotice(
+    val brand: String? = null,
+    val message: String? = null,
+    @com.squareup.moshi.Json(name = "canonical_url")
+    val canonicalUrl: String? = null,
+    @com.squareup.moshi.Json(name = "legacy_url")
+    val legacyUrl: String? = null,
+    @com.squareup.moshi.Json(name = "keep_package")
+    val keepPackage: String? = null,
+    val channel: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class ApkInfoResponse(
     val ready: Boolean? = false,
     val versionName: String? = null,
@@ -101,6 +114,7 @@ data class ApkInfoResponse(
     /** Package de l’APK OTA (toujours `ovh.delhomme.ytmusic` = PLM prod). */
     @com.squareup.moshi.Json(name = "package")
     val packageName: String? = null,
+    val hubera: HuberaNotice? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -570,7 +584,12 @@ interface YtMusicApi {
     suspend fun deviceLoginPoll(@Body body: Map<String, String>): DeviceLoginPollResponse
 
     @GET("api/deploy/apk/info")
-    suspend fun apkInfo(): ApkInfoResponse
+    suspend fun apkInfo(
+        @Query("clientVersion") clientVersion: String,
+        @Query("clientVersionCode") clientVersionCode: Int,
+        @Query("install") install: String,
+        @Query("huberaAware") huberaAware: Int = 1,
+    ): ApkInfoResponse
 
     @GET("api/home")
     suspend fun home(): HomeResponse

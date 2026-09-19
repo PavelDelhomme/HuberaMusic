@@ -27,6 +27,7 @@ import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.player.PlaybackService
 import java.io.File
 import java.util.Calendar
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -48,6 +49,29 @@ class ApkUpdateManager(
     private val prefs = context.getSharedPreferences("ytm_updates", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var updateJob: Job? = null
+
+    private fun installId(): String {
+        val existing = prefs.getString("hubera_install_id", null)
+        if (!existing.isNullOrBlank()) return existing
+        val created = UUID.randomUUID().toString()
+        prefs.edit().putString("hubera_install_id", created).apply()
+        return created
+    }
+
+    private suspend fun fetchApkInfo(): ApkInfoResponse {
+        val info = container.api.apkInfo(
+            clientVersion = BuildConfig.VERSION_NAME,
+            clientVersionCode = BuildConfig.VERSION_CODE,
+            install = installId(),
+            huberaAware = 1,
+        )
+        lastHubera = info.hubera?.message?.takeIf { it.isNotBlank() }
+        return info
+    }
+
+    fun lastHuberaMessage(): String? = lastHubera
+
+    private var lastHubera: String? = null
     private val busy = AtomicBoolean(false)
     private val notifier = UpdateProgressNotifier(context.applicationContext)
     /** Paquet cible de la dernière session d’install (persisté pour SUCCESS après kill). */
@@ -961,7 +985,7 @@ class ApkUpdateManager(
             }
             runCatching {
                 container.ensureFreshToken()
-                val info = container.api.apkInfo()
+                val info = fetchApkInfo()
                 prefs.edit()
                     .putLong(KEY_LAST_CHECK, System.currentTimeMillis())
                     .putInt(KEY_LAST_REMOTE_CODE, info.versionCode ?: 0)
@@ -1033,7 +1057,7 @@ class ApkUpdateManager(
         }
 
         container.ensureFreshToken()
-        val meta = info ?: container.api.apkInfo()
+        val meta = info ?: fetchApkInfo()
         if (meta.ready != true) return@withContext "APK pas encore publiée"
         val remote = meta.versionCode ?: 0
         val metaPkg = meta.packageName?.takeIf { it.isNotBlank() } ?: PROD_PACKAGE
