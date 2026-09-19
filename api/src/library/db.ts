@@ -206,6 +206,16 @@ try {
 }
 } // end !usingPostgres() bootstrap
 
+if (!usingPostgres()) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_email_aliases (
+      email TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+}
+
 export function upsertTrack(track: Track) {
   const clean = sanitizeTrack(track);
   const prev = getTrackPayload(clean.id);
@@ -262,7 +272,23 @@ export type UserRow = {
 };
 
 export function findUserByEmail(email: string): UserRow | undefined {
-  return db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined;
+  const e = String(email || '')
+    .toLowerCase()
+    .trim();
+  if (!e) return undefined;
+  const primary = db.prepare('SELECT * FROM users WHERE email = ?').get(e) as UserRow | undefined;
+  if (primary) return primary;
+  try {
+    return db
+      .prepare(
+        `SELECT u.* FROM users u
+         JOIN user_email_aliases a ON a.user_id = u.id
+         WHERE a.email = ?`,
+      )
+      .get(e) as UserRow | undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function findUserById(id: string): UserRow | undefined {
@@ -362,12 +388,25 @@ db.exec(`
   );
 `);
 }
+function aliasEmailsForUser(userId: string): string[] {
+  try {
+    return (
+      db.prepare('SELECT email FROM user_email_aliases WHERE user_id = ?').all(userId) as {
+        email: string;
+      }[]
+    ).map((r) => r.email.toLowerCase());
+  } catch {
+    return [];
+  }
+}
+
 export function isAdminUser(u: UserRow) {
   const adminEmails = (process.env.ADMIN_EMAILS || '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
   if (adminEmails.includes(u.email.toLowerCase())) return true;
+  if (aliasEmailsForUser(u.id).some((e) => adminEmails.includes(e))) return true;
   const row = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(u.id) as
     | { is_admin: number }
     | undefined;
@@ -400,8 +439,9 @@ export function promoteAdminIfNeeded(email: string) {
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  if (admins.includes(email.toLowerCase())) {
-    db.prepare('UPDATE users SET is_admin = 1 WHERE email = ?').run(email.toLowerCase());
+  const user = findUserByEmail(email);
+  if (user && admins.includes(email.toLowerCase())) {
+    db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(user.id);
   }
   // First real user becomes admin
   const realCount = (
@@ -409,7 +449,7 @@ export function promoteAdminIfNeeded(email: string) {
       c: number;
     }
   ).c;
-  if (realCount <= 1) {
-    db.prepare(`UPDATE users SET is_admin = 1 WHERE email = ?`).run(email.toLowerCase());
+  if (realCount <= 1 && user) {
+    db.prepare(`UPDATE users SET is_admin = 1 WHERE id = ?`).run(user.id);
   }
 }
