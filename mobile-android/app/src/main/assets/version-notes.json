@@ -1,6 +1,35 @@
 {
-  "updatedAt": "2026-09-18",
+  "updatedAt": "2026-09-20",
   "versions": [
+    {
+      "version": "1.3.261",
+      "date": "2026-09-20",
+      "title": "MHC + Accès rapide web",
+      "notes": [
+        "PLM s’appelle désormais MHC (Music Hubera Cloud). Hubera Music reste le nom long",
+        "Identité manifeste : cloud.hubera.music — le package Android ovh.delhomme.ytmusic ne change pas (comptes conservés)",
+        "Accès rapide web : boutons Tout lire et Aléatoire comme sur Android"
+      ]
+    },
+    {
+      "version": "1.3.260",
+      "date": "2026-09-20",
+      "title": "Hubera Music + signaler un problème",
+      "notes": [
+        "Nom affiché : Hubera Music partout (icône, accueil, notifs)",
+        "Compte → Signaler un problème : envoie un journal de l’appareil",
+        "Le package Android reste le même : tes comptes ne bougent pas"
+      ]
+    },
+    {
+      "version": "1.3.259",
+      "date": "2026-09-20",
+      "title": "QR connexion : music.hubera.cloud",
+      "notes": [
+        "Le scan QR reconnaît music.hubera.cloud (plus seulement PLM)",
+        "Cookies / CORS Hubera pour connecter un navigateur depuis l’app"
+      ]
+    },
     {
       "version": "1.3.258",
       "date": "2026-09-18",

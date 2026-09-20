@@ -986,7 +986,7 @@ bash scripts/deploy/link-home-stream.sh
         ) : (
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
             <div className="flex-1">
-              <h2 className="font-display text-2xl font-semibold">Installe PLM (PWA)</h2>
+              <h2 className="font-display text-2xl font-semibold">Installe MHC (PWA)</h2>
               <p className="mt-2 max-w-md text-sm text-yt-muted">
                 Même Wi‑Fi que cet ordinateur. Scanne le QR, ouvre le lien, puis installe en PWA
                 (plein écran, icône, offline).
@@ -1085,7 +1085,7 @@ bash scripts/deploy/link-home-stream.sh
             </li>
             <li>
               <strong className="text-white">Ordinateur</strong> — Chrome/Edge propose « Installer
-              PLM » uniquement si pas déjà installé (bannière conditionnelle).
+              MHC » uniquement si pas déjà installé (bannière conditionnelle).
             </li>
             <li>
               <strong className="text-white">Electron</strong> —{' '}
@@ -1166,7 +1166,7 @@ function MaintenanceAdminBlock() {
                 maintenance: next,
                 maintenanceMessage: next
                   ? message.trim() ||
-                    'PLM est en maintenance — réessaie dans un instant.'
+                    'MHC est en maintenance — réessaie dans un instant.'
                   : null,
                 maintenanceUntil: next ? until : null,
                 maintenanceBlockPlayback: next ? blockPlayback : false,

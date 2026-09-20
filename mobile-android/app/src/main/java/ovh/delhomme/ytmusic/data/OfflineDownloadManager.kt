@@ -335,7 +335,11 @@ class OfflineDownloadManager(
                             // Bundle paroles en cache local pour lecture hors-ligne
                             runCatching {
                                 val app = ovh.delhomme.ytmusic.YtMusicApp.instance
-                                val r = app.container.api.lyrics(track.id)
+                                val r = app.container.api.lyrics(
+                                    track.id,
+                                    track.title,
+                                    track.artistLine().takeIf { it != "Artiste" },
+                                )
                                 val prefs = app.getSharedPreferences(
                                     "plm_lyrics_cache_v5",
                                     android.content.Context.MODE_PRIVATE,

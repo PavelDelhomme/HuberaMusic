@@ -632,7 +632,11 @@ interface YtMusicApi {
     suspend fun upNext(@Path("id") id: String): TracksResponse
 
     @GET("api/track/{id}/lyrics")
-    suspend fun lyrics(@Path("id") id: String): LyricsResponse
+    suspend fun lyrics(
+        @Path("id") id: String,
+        @Query("title") title: String? = null,
+        @Query("artist") artist: String? = null,
+    ): LyricsResponse
 
     @GET("api/lyric-offsets")
     suspend fun lyricOffsets(): LyricOffsetsResponse

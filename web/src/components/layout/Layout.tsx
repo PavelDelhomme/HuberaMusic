@@ -401,9 +401,9 @@ export function Layout() {
           <BrandLogo className="h-8 w-8 shrink-0" />
           <span
             className="font-display text-lg font-semibold tracking-tight"
-            title="PLM"
+            title="MHC — Music Hubera Cloud (anciennement PLM)"
           >
-            PLM
+            MHC
           </span>
         </div>
         <button

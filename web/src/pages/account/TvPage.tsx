@@ -50,7 +50,7 @@ export function TvPage() {
       )}
 
       <div className="relative z-10 max-w-3xl">
-        <p className="mb-2 text-sm uppercase tracking-[0.3em] text-yt-muted">PLM TV</p>
+        <p className="mb-2 text-sm uppercase tracking-[0.3em] text-yt-muted">MHC TV</p>
         <p className="mb-8 text-sm text-yt-muted">
           {isActivePlayer
             ? 'Récepteur actif — contrôle depuis ton téléphone'

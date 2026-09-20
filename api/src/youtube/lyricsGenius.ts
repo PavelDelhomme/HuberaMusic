@@ -36,6 +36,42 @@ function tokenOverlap(a: string, b: string) {
   return n / Math.max(ta.size, tb.size);
 }
 
+function significantTokens(s: string) {
+  return s.split(' ').filter((x) => x.length > 1);
+}
+
+/**
+ * ADHD ⊂ « ABCD ADHD / ABCD ADAH » ne doit pas gagner.
+ * Un titre court populaire ne remplace pas le titre affiché en lecture.
+ */
+export function titleMatchScore(wantT: string, gotT: string): number {
+  if (!wantT || !gotT) return 0;
+  if (gotT === wantT) return 50;
+  const wantTok = significantTokens(wantT);
+  const gotTok = significantTokens(gotT);
+  const overlap = tokenOverlap(wantT, gotT);
+  const lenRatio =
+    Math.min(gotT.length, wantT.length) / Math.max(gotT.length, wantT.length);
+
+  if (gotT.includes(wantT) || wantT.includes(gotT)) {
+    if (lenRatio >= 0.72 && Math.abs(wantTok.length - gotTok.length) <= 1) return 30;
+    if (wantTok.length && gotTok.length && wantTok.every((t) => gotTok.includes(t))) return 28;
+    return 0;
+  }
+  if (overlap >= 0.8) return Math.round(overlap * 35);
+  if (overlap >= 0.5 && Math.abs(wantTok.length - gotTok.length) <= 1) {
+    return Math.round(overlap * 28);
+  }
+  return 0;
+}
+
+export function artistMatchScore(wantA: string, gotA: string): number {
+  if (!wantA || !gotA) return 0;
+  if (gotA === wantA) return 30;
+  if (gotA.includes(wantA) || wantA.includes(gotA)) return 18;
+  return Math.round(tokenOverlap(wantA, gotA) * 22);
+}
+
 function cleanTitle(title: string) {
   return title
     .replace(/\s*[\[(【].*?[\])】]/g, ' ')
@@ -182,13 +218,13 @@ async function geniusHttpGet(
   return direct.status ? direct : { ok: false, status: 0, text: '' };
 }
 
-function pickBestHit(
+export function pickBestHit(
   rows: Record<string, unknown>[],
   artist: string,
   title: string,
 ): GeniusHit | null {
   const wantT = fold(cleanTitle(title) || title);
-  const wantA = fold(artist);
+  const wantA = fold(mainArtist(artist) || artist);
   let best: { score: number; hit: GeniusHit } | null = null;
   for (const r of rows) {
     const url = String(r.url || (r.path ? `https://genius.com${r.path}` : '')).trim();
@@ -200,21 +236,18 @@ function pickBestHit(
         (r.primary_artist as { name?: string })?.name ||
         '',
     ).trim();
-    let score = 0;
     const ft = fold(t);
     const fa = fold(a);
-    if (wantT && ft) {
-      if (ft === wantT) score += 50;
-      else if (ft.includes(wantT) || wantT.includes(ft)) score += 30;
-      else score += Math.round(tokenOverlap(wantT, ft) * 35);
+    const tScore = titleMatchScore(wantT, ft);
+    const aScore = artistMatchScore(wantA, fa);
+    const score = tScore + aScore;
+    if (wantA.length >= 3) {
+      const distinctiveTitle =
+        tScore >= 50 && significantTokens(wantT).length >= 3;
+      if (aScore < 10 && !distinctiveTitle) continue;
     }
-    if (wantA && fa) {
-      if (fa === wantA) score += 30;
-      else if (fa.includes(wantA) || wantA.includes(fa)) score += 18;
-      else score += Math.round(tokenOverlap(wantA, fa) * 22);
-    }
-    // Titre quasi exact seul : accepter même si artiste flou (feat / remix naming)
-    const minScore = wantT && ft && (ft === wantT || tokenOverlap(wantT, ft) >= 0.7) ? 12 : 16;
+    if (wantT && tScore < 22 && !(tScore >= 18 && aScore >= 18)) continue;
+    const minScore = tScore >= 50 ? 50 : 28;
     if (score < minScore) continue;
     const hit = { url, title: t || title, artist: a || artist };
     if (!best || score > best.score) best = { score, hit };
@@ -344,18 +377,24 @@ async function searchGeniusViaDdg(artist: string, title: string): Promise<Genius
   const unique = [...new Set(urls.map((u) => u.replace(/[?#].*$/, '')))];
   if (!unique.length) return null;
 
-  // Score URL slug vs title/artist
   const wantT = fold(cleanTitle(title) || title);
   const wantA = fold(mainArtist(artist));
   let best: { score: number; url: string } | null = null;
   for (const url of unique.slice(0, 8)) {
-    const slug = fold(url.replace(/^https?:\/\/genius\.com\//i, '').replace(/-lyrics$/i, '').replace(/-/g, ' '));
-    let score = Math.round(tokenOverlap(wantT, slug) * 40);
-    if (wantA && slug.includes(wantA.split(' ')[0] || wantA)) score += 15;
-    if (wantT && slug.includes(wantT)) score += 25;
+    const slug = fold(
+      url.replace(/^https?:\/\/genius\.com\//i, '').replace(/-lyrics$/i, '').replace(/-/g, ' '),
+    );
+    const tScore = titleMatchScore(wantT, slug);
+    let score = tScore;
+    if (wantT && slug.includes(wantT)) score += 20;
+    if (wantA) {
+      const a0 = wantA.split(' ')[0] || wantA;
+      if (a0.length >= 3 && slug.includes(a0)) score += 20;
+      else continue;
+    }
     if (!best || score > best.score) best = { score, url };
   }
-  if (!best || best.score < 10) return null;
+  if (!best || best.score < 28) return null;
   return { url: best.url, title: cleanTitle(title) || title, artist: mainArtist(artist) || artist };
 }
 
@@ -363,16 +402,17 @@ async function searchGenius(artist: string, title: string): Promise<GeniusHit | 
   const cleaned = cleanTitle(title) || title;
   const main = mainArtist(artist);
   const featured = artistsFromTitle(title);
+  // Jamais le titre seul si l’artiste est connu (ADHD vs InTheLight / ABCD ADAH).
   const queries = [
-    [artist, cleaned].filter(Boolean).join(' '),
     [main, cleaned].filter(Boolean).join(' '),
+    [artist, cleaned].filter(Boolean).join(' '),
     [cleaned, main].filter(Boolean).join(' '),
-    cleaned,
-    ...featured.map((f) => [f, cleaned].filter(Boolean).join(' ')),
     [main, title].filter(Boolean).join(' '),
+    ...featured.map((f) => [f, cleaned].filter(Boolean).join(' ')),
   ]
     .map((q) => q.slice(0, 120).trim())
     .filter((q, i, a) => q && a.indexOf(q) === i);
+  if (!main && !artist && cleaned) queries.unshift(cleaned);
 
   for (const q of queries.slice(0, 3)) {
     const hit = await searchGeniusOnce(q, artist || main, title).catch(() => null);
@@ -491,6 +531,8 @@ export async function fetchGeniusLyrics(
 
 /** URL de recherche Genius (bouton « Chercher sur le web »). */
 export function geniusSearchUrl(artist: string, title: string): string {
-  const q = [cleanTitle(title) || title, artist].filter(Boolean).join(' ');
+  const q = [mainArtist(artist) || artist, cleanTitle(title) || title]
+    .filter(Boolean)
+    .join(' ');
   return `https://genius.com/search?q=${encodeURIComponent(q)}`;
 }

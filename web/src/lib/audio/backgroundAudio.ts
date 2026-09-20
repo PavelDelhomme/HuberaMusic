@@ -17,7 +17,7 @@ export async function setNativePlaybackNotification(opts: {
   try {
     if (opts.playing) {
       await BackgroundAudio.enable({
-        title: opts.title || 'PLM',
+        title: opts.title || 'Hubera Music',
         artist: opts.artist || 'Lecture en cours',
       });
     } else {

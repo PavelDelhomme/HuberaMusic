@@ -519,8 +519,13 @@ export function NowPlaying({
       setLyricsTimed(r.timed || null);
       setLyricsSource(r.source ?? null);
     };
+    const artist = artistNames(current);
+    const hints = {
+      title: current.title,
+      artist: artist !== 'Artiste' ? artist : undefined,
+    };
     void api
-      .lyrics(current.id)
+      .lyrics(current.id, hints)
       .then(async (r) => {
         if (cancelled) return;
         apply(r);
@@ -528,7 +533,7 @@ export function NowPlaying({
         if (!r.lyrics) {
           await new Promise((res) => setTimeout(res, 500));
           if (cancelled) return;
-          const retry = await api.lyrics(current.id).catch(() => null);
+          const retry = await api.lyrics(current.id, hints).catch(() => null);
           if (retry?.lyrics) apply(retry);
         }
       })
@@ -1097,7 +1102,25 @@ export function NowPlaying({
                 {lyricsLoading ? (
                   <div className="px-3 py-5 text-sm text-yt-muted">Chargement des paroles…</div>
                 ) : (
-                  <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
+                  <>
+                    <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
+                    {!lyricsText && (
+                      <div className="mt-3 flex justify-center px-2">
+                        <a
+                          href={`https://genius.com/search?q=${encodeURIComponent(
+                            [artistNames(current) !== 'Artiste' ? artistNames(current) : '', current.title]
+                              .filter(Boolean)
+                              .join(' '),
+                          )}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-full border border-yt-border px-3 py-1.5 text-xs text-yt-muted hover:bg-white/10 hover:text-white"
+                        >
+                          Chercher sur Genius / le web
+                        </a>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}

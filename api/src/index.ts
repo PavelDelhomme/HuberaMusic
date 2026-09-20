@@ -389,14 +389,14 @@ app.get('/api/version-notes', (_req, res) => {
 app.get('/api/health', (_req, res) => {
   const ytCookies = youtubeCookiesStatus();
   const ref = process.env.BUILD_REF || 'local';
-  let semver = (process.env.APP_VERSION || '').trim();
-  if (!semver) {
-    try {
-      semver = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
-    } catch {
-      semver = process.env.npm_package_version || '0.0.0';
-    }
+  let semver = '';
+  try {
+    semver = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+  } catch {
+    /* ignore */
   }
+  if (!semver) semver = (process.env.APP_VERSION || '').trim();
+  if (!semver) semver = process.env.npm_package_version || '0.0.0';
   const channel = ref === 'prod' || process.env.APP_ENV === 'production' ? 'p' : 'd';
   res.json({
     ok: true,
@@ -2453,7 +2453,9 @@ app.get('/api/track/:id/related', accountRequired, async (req, res) => {
 app.get('/api/track/:id/lyrics', accountRequired, async (req, res) => {
   try {
     const trackId = p(req.params.id);
-    const lyrics = await getLyrics(trackId);
+    const qTitle = typeof req.query.title === 'string' ? req.query.title : '';
+    const qArtist = typeof req.query.artist === 'string' ? req.query.artist : '';
+    const lyrics = await getLyrics(trackId, { title: qTitle, artist: qArtist });
     const profile = resolveLyricSync(req.userId!, trackId);
     res.json({
       ...lyrics,

@@ -3224,7 +3224,13 @@ private fun InlineSyncedLyrics(
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() && !cachedText.isNullOrBlank()) {
             return@LaunchedEffect
         }
-        runCatching { container.api.lyrics(track.id) }
+        runCatching {
+            container.api.lyrics(
+                track.id,
+                track.title,
+                track.artistLine().takeIf { it != "Artiste" },
+            )
+        }
             .onSuccess { first ->
                 fun applyLyrics(it: ovh.delhomme.ytmusic.data.LyricsResponse) {
                     val learned = it.userOffsetMs ?: 0L
@@ -3272,7 +3278,13 @@ private fun InlineSyncedLyrics(
                 // Auto-fallback : 2ᵉ passe API si vide (TTL cache null court côté serveur)
                 if (first.lyrics.isNullOrBlank()) {
                     delay(500)
-                    runCatching { container.api.lyrics(track.id) }
+                    runCatching {
+                        container.api.lyrics(
+                            track.id,
+                            track.title,
+                            track.artistLine().takeIf { it != "Artiste" },
+                        )
+                    }
                         .getOrNull()
                         ?.takeIf { !it.lyrics.isNullOrBlank() }
                         ?.let { applyLyrics(it) }
@@ -3511,8 +3523,11 @@ private fun InlineSyncedLyrics(
                     onClick = {
                         val artist = track.artistLine().takeIf { it != "Artiste" }.orEmpty()
                         val q = buildString {
+                            if (artist.isNotBlank()) {
+                                append(artist)
+                                append(' ')
+                            }
                             append(track.title)
-                            if (artist.isNotBlank()) append(' ').append(artist)
                         }
                         // Genius d’abord (souvent mieux que Google pour les paroles)
                         val geniusUri = android.net.Uri.parse(

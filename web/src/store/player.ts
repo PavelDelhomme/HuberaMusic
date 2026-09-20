@@ -1847,8 +1847,12 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         void ensureAutoRadio(seedId);
       }
       // Paroles timed en fond → aide le skip de silence de fin
+      const artist = artistNames(playTrack);
       void api
-        .lyrics(seedId)
+        .lyrics(seedId, {
+          title: playTrack.title,
+          artist: artist !== 'Artiste' ? artist : undefined,
+        })
         .then((r) => {
           if (get().current?.id !== seedId) return;
           void import('../lib/player/lyricSync').then((m) => {
@@ -2455,7 +2459,11 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set({ showLyrics: true, showQueue: false });
     if (current) {
       try {
-        const { lyrics, timed, source, userOffsetMs, segments } = await api.lyrics(current.id);
+        const artist = artistNames(current);
+        const { lyrics, timed, source, userOffsetMs, segments } = await api.lyrics(current.id, {
+          title: current.title,
+          artist: artist !== 'Artiste' ? artist : undefined,
+        });
         const { applyServerOffsetIfUnset, applyServerSegments } = await import('../lib/player/lyricSync');
         applyServerOffsetIfUnset(current.id, userOffsetMs);
         applyServerSegments(current.id, segments);

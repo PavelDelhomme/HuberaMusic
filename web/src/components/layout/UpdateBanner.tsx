@@ -60,7 +60,7 @@ export function UpdateBanner() {
       <RefreshCw className="h-4 w-4 shrink-0 text-yt-accent" aria-hidden />
       <p className="min-w-0 flex-1">
         {needRefresh
-          ? 'Nouvelle version PLM disponible — recharge pour appliquer la mise à jour.'
+          ? 'Nouvelle version MHC disponible — recharge pour appliquer la mise à jour.'
           : `Serveur en ${apiNewer} — recharge la page pour aligner l’app.`}
       </p>
       <button

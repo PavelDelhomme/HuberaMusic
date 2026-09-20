@@ -738,8 +738,15 @@ export const api = {
       artist: { id: string; name: string; subscribers?: string; thumbnails: Track['thumbnails']; description?: string };
       tracks: Track[];
     }>(`/api/artist/${id}/songs${limit ? `?limit=${limit}` : ''}`),
-  lyrics: (id: string) =>
-    req<{
+  lyrics: (id: string, hints?: { title?: string; artist?: string }) => {
+    const q = new URLSearchParams();
+    if (hints?.title?.trim()) q.set('title', hints.title.trim());
+    const artist = hints?.artist?.trim();
+    if (artist && !/^(artiste|artist|inconnu|unknown|n\/a)$/i.test(artist)) {
+      q.set('artist', artist);
+    }
+    const qs = q.toString();
+    return req<{
       lyrics: string | null;
       timed?: { startMs: number; text: string }[] | null;
       source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
@@ -754,7 +761,8 @@ export const api = {
         offsetMs: number;
       }[];
       segmentsFromUser?: boolean;
-    }>(`/api/track/${id}/lyrics`),
+    }>(`/api/track/${id}/lyrics${qs ? `?${qs}` : ''}`);
+  },
   lyricOffsets: () => req<{ offsets: Record<string, number> }>('/api/lyric-offsets'),
   saveLyricOffset: (
     id: string,

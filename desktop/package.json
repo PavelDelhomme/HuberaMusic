@@ -2,7 +2,7 @@
   "name": "plm-desktop",
   "version": "1.3.258",
   "private": true,
-  "description": "PLM desktop (shell Electron → PWA prod)",
+  "description": "MHC desktop (shell Electron → PWA prod)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -12,7 +12,7 @@
   },
   "build": {
     "appId": "ovh.delhomme.plm.desktop",
-    "productName": "PLM",
+    "productName": "MHC",
     "directories": {
       "output": "dist"
     },

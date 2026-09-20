@@ -1619,7 +1619,14 @@ class PlayerController(
         if (!lyricsWarmed.add(trackId)) return
         scope.launch(Dispatchers.IO) {
             runCatching {
-                val r = YtMusicApp.instance.container.api.lyrics(trackId)
+                val hint = PlaybackService.Holder.queue.find { it.id == trackId }
+                    ?: _state.value.queue.find { it.id == trackId }
+                    ?: _state.value.track?.takeIf { it.id == trackId }
+                val r = YtMusicApp.instance.container.api.lyrics(
+                    trackId,
+                    hint?.title,
+                    hint?.artistLine()?.takeIf { it != "Artiste" },
+                )
                 val timed = r.timed.orEmpty()
                 val prefs = context.getSharedPreferences("plm_lyrics_cache_v5", Context.MODE_PRIVATE)
                 prefs.edit()

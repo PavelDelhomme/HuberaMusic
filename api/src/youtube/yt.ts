@@ -1543,8 +1543,8 @@ export async function getArtistSongs(
 }
 
 const LYRICS_CACHE_MAX = 400;
-/** bump : intro estimation plus courte (v16) — sync moins « en retard » */
-const LYRICS_CACHE_VER = 'v16';
+/** bump : Genius exige artiste+titre (v17) — plus de faux ADHD */
+const LYRICS_CACHE_VER = 'v17';
 type LyricsResult = {
   lyrics: string | null;
   timed: { startMs: number; text: string }[] | null;
@@ -1563,12 +1563,22 @@ type LyricsResult = {
 };
 const lyricsCache = new Map<string, LyricsResult & { at: number }>();
 
-function lyricsCacheKey(videoId: string) {
-  return `${LYRICS_CACHE_VER}:${videoId}`;
+function foldLyricsHint(s: string) {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
 }
 
-function putLyricsCache(videoId: string, result: LyricsResult) {
-  lyricsCache.set(lyricsCacheKey(videoId), { ...result, at: Date.now() });
+function lyricsCacheKey(videoId: string, title = '', artist = '') {
+  const hint = `${foldLyricsHint(artist)}:${foldLyricsHint(title)}`.slice(0, 96);
+  return `${LYRICS_CACHE_VER}:${videoId}:${hint}`;
+}
+
+function putLyricsCache(videoId: string, result: LyricsResult, title = '', artist = '') {
+  lyricsCache.set(lyricsCacheKey(videoId, title, artist), { ...result, at: Date.now() });
   while (lyricsCache.size > LYRICS_CACHE_MAX) {
     const first = lyricsCache.keys().next().value;
     if (first === undefined) break;
@@ -1797,8 +1807,8 @@ async function fetchLrclibTimed(
   const searchQueries = [
     [artist, cleanTitle || title].filter(Boolean).join(' '),
     [mainArtist, cleanTitle || title].filter(Boolean).join(' '),
-    cleanTitle || title,
     ...featuredFromTitle.slice(0, 2).map((f) => [f, cleanTitle || title].filter(Boolean).join(' ')),
+    ...(!mainArtist && !artist ? [cleanTitle || title] : []),
   ]
     .map((q) => q.slice(0, 180).trim())
     .filter((q, i, arr) => q && arr.indexOf(q) === i);
@@ -1852,8 +1862,12 @@ async function fetchLrclibTimed(
     const ra = fold(r.artistName || '');
     if (wantTitle && rt) {
       if (rt === wantTitle) s += 40;
-      else if (rt.includes(wantTitle) || wantTitle.includes(rt)) s += 25;
-      else s += Math.round(tokenOverlap(wantTitle, rt) * 30);
+      else {
+        const lenRatio =
+          Math.min(rt.length, wantTitle.length) / Math.max(rt.length, wantTitle.length);
+        if ((rt.includes(wantTitle) || wantTitle.includes(rt)) && lenRatio >= 0.72) s += 25;
+        else s += Math.round(tokenOverlap(wantTitle, rt) * 30);
+      }
     }
     if (wantArtist && ra) {
       if (ra === wantArtist) s += 25;
@@ -1863,11 +1877,29 @@ async function fetchLrclibTimed(
     return s;
   };
   const ranked = [...results].sort((a, b) => scoreHit(b) - scoreHit(a));
+  const titleOk = (r: SearchHit) => {
+    const rt = fold(r.trackName || '');
+    if (!wantTitle || !rt) return !wantTitle;
+    if (rt === wantTitle) return true;
+    const ov = tokenOverlap(wantTitle, rt);
+    const lenRatio =
+      Math.min(rt.length, wantTitle.length) / Math.max(rt.length, wantTitle.length);
+    if ((rt.includes(wantTitle) || wantTitle.includes(rt)) && lenRatio >= 0.72) return true;
+    return ov >= 0.5;
+  };
+  const artistOk = (r: SearchHit) => {
+    if (!wantArtist) return true;
+    const ra = fold(r.artistName || '');
+    if (!ra) return false;
+    if (ra === wantArtist || ra.includes(wantArtist) || wantArtist.includes(ra)) return true;
+    return tokenOverlap(wantArtist, ra) >= 0.3;
+  };
+  const rankedSafe = ranked.filter((r) => titleOk(r) && artistOk(r));
   const best =
-    ranked.find((r) => (r.syncedLyrics?.trim() || r.plainLyrics?.trim()) && scoreHit(r) >= 25) ||
-    ranked.find((r) => r.syncedLyrics?.trim() && scoreHit(r) >= 20) ||
-    ranked.find((r) => r.plainLyrics?.trim()) ||
-    ranked[0];
+    rankedSafe.find((r) => (r.syncedLyrics?.trim() || r.plainLyrics?.trim()) && scoreHit(r) >= 25) ||
+    rankedSafe.find((r) => r.syncedLyrics?.trim() && scoreHit(r) >= 20) ||
+    rankedSafe.find((r) => r.plainLyrics?.trim()) ||
+    null;
   if (!best) return null;
 
   const timedOk = (timed: { startMs: number; text: string }[]) => {
@@ -1984,14 +2016,23 @@ async function parseCaptionTrack(
   };
 }
 
-export async function getLyrics(videoId: string): Promise<LyricsResult> {
-  const cached = lyricsCache.get(lyricsCacheKey(videoId));
-  if (cached) {
-    const ttl = cached.lyrics ? 6 * 60 * 60 * 1000 : 90 * 1000; // null : court TTL pour retenter
-    if (Date.now() - cached.at < ttl) {
-      const { at: _at, ...rest } = cached;
-      return rest;
-    }
+export type LyricsHints = { title?: string; artist?: string };
+
+function lyricsCacheHit(videoId: string, title: string, artist: string): LyricsResult | null {
+  const cached = lyricsCache.get(lyricsCacheKey(videoId, title, artist));
+  if (!cached) return null;
+  const ttl = cached.lyrics ? 6 * 60 * 60 * 1000 : 90 * 1000;
+  if (Date.now() - cached.at >= ttl) return null;
+  const { at: _at, ...rest } = cached;
+  return rest;
+}
+
+export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<LyricsResult> {
+  const hintTitle = String(hints?.title || '').trim();
+  const hintArtist = String(hints?.artist || '').trim();
+  if (hintTitle) {
+    const cached = lyricsCacheHit(videoId, hintTitle, hintArtist);
+    if (cached) return cached;
   }
 
   const innertube = await getYT();
@@ -2037,11 +2078,16 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
   }
 
   const meta = await metaP;
-  const title = meta?.track?.title || '';
+  const title = hintTitle || meta?.track?.title || '';
   const artist =
+    hintArtist ||
     meta?.track?.artists?.map((a) => a.name).filter(Boolean).join(' ') ||
     meta?.track?.artists?.[0]?.name ||
     '';
+  if (!hintTitle) {
+    const cached = lyricsCacheHit(videoId, title, artist);
+    if (cached) return cached;
+  }
   const durationSec =
     typeof meta?.track?.durationSeconds === 'number' ? meta.track.durationSeconds : undefined;
 
@@ -2161,7 +2207,7 @@ export async function getLyrics(videoId: string): Promise<LyricsResult> {
     source: timed?.length ? source : text ? source : null,
     syncOffsetMs: timed?.length ? syncOffsetMs : 0,
   };
-  putLyricsCache(videoId, result);
+  putLyricsCache(videoId, result, title, artist);
   return result;
 }
 

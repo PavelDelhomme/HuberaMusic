@@ -2,6 +2,26 @@
   "updatedAt": "2026-09-20",
   "versions": [
     {
+      "version": "1.3.262",
+      "date": "2026-09-20",
+      "title": "Paroles Genius : le bon titre",
+      "notes": [
+        "Recherche de paroles avec l’artiste et le titre en lecture (ex. InTheLight — ABCD ADAH), plus le titre seul",
+        "Un tube populaire au nom proche (ADHD) n’est plus pris à la place du morceau en cours",
+        "Le bouton Chercher sur Genius ouvre artiste + titre, sur le web comme sur Android"
+      ]
+    },
+    {
+      "version": "1.3.261",
+      "date": "2026-09-20",
+      "title": "MHC + Accès rapide web",
+      "notes": [
+        "PLM s’appelle désormais MHC (Music Hubera Cloud). Hubera Music reste le nom long",
+        "Identité manifeste : cloud.hubera.music — le package Android ovh.delhomme.ytmusic ne change pas (comptes conservés)",
+        "Accès rapide web : boutons Tout lire et Aléatoire comme sur Android"
+      ]
+    },
+    {
       "version": "1.3.260",
       "date": "2026-09-20",
       "title": "Hubera Music + signaler un problème",
