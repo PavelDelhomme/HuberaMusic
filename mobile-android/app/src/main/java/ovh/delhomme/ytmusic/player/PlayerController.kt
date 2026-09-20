@@ -1481,6 +1481,33 @@ class PlayerController(
             }
             _state.value = _state.value.copy(shuffle = false)
         }
+        // File réordonnée : chauffer +1…+4 tout de suite (sinon BUFFERING à la fin du titre).
+        val p = player()
+        if (p != null) {
+            val q = PlaybackService.Holder.queue
+            val idx = p.currentMediaItemIndex.coerceAtLeast(0)
+            if (q.isNotEmpty()) {
+                warmAround(q, idx)
+                val base = PlaybackService.Holder.resolvedApiBase()
+                if (base.isNotBlank()) {
+                    scope.launch(Dispatchers.IO) {
+                        StreamPrefetcher.prefetchNextDuringPlayback(
+                            base,
+                            q.map { it.id },
+                            idx,
+                            ignoreQuiet = true,
+                        )
+                        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                            base,
+                            q.map { it.id },
+                            idx,
+                            count = 6,
+                            ignoreQuiet = true,
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun cycleRepeat() {

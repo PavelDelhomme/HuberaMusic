@@ -75,7 +75,7 @@ suspend fun playLibraryShuffled(
         )
     // Ne pas cancelAll avant Exo si on a déjà une tête utile
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(if (lead0Hot) 180L else 420L)
+    StreamPrefetcher.quietPrefetch(if (lead0Hot) 80L else 160L)
     runCatching { container.downloadManager.cancelOpportunistic() }
     if (lead0Hot) {
         StreamPrefetcher.markHeadReady(lead0)

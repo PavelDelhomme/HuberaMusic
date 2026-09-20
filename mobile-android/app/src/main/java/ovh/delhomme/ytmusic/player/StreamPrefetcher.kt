@@ -592,6 +592,20 @@ object StreamPrefetcher {
         }
     }
 
+    /** Titre courant en BUFFERING : relance format + tête (ne pas attendre 40 s). */
+    fun kickStartCurrent(baseApi: String, trackId: String) {
+        if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
+        warmTrackFormatOnly(baseApi, trackId)
+        val url = "${baseApi.trimEnd('/')}/api/stream/$trackId"
+        PlayerCache.prefetchHead(
+            YtMusicApp.instance,
+            url,
+            trackId,
+            HEAD_NEXT_PLAYING,
+            priorityNext = true,
+        )
+    }
+
     /**
      * Pendant la lecture : chauffe le titre +1 (warm wait + tête Exo prioritaire).
      * Marque le succès seulement après octets en cache — retry possible si cancelIdle.
@@ -612,14 +626,23 @@ object StreamPrefetcher {
             if (last != null && System.currentTimeMillis() - last < 3_500L) return
         }
         // Déjà assez d’octets → marque prêt, pas de re-download
-        val already = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, HEAD_NEXT_METERED)
-        if (already >= 220L * 1024L) {
+        val charging = ovh.delhomme.ytmusic.data.BatterySaver.isCharging()
+        val saver = ovh.delhomme.ytmusic.data.BatterySaver.isActive()
+        val bytes = when {
+            saver -> HEAD_NEXT_METERED
+            !isUnmetered() -> HEAD_NEXT_METERED
+            charging -> HEAD_NEXT_PLAYING * 2
+            else -> HEAD_NEXT_PLAYING
+        }
+        val already = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, bytes)
+        // 220 Ko ≈ 1 s : trop peu pour enchaîner. On ne s’arrête que si ~¾ de la tête cible est là.
+        if (already >= (bytes * 3 / 4).coerceAtLeast(700L * 1024L)) {
             markHeadReady(nextId)
             synchronized(recent) { recent[key] = System.currentTimeMillis() }
             return
         }
+        if (already >= 400L * 1024L) markHeadReady(nextId)
         PlayerCache.pinTrack(nextId)
-        val bytes = if (isUnmetered()) HEAD_NEXT_PLAYING else HEAD_NEXT_METERED
         Thread {
             try {
                 fun attempt(): Boolean {
@@ -634,7 +657,7 @@ object StreamPrefetcher {
                     )
                     Thread.sleep(700)
                     val cached = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, bytes)
-                    return cached >= bytes / 8 || cached >= 200L * 1024L
+                    return cached >= (bytes / 6).coerceAtLeast(400L * 1024L)
                 }
                 var ok = attempt()
                 if (!ok) {

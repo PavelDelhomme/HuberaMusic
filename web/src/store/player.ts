@@ -775,10 +775,10 @@ function schedulePrefetch(queue: Track[], queueIndex: number) {
   const durationsSec = playable.map((t) => trackDurationSeconds(t));
   // Pendant la lecture : peu de full-prefetch (évite de voler la bande du titre long)
   prefetchAround(ids, idx, {
-    ahead: saveData ? 3 : 6,
+    ahead: saveData ? 4 : 8,
     behind: 0,
-    fullAhead: saveData || loopOne ? 0 : 2,
-    delayFullMs: saveData ? 5000 : 1800,
+    fullAhead: saveData || loopOne ? 0 : 3,
+    delayFullMs: saveData ? 4000 : 900,
     durationsSec,
     loopOne,
   });
@@ -798,6 +798,7 @@ function schedulePrefetch(queue: Track[], queueIndex: number) {
 
 /** Génère un id de « bras » standby pour ignorer les armements obsolètes. */
 let standbyArmGen = 0;
+let lastNearEndPrefetchMs = 0;
 
 async function armStandby(trackId: string) {
   if (!/^[a-zA-Z0-9_-]{11}$/.test(trackId) || isStreamDown()) return;
@@ -1403,6 +1404,19 @@ function attachAudioRuntime(
       })
     ) {
       void get().next({ fromEnded: true });
+      return;
+    }
+    const dur = Number(el.duration);
+    const t = Number(el.currentTime);
+    if (Number.isFinite(dur) && dur > 20 && Number.isFinite(t)) {
+      const rem = dur - t;
+      if (rem >= 8 && rem <= 40) {
+        const now = Date.now();
+        if (now - lastNearEndPrefetchMs > 3500) {
+          lastNearEndPrefetchMs = now;
+          schedulePrefetch(s.queue, s.queueIndex);
+        }
+      }
     }
   });
   el.addEventListener('loadeddata', () => {
@@ -2081,7 +2095,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       }
     }
 
-    const { queue, queueIndex, repeat, shuffle, current, progress } = get();
+    const { queue, queueIndex, repeat, current, progress } = get();
     if (!queue.length) {
       if (current?.id) {
         await ensureAutoRadio(current.id);
@@ -2181,16 +2195,8 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         return;
       }
     }
-    if (shuffle && queue.length > 1) {
-      const candidates = queue
-        .map((t, i) => ({ t, i }))
-        .filter((x) => x.i !== queueIndex);
-      const pick = candidates[Math.floor(Math.random() * candidates.length)];
-      if (pick) {
-        await get().playAt(pick.i);
-        return;
-      }
-    }
+    // File déjà mélangée (toggle / Aléatoire) : idx+1 = suivant chaud.
+    // Un pick random ici visait un titre jamais prefetché → « Chargement » infini.
     await get().playAt(nextIndex);
   },
 

@@ -229,6 +229,10 @@ class PlaybackService : MediaSessionService() {
                 stallSessionCount = 0
                 stallSessionAnchorPos = -1L
             }
+            val base = resolvedApiBase()
+            if (base.isNotBlank() && id.length == 11) {
+                StreamPrefetcher.kickStartCurrent(base, id)
+            }
         }
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
         val r = Runnable {
@@ -267,7 +271,15 @@ class PlaybackService : MediaSessionService() {
             // Un titre absent du cache serveur demande une résolution yt-dlp (jusqu’à ~35 s) :
             // rebinder à 11 s relançait la requête sans jamais lui laisser aboutir.
             val headWarmed = StreamPrefetcher.wasHeadReadyRecently(curId, withinMs = 90_000L)
-            val coldGraceMs = if (headWarmed) 18_000L else 42_000L
+            val nextId = Holder.queue.getOrNull(exo.currentMediaItemIndex + 1)?.id
+            val nextHot = !nextId.isNullOrBlank() &&
+                StreamPrefetcher.wasHeadReadyRecently(nextId, withinMs = 120_000L)
+            // 42 s de « Chargement » : trop long. Si +1 est chaud, on lâche le titre mort plus tôt.
+            val coldGraceMs = when {
+                headWarmed -> 12_000L
+                nextHot -> 8_000L
+                else -> 16_000L
+            }
             if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < coldGraceMs) {
                 armStallWatch(exo)
                 return@Runnable
@@ -707,7 +719,7 @@ class PlaybackService : MediaSessionService() {
                     }
                 if (d > 0L && d != C.TIME_UNSET) {
                     val rem = d - posNow
-                    if (rem in 8_000L..45_000L) {
+                    if (rem in 8_000L..60_000L) {
                         val now = android.os.SystemClock.elapsedRealtime()
                         if (now - lastNearEndWarmMs > 3_500L) {
                             lastNearEndWarmMs = now
@@ -715,16 +727,26 @@ class PlaybackService : MediaSessionService() {
                         }
                     }
                 }
-                // Pendant toute la lecture : maintient le titre suivant (ignore quiet).
+                // Pendant toute la lecture : maintient +1 (et +2…+4 en charge).
                 val nowMid = android.os.SystemClock.elapsedRealtime()
                 if (nowMid - lastMidTrackPrefetchMs > 5_000L) {
                     lastMidTrackPrefetchMs = nowMid
                     val q = Holder.queue
                     if (q.isNotEmpty()) {
+                        val ids = q.map { it.id }
+                        val idx = player.currentMediaItemIndex
                         StreamPrefetcher.prefetchNextDuringPlayback(
                             resolvedApiBase(),
-                            q.map { it.id },
-                            player.currentMediaItemIndex,
+                            ids,
+                            idx,
+                            ignoreQuiet = true,
+                        )
+                        val ahead = if (ovh.delhomme.ytmusic.data.BatterySaver.isCharging()) 5 else 3
+                        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                            resolvedApiBase(),
+                            ids,
+                            idx,
+                            count = ahead,
                             ignoreQuiet = true,
                         )
                     }
@@ -764,16 +786,22 @@ class PlaybackService : MediaSessionService() {
             val snapPrevDur = prevPlayingDurationMs.takeIf { it > 0L } ?: lastPlayingDurationMs
             val snapPrevBuf = prevPlayingBufferedMs.takeIf { it > 0L } ?: lastPlayingBufferedMs
             promoteUpcomingToLocal(exo, exo.currentMediaItemIndex + 1)
-            // Nouveau +1 : pin cache + prefetch immédiat
-            val nextId = Holder.queue.getOrNull(curIdx + 1)?.id
+            // Nouveau +1…+4 : pin + têtes (titre court = pas le temps d’attendre le tick 5 s)
+            val qIds = Holder.queue.map { it.id }
+            val nextId = qIds.getOrNull(curIdx + 1)
             if (nextId != null && nextId.length == 11) {
                 PlayerCache.pinTrack(nextId)
-                StreamPrefetcher.prefetchNextDuringPlayback(
-                    resolvedApiBase(),
-                    Holder.queue.map { it.id },
-                    curIdx,
-                    ignoreQuiet = true,
-                )
+            }
+            StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                resolvedApiBase(),
+                qIds,
+                curIdx,
+                count = if (ovh.delhomme.ytmusic.data.BatterySaver.isCharging()) 6 else 4,
+                ignoreQuiet = true,
+            )
+            val curDur = Holder.queue.getOrNull(curIdx)?.durationMsOrNull() ?: 0L
+            if (curDur in 1L..90_000L || curDur <= 0L) {
+                warmExclusiveNext(curIdx)
             }
             if (skipRecovery) {
                 recoveringTrackId = ""
@@ -2423,7 +2451,14 @@ class PlaybackService : MediaSessionService() {
             fromIndex,
             ignoreQuiet = true,
         )
-        CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 1, behind = 0)
+        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+            resolvedApiBase(),
+            ids,
+            fromIndex,
+            count = 3,
+            ignoreQuiet = true,
+        )
+        CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 2, behind = 0)
     }
 
     /** Télécharge silencieusement +1 titre offline (Wi‑Fi, hors BatterySaver / near-end). */

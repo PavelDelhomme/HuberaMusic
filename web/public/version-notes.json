@@ -2,6 +2,37 @@
   "updatedAt": "2026-09-20",
   "versions": [
     {
+      "version": "1.3.267",
+      "date": "2026-09-20",
+      "title": "Enchaînement aléatoire sans chargement bloqué",
+      "notes": [
+        "Fin d’un titre en aléatoire : le suivant est celui déjà préchargé (plus de tirage au sort à froid)",
+        "Aléatoire : préchargement immédiat de la nouvelle suite (+1…+6)",
+        "Tête du titre suivant plus large, surtout en charge, pour éviter « Chargement du flux… »",
+        "Hors charge / économiseur : prefetch allégé pour la batterie"
+      ]
+    },
+    {
+      "version": "1.3.266",
+      "date": "2026-09-20",
+      "title": "Bibliothèque fluide (file 400, listes virtualisées)",
+      "notes": [
+        "Tout lire / Aléatoire : file limitée à 400 titres pour rester fluide",
+        "Albums, playlists, artistes, mixes : listes longues sans geler le défilement",
+        "Connexion : un seul rafraîchissement de la bibliothèque"
+      ]
+    },
+    {
+      "version": "1.3.262",
+      "date": "2026-09-20",
+      "title": "Paroles Genius : le bon titre",
+      "notes": [
+        "Recherche de paroles avec l’artiste et le titre en lecture (ex. InTheLight — ABCD ADAH), plus le titre seul",
+        "Un tube populaire au nom proche (ADHD) n’est plus pris à la place du morceau en cours",
+        "Le bouton Chercher sur Genius ouvre artiste + titre, sur le web comme sur Android"
+      ]
+    },
+    {
       "version": "1.3.261",
       "date": "2026-09-20",
       "title": "MHC + Accès rapide web",
