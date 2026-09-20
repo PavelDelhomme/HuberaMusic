@@ -23,11 +23,14 @@ import {
 } from '../youtube/youtubeCookies.js';
 import {
   isProxyWorthRetry,
+  isUpstream5xx,
   markYoutubeProxyFailure,
   markYoutubeProxySuccess,
   youtubeProxyAttempts,
   youtubeProxyFreeEnabled,
   ensureYoutubeProxyPool,
+  fetchUrlViaProxy,
+  isHttpProxy,
 } from '../youtube/youtubeProxy.js';
 import {
   peekStreamHead,
@@ -114,25 +117,76 @@ export function streamRetryN(req: Request): number {
   return 0;
 }
 
-async function fetchGooglevideo(url: string, range?: string): Promise<globalThis.Response> {
-  const doFetch = () =>
-    fetch(url, {
-      headers: googlevideoHeaders(url, range),
-      redirect: 'follow',
-    });
-  try {
-    const first = await doFetch();
-    // 502/503/504 googlevideo souvent transitoires — 1 retry court avant de remonter au client.
-    if (first.status === 502 || first.status === 503 || first.status === 504) {
-      await new Promise((r) => setTimeout(r, 280));
-      return await doFetch();
+async function fetchGooglevideo(
+  url: string,
+  range?: string,
+  opts?: { preferProxies?: boolean; boundProxy?: string | null },
+): Promise<globalThis.Response> {
+  const headers = googlevideoHeaders(url, range);
+  const prefer = opts?.preferProxies !== false && youtubeProxyFreeEnabled();
+
+  const tryOnce = async (proxy: string | null) => {
+    if (proxy && !isHttpProxy(proxy)) {
+      throw new Error('SOCKS fetch skip');
     }
-    return first;
-  } catch (err) {
-    await new Promise((r) => setTimeout(r, 220));
-    return await doFetch();
+    const res = await fetchUrlViaProxy(url, proxy, {
+      method: 'GET',
+      headers,
+      timeoutMs: 14_000,
+    });
+    // Status lu avant tout pipe client = détection 5xx amont.
+    if (isUpstream5xx(res.status) || res.status === 0) {
+      if (proxy) markYoutubeProxyFailure(proxy, 'gv');
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`upstream audio ${res.status || 'fail'}`);
+    }
+    if (res.status === 200 || res.status === 206) {
+      if (proxy) markYoutubeProxySuccess(proxy, 'gv');
+    }
+    return res;
+  };
+
+  // URL yt-dlp liée à l’IP du proxy : fetch uniquement via ce proxy (sinon 403).
+  if (opts?.boundProxy) {
+    if (!isHttpProxy(opts.boundProxy)) {
+      throw new Error('SOCKS bound — pipe yt-dlp');
+    }
+    return await tryOnce(opts.boundProxy);
   }
+
+  if (!prefer) {
+    try {
+      return await tryOnce(null);
+    } catch {
+      await new Promise((r) => setTimeout(r, 220));
+      return await tryOnce(null);
+    }
+  }
+
+  const proxies = await youtubeProxyAttempts({
+    max: 10,
+    includeDirect: true,
+    directLast: true,
+    shuffle: true,
+    probe: true,
+  });
+  let lastErr: Error | null = null;
+  for (const proxy of proxies) {
+    try {
+      const res = await tryOnce(proxy);
+      if (isUpstream5xx(res.status)) continue;
+      return res;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+  throw lastErr || new Error('upstream audio 5xx (proxies épuisés)');
 }
+
 function ensureCache() {
   if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
 }
@@ -668,7 +722,7 @@ async function streamViaYtDlp(videoId: string, res: Response, preferProxies = fa
   const formats = YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, preferProxies ? 2 : 3);
   // Maison offline → proxies d’abord (IP VPS souvent bot-bloquée)
   const proxies = await youtubeProxyAttempts({
-    max: preferProxies ? 10 : 5,
+    max: preferProxies ? 12 : 5,
     includeDirect: true,
     directLast: preferProxies,
     shuffle: preferProxies,
@@ -1588,32 +1642,35 @@ export async function handleStream(req: Request, res: Response) {
     ensureTime('format');
     let format = wantVideo
       ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
-      : await withDeadline(
-          // Innertube/OAuth d’abord (VPS OK ~1 s) en parallèle de yt-dlp —
-          // avant : yt-dlp seul timeout 35 s → jamais de fallback Innertube.
-          'getAudioFormatRace',
-          Promise.any([
-            getAudioFormat(videoId, {
-              userId: (req as any).userId,
-              forceFresh: retryN > 0,
-              retryN,
-              live: true,
-            }),
-            // yt-dlp démarre avec un léger délai pour laisser OAuth gagner (sans maison).
-            new Promise<Awaited<ReturnType<typeof getAudioFormat>>>((resolve, reject) => {
-              setTimeout(() => {
-                getAudioFormatViaYtDlpOnly(videoId, {
-                  live: true,
-                  preferProxies: true,
-                }).then(resolve, reject);
-              }, 1_200);
-            }),
-          ]),
-        );
+      : preferProxies
+        ? await withDeadline(
+            'ytDlpUrlFirst',
+            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true }),
+          )
+        : await withDeadline(
+            'getAudioFormatRace',
+            Promise.any([
+              getAudioFormat(videoId, {
+                userId: (req as any).userId,
+                forceFresh: retryN > 0,
+                retryN,
+                live: true,
+              }),
+              new Promise<Awaited<ReturnType<typeof getAudioFormat>>>((resolve, reject) => {
+                setTimeout(() => {
+                  getAudioFormatViaYtDlpOnly(videoId, {
+                    live: true,
+                    preferProxies: true,
+                  }).then(resolve, reject);
+                }, 1_200);
+              }),
+            ]),
+          );
     if (format.url) {
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).
-      if (wantsDirectRedirect(req)) {
+      // URL liée à un proxy : ne pas 302 le téléphone (IP ≠ proxy → 403).
+      if (wantsDirectRedirect(req) && !format.viaProxy) {
         noteStreamSource(res, 'redirection googlevideo');
         res.setHeader('Cache-Control', 'no-store');
         if (format.bitrate) res.setHeader('X-PLM-Audio-Bitrate', String(format.bitrate));
@@ -1621,7 +1678,8 @@ export async function handleStream(req: Request, res: Response) {
         return;
       }
       const rangeHdr = req.headers.range ? String(req.headers.range) : undefined;
-      let upstream = await withDeadline('fetchGV', fetchGooglevideo(format.url, rangeHdr));
+      const gvOpts = { preferProxies, boundProxy: format.viaProxy };
+      let upstream = await withDeadline('fetchGV', fetchGooglevideo(format.url, rangeHdr, gvOpts));
       // URL morte / anti-bot → invalide le cache format et retente 1× avant fallbacks
       if (upstream.status === 403 || upstream.status === 401 || upstream.status === 404) {
         invalidateAudioFormat(videoId);
@@ -1631,10 +1689,15 @@ export async function handleStream(req: Request, res: Response) {
           ? await withDeadline('getVideoFormat2', getVideoFormat(videoId))
           : await withDeadline(
               'getAudioFormat2',
-              getAudioFormat(videoId, { userId: (req as any).userId, live: true }),
+              preferProxies
+                ? getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true })
+                : getAudioFormat(videoId, { userId: (req as any).userId, live: true }),
             );
         if (!format.url) throw new Error(`upstream ${wantVideo ? 'video' : 'audio'} ${upstream.status}`);
-        upstream = await withDeadline('fetchGV2', fetchGooglevideo(format.url, rangeHdr));
+        upstream = await withDeadline(
+          'fetchGV2',
+          fetchGooglevideo(format.url, rangeHdr, { preferProxies, boundProxy: format.viaProxy }),
+        );
       }
       // Innertube toujours 403 → URL yt-dlp (souvent OK sans cookies fichier)
       if (
@@ -1643,26 +1706,31 @@ export async function handleStream(req: Request, res: Response) {
       ) {
         try {
           format = await withDeadline('ytDlpUrl', getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies }));
-          upstream = await withDeadline('fetchGV3', fetchGooglevideo(format.url, rangeHdr));
+          upstream = await withDeadline(
+            'fetchGV3',
+            fetchGooglevideo(format.url, rangeHdr, { preferProxies, boundProxy: format.viaProxy }),
+          );
         } catch {
           /* fallback pipe plus bas */
         }
       }
-      // 5xx amont : invalide + 1 re-resolve format (URL neuve) avant d’abandonner.
-      if (!wantVideo && (upstream.status === 502 || upstream.status === 503 || upstream.status === 504)) {
+      // 5xx amont : ne pas retenter l’IP VPS — re-resolve yt-dlp + même proxy.
+      if (!wantVideo && isUpstream5xx(upstream.status)) {
         invalidateAudioFormat(videoId);
         invalidateStreamHead(videoId);
         try {
           format = await withDeadline(
             'getAudioFormat5xx',
-            getAudioFormat(videoId, { userId: (req as any).userId, live: true }),
+            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true }),
           );
           if (format.url) {
-            await new Promise((r) => setTimeout(r, 200));
-            upstream = await withDeadline('fetchGV5xx', fetchGooglevideo(format.url, rangeHdr));
+            upstream = await withDeadline(
+              'fetchGV5xx',
+              fetchGooglevideo(format.url, rangeHdr, { preferProxies: true, boundProxy: format.viaProxy }),
+            );
           }
         } catch {
-          /* throw plus bas si toujours KO */
+          /* throw plus bas → pipe yt-dlp */
         }
       }
       // Toujours 403 / 5xx → laisser les fallbacks yt-dlp / Innertube (log soft, pas d’alarme)
@@ -2570,7 +2638,7 @@ export async function downloadTrack(
     const cookieSets = ytDlpCookieArgSets({ forDownload: true });
     const extractorSets = ytDlpExtractorArgSets();
     const proxies = await youtubeProxyAttempts({
-      max: opts?.preferProxies ? 10 : 5,
+      max: opts?.preferProxies ? 12 : 5,
       includeDirect: true,
       directLast: Boolean(opts?.preferProxies),
       shuffle: Boolean(opts?.preferProxies),

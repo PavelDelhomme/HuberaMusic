@@ -121,6 +121,8 @@ type AudioFormat = {
   bitrate?: number;
   contentLength?: number;
   expiresAt: number;
+  /** Proxy HTTP utilisé pour yt-dlp -g — googlevideo doit être fetché via la même IP. */
+  viaProxy?: string | null;
 };
 
 /** Cache URLs googlevideo (évite re-decipher à chaque play / prefetch). */
@@ -2563,6 +2565,7 @@ async function audioFormatViaYtDlpFast(
           bitrate: 128_000,
           contentLength: undefined,
           expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+          viaProxy: proxy,
         };
       } catch (err) {
         lastErr = err instanceof Error ? err : new Error(String(err));
@@ -2591,7 +2594,7 @@ async function audioFormatViaYtDlp(
   // Direct puis proxies (bypass bot IP) — cooldown VPS ≠ stop proxies
   // Live écoute : proxies d’abord + peu de formats (budget stream ~35 s).
   const proxies = await youtubeProxyAttempts({
-    max: proxyOpts?.directLast || live ? 8 : 5,
+    max: proxyOpts?.directLast || live ? 12 : 8,
     includeDirect: true,
     shuffle: proxyOpts?.shuffle || live,
     directLast: proxyOpts?.directLast || live,
@@ -2633,6 +2636,7 @@ async function audioFormatViaYtDlp(
                   : 'audio/webm',
               bitrate: abr,
               expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+              viaProxy: proxy,
             };
           } catch (err) {
             lastErr = err instanceof Error ? err : new Error(String(err));
@@ -2881,6 +2885,7 @@ async function videoFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
           url,
           mimeType: 'video/mp4',
           expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+          viaProxy: proxy,
         };
       } catch (err) {
         lastErr = err instanceof Error ? err : new Error(String(err));
