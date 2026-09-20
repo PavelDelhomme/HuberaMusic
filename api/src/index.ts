@@ -1560,8 +1560,12 @@ app.post('/api/admin/apk/ticket', requireAdmin, (req, res) => {
 });
 
 /** Meta APK publique (page /install) — pas de binaire. */
-app.get('/api/install/apk-info', (_req, res) => {
+app.get('/api/install/apk-info', (req, res) => {
   const info = deployInfo(PORT).apk;
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0]
+    .trim();
+  const origin = host ? `https://${host}` : 'https://music.hubera.cloud';
   res.json({
     ready: Boolean(info.ready),
     versionName: info.versionName,
@@ -1570,6 +1574,7 @@ app.get('/api/install/apk-info', (_req, res) => {
     builtAt: info.builtAt,
     package: 'ovh.delhomme.ytmusic',
     installPath: '/install',
+    installUrl: `${origin}/install`,
     hubera: huberaNotice(),
   });
 });
