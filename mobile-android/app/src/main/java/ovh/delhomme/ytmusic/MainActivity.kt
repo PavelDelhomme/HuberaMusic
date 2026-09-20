@@ -540,7 +540,7 @@ fun YtMusicAppContent(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    "PLM",
+                    "Hubera Music",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -627,7 +627,7 @@ fun YtMusicAppContent(
                         Toast.makeText(
                             context,
                             if (ok) {
-                                "Regarde l’écran Confirmer (derrière PLM parfois)"
+                                "Regarde l’écran Confirmer (parfois derrière l’app)"
                             } else {
                                 "Écran système introuvable — appuie Plus tard ou réessaie dans Compte"
                             },
@@ -1943,7 +1943,7 @@ private fun MainTabs(
             title = { Text("Hubera Music") },
             text = {
                 Text(
-                    "PLM fait partie de Hubera Music. Ton compte et tes playlists restent. " +
+                    "Hubera Music. Ton compte et tes playlists restent. " +
                         "Détails dans Compte → Aide & limites. Le login local continue : rien n’est fusionné.",
                 )
             },
@@ -1974,7 +1974,7 @@ private fun MainTabs(
             text = {
                 Text(
                     "Une fois : choisis ton compte Google sur le téléphone (code appareil, sans mot de passe). " +
-                        "PLM signe tes streams avec ton compte — ça reste actif après les mises à jour. " +
+                        "L’app signe tes streams avec ton compte — ça reste actif après les mises à jour. " +
                         "Option biblio : likes / playlists ensuite.",
                 )
             },

@@ -203,7 +203,7 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 )
             }
             null -> {
-                _state.value = _state.value.copy(error = "QR non reconnu — scanne le QR affiché sur music.hubera.cloud (ou PLM).")
+                _state.value = _state.value.copy(error = "QR non reconnu — scanne le QR affiché sur music.hubera.cloud.")
             }
         }
     }

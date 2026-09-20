@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Hubera Music</string>
     <!-- Nom complet projet : docs/PLM.md — pas affiché en UI principale -->
-    <string name="app_name_full" translatable="false">PueLaMerde</string>
+    <string name="app_name_full" translatable="false">Hubera Music</string>
     <string name="playback_channel">Lecture Hubera Music</string>
     <string name="playback_channel_name">Lecture en cours</string>
 </resources>

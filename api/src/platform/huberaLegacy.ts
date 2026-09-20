@@ -24,9 +24,8 @@ export function huberaNotice(): HuberaNotice {
     canonical_url: 'https://music.hubera.cloud',
     legacy_url: 'https://plm.delhomme.ovh',
     message:
-      'PLM fait partie de Hubera Music. Ton compte, tes playlists et tes données restent. ' +
-      'Nouveau domaine : music.hubera.cloud — plm.delhomme.ovh et ytmusic.delhomme.ovh continuent de marcher. ' +
-      'Même application (package inchangé), pas de réinstallation Play Store.',
+      'Ton compte et tes playlists restent. L’app s’appelle Hubera Music. ' +
+      'music.hubera.cloud ouvre la même chose que l’ancien site.',
   };
 }
 

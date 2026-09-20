@@ -257,7 +257,7 @@ object UpdateRelaunch {
                         "Réouverture après MAJ",
                         NotificationManager.IMPORTANCE_HIGH,
                     ).apply {
-                        description = "Rouvre PLM juste après une mise à jour"
+                        description = "Rouvre Hubera Music juste après une mise à jour"
                         setShowBadge(true)
                         enableVibration(true)
                     },
@@ -269,7 +269,7 @@ object UpdateRelaunch {
         val fullPi = PendingIntent.getActivity(ctx, PI_NOTIF + 1, launch, flags)
         val notif = NotificationCompat.Builder(ctx, RELAUNCH_NOTIF_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_play)
-            .setContentTitle("PLM mis à jour")
+            .setContentTitle("Hubera Music mis à jour")
             .setContentText("Touche pour rouvrir — ouverture auto…")
             .setContentIntent(contentPi)
             .setFullScreenIntent(fullPi, true)
@@ -286,7 +286,7 @@ object UpdateRelaunch {
                 41001,
                 NotificationCompat.Builder(ctx, RELAUNCH_NOTIF_CHANNEL)
                     .setSmallIcon(R.drawable.ic_stat_play)
-                    .setContentTitle("Mise à jour PLM")
+                    .setContentTitle("Mise à jour Hubera Music")
                     .setContentText("Installée — touche pour ouvrir")
                     .setContentIntent(contentPi)
                     .setAutoCancel(true)

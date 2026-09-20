@@ -73,7 +73,7 @@ object AppLog {
         val sw = StringWriter()
         t.printStackTrace(PrintWriter(sw))
         val body = buildString {
-            appendLine("=== PLM crash ${ts()} fatal=$fatal ===")
+            appendLine("=== Hubera Music crash ${ts()} fatal=$fatal ===")
             appendLine("session=$sessionId")
             appendLine("sdk=${Build.VERSION.SDK_INT} ${Build.MANUFACTURER} ${Build.MODEL}")
             appendLine("app=${BuildConfig.VERSION_NAME} api=${BuildConfig.API_BASE_URL}")
@@ -118,10 +118,23 @@ object AppLog {
         return slice.lineSequence().toList().asReversed().joinToString("\n")
     }
 
-    fun exportBundle(): String {
-        return buildString {
-            appendLine("=== PLM debug export ${ts()} ===")
+    fun dumpForSupport(maxChars: Int = 90_000): String {
+        val prevTail = runCatching {
+            val prev = filesDir?.let { File(it, "app.prev.log") }
+            if (prev != null && prev.isFile) {
+                val t = prev.readText()
+                if (t.length > 18_000) t.takeLast(18_000) else t
+            } else {
+                ""
+            }
+        }.getOrDefault("")
+        val body = buildString {
+            appendLine("=== Hubera Music support dump ${ts()} ===")
             appendLine("session=$sessionId")
+            appendLine("app=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) channel=${BuildConfig.APP_CHANNEL}")
+            appendLine("package=${BuildConfig.APPLICATION_ID}")
+            appendLine("sdk=${Build.VERSION.SDK_INT} ${Build.MANUFACTURER} ${Build.MODEL}")
+            appendLine("api=${BuildConfig.API_BASE_URL}")
             appendLine()
             appendLine("--- last crash ---")
             appendLine(lastCrashText())
@@ -129,9 +142,19 @@ object AppLog {
             appendLine("--- breadcrumbs ---")
             breadcrumbs.forEach { appendLine(it) }
             appendLine()
-            appendLine("--- app.log (tail) ---")
-            appendLine(recentLogText())
+            appendLine("--- app.log ---")
+            appendLine(recentLogText(48_000))
+            if (prevTail.isNotBlank()) {
+                appendLine()
+                appendLine("--- app.prev.log (tail) ---")
+                appendLine(prevTail)
+            }
         }
+        return if (body.length <= maxChars) body else body.take(maxChars)
+    }
+
+    fun exportBundle(): String {
+        return dumpForSupport()
     }
 
     fun clearLogs() {

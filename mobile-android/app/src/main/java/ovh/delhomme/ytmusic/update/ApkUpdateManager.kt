@@ -185,7 +185,7 @@ class ApkUpdateManager(
             return tryOpenConfirmUi("reopen-intent") {
                 UpdateRelaunch.launchConfirm(context, confirm)
                 notifier.show(
-                    "Mise à jour PLM",
+                    "Mise à jour Hubera Music",
                     "Écran d’installation — Rouvrir",
                     100,
                     indeterminate = false,
@@ -719,7 +719,7 @@ class ApkUpdateManager(
                 available = true,
             ),
         )
-        notifier.show("Mise à jour PLM", "Vérification de la version…", null, indeterminate = true)
+        notifier.show("Mise à jour Hubera Music", "Vérification de la version…", null, indeterminate = true)
         updateJob?.cancel()
         updateJob = scope.launch {
             try {
@@ -752,7 +752,7 @@ class ApkUpdateManager(
                         ),
                     )
                     notifier.show(
-                        "Mise à jour PLM",
+                        "Mise à jour Hubera Music",
                         "Préparation de l’installateur…",
                         0,
                         indeterminate = true,
@@ -761,7 +761,7 @@ class ApkUpdateManager(
                     val okInstall = msg.startsWith("Installation")
                     if (okInstall) {
                         notifier.show(
-                            "Mise à jour PLM",
+                            "Mise à jour Hubera Music",
                             "Écran d’installation ouvert",
                             100,
                             indeterminate = false,
@@ -773,7 +773,7 @@ class ApkUpdateManager(
                         UiState(
                             phase = if (okInstall) Phase.AwaitingConfirm else Phase.Error,
                             message = if (okInstall) {
-                                "Valide l’installation système — PLM se relancera ensuite"
+                                "Valide l’installation système — Hubera Music se relancera ensuite"
                             } else {
                                 msg
                             },
@@ -795,7 +795,7 @@ class ApkUpdateManager(
                         progress = 0f,
                     ),
                 )
-                notifier.show("Mise à jour PLM", "Téléchargement… 0 %", 0, indeterminate = false)
+                notifier.show("Mise à jour Hubera Music", "Téléchargement… 0 %", 0, indeterminate = false)
                 val msg = downloadAndInstall(check.info) { p ->
                     val pct = (p * 100).toInt().coerceIn(0, 99)
                     val line = "Téléchargement ${remoteName ?: remote}… $pct %"
@@ -809,12 +809,12 @@ class ApkUpdateManager(
                             available = true,
                         )
                     }
-                    notifier.show("Mise à jour PLM", line, pct, indeterminate = false)
+                    notifier.show("Mise à jour Hubera Music", line, pct, indeterminate = false)
                 }
                 val ok = msg.startsWith("Installation")
                 if (ok) {
                     notifier.show(
-                        "Mise à jour PLM",
+                        "Mise à jour Hubera Music",
                         "Écran d’installation ouvert",
                         100,
                         indeterminate = false,
@@ -831,7 +831,7 @@ class ApkUpdateManager(
                             else -> Phase.Error
                         },
                         message = when {
-                            ok -> "Valide l’installation système — PLM se relancera ensuite"
+                            ok -> "Valide l’installation système — Hubera Music se relancera ensuite"
                             else -> msg
                         },
                         remoteName = remoteName,
@@ -896,7 +896,7 @@ class ApkUpdateManager(
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
             }
-            return "Autorise l’installation pour PLM, puis reviens — on relance auto"
+            return "Autorise l’installation pour Hubera Music, puis reviens — on relance auto"
         }
         withContext(Dispatchers.Main) {
             runCatching {
@@ -1044,7 +1044,7 @@ class ApkUpdateManager(
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
             }
-            return@withContext "Autorise l’installation pour PLM, puis réessaie"
+            return@withContext "Autorise l’installation pour Hubera Music, puis réessaie"
         }
 
         // Pause + stop service avant DL (évite ANR + « rien en lecture » + vol Netflix)
@@ -1070,7 +1070,7 @@ class ApkUpdateManager(
             // Même versionCode que le serveur, mais autre package (ex. d+198 vs p+198) :
             // pas de DL — l’utilisateur doit ouvrir l’icône PLM.
             return@withContext crossPackageHint(metaPkg)
-                ?: "Ouvre l’app PLM (prod) — cette build Dev est déjà au même code $remote"
+                ?: "Ouvre Hubera Music (prod) — cette build Dev est déjà au même code $remote"
         }
         lastTargetPackage = metaPkg
         prefs.edit().putString(KEY_TARGET_PACKAGE, metaPkg).apply()
@@ -1146,7 +1146,7 @@ class ApkUpdateManager(
                 message = "Préparation de l’installateur (v$remote)… 0 %",
             ),
         )
-        notifier.show("Mise à jour PLM", "Préparation de l’installateur… 0 %", 0, indeterminate = false)
+        notifier.show("Mise à jour Hubera Music", "Préparation de l’installateur… 0 %", 0, indeterminate = false)
         launchInstall(out, remote)
     }
 
@@ -1174,8 +1174,8 @@ class ApkUpdateManager(
     private fun crossPackageHint(target: String): String? {
         if (target == context.packageName) return null
         return when (BuildConfig.APP_CHANNEL) {
-            "d" -> "Tu es sur PLM Dev — la MAJ installe/met à jour l’app PLM (icône sans « Dev »)."
-            "b" -> "Tu es sur PLM Preprod — la MAJ installe/met à jour l’app PLM (prod)."
+            "d" -> "Tu es sur Hubera Music Dev — la MAJ met à jour l’app Hubera Music (sans « Dev »)."
+            "b" -> "Tu es sur Hubera Music Preprod — la MAJ met à jour l’app Hubera Music (prod)."
             else -> "La MAJ cible $target (pas cette app)."
         }
     }
@@ -1236,7 +1236,7 @@ class ApkUpdateManager(
                                     available = true,
                                 ),
                             )
-                            notifier.show("Mise à jour PLM", line, pct, indeterminate = false)
+                            notifier.show("Mise à jour Hubera Music", line, pct, indeterminate = false)
                         }
                     }
                     session.fsync(out)
@@ -1251,7 +1251,7 @@ class ApkUpdateManager(
                 ),
             )
             notifier.show(
-                "Mise à jour PLM",
+                "Mise à jour Hubera Music",
                 "Installation en cours…",
                 100,
                 indeterminate = true,
@@ -1295,13 +1295,13 @@ class ApkUpdateManager(
                 publish(
                     _ui.value.copy(
                         phase = Phase.AwaitingConfirm,
-                        message = "Valide l’installation — si l’écran est derrière PLM, appuie sur la vignette",
+                        message = "Valide l’installation — si l’écran est derrière l’app, appuie sur la vignette",
                         available = true,
                         progress = 1f,
                     ),
                 )
                 notifier.show(
-                    "Mise à jour PLM",
+                    "Mise à jour Hubera Music",
                     "Écran d’installation ouvert",
                     100,
                     indeterminate = false,
@@ -1316,14 +1316,14 @@ class ApkUpdateManager(
                     ?: context.packageName
                 val cross = target != context.packageName
                 notifier.done(
-                    if (cross) "PLM mis à jour — ouvre l’icône PLM"
+                    if (cross) "Hubera Music mis à jour — ouvre l’icône Hubera Music"
                     else "Installée — réouverture…",
                 )
                 publish(
                     UiState(
                         phase = Phase.Done,
                         message = if (cross) {
-                            "PLM (prod) installé — ouvre l’icône « PLM », pas PLM Dev"
+                            "Hubera Music (prod) installé — ouvre l’icône « Hubera Music », pas Dev"
                         } else {
                             "Mise à jour installée — réouverture…"
                         },

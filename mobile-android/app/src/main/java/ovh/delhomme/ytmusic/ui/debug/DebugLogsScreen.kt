@@ -343,7 +343,7 @@ fun DebugLogsScreen(
                     onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, "PLM debug logs")
+                            putExtra(Intent.EXTRA_SUBJECT, "Hubera Music debug logs")
                             putExtra(Intent.EXTRA_TEXT, AppLog.exportBundle())
                         }
                         context.startActivity(Intent.createChooser(send, "Partager les logs"))

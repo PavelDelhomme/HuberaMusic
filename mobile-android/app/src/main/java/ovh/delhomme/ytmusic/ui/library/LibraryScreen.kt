@@ -1073,7 +1073,7 @@ private fun buildLibraryContent(
             headline = "Fichiers de l'appareil",
             rows = emptyList(),
             playableQueue = emptyList(),
-            emptyMessage = "Import téléphone bientôt. Utilise Téléchargements PLM pour l’instant.",
+            emptyMessage = "Import téléphone bientôt. Utilise Téléchargements pour l’instant.",
             comingSoon = null,
         )
     }

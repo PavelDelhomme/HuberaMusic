@@ -64,7 +64,7 @@ class LocalOfflineStore(
                 ovh.delhomme.ytmusic.YtMusicApp.instance.container.tokenStore.peekAccess()
             }.getOrNull()
             val b = chain.request().newBuilder()
-                .header("User-Agent", "PLM-Android")
+                .header("User-Agent", "HuberaMusic-Android")
                 .header("X-YTM-Client", "android")
                 .header("X-YTM-Offline", "1")
                 .header("Accept", "*/*")

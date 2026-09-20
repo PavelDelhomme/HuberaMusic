@@ -1481,7 +1481,9 @@ class PlaybackService : MediaSessionService() {
         val exo = player
         val hasMedia = exo != null && exo.mediaItemCount > 0
         val title = exo?.currentMediaItem?.mediaMetadata?.title?.toString()?.trim().orEmpty()
-        val hasRealTitle = title.isNotBlank() && title != "…" && !title.equals("PLM", ignoreCase = true)
+        val hasRealTitle = title.isNotBlank() && title != "…" &&
+            !title.equals("PLM", ignoreCase = true) &&
+            !title.equals("Hubera Music", ignoreCase = true)
         if (hasMedia && (hasRealTitle || session != null)) {
             // Remet / rafraîchit la vraie notif transport (évite rester sur le placeholder).
             runCatching { ensureCurrentItemMetadata() }
@@ -1518,7 +1520,7 @@ class PlaybackService : MediaSessionService() {
                         setShowBadge(false)
                         setSound(null, null)
                         enableVibration(false)
-                        description = "Lecteur multimédia PLM"
+                        description = "Lecteur Hubera Music"
                     }
                     nm.createNotificationChannel(ch)
                 }
@@ -1527,7 +1529,7 @@ class PlaybackService : MediaSessionService() {
                 this,
                 DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID,
             )
-                .setContentTitle("PLM")
+                .setContentTitle("Hubera Music")
                 .setContentText("Lecture…")
                 .setSmallIcon(R.drawable.ic_stat_play)
                 .setContentIntent(sessionActivityPendingIntent())

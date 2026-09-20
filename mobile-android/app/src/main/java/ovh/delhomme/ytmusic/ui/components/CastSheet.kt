@@ -225,7 +225,7 @@ fun CastSheet(
 
         if (devices.none { it.id != container.deviceId }) {
             Text(
-                "Aucun autre appareil connecté. Ouvre PLM sur le web (même compte) pour caster.",
+                "Aucun autre appareil connecté. Ouvre Hubera Music sur le web (même compte) pour caster.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(20.dp),
