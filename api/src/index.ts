@@ -158,6 +158,7 @@ import {
   inviteDeviceLogin,
   pollDeviceLogin,
   startDeviceLogin,
+  publicOriginFromRequest,
 } from './auth/deviceLogin.js';
 import {
   accountRequired,
@@ -307,6 +308,7 @@ function isAllowedOrigin(origin: string | undefined): boolean {
       'https://plm.delhomme.ovh',
       'https://ytmusic.delhomme.ovh',
       'https://pue-la-merde.delhomme.ovh',
+      'https://music.hubera.cloud',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
       'http://localhost:8787',
@@ -318,6 +320,7 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
   // Alias canoniques toujours OK en prod (cookies Domain=.delhomme.ovh)
   if (/^https:\/\/(plm|ytmusic|pue-la-merde)\.delhomme\.ovh$/i.test(origin)) return true;
+  if (/^https:\/\/music\.hubera\.cloud$/i.test(origin)) return true;
   if (env === 'local' || env === 'development') {
     return /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/i.test(
       origin,
@@ -452,7 +455,7 @@ app.post('/api/auth/register', authBurst, authStrict, async (req, res) => {
       return;
     }
     const result = await registerLocal(String(email), String(password), String(name || ''));
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
     res.json(result);
@@ -467,7 +470,7 @@ app.post('/api/auth/login', authBurst, authStrict, async (req, res) => {
       totp: req.body?.totp ? String(req.body.totp) : undefined,
       deviceLabel: String(req.body?.deviceLabel || req.headers['user-agent'] || 'web').slice(0, 120),
     });
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
     // Préchauffe goûts en fond (ne bloque pas le login)
@@ -489,7 +492,7 @@ app.post('/api/auth/google', authBurst, authStrict, async (req, res) => {
       String(req.body?.credential || req.body?.idToken || ''),
       String(req.body?.deviceLabel || 'google'),
     );
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
     if (result.user?.id) scheduleUserTasteWarm(result.user.id, [], { force: true, disk: 24 });
@@ -519,7 +522,7 @@ app.post('/api/auth/refresh', authBurst, async (req, res) => {
       return;
     }
     const token = await signToken(user);
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', token, opts);
     res.cookie('ytm_refresh', rotated.token, { ...opts, httpOnly: true });
     scheduleUserTasteWarm(user.id, [], { disk: 8 });
@@ -532,7 +535,7 @@ app.post('/api/auth/refresh', authBurst, async (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   const raw = String((req as any).cookies?.ytm_refresh || req.body?.refreshToken || '');
   if (raw) revokeRefreshToken(raw);
-  const opts = sessionCookieOptions();
+  const opts = sessionCookieOptions(req);
   res.clearCookie('ytm_token', { path: opts.path, sameSite: opts.sameSite, secure: opts.secure });
   res.clearCookie('ytm_refresh', { path: opts.path, sameSite: opts.sameSite, secure: opts.secure });
   res.json({ ok: true });
@@ -1204,7 +1207,7 @@ app.post('/api/auth/passkeys/login/verify', async (req, res) => {
       return;
     }
     const session = await issueSession(user, 'passkey');
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', session.token, opts);
     res.cookie('ytm_refresh', session.refreshToken, { ...opts, httpOnly: true });
     res.json(session);
@@ -1215,8 +1218,7 @@ app.post('/api/auth/passkeys/login/verify', async (req, res) => {
 
 /** Login QR : appareil à connecter démarre une session (affiche le QR). */
 app.post('/api/auth/device-login/start', (req, res) => {
-  const origin = String(req.headers.origin || req.body?.origin || '').trim();
-  res.json(startDeviceLogin(origin || undefined));
+  res.json(startDeviceLogin(publicOriginFromRequest(req)));
 });
 
 /** Poll jusqu’à approbation — renvoie la session une fois. */
@@ -1247,7 +1249,7 @@ app.post('/api/auth/device-login/poll', async (req, res) => {
       return;
     }
     const session = await issueSession(user, 'device-qr');
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', session.token, opts);
     res.cookie('ytm_refresh', session.refreshToken, { ...opts, httpOnly: true });
     res.json({ status: 'approved', ...session });
@@ -1285,8 +1287,7 @@ app.get('/api/auth/device-login/peek', (req, res) => {
 
 /** Compte connecté → QR pour connecter un autre appareil. */
 app.post('/api/auth/device-login/invite', authRequired, (req, res) => {
-  const origin = String(req.headers.origin || req.body?.origin || '').trim();
-  res.json(inviteDeviceLogin(req.userId!, origin || undefined));
+  res.json(inviteDeviceLogin(req.userId!, publicOriginFromRequest(req)));
 });
 
 /** L’autre appareil ouvre le lien d’invite et récupère la session. */
@@ -1304,7 +1305,7 @@ app.post('/api/auth/device-login/claim', async (req, res) => {
       return;
     }
     const session = await issueSession(user, 'device-invite');
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', session.token, opts);
     res.cookie('ytm_refresh', session.refreshToken, { ...opts, httpOnly: true });
     scheduleUserTasteWarm(user.id, [], { force: true, disk: 12 });

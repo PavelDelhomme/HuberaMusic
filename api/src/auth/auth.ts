@@ -82,15 +82,25 @@ export async function issueSession(user: UserRow, deviceLabel?: string) {
   return { user: publicUser(user), token, refreshToken: refresh.token };
 }
 
-export function sessionCookieOptions() {
+export function sessionCookieOptions(req?: Request) {
   const env = process.env.APP_ENV || 'local';
   const secure =
     process.env.NODE_ENV === 'production' ||
     process.env.COOKIE_SECURE === '1' ||
     env === 'production' ||
     env === 'preprod';
-  // Partage session plm / ytmusic / pue-la-merde (ex. COOKIE_DOMAIN=.delhomme.ovh)
-  const domain = (process.env.COOKIE_DOMAIN || '').trim() || undefined;
+  const host = String(req?.headers['x-forwarded-host'] || req?.headers.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
+  let domain = (process.env.COOKIE_DOMAIN || '').trim() || undefined;
+  // Ne jamais poser Domain=.delhomme.ovh sur hubera.cloud (le navigateur ignore le cookie).
+  if (host === 'hubera.cloud' || host.endsWith('.hubera.cloud')) {
+    domain = '.hubera.cloud';
+  } else if (host.endsWith('.delhomme.ovh') || host === 'delhomme.ovh') {
+    domain = domain || '.delhomme.ovh';
+  }
   return {
     httpOnly: true,
     sameSite: 'lax' as const,

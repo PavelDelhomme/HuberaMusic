@@ -204,17 +204,33 @@ class MainActivity : ComponentActivity() {
             "plm.delhomme.ovh",
             "ytmusic.delhomme.ovh",
             "pue-la-merde.delhomme.ovh",
+            "ytmusic-preprod.delhomme.ovh",
+            "music.hubera.cloud",
         )
+
+        private fun isLoginDeviceHost(host: String): Boolean {
+            if (host.isEmpty()) return false
+            if (host in LOGIN_DEVICE_HOSTS) return true
+            if (host == "hubera.cloud" || host.endsWith(".hubera.cloud")) return true
+            if (host.endsWith(".delhomme.ovh")) return true
+            return host == "localhost" || host == "127.0.0.1"
+        }
 
         fun parseDeviceLogin(uri: Uri?): DeviceLoginDeepLink? {
             if (uri == null) return null
             val host = uri.host?.lowercase().orEmpty()
+            val path = uri.path.orEmpty()
+            val isLoginPath =
+                path.startsWith("/login-device") ||
+                    path.contains("login-device") ||
+                    host == "login-device"
             val isHttps =
                 (uri.scheme == "https" || uri.scheme == "http") &&
-                    host in LOGIN_DEVICE_HOSTS &&
-                    (uri.path?.startsWith("/login-device") == true)
+                    isLoginPath &&
+                    (isLoginDeviceHost(host) || isLoginPath)
             val isCustom =
-                (uri.scheme == "ytmusic" || uri.scheme == "plm") && uri.host == "login-device"
+                (uri.scheme == "ytmusic" || uri.scheme == "plm" || uri.scheme == "hubera") &&
+                    (host == "login-device" || isLoginPath)
             if (!isHttps && !isCustom) return null
             val claim = uri.getQueryParameter("claim")?.trim().orEmpty()
             if (claim.isNotEmpty()) return DeviceLoginDeepLink.Claim(claim)

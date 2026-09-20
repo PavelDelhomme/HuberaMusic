@@ -189,7 +189,7 @@ fun AccountScreen(
                     is DeviceLoginDeepLink.Claim -> {
                         context.toastMain("Ce QR est une invite — scanne-le depuis l’écran de login")
                     }
-                    null -> context.toastMain("QR non reconnu")
+                    null -> context.toastMain("QR non reconnu — ce n’est pas un QR de connexion Hubera Music")
                 }
             },
         )

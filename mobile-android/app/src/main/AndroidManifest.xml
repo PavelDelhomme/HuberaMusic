@@ -106,6 +106,22 @@
                 <data android:scheme="https" android:host="ytmusic.delhomme.ovh" android:pathPrefix="/import" />
                 <data android:scheme="https" android:host="ytmusic.delhomme.ovh" android:pathPrefix="/offline" />
                 <data android:scheme="https" android:host="ytmusic-preprod.delhomme.ovh" android:pathPrefix="/" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:path="/" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/watch" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/artist" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/album" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/playlist" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/local-playlist" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/mix" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/mood" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/library" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/search" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/explore" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/profile" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/install" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/login-device" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/import" />
+                <data android:scheme="https" android:host="music.hubera.cloud" android:pathPrefix="/offline" />
             </intent-filter>
             <!-- Schéma custom (partages / QR hors HTTPS) -->
             <intent-filter>
@@ -121,6 +137,8 @@
                 <data android:scheme="ytmusic" android:host="search" />
                 <data android:scheme="ytmusic" android:host="home" />
                 <data android:scheme="ytmusic" android:host="login-device" />
+                <data android:scheme="plm" android:host="login-device" />
+                <data android:scheme="hubera" android:host="login-device" />
                 <data android:scheme="ytmusic" android:host="open" android:pathPrefix="/" />
             </intent-filter>
         </activity>
