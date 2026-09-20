@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, type Track } from '../../api';
 import { TrackRow } from '../../components/media/TrackRow';
+import { VirtualTrackList } from '../../components/media/VirtualTrackList';
 import { ShelfRow } from '../../components/media/MediaCard';
 import { CoverImage } from '../../components/media/CoverImage';
 import { usePlayer } from '../../store/player';
@@ -325,9 +326,7 @@ export function ArtistPage() {
               <ChevronRight className="h-4 w-4" />
             </Link>
           </div>
-          {topSongs.map((t, i) => (
-            <TrackRow key={t.id} track={t} index={i} queue={data.songs} />
-          ))}
+          <VirtualTrackList tracks={topSongs} queue={data.songs} />
         </section>
       )}
 
@@ -340,9 +339,7 @@ export function ArtistPage() {
               items={libAlbums.map((a) => ({ ...a, type: 'album' as const }))}
             />
           )}
-          {libTracks.map((t, i) => (
-            <TrackRow key={`lib-${t.id}`} track={t} index={i} queue={libTracks} />
-          ))}
+          <VirtualTrackList tracks={libTracks} />
         </section>
       )}
 
@@ -466,9 +463,7 @@ export function ArtistSongsPage() {
       {!loading && !error && tracks.length === 0 && (
         <p className="text-yt-muted">Aucun titre trouvé pour cet artiste.</p>
       )}
-      {tracks.map((t, i) => (
-        <TrackRow key={`${t.id}-${i}`} track={t} index={i} queue={tracks} showAlbum />
-      ))}
+      <VirtualTrackList tracks={tracks} showAlbum />
     </div>
   );
 }
@@ -864,9 +859,7 @@ export function AlbumPage() {
         </p>
       )}
 
-      {data.tracks.map((t, i) => (
-        <TrackRow key={`${t.id}-${i}`} track={t} index={i} queue={data.tracks} showAlbum={false} />
-      ))}
+      <VirtualTrackList tracks={data.tracks} showAlbum={false} />
 
       {radio.length > 0 && (
         <section className="mt-10">
@@ -1235,9 +1228,7 @@ function CollectionHeader({
           </div>
         </div>
       </div>
-      {tracks.map((t, i) => (
-        <TrackRow key={`${t.id}-${i}`} track={t} index={i} queue={tracks} showAlbum />
-      ))}
+      <VirtualTrackList tracks={tracks} showAlbum />
     </div>
   );
 }

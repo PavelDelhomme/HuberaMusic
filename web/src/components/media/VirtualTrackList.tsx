@@ -19,15 +19,27 @@ type RowPass = Omit<
 
 type Props = {
   tracks: Track[];
+  /** File jouée au clic (défaut = `tracks`). */
+  queue?: Track[];
   rowHeight?: number;
   overscan?: number;
+  onPlayAt?: (index: number, track: Track) => void;
 } & RowPass;
 
-export function VirtualTrackList({ tracks, rowHeight = 72, overscan = 12, ...rowProps }: Props) {
+export function VirtualTrackList({
+  tracks,
+  queue,
+  rowHeight = 72,
+  overscan = 12,
+  onPlayAt,
+  ...rowProps
+}: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const tracksRef = useRef(tracks);
   tracksRef.current = tracks;
-  const getQueue = useCallback(() => tracksRef.current, []);
+  const queueRef = useRef(queue ?? tracks);
+  queueRef.current = queue ?? tracks;
+  const getQueue = useCallback(() => queueRef.current, []);
   const [range, setRange] = useState(() => ({
     start: 0,
     end: Math.min(tracks.length, overscan * 2 + 24),
@@ -94,6 +106,7 @@ export function VirtualTrackList({ tracks, rowHeight = 72, overscan = 12, ...row
           index={start + i}
           prefetch={false}
           getQueue={getQueue}
+          onPlay={onPlayAt ? () => onPlayAt(start + i, t) : undefined}
         />
       ))}
       <div style={{ height: botH }} aria-hidden />

@@ -158,16 +158,8 @@ export function Layout() {
 
   useEffect(() => {
     wireRemotePlayer();
-    void initAuth().then(() => {
-      const u = useAuth.getState().user;
-      const guest = !u || u.isGuest || u.email?.includes('@local.ytmusic');
-      if (!guest) {
-        void refresh();
-        void refreshPins(u?.id);
-        initSession();
-      }
-    });
-  }, [initAuth, refresh, refreshPins, initSession]);
+    void initAuth();
+  }, [initAuth]);
 
   useEffect(() => {
     if (/^\/(album|artist|playlist|local)\//.test(location.pathname)) {

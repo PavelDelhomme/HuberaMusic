@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLibrary } from '../../store/library';
 import { VirtualTrackList } from '../../components/media/VirtualTrackList';
@@ -13,6 +13,12 @@ import { api, type Track } from '../../api';
 import { formatTotalDuration, sumTracksDurationSeconds } from '../../lib/util/time';
 import { warmFormats } from '../../lib/audio/streamPrefetch';
 
+const PLAY_QUEUE_CAP = 400;
+
+function isPlayableTrack(t: Track) {
+  return t.type === 'song' || t.type === 'video' || t.type === 'unknown' || /^[a-zA-Z0-9_-]{11}$/.test(t.id);
+}
+
 function shuffleTracks(tracks: Track[]) {
   const copy = [...tracks];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -20,6 +26,13 @@ function shuffleTracks(tracks: Track[]) {
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
+}
+
+/** File bornée : shuffle d’abord (aléatoire), puis slice 400 playable. */
+function capPlayQueue(tracks: Track[], shuffle: boolean) {
+  const playable = tracks.filter(isPlayableTrack);
+  const ordered = shuffle ? shuffleTracks(playable) : playable;
+  return ordered.slice(0, PLAY_QUEUE_CAP);
 }
 
 function LibraryListSkeleton({ rows = 8 }: { rows?: number }) {
@@ -61,6 +74,13 @@ export function LibraryPage() {
   } = useLibrary();
   const titreCount = totalSongs || songs.length;
   const playQueue = usePlayer((s) => s.playQueue);
+  const titresDurationLabel = useMemo(() => {
+    if (partial) return null;
+    const sec = sumTracksDurationSeconds(songs);
+    if (sec < 60) return null;
+    const h = sec / 3600;
+    return ` · ${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
+  }, [songs, partial]);
   const openActions = useItemActions((s) => s.open);
   const [tab, setTab] = useState<'ajouts' | 'titres' | 'liked' | 'playlists' | 'albums' | 'artists' | 'mixes' | 'history' | 'podcasts' | 'audiobooks'>('ajouts');
   const [name, setName] = useState('');
@@ -185,16 +205,7 @@ export function LibraryPage() {
                 <span className="text-white/80">
                   {titreCount.toLocaleString('fr-FR')} titre{titreCount > 1 ? 's' : ''}
                   {partial ? '…' : ''}
-                  {!partial &&
-                    (() => {
-                      const sec = songs.reduce(
-                        (a, t) => a + (Number(t.durationSeconds) || 0),
-                        0,
-                      );
-                      if (sec < 60) return null;
-                      const h = sec / 3600;
-                      return ` · ${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
-                    })()}
+                  {!partial && titresDurationLabel}
                 </span>
               </>
             )}
@@ -208,19 +219,22 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(songs, 0)}
+                  onClick={() => void playQueue(capPlayQueue(songs, false), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(shuffleTracks(songs), 0)}
+                  onClick={() => void playQueue(capPlayQueue(songs, true), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
                 </button>
               </div>
+              {songs.length > PLAY_QUEUE_CAP && (
+                <p className="mb-3 text-xs text-yt-muted">File limitée à 400 titres pour rester fluide</p>
+              )}
               <VirtualTrackList tracks={songs} showAlbum />
             </>
           )}
@@ -239,14 +253,14 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(liked, 0)}
+                  onClick={() => void playQueue(capPlayQueue(liked, false), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(shuffleTracks(liked), 0)}
+                  onClick={() => void playQueue(capPlayQueue(liked, true), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
@@ -285,14 +299,14 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(history, 0)}
+                  onClick={() => void playQueue(capPlayQueue(history, false), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(shuffleTracks(history), 0)}
+                  onClick={() => void playQueue(capPlayQueue(history, true), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
@@ -461,14 +475,14 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(unique, 0)}
+                  onClick={() => void playQueue(capPlayQueue(unique, false), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(shuffleTracks(unique), 0)}
+                  onClick={() => void playQueue(capPlayQueue(unique, true), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
@@ -573,14 +587,14 @@ export function LibraryPage() {
                 <div className="mb-4 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => void playQueue(items, 0)}
+                    onClick={() => void playQueue(capPlayQueue(items, false), 0)}
                     className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                   >
                     <Play className="h-4 w-4 fill-white" /> Tout lire
                   </button>
                   <button
                     type="button"
-                    onClick={() => void playQueue(shuffleTracks(items), 0)}
+                    onClick={() => void playQueue(capPlayQueue(items, true), 0)}
                     className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium"
                   >
                     <Shuffle className="h-4 w-4" /> Aléatoire

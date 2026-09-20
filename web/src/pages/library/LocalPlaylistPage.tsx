@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom';
 import { useLibrary } from '../../store/library';
-import { TrackRow } from '../../components/media/TrackRow';
+import { VirtualTrackList } from '../../components/media/VirtualTrackList';
 import { usePlayer } from '../../store/player';
 import { Play } from 'lucide-react';
 import { CoverImage } from '../../components/media/CoverImage';
@@ -57,9 +57,7 @@ export function LocalPlaylistPage() {
           )}
         </div>
       </div>
-      {pl.tracks.map((t, i) => (
-        <TrackRow key={t.id} track={t} index={i} queue={pl.tracks} showAlbum />
-      ))}
+      <VirtualTrackList tracks={pl.tracks} showAlbum playlistId={pl.id} />
     </div>
   );
 }
