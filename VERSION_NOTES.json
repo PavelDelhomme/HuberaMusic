@@ -2,6 +2,16 @@
   "updatedAt": "2026-09-20",
   "versions": [
     {
+      "version": "1.3.266",
+      "date": "2026-09-20",
+      "title": "Bibliothèque fluide (file 400, listes virtualisées)",
+      "notes": [
+        "Tout lire / Aléatoire : file limitée à 400 titres pour rester fluide",
+        "Albums, playlists, artistes, mixes : listes longues sans geler le défilement",
+        "Connexion : un seul rafraîchissement de la bibliothèque"
+      ]
+    },
+    {
       "version": "1.3.262",
       "date": "2026-09-20",
       "title": "Paroles Genius : le bon titre",
