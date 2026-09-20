@@ -44,3 +44,6 @@ rapport-suite-*.pdf
 
 # Runtime proxy-steward (secrets / IPs live) — ne jamais committer
 data/proxy-steward/live.json
+
+# Cache Python du steward proxy
+scripts/proxy-steward/__pycache__/
