@@ -133,11 +133,11 @@ function currentCycle(): { cycle_no: number; started_at: number; last_report_at:
   };
 }
 
-/** Titres de tous les comptes, en une seule liste dédoublonnée. */
-const ALL_TRACKS = `SELECT track_id, MAX(created_at) AS created_at FROM (
-    SELECT track_id, created_at FROM library_tracks
+/** Titres de tous les comptes, avec un propriétaire (pool proxy dédié). */
+const ALL_TRACKS = `SELECT track_id, MIN(user_id) AS user_id, MAX(created_at) AS created_at FROM (
+    SELECT track_id, user_id, created_at FROM library_tracks
     UNION ALL
-    SELECT track_id, created_at FROM liked_tracks
+    SELECT track_id, user_id, created_at FROM liked_tracks
   ) GROUP BY track_id`;
 
 /** Un titre est à vérifier s'il est inconnu, ou si sa vérification a expiré. */
@@ -155,22 +155,26 @@ function dueCuts() {
  * sont eux que l'utilisateur risque de lancer, et donc là où l'attente se
  * ferait sentir. Une bibliothèque fraîchement synchronisée passe donc devant.
  */
-function nextTrackId(): string | null {
+let lastHealthUserId = '';
+
+function nextTrackId(): { id: string; userId?: string } | null {
   ensureSchema();
   const row = db
     .prepare(
-      `SELECT t.track_id AS id
+      `SELECT t.track_id AS id, t.user_id AS userId
          FROM (${ALL_TRACKS}) t
          LEFT JOIN track_health h ON h.track_id = t.track_id
         WHERE ${DUE_CLAUSE}
         ORDER BY
+          CASE WHEN t.user_id = :lastUser THEN 1 ELSE 0 END,
           CASE WHEN EXISTS (SELECT 1 FROM liked_tracks l WHERE l.track_id = t.track_id) THEN 0 ELSE 1 END,
           (h.track_id IS NOT NULL),
           t.created_at DESC
         LIMIT 1`,
     )
-    .get(dueCuts()) as { id?: string } | undefined;
-  return row?.id || null;
+    .get({ ...dueCuts(), lastUser: lastHealthUserId }) as { id?: string; userId?: string } | undefined;
+  if (!row?.id) return null;
+  return { id: row.id, userId: row.userId };
 }
 
 /** Vidéo morte constatée mais dont le remplaçant reste à chercher. */
@@ -206,11 +210,11 @@ function cachedOnDisk(id: string): boolean {
 type Check = { state: State; network: boolean };
 
 /** Sonde seule : constate la mort d'une vidéo sans chercher son remplaçant. */
-async function probeOne(id: string): Promise<Check> {
+async function probeOne(id: string, userId?: string): Promise<Check> {
   if (cachedOnDisk(id) || getReplacementId(id)) return { state: 'ok', network: false };
   try {
     const fmt = await Promise.race([
-      getAudioFormat(id),
+      getAudioFormat(id, { userId }),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), PROBE_MS)),
     ]);
     if (fmt?.url) return { state: 'ok', network: true };
@@ -389,8 +393,8 @@ async function tick() {
     // Un titre déjà en cache se règle sans toucher au réseau : lui consacrer un
     // tour d'horloge complet ferait durer le balayage des jours pour rien.
     for (let i = 0; i < FREE_BATCH; i++) {
-      const id = nextTrackId();
-      if (!id) {
+      const next = nextTrackId();
+      if (!next) {
         // Plus rien à vérifier pour l’instant. Attendre EMPTY_GRACE_MS avant de
         // clôturer : la re-vérif à 7 j drippe 1 titre / 5–20 s et ne doit pas
         // déclencher un « cycle terminé » à chaque trou.
@@ -406,8 +410,9 @@ async function tick() {
       }
       emptySinceMs = 0;
       cycleIdleClosed = false;
-      const { state, network } = await probeOne(id);
-      markHealth(id, state);
+      lastHealthUserId = next.userId || lastHealthUserId;
+      const { state, network } = await probeOne(next.id, next.userId);
+      markHealth(next.id, state);
       stats.checked++;
       stats[state]++;
       if (network) return;

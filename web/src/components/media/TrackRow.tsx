@@ -16,6 +16,10 @@ type Props = {
   track: Track;
   index?: number;
   queue?: Track[];
+  /** File au clic lecture (évite de passer `queue` à chaque ligne). */
+  getQueue?: () => Track[];
+  /** warmHead / warmFormat — désactivé par défaut (listes longues). */
+  prefetch?: boolean;
   showAlbum?: boolean;
   /** Remplace le comportement de lecture (ex. file d'attente) */
   onPlay?: () => void;
@@ -39,6 +43,8 @@ export function TrackRow({
   track,
   index,
   queue,
+  getQueue,
+  prefetch = false,
   showAlbum,
   onPlay,
   queueIndex,
@@ -75,8 +81,9 @@ export function TrackRow({
     setEnriched(track);
   }, [track]);
 
-  // Prefetch tête (~10 s) dès que la ligne entre dans le viewport (listes longues)
+  // Prefetch tête (~10 s) dès que la ligne entre dans le viewport (rails / related)
   useEffect(() => {
+    if (!prefetch) return;
     if (!isPlayable(track) || track.id.length !== 11) return;
     const el = rowRef.current;
     if (!el || typeof IntersectionObserver === 'undefined') {
@@ -95,7 +102,7 @@ export function TrackRow({
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [track.id]);
+  }, [track.id, prefetch]);
 
   const open = () => {
     if (onPlay) {
@@ -105,7 +112,7 @@ export function TrackRow({
     if (track.type === 'artist') navigate(`/artist/${track.id}`);
     else if (track.type === 'album') navigate(`/album/${track.id}`);
     else if (track.type === 'playlist') navigate(`/playlist/${track.id}`);
-    else void play(track, queue, { forceRestart: true });
+    else void play(track, queue ?? getQueue?.(), { forceRestart: true });
   };
 
   const openMenu = (e?: { stopPropagation?: () => void; preventDefault?: () => void }) => {
@@ -129,6 +136,7 @@ export function TrackRow({
       } ${dragging ? 'opacity-50' : ''} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
       draggable={Boolean(draggable && typeof queueIndex === 'number')}
       onMouseEnter={() => {
+        if (!prefetch) return;
         if (isPlayable(track) && track.id.length === 11) void warmFormat(track.id);
       }}
       onContextMenu={openMenu}

@@ -1,10 +1,16 @@
 import { create } from 'zustand';
 import { api, type LibraryData, type Track } from '../api';
 
+const LIB_TTL_MS = 10 * 60 * 1000;
+let refreshInflight: Promise<void> | null = null;
+
 type LibraryState = LibraryData & {
   loaded: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  likedIds: Set<string>;
+  libraryIds: Set<string>;
+  lastFullAt: number;
+  refresh: (force?: boolean) => Promise<void>;
   applyLibrary: (lib: LibraryData | null | undefined) => void;
   toggleLike: (track: Track) => Promise<boolean>;
   toggleLibrarySong: (track: Track) => Promise<boolean>;
@@ -62,6 +68,22 @@ function mergeLibrary(lib: LibraryData): LibraryData {
       ? (lib as LibraryData).recentEntities
       : [],
     downloaded: Array.isArray(lib.downloaded) ? lib.downloaded : [],
+    partial: Boolean((lib as LibraryData).partial),
+    totalSongs:
+      typeof (lib as LibraryData).totalSongs === 'number'
+        ? (lib as LibraryData).totalSongs
+        : songs.length,
+    totalLiked:
+      typeof (lib as LibraryData).totalLiked === 'number'
+        ? (lib as LibraryData).totalLiked
+        : liked.length,
+  };
+}
+
+function idSets(songs: Track[], liked: Track[]) {
+  return {
+    likedIds: new Set(liked.map((t) => t.id)),
+    libraryIds: new Set(songs.map((t) => t.id)),
   };
 }
 
@@ -108,44 +130,115 @@ export const useLibrary = create<LibraryState>((set, get) => ({
   ...(bootCache || empty),
   loaded: Boolean(bootCache),
   error: null,
+  likedIds: new Set((bootCache?.liked || []).map((t) => t.id)),
+  libraryIds: new Set((bootCache?.songs || []).map((t) => t.id)),
+  lastFullAt: 0,
 
   applyLibrary: (lib) => {
     if (!lib || typeof lib !== 'object') return;
     const merged = mergeLibrary(lib);
     writeLibraryCache(merged);
-    set({ ...merged, loaded: true, error: null });
+    set({
+      ...merged,
+      loaded: true,
+      error: null,
+      ...idSets(merged.songs, merged.liked),
+      lastFullAt: merged.partial ? get().lastFullAt : Date.now(),
+    });
   },
 
-  refresh: async () => {
-    try {
+  refresh: async (force = false) => {
+    if (refreshInflight && !force) return refreshInflight;
+    const run = (async () => {
+      const st = get();
+      const now = Date.now();
+      const freshFull =
+        !force &&
+        !st.partial &&
+        st.songs.length > 0 &&
+        st.lastFullAt > 0 &&
+        now - st.lastFullAt < LIB_TTL_MS;
+      if (freshFull) return;
+
+      if (!st.songs.length) {
+        try {
+          const light = await api.libraryLight(40);
+          const merged = mergeLibrary({ ...light, partial: true });
+          writeLibraryCache(merged);
+          set({
+            ...merged,
+            loaded: true,
+            error: null,
+            partial: true,
+            totalSongs: light.totalSongs ?? merged.songs.length,
+            ...idSets(merged.songs, merged.liked),
+          });
+        } catch {
+          /* full ci-dessous */
+        }
+      }
+
+      const after = get();
+      if (
+        !force &&
+        !after.partial &&
+        after.songs.length > 0 &&
+        after.lastFullAt > 0 &&
+        Date.now() - after.lastFullAt < LIB_TTL_MS
+      ) {
+        return;
+      }
+
       const data = await api.library();
-      const merged = mergeLibrary(data);
+      const merged = mergeLibrary({ ...data, partial: false, totalSongs: data.songs?.length });
       writeLibraryCache(merged);
-      set({ ...merged, loaded: true, error: null });
-    } catch (e) {
+      set({
+        ...merged,
+        loaded: true,
+        error: null,
+        partial: false,
+        totalSongs: merged.songs.length,
+        lastFullAt: Date.now(),
+        ...idSets(merged.songs, merged.liked),
+      });
+    })().catch((e) => {
       set({
         loaded: true,
         error: e instanceof Error ? e.message : 'Bibliothèque indisponible',
       });
+    });
+    refreshInflight = run;
+    try {
+      await run;
+    } finally {
+      if (refreshInflight === run) refreshInflight = null;
     }
   },
 
   toggleLike: async (track) => {
     const wasLiked = get().isLiked(track.id);
-    set((s) => ({
-      liked: wasLiked
+    set((s) => {
+      const liked = wasLiked
         ? s.liked.filter((t) => t.id !== track.id)
-        : [track, ...s.liked.filter((t) => t.id !== track.id)],
-    }));
+        : [track, ...s.liked.filter((t) => t.id !== track.id)];
+      const likedIds = new Set(s.likedIds);
+      if (wasLiked) likedIds.delete(track.id);
+      else likedIds.add(track.id);
+      return { liked, likedIds };
+    });
     try {
       const r = await api.like(track);
       if (r.library) get().applyLibrary(r.library);
       else {
-        set((s) => ({
-          liked: r.liked
+        set((s) => {
+          const liked = r.liked
             ? [track, ...s.liked.filter((t) => t.id !== track.id)]
-            : s.liked.filter((t) => t.id !== track.id),
-        }));
+            : s.liked.filter((t) => t.id !== track.id);
+          const likedIds = new Set(s.likedIds);
+          if (r.liked) likedIds.add(track.id);
+          else likedIds.delete(track.id);
+          return { liked, likedIds };
+        });
       }
       // Réoriente les futures propositions (file déjà chargée intacte)
       try {
@@ -163,46 +256,62 @@ export const useLibrary = create<LibraryState>((set, get) => ({
       }
       return r.liked;
     } catch {
-      set((s) => ({
-        liked: wasLiked
+      set((s) => {
+        const liked = wasLiked
           ? [track, ...s.liked.filter((t) => t.id !== track.id)]
-          : s.liked.filter((t) => t.id !== track.id),
-      }));
+          : s.liked.filter((t) => t.id !== track.id);
+        const likedIds = new Set(s.likedIds);
+        if (wasLiked) likedIds.add(track.id);
+        else likedIds.delete(track.id);
+        return { liked, likedIds };
+      });
       throw new Error('like failed');
     }
   },
 
   toggleLibrarySong: async (track) => {
     const wasSaved = get().isInLibrary(track.id);
-    set((s) => ({
-      songs: wasSaved
+    set((s) => {
+      const songs = wasSaved
         ? s.songs.filter((t) => t.id !== track.id)
-        : [track, ...s.songs.filter((t) => t.id !== track.id)],
-    }));
+        : [track, ...s.songs.filter((t) => t.id !== track.id)];
+      const libraryIds = new Set(s.libraryIds);
+      if (wasSaved) libraryIds.delete(track.id);
+      else libraryIds.add(track.id);
+      return { songs, libraryIds };
+    });
     try {
       const r = await api.toggleLibrarySong(track);
       if (r.library) get().applyLibrary(r.library);
       else {
-        set((s) => ({
-          songs: r.saved
+        set((s) => {
+          const songs = r.saved
             ? [track, ...s.songs.filter((t) => t.id !== track.id)]
-            : s.songs.filter((t) => t.id !== track.id),
-        }));
+            : s.songs.filter((t) => t.id !== track.id);
+          const libraryIds = new Set(s.libraryIds);
+          if (r.saved) libraryIds.add(track.id);
+          else libraryIds.delete(track.id);
+          return { songs, libraryIds };
+        });
       }
       return r.saved;
     } catch {
-      set((s) => ({
-        songs: wasSaved
+      set((s) => {
+        const songs = wasSaved
           ? [track, ...s.songs.filter((t) => t.id !== track.id)]
-          : s.songs.filter((t) => t.id !== track.id),
-      }));
+          : s.songs.filter((t) => t.id !== track.id);
+        const libraryIds = new Set(s.libraryIds);
+        if (wasSaved) libraryIds.add(track.id);
+        else libraryIds.delete(track.id);
+        return { songs, libraryIds };
+      });
       throw new Error('library song failed');
     }
   },
 
   createPlaylist: async (name, description = '') => {
     const pl = await api.createPlaylist(name, description);
-    await get().refresh();
+    await get().refresh(true);
     return pl;
   },
 
@@ -220,7 +329,7 @@ export const useLibrary = create<LibraryState>((set, get) => ({
           : [updated, ...s.playlists],
       }));
     } else {
-      await get().refresh();
+      await get().refresh(true);
     }
   },
 
@@ -237,7 +346,7 @@ export const useLibrary = create<LibraryState>((set, get) => ({
         playlists: s.playlists.map((p) => (p.id === updated!.id ? updated! : p)),
       }));
     } else {
-      await get().refresh();
+      await get().refresh(true);
     }
   },
 
@@ -267,8 +376,8 @@ export const useLibrary = create<LibraryState>((set, get) => ({
     }
   },
 
-  isLiked: (id) => get().liked.some((t) => t.id === id),
-  isInLibrary: (id) => get().songs.some((t) => t.id === id),
+  isLiked: (id) => get().likedIds.has(id),
+  isInLibrary: (id) => get().libraryIds.has(id),
   hasAlbum: (id) => get().albums.some((a) => a.id === id),
   hasArtist: (id) => get().artists.some((a) => a.id === id),
   hasMix: (id) => get().mixes.some((m) => m.id === id),

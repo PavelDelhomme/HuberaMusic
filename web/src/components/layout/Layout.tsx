@@ -204,7 +204,7 @@ export function Layout() {
         }
       })
       .catch(() => undefined);
-  }, [authLoaded, user, refresh, refreshPins, initSession, location.pathname]);
+  }, [authLoaded, user, refresh, refreshPins, initSession]);
 
   useEffect(() => {
     const guest = !user || user.isGuest || user.email?.includes('@local.ytmusic');
@@ -298,21 +298,21 @@ export function Layout() {
       const guest = !u || u.isGuest || u.email?.includes('@local.ytmusic');
       if (guest) return;
       const now = Date.now();
-      if (now - lastLibRefresh < 8_000) return;
+      if (now - lastLibRefresh < 10 * 60_000) return;
       lastLibRefresh = now;
       void refresh();
     };
-    // Poll léger pour sync playlists créées sur mobile pendant que le drawer est ouvert
+    // Poll 10 min — la navigation ne re-télécharge plus les 14k titres
     const poll = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
       const u = useAuth.getState().user;
       const guest = !u || u.isGuest || u.email?.includes('@local.ytmusic');
       if (guest) return;
       const now = Date.now();
-      if (now - lastLibRefresh < 20_000) return;
+      if (now - lastLibRefresh < 10 * 60_000) return;
       lastLibRefresh = now;
       void refresh();
-    }, 20_000);
+    }, 10 * 60_000);
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
     document.addEventListener('visibilitychange', onHide);

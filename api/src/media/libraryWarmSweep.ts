@@ -74,23 +74,38 @@ export async function runLibraryWarmSweepOnce(): Promise<{
   if (running) return { users: 0, ids: lastStats.ids, likes: lastStats.likes };
   running = true;
   const seen = new Set<string>();
-  const likesAll: string[] = [];
   let users = 0;
   try {
     await waitIfPlaybackHot();
     const uids = allUserIds();
     const lim = likesLimit();
+    const uniqueLikes: string[] = [];
     for (const uid of uids) {
       users += 1;
+      const userHeads: string[] = [];
+      const userLikes: string[] = [];
       try {
         const heads = getShuffleHeads(uid, { warm: false, scope: 'all' });
-        for (const id of (heads.ids || []).slice(0, 64)) seen.add(id);
+        for (const id of (heads.ids || []).slice(0, 64)) {
+          if (!seen.has(id)) {
+            seen.add(id);
+            userHeads.push(id);
+          }
+        }
         const recent = getShuffleHeads(uid, { warm: false, scope: 'recent' });
-        for (const id of (recent.ids || []).slice(0, 40)) seen.add(id);
-        // Favoris : file disque dédiée (pas seulement têtes RAM).
+        for (const id of (recent.ids || []).slice(0, 40)) {
+          if (!seen.has(id)) {
+            seen.add(id);
+            userHeads.push(id);
+          }
+        }
         for (const id of likedIds(uid, lim)) {
-          seen.add(id);
-          likesAll.push(id);
+          if (!seen.has(id)) {
+            seen.add(id);
+            userHeads.push(id);
+          }
+          userLikes.push(id);
+          uniqueLikes.push(id);
         }
         scheduleUserTasteWarm(uid);
       } catch (err) {
@@ -100,23 +115,21 @@ export async function runLibraryWarmSweepOnce(): Promise<{
         );
       }
       await new Promise((r) => setTimeout(r, 400));
-    }
-    // Likes d’abord (priorité) — une file dédiée qui ne droppe pas derrière le taste.
-    const uniqueLikes = [...new Set(likesAll)];
-    for (let i = 0; i < uniqueLikes.length; i += 16) {
-      await waitIfPlaybackHot();
-      enqueueLikesDiskWarm(uniqueLikes.slice(i, i + 16));
-      enqueueStreamWarm(uniqueLikes.slice(i, i + 16));
-      await new Promise((r) => setTimeout(r, 600));
+      for (let i = 0; i < userLikes.length; i += 16) {
+        await waitIfPlaybackHot();
+        enqueueLikesDiskWarm(userLikes.slice(i, i + 16));
+        enqueueStreamWarm(userLikes.slice(i, i + 16), uid);
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      for (let i = 0; i < userHeads.length; i += 8) {
+        await waitIfPlaybackHot();
+        const chunk = userHeads.slice(i, i + 8);
+        enqueueStreamWarm(chunk, uid);
+        enqueueDiskWarm(chunk);
+        await new Promise((r) => setTimeout(r, 1_000));
+      }
     }
     const ids = [...seen];
-    for (let i = 0; i < ids.length; i += 8) {
-      await waitIfPlaybackHot();
-      const chunk = ids.slice(i, i + 8);
-      enqueueStreamWarm(chunk);
-      enqueueDiskWarm(chunk);
-      await new Promise((r) => setTimeout(r, 1_000));
-    }
     lastRunAt = Date.now();
     lastStats = { users, ids: ids.length, likes: uniqueLikes.length, at: lastRunAt };
     const q = diskWarmQueueStats();

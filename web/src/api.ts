@@ -41,6 +41,10 @@ export type LibraryData = {
   /** Playlists / albums / mixes lancés récemment. */
   recentEntities: Track[];
   downloaded: string[];
+  /** Réponse GET /api/library?light=1 */
+  partial?: boolean;
+  totalSongs?: number;
+  totalLiked?: number;
 };
 
 export type User = {
@@ -872,6 +876,8 @@ export const api = {
       body: JSON.stringify(entity),
     }),
   library: () => req<LibraryData>('/api/library'),
+  libraryLight: (limit = 40) =>
+    req<LibraryData>(`/api/library?light=1&limit=${Math.max(10, Math.min(40, limit))}`),
   /** Têtes Aléatoire biblio (~100) — rotation serveur ~30 min. */
   shuffleHeads: (warm = true) =>
     req<{

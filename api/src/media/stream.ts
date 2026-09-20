@@ -120,7 +120,7 @@ export function streamRetryN(req: Request): number {
 async function fetchGooglevideo(
   url: string,
   range?: string,
-  opts?: { preferProxies?: boolean; boundProxy?: string | null },
+  opts?: { preferProxies?: boolean; boundProxy?: string | null; userId?: string },
 ): Promise<globalThis.Response> {
   const headers = googlevideoHeaders(url, range);
   const prefer = opts?.preferProxies !== false && youtubeProxyFreeEnabled();
@@ -173,6 +173,7 @@ async function fetchGooglevideo(
     directLast: true,
     shuffle: true,
     probe: true,
+    userId: opts?.userId,
   });
   let lastErr: Error | null = null;
   for (const proxy of proxies) {
@@ -1058,6 +1059,7 @@ export async function handleStream(req: Request, res: Response) {
     youtubeProxyFreeEnabled() ||
     Boolean((process.env.YOUTUBE_HTTP_PROXY || '').trim()) ||
     (homeUpstream ? !(await isHomeUpstreamReachable(homeUpstream)) : false);
+  const streamUserId = (req as any).userId as string | undefined;
 
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
   const wantOffline =
@@ -1088,7 +1090,7 @@ export async function handleStream(req: Request, res: Response) {
         createReadStream(cached, { start: 0, end: 0 }).pipe(res);
         return;
       }
-      downloadTrack(videoId, { progressiveOnly: true, preferProxies }).catch(() => {});
+      downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).catch(() => {});
       if (!res.headersSent) {
         res.status(503);
         res.setHeader('Retry-After', '2');
@@ -1104,7 +1106,7 @@ export async function handleStream(req: Request, res: Response) {
     const waitMs = 75_000;
     try {
       await Promise.race([
-        downloadTrack(videoId, { progressiveOnly: true, preferProxies }).then(() => true),
+        downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).then(() => true),
         new Promise<boolean>((r) => setTimeout(() => r(false), waitMs)),
       ]);
     } catch {
@@ -1195,7 +1197,7 @@ export async function handleStream(req: Request, res: Response) {
         if (waitMs > 0) {
           try {
             await Promise.race([
-              downloadTrack(videoId, { progressiveOnly: true, preferProxies }).then(() => true),
+              downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).then(() => true),
               new Promise<boolean>((r) => setTimeout(() => r(false), waitMs)),
             ]);
           } catch {
@@ -1234,11 +1236,12 @@ export async function handleStream(req: Request, res: Response) {
   // Dès le début : télécharge le .m4a en fond pour les Ranges suivantes.
   if (!wantVideo && audioRangeStart === 0) {
     const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
-    if (!isYtDlpCoolingDown()) {
+    if (!isYtDlpCoolingDown(streamUserId)) {
       // Progressif pour TOUS (web + Android) — rejet DASH universel depuis 1.3.240.
       void downloadTrack(videoId, {
         progressiveOnly: true,
         preferProxies,
+        userId: streamUserId,
       }).catch((err) => {
         const msg = String((err as Error).message || err);
         if (/cooling down|bot\/rate-limit|Sign in to confirm|rate-limited/i.test(msg)) return;
@@ -1283,7 +1286,7 @@ export async function handleStream(req: Request, res: Response) {
     purgeDashCache(videoId);
     const cachedEarly = cachePath(videoId);
     if (!isCompleteEnoughDisk(cachedEarly)) {
-      downloadTrack(videoId, { progressiveOnly: true, preferProxies }).catch(() => {
+      downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).catch(() => {
         /* fond */
       });
     }
@@ -1306,7 +1309,7 @@ export async function handleStream(req: Request, res: Response) {
       // et le fallback relais/googlevideo n’avait plus de temps → 502/504 garanti.
       // Le téléchargement continue en fond (downloadInflight) pour la requête suivante.
       const budget = midRangeWaitMs(videoId);
-      const dl = downloadTrack(videoId, { progressiveOnly: true, preferProxies });
+      const dl = downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId });
       dl.catch(() => {
         /* poursuivi en fond — l’erreur est traitée par le await borné ci-dessous */
       });
@@ -1645,7 +1648,7 @@ export async function handleStream(req: Request, res: Response) {
       : preferProxies
         ? await withDeadline(
             'ytDlpUrlFirst',
-            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true }),
+            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId }),
           )
         : await withDeadline(
             'getAudioFormatRace',
@@ -1661,6 +1664,7 @@ export async function handleStream(req: Request, res: Response) {
                   getAudioFormatViaYtDlpOnly(videoId, {
                     live: true,
                     preferProxies: true,
+                    userId: streamUserId,
                   }).then(resolve, reject);
                 }, 1_200);
               }),
@@ -1678,7 +1682,7 @@ export async function handleStream(req: Request, res: Response) {
         return;
       }
       const rangeHdr = req.headers.range ? String(req.headers.range) : undefined;
-      const gvOpts = { preferProxies, boundProxy: format.viaProxy };
+      const gvOpts = { preferProxies, boundProxy: format.viaProxy, userId: streamUserId };
       let upstream = await withDeadline('fetchGV', fetchGooglevideo(format.url, rangeHdr, gvOpts));
       // URL morte / anti-bot → invalide le cache format et retente 1× avant fallbacks
       if (upstream.status === 403 || upstream.status === 401 || upstream.status === 404) {
@@ -1690,13 +1694,13 @@ export async function handleStream(req: Request, res: Response) {
           : await withDeadline(
               'getAudioFormat2',
               preferProxies
-                ? getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true })
+                ? getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId })
                 : getAudioFormat(videoId, { userId: (req as any).userId, live: true }),
             );
         if (!format.url) throw new Error(`upstream ${wantVideo ? 'video' : 'audio'} ${upstream.status}`);
         upstream = await withDeadline(
           'fetchGV2',
-          fetchGooglevideo(format.url, rangeHdr, { preferProxies, boundProxy: format.viaProxy }),
+          fetchGooglevideo(format.url, rangeHdr, { preferProxies, boundProxy: format.viaProxy, userId: streamUserId }),
         );
       }
       // Innertube toujours 403 → URL yt-dlp (souvent OK sans cookies fichier)
@@ -1705,10 +1709,10 @@ export async function handleStream(req: Request, res: Response) {
         (upstream.status === 403 || upstream.status === 401 || upstream.status === 404)
       ) {
         try {
-          format = await withDeadline('ytDlpUrl', getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies }));
+          format = await withDeadline('ytDlpUrl', getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies, userId: streamUserId }));
           upstream = await withDeadline(
             'fetchGV3',
-            fetchGooglevideo(format.url, rangeHdr, { preferProxies, boundProxy: format.viaProxy }),
+            fetchGooglevideo(format.url, rangeHdr, { preferProxies, boundProxy: format.viaProxy, userId: streamUserId }),
           );
         } catch {
           /* fallback pipe plus bas */
@@ -1721,12 +1725,12 @@ export async function handleStream(req: Request, res: Response) {
         try {
           format = await withDeadline(
             'getAudioFormat5xx',
-            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true }),
+            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId }),
           );
           if (format.url) {
             upstream = await withDeadline(
               'fetchGV5xx',
-              fetchGooglevideo(format.url, rangeHdr, { preferProxies: true, boundProxy: format.viaProxy }),
+              fetchGooglevideo(format.url, rangeHdr, { preferProxies: true, boundProxy: format.viaProxy, userId: streamUserId }),
             );
           }
         } catch {
@@ -1762,7 +1766,7 @@ export async function handleStream(req: Request, res: Response) {
         }
         invalidateStreamHead(videoId);
         invalidateAudioFormat(videoId);
-        downloadTrack(videoId, { progressiveOnly: true, preferProxies }).catch(() => {
+        downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).catch(() => {
           /* fond */
         });
         console.warn(`[stream] reject DASH googlevideo ${videoId} → progressif`);
@@ -1876,7 +1880,7 @@ export async function handleStream(req: Request, res: Response) {
   if (!wantVideo && !res.headersSent && !midNeedsDisk) {
     const cachedProg = cachePath(videoId);
     if (!isCompleteEnoughDisk(cachedProg)) {
-      downloadTrack(videoId, { progressiveOnly: true, preferProxies }).catch(() => {});
+      downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).catch(() => {});
     }
     if (isCompleteEnoughDisk(cachedProg)) {
       try {
@@ -1931,13 +1935,13 @@ export async function handleStream(req: Request, res: Response) {
         const rangeHdr = req.headers.range ? String(req.headers.range) : undefined;
         const fmt = await antiDashRace(
           'ytdlpUrlAntiDash',
-          getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true }),
+          getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId }),
           18_000,
         );
         if (fmt?.url && !res.headersSent) {
           const upstream = await antiDashRace(
             'fetchGVAntiDash',
-            fetchGooglevideo(fmt.url, rangeHdr),
+          fetchGooglevideo(fmt.url, rangeHdr, { preferProxies: true, userId: streamUserId, boundProxy: fmt.viaProxy }),
             12_000,
           );
           if (upstream.status < 400 && upstream.body) {
@@ -2199,7 +2203,9 @@ export async function handleStreamUrl(req: Request, res: Response) {
     });
     // Chauffe la tête RAM en fond (prochain play ≪ 100 ms)
     if (!wantVideo && format.url) {
-      void warmStreamHead(videoId, (range) => fetchGooglevideo(format.url, range));
+      void warmStreamHead(videoId, (range) =>
+        fetchGooglevideo(format.url, range, { userId: uid, boundProxy: format.viaProxy }),
+      );
     }
   } catch (err) {
     res.status(502).json({
@@ -2359,7 +2365,9 @@ async function runWarmWorker() {
       try {
         const format = await getAudioFormat(job.id, { userId: job.userId });
         if (format?.url) {
-          await warmStreamHead(job.id, (range) => fetchGooglevideo(format.url, range));
+          await warmStreamHead(job.id, (range) =>
+            fetchGooglevideo(format.url, range, { userId: job.userId, boundProxy: format.viaProxy }),
+          );
         }
       } catch {
         /* best-effort */
@@ -2453,7 +2461,7 @@ export async function handleStreamWarm(req: Request, res: Response) {
       ids,
       async (id) => {
         const format = await getAudioFormat(id, { userId: uid });
-        return (range) => fetchGooglevideo(format.url, range);
+        return (range) => fetchGooglevideo(format.url, range, { userId: uid, boundProxy: format.viaProxy });
       },
       Math.min(6, ids.length),
     );
@@ -2527,7 +2535,7 @@ function midRangeWaitMs(videoId: string): number {
 
 export async function downloadTrack(
   videoId: string,
-  opts?: { progressiveOnly?: boolean; preferProxies?: boolean },
+  opts?: { progressiveOnly?: boolean; preferProxies?: boolean; userId?: string },
 ): Promise<string> {
   ensureCache();
   const out = cachePath(videoId);
@@ -2610,7 +2618,7 @@ export async function downloadTrack(
       // Dernier recours sans binaire yt-dlp
       if (!opts?.progressiveOnly) {
         try {
-          await downloadTrackViaFormatRemux(videoId, out);
+          await downloadTrackViaFormatRemux(videoId, out, opts?.userId);
           if (isCompleteEnoughDisk(out) && !isDashBrandFile(out)) return out;
         } catch {
           /* ignore */
@@ -2643,9 +2651,10 @@ export async function downloadTrack(
       directLast: Boolean(opts?.preferProxies),
       shuffle: Boolean(opts?.preferProxies),
       probe: Boolean(opts?.preferProxies),
+      userId: opts?.userId,
     });
     for (const proxy of proxies) {
-      if (!proxy && isYtDlpCoolingDown()) continue;
+      if (!proxy && isYtDlpCoolingDown(opts?.userId)) continue;
       for (const extractorArgs of extractorSets) {
         for (const cookieArgs of cookieSets) {
           for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
@@ -2695,7 +2704,7 @@ export async function downloadTrack(
                       reject(new Error(tip || `yt-dlp ${code}`));
                     });
                   }),
-                { bypassCooldown: true, noteFailure: false },
+                { bypassCooldown: true, noteFailure: false, userId: opts?.userId },
               );
               if (isCompleteEnoughDisk(out)) {
                 downloadFailUntil.delete(videoId);
@@ -2728,7 +2737,7 @@ export async function downloadTrack(
 
     // Après yt-dlp bot-bloqué : encore une chance OAuth+remux (cookies fichier souvent morts).
     try {
-      await downloadTrackViaFormatRemux(videoId, out);
+      await downloadTrackViaFormatRemux(videoId, out, opts?.userId);
       if (isCompleteEnoughDisk(out) && !isDashBrandFile(out)) {
         downloadFailUntil.delete(videoId);
         return out;
@@ -2740,7 +2749,7 @@ export async function downloadTrack(
       );
     }
 
-    if (sawBot && lastErr) noteYtDlpFailure(lastErr);
+    if (sawBot && lastErr) noteYtDlpFailure(lastErr, opts?.userId);
     const failMsg = lastErr?.message || 'Audio download KO';
     if (existsSync(out) && !isCompleteEnoughDisk(out)) {
       try {
@@ -2852,13 +2861,20 @@ async function remuxToProgressiveM4a(src: string, dest: string): Promise<void> {
 }
 
 /** OAuth/format URL → fichier progressif (remux si DASH). Indépendant des cookies yt-dlp. */
-async function downloadTrackViaFormatRemux(videoId: string, out: string): Promise<void> {
-  const format = await getAudioFormat(videoId, { live: true, forceFresh: false });
+async function downloadTrackViaFormatRemux(
+  videoId: string,
+  out: string,
+  userId?: string,
+): Promise<void> {
+  const format = await getAudioFormat(videoId, { live: true, forceFresh: false, userId });
   if (!format?.url) throw new Error('format remux: pas d’URL');
   const tmp = `${out}.dash.tmp`;
   try {
     if (existsSync(tmp)) unlinkSync(tmp);
-    const upstream = await fetchGooglevideo(format.url);
+    const upstream = await fetchGooglevideo(format.url, undefined, {
+      userId,
+      boundProxy: format.viaProxy,
+    });
     if (!upstream.ok || !upstream.body) {
       throw new Error(`format remux gv ${upstream.status}`);
     }

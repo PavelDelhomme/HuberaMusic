@@ -1147,7 +1147,7 @@ export function NowPlaying({
                     <p className="px-2 text-sm text-yt-muted">Aucune suggestion pour l’instant.</p>
                   )}
                   {(relatedSeedId === current?.id ? related : []).slice(0, similarVisible).map((t) => (
-                    <TrackRow key={`rel-${t.id}`} track={t} queue={related} hideIndex />
+                    <TrackRow key={`rel-${t.id}`} track={t} queue={related} hideIndex prefetch />
                   ))}
                   {relatedSeedId === current?.id && similarVisible < related.length && (
                     <button

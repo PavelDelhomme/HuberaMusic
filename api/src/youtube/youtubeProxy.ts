@@ -45,23 +45,104 @@ const CANARY_URL = 'https://www.google.com/generate_204';
 
 let cachedFree: { at: number; urls: string[] } | null = null;
 const pool = new Map<string, ProxyEntry>();
+/** url → userId (lease exclusif). */
+const proxyLease = new Map<string, string>();
+/** userId → urls louées. */
+const userLeases = new Map<string, Set<string>>();
+let stewardLoaded = false;
 let rr = 0;
 let refreshInflight: Promise<void> | null = null;
 let bgTimer: ReturnType<typeof setInterval> | null = null;
 let lastForceRefreshAt = 0;
+
+const USER_POOL_SIZE = Math.max(
+  8,
+  Math.min(48, Number(process.env.YOUTUBE_PROXY_USER_POOL || 24) || 24),
+);
+
+function hash32(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** SSRF : localhost, RFC1918, link-local, metadata, *.internal / *.local. */
+export function isBlockedProxyHost(host: string): boolean {
+  const h = String(host || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  if (!h) return true;
+  if (h === 'localhost' || h === '::1' || h === '0.0.0.0' || h === '::' || h === '[::1]') return true;
+  if (h === 'metadata.google.internal' || h === 'metadata') return true;
+  if (h.endsWith('.internal') || h.endsWith('.local')) return true;
+  if (h === '0:0:0:0:0:0:0:1' || h === 'https://example.net/id/garnet') return true;
+  if (h.includes(':') && (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd'))) return true;
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a === 0 || a === 127 || a === 10) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 169 && b === 254) return true;
+  }
+  return false;
+}
+
+/** Destinations autorisées via CONNECT (anti open-relay). */
+export function isAllowedProxyTarget(hostname: string): boolean {
+  const h = String(hostname || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  if (!h || isBlockedProxyHost(h)) return false;
+  const roots = ['google.com', 'googlevideo.com', 'youtube.com', 'youtu.be', 'ytimg.com', 'ggpht.com', 'genius.com'];
+  return roots.some((d) => h === d || h.endsWith(`.${d}`));
+}
+
+function dropFromPool(url: string): void {
+  pool.delete(url);
+  const uid = proxyLease.get(url);
+  if (uid) {
+    proxyLease.delete(url);
+    userLeases.get(uid)?.delete(url);
+  }
+}
 
 function envTruthy(v: string | undefined, defaultTrue: boolean): boolean {
   if (v == null || v === '') return defaultTrue;
   return !(v === '0' || v === 'false' || v === 'no');
 }
 
-function normalizeProxyUrl(raw: string): string | null {
+function normalizeProxyUrl(raw: string, opts?: { allowAuth?: boolean }): string | null {
   const s = raw.trim();
   if (!s || s.startsWith('#')) return null;
-  if (/^https?:\/\//i.test(s) || /^socks5?:\/\//i.test(s)) return s.replace(/\/$/, '');
-  // host:port → http
-  if (/^[\w.[\]:-]+:\d+$/.test(s)) return `http://${s}`;
-  return null;
+  let n: string;
+  if (/^https?:\/\//i.test(s) || /^socks5?:\/\//i.test(s)) n = s.replace(/\/$/, '');
+  else if (/^[\w.[\]:-]+:\d+$/.test(s)) n = `http://${s}`;
+  else return null;
+  try {
+    const u = new URL(n);
+    if (isBlockedProxyHost(u.hostname)) return null;
+    // Listes publiques avec user:pass = appât. On ne garde que host:port.
+    if (!opts?.allowAuth && (u.username || u.password)) {
+      u.username = '';
+      u.password = '';
+    }
+    const proto = u.protocol.toLowerCase();
+    const port = u.port || (proto === 'https:' ? '443' : proto.startsWith('socks') ? '1080' : '80');
+    if (opts?.allowAuth && (u.username || u.password)) {
+      const auth = `${encodeURIComponent(u.username)}:${encodeURIComponent(u.password)}@`;
+      return `${proto}//${auth}${u.hostname}:${port}`;
+    }
+    return `${proto}//${u.hostname}:${port}`;
+  } catch {
+    return null;
+  }
 }
 
 function ensureEntry(url: string): ProxyEntry {
@@ -92,7 +173,10 @@ function pushPool(urls: string[]) {
 function loadStaticList(): string[] {
   const out: string[] = [];
   const single = (process.env.YOUTUBE_HTTP_PROXY || process.env.HTTPS_PROXY || '').trim();
-  if (single) out.push(single);
+  if (single) {
+    const n = normalizeProxyUrl(single, { allowAuth: true });
+    if (n) out.push(n);
+  }
 
   const listEnv = (process.env.YOUTUBE_HTTP_PROXY_LIST || '').trim();
   if (listEnv) {
@@ -121,6 +205,25 @@ function loadStaticList(): string[] {
           .map((l) => l.trim())
           .filter(Boolean),
       );
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const live = join(process.cwd(), 'data', 'proxy-steward', 'live.json');
+    if (existsSync(live)) {
+      const j = JSON.parse(readFileSync(live, 'utf8')) as {
+        updated?: number;
+        proxies?: Array<{ url?: string; score?: number }>;
+      };
+      stewardLoaded = Array.isArray(j.proxies);
+      const ranked = [...(j.proxies || [])]
+        .filter((p) => p?.url)
+        .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+      for (const p of ranked) {
+        if (p.url) out.push(p.url);
+      }
     }
   } catch {
     /* ignore */
@@ -217,7 +320,7 @@ function evictDead(): void {
   const now = Date.now();
   for (const [url, e] of pool) {
     if (e.fails >= EVICT_AFTER_FAILS && now - e.lastFailAt > COOLDOWN_MS) {
-      pool.delete(url);
+      dropFromPool(url);
     }
   }
   if (pool.size <= POOL_CAP) return;
@@ -228,7 +331,7 @@ function evictDead(): void {
   });
   for (const e of ranked.slice(POOL_CAP)) {
     if ((e.gvHits || 0) > 0) continue;
-    pool.delete(e.url);
+    dropFromPool(e.url);
   }
 }
 
@@ -265,7 +368,7 @@ export function probeProxyReachable(proxyUrl: string, timeoutMs = PROBE_TIMEOUT_
       const u = new URL(proxyUrl);
       const host = u.hostname;
       const port = Number(u.port) || (u.protocol.startsWith('socks') ? 1080 : 80);
-      if (!host || !port) {
+      if (!host || !port || isBlockedProxyHost(host)) {
         resolve(false);
         return;
       }
@@ -303,6 +406,10 @@ export function probeHttpConnect(proxyUrl: string, timeoutMs = 2_400): Promise<b
     };
     try {
       const proxy = new URL(proxyUrl);
+      if (isBlockedProxyHost(proxy.hostname)) {
+        finish(false);
+        return;
+      }
       const port = Number(proxy.port) || (proxy.protocol === 'https:' ? 443 : 80);
       const req = http.request({
         host: proxy.hostname,
@@ -341,20 +448,7 @@ function usable(e: ProxyEntry): boolean {
   return true;
 }
 
-/** Prochain proxy à essayer (null = direct, sans proxy). */
-export async function nextYoutubeProxy(exclude: Set<string> = new Set()): Promise<string | null> {
-  await ensureYoutubeProxyPool();
-  let candidates = [...pool.values()].filter((e) => usable(e) && !exclude.has(e.url));
-  if (!candidates.length) {
-    if (youtubeProxyFreeEnabled() && Date.now() - lastForceRefreshAt > 15_000) {
-      lastForceRefreshAt = Date.now();
-      cachedFree = null;
-      await ensureYoutubeProxyPool(true);
-    }
-    candidates = [...pool.values()].filter((e) => usable(e) && !exclude.has(e.url));
-    if (!candidates.length) return null;
-  }
-  // Préférer googlevideo 206 récents, puis lastOk, round-robin dans le top.
+function rankPick(candidates: ProxyEntry[]): ProxyEntry {
   candidates.sort((a, b) => {
     const sa =
       (a.gvHits || 0) * 20 +
@@ -371,8 +465,87 @@ export async function nextYoutubeProxy(exclude: Set<string> = new Set()): Promis
     return sb - sa;
   });
   const top = candidates.slice(0, Math.min(48, Math.max(8, Math.ceil(candidates.length / 8))));
-  const pick = top[rr++ % top.length]!;
-  return pick.url;
+  return top[rr++ % top.length]!;
+}
+
+function leasePoolForUser(userId: string): string[] {
+  let set = userLeases.get(userId);
+  if (!set) {
+    set = new Set();
+    userLeases.set(userId, set);
+  }
+  for (const url of [...set]) {
+    const e = pool.get(url);
+    if (!e || !usable(e)) {
+      set.delete(url);
+      if (proxyLease.get(url) === userId) proxyLease.delete(url);
+    }
+  }
+  if (set.size < USER_POOL_SIZE) {
+    const unused = [...pool.values()].filter((e) => {
+      if (!usable(e)) return false;
+      if (set.has(e.url)) return false;
+      const owner = proxyLease.get(e.url);
+      if (owner && owner !== userId) return false;
+      return true;
+    });
+    unused.sort((a, b) => {
+      const sa = (a.gvHits || 0) * 1000 + (hash32(`${userId}\0${a.url}`) % 10_000);
+      const sb = (b.gvHits || 0) * 1000 + (hash32(`${userId}\0${b.url}`) % 10_000);
+      return sb - sa;
+    });
+    for (const e of unused) {
+      if (set.size >= USER_POOL_SIZE) break;
+      proxyLease.set(e.url, userId);
+      set.add(e.url);
+    }
+  }
+  // Overflow partagé seulement si le pool perso reste < 6 (pénurie).
+  if (set.size < 6) {
+    const shared = [...pool.values()]
+      .filter((e) => usable(e) && !set.has(e.url))
+      .sort((a, b) => (b.gvHits || 0) - (a.gvHits || 0));
+    for (const e of shared) {
+      if (set.size >= 6) break;
+      set.add(e.url);
+    }
+  }
+  return [...set];
+}
+
+/** Prochain proxy à essayer (null = direct, sans proxy). */
+export async function nextYoutubeProxy(
+  exclude: Set<string> = new Set(),
+  userId?: string,
+): Promise<string | null> {
+  await ensureYoutubeProxyPool();
+
+  const pickFrom = (preferUnleased: boolean): ProxyEntry[] => {
+    if (userId) {
+      return leasePoolForUser(userId)
+        .filter((u) => !exclude.has(u))
+        .map((u) => pool.get(u))
+        .filter((e): e is ProxyEntry => Boolean(e && usable(e)));
+    }
+    return [...pool.values()].filter((e) => {
+      if (!usable(e) || exclude.has(e.url)) return false;
+      if (preferUnleased && proxyLease.has(e.url)) return false;
+      return true;
+    });
+  };
+
+  let candidates = pickFrom(true);
+  if (!candidates.length) {
+    if (youtubeProxyFreeEnabled() && Date.now() - lastForceRefreshAt > 15_000) {
+      lastForceRefreshAt = Date.now();
+      cachedFree = null;
+      await ensureYoutubeProxyPool(true);
+    }
+    candidates = pickFrom(true);
+    if (!candidates.length) candidates = pickFrom(false);
+    if (!candidates.length) return null;
+  }
+  return rankPick(candidates).url;
 }
 
 function shuffleArray<T>(items: T[]): T[] {
@@ -395,6 +568,7 @@ export async function youtubeProxyAttempts(opts?: {
   shuffle?: boolean;
   /** Soft-probe TCP avant d’inclure (évite 12 s yt-dlp sur proxy mort). */
   probe?: boolean;
+  userId?: string;
 }): Promise<(string | null)[]> {
   const max = Math.max(1, Math.min(opts?.max ?? 4, 16));
   const includeDirect = opts?.includeDirect !== false;
@@ -403,10 +577,12 @@ export async function youtubeProxyAttempts(opts?: {
   const used = new Set<string>();
   const proxies: string[] = [];
   const raw: string[] = [];
+  const userId = opts?.userId;
 
   const fixed = (process.env.YOUTUBE_HTTP_PROXY || '').trim();
-  const fixedN = fixed ? normalizeProxyUrl(fixed) : null;
-  if (fixedN) {
+  const fixedN = fixed ? normalizeProxyUrl(fixed, { allowAuth: true }) : null;
+  // Proxy fixe partagé : pas en tête des pools perso (évite de brûler une seule IP).
+  if (fixedN && !userId) {
     raw.push(fixedN);
     used.add(fixedN);
   }
@@ -417,7 +593,7 @@ export async function youtubeProxyAttempts(opts?: {
     if (usableCount() < LOW_POOL_REFRESH && youtubeProxyFreeEnabled()) {
       void ensureYoutubeProxyPool(true);
     }
-    const p = await nextYoutubeProxy(used);
+    const p = await nextYoutubeProxy(used, userId);
     if (!p) break;
     used.add(p);
     raw.push(p);
@@ -453,7 +629,7 @@ export async function youtubeProxyAttempts(opts?: {
     }
   }
 
-  if (fixedN && !proxies.includes(fixedN)) proxies.unshift(fixedN);
+  if (fixedN && !userId && !proxies.includes(fixedN)) proxies.unshift(fixedN);
 
   let ordered: (string | null)[];
   if (doProbe && proxies.length < 2 && youtubeProxyFreeEnabled() && Date.now() - lastForceRefreshAt > 8_000) {
@@ -488,7 +664,7 @@ export function markYoutubeProxyFailure(proxy: string | null, kind: 'tcp' | 'gv'
     e.deadUntil = Date.now() + COOLDOWN_MS;
   }
   if (e.fails >= EVICT_AFTER_FAILS) {
-    pool.delete(proxy);
+    dropFromPool(proxy);
     // Recharge en fond pour remplacer
     if (youtubeProxyFreeEnabled()) {
       void ensureYoutubeProxyPool(true);
@@ -512,6 +688,9 @@ export function youtubeProxyStats(): {
   usable: number;
   freeEnabled: boolean;
   gvWinners: number;
+  users: number;
+  leased: number;
+  stewardLoaded: boolean;
 } {
   let gvWinners = 0;
   for (const e of pool.values()) {
@@ -523,7 +702,33 @@ export function youtubeProxyStats(): {
     usable: usableCount(),
     freeEnabled: youtubeProxyFreeEnabled(),
     gvWinners,
+    users: userLeases.size,
+    leased: proxyLease.size,
+    stewardLoaded,
   };
+}
+
+export function userProxyPoolStats(userId: string): { size: number; usable: number } {
+  const set = userLeases.get(userId);
+  if (!set) return { size: 0, usable: 0 };
+  let n = 0;
+  for (const url of set) {
+    const e = pool.get(url);
+    if (e && usable(e)) n += 1;
+  }
+  return { size: set.size, usable: n };
+}
+
+/** 3 proxies distincts du pool user pour une course de résolution. */
+export function youtubeProxyStripe(userId: string | undefined, n = 3) {
+  return youtubeProxyAttempts({
+    max: n,
+    userId,
+    includeDirect: false,
+    probe: true,
+    shuffle: false,
+    directLast: true,
+  });
 }
 
 function headersToWeb(raw: http.IncomingHttpHeaders): Headers {
@@ -566,7 +771,15 @@ export function fetchUrlViaProxy(
   }
 
   const target = new URL(targetUrl);
+  if (!isAllowedProxyTarget(target.hostname)) {
+    return Promise.reject(
+      new Error(`proxy target not allowed: ${target.hostname}`),
+    );
+  }
   const proxy = new URL(proxyUrl);
+  if (isBlockedProxyHost(proxy.hostname)) {
+    return Promise.reject(new Error(`blocked proxy host: ${proxy.hostname}`));
+  }
   const proxyPort = Number(proxy.port) || (proxy.protocol === 'https:' ? 443 : 80);
   const destPort = Number(target.port) || 443;
 

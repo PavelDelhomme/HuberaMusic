@@ -414,7 +414,7 @@ async function searchGenius(artist: string, title: string): Promise<GeniusHit | 
     .filter((q, i, a) => q && a.indexOf(q) === i);
   if (!main && !artist && cleaned) queries.unshift(cleaned);
 
-  for (const q of queries.slice(0, 3)) {
+  for (const q of queries.slice(0, 4)) {
     const hit = await searchGeniusOnce(q, artist || main, title).catch(() => null);
     if (hit) return hit;
   }
@@ -508,13 +508,17 @@ export async function fetchGeniusLyrics(
   title: string,
 ): Promise<{ lyrics: string; url: string } | null> {
   if (!title.trim()) return null;
-  // Budget global : ne pas bloquer getLyrics / le lecteur
-  const deadline = Date.now() + 12_000;
-  const hit = (await searchGenius(artist, title).catch(() => null)) || null;
+  const deadline = Date.now() + 14_000;
+  const guessed = guessGeniusUrl(artist, title);
+  const [hit, guessedLyrics] = await Promise.all([
+    searchGenius(artist, title).catch(() => null),
+    guessed ? scrapeGeniusPage(guessed).catch(() => null) : Promise.resolve(null),
+  ]);
+  if (guessed && guessedLyrics) return { lyrics: guessedLyrics, url: guessed };
   if (Date.now() > deadline) return null;
   const urls = [
     hit?.url,
-    guessGeniusUrl(artist, title),
+    guessed,
     guessGeniusUrl(mainArtist(artist), title),
     ...artistsFromTitle(title)
       .slice(0, 1)

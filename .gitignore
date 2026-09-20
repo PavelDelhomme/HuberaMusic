@@ -41,3 +41,6 @@ portainer-backup*.tar.gz
 NOTES.md
 cloudity-suite-integration-*.pdf
 rapport-suite-*.pdf
+
+# Runtime proxy-steward (secrets / IPs live) — ne jamais committer
+data/proxy-steward/live.json

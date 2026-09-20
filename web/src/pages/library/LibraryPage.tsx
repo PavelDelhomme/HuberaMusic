@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLibrary } from '../../store/library';
-import { TrackRow } from '../../components/media/TrackRow';
+import { VirtualTrackList } from '../../components/media/VirtualTrackList';
 import { Heart, Play, Plus, Shuffle, Trash2, X } from 'lucide-react';
 import { usePlayer } from '../../store/player';
 import { MediaCard } from '../../components/media/MediaCard';
@@ -40,8 +40,26 @@ function LibraryListSkeleton({ rows = 8 }: { rows?: number }) {
 
 export function LibraryPage() {
   const navigate = useNavigate();
-  const { songs, liked, playlists, history, recentEntities, albums, artists, mixes, likedPlaylists, createPlaylist, deletePlaylist, hasMix, loaded, error, refresh } =
-    useLibrary();
+  const {
+    songs,
+    liked,
+    playlists,
+    history,
+    recentEntities,
+    albums,
+    artists,
+    mixes,
+    likedPlaylists,
+    createPlaylist,
+    deletePlaylist,
+    hasMix,
+    loaded,
+    error,
+    refresh,
+    partial,
+    totalSongs,
+  } = useLibrary();
+  const titreCount = totalSongs || songs.length;
   const playQueue = usePlayer((s) => s.playQueue);
   const openActions = useItemActions((s) => s.open);
   const [tab, setTab] = useState<'ajouts' | 'titres' | 'liked' | 'playlists' | 'albums' | 'artists' | 'mixes' | 'history' | 'podcasts' | 'audiobooks'>('ajouts');
@@ -143,9 +161,7 @@ export function LibraryPage() {
             <p className="text-yt-muted">Rien d&apos;enregistré pour l&apos;instant.</p>
           ) : (
             <>
-              {[...songs.slice(0, 30)].map((t) => (
-                <TrackRow key={t.id} track={t} queue={songs} showAlbum />
-              ))}
+              <VirtualTrackList tracks={songs.slice(0, 30)} showAlbum />
               {albums.slice(0, 12).length > 0 && (
                 <div className="mt-6 shelf-scroll">
                   {albums.slice(0, 12).map((a) => (
@@ -162,21 +178,23 @@ export function LibraryPage() {
         <div>
           <p className="mb-4 text-sm text-yt-muted">
             Titres enregistrés dans ta bibliothèque (indépendant des J&apos;aime).
-            {songs.length > 0 && (
+            {titreCount > 0 && (
               <>
                 {' '}
                 —{' '}
                 <span className="text-white/80">
-                  {songs.length.toLocaleString('fr-FR')} titre{songs.length > 1 ? 's' : ''}
-                  {(() => {
-                    const sec = songs.reduce(
-                      (a, t) => a + (Number(t.durationSeconds) || 0),
-                      0,
-                    );
-                    if (sec < 60) return null;
-                    const h = sec / 3600;
-                    return ` · ${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
-                  })()}
+                  {titreCount.toLocaleString('fr-FR')} titre{titreCount > 1 ? 's' : ''}
+                  {partial ? '…' : ''}
+                  {!partial &&
+                    (() => {
+                      const sec = songs.reduce(
+                        (a, t) => a + (Number(t.durationSeconds) || 0),
+                        0,
+                      );
+                      if (sec < 60) return null;
+                      const h = sec / 3600;
+                      return ` · ${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
+                    })()}
                 </span>
               </>
             )}
@@ -203,9 +221,7 @@ export function LibraryPage() {
                   <Shuffle className="h-4 w-4" /> Aléatoire
                 </button>
               </div>
-              {songs.map((t) => (
-                <TrackRow key={t.id} track={t} queue={songs} showAlbum />
-              ))}
+              <VirtualTrackList tracks={songs} showAlbum />
             </>
           )}
         </div>
@@ -236,9 +252,7 @@ export function LibraryPage() {
                   <Shuffle className="h-4 w-4" /> Aléatoire
                 </button>
               </div>
-              {liked.map((t) => (
-                <TrackRow key={t.id} track={t} queue={liked} showAlbum />
-              ))}
+              <VirtualTrackList tracks={liked} showAlbum />
             </>
           )}
         </div>
@@ -284,9 +298,7 @@ export function LibraryPage() {
                   <Shuffle className="h-4 w-4" /> Aléatoire
                 </button>
               </div>
-              {history.map((t) => (
-                <TrackRow key={t.id} track={t} queue={history} showAlbum />
-              ))}
+              <VirtualTrackList tracks={history} showAlbum />
             </>
           )}
         </div>
@@ -574,11 +586,7 @@ export function LibraryPage() {
                     <Shuffle className="h-4 w-4" /> Aléatoire
                   </button>
                 </div>
-                <div className="space-y-0.5">
-                  {items.map((t) => (
-                    <TrackRow key={t.id} track={t} queue={items} showAlbum />
-                  ))}
-                </div>
+                <VirtualTrackList tracks={items} showAlbum />
               </>
             );
           })()}
