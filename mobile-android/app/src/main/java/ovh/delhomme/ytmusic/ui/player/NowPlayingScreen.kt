@@ -72,6 +72,7 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
@@ -3180,6 +3181,15 @@ private fun InlineSyncedLyrics(
     var lyricsSource by remember(track.id) { mutableStateOf<String?>(null) }
     var loading by remember(track.id) { mutableStateOf(true) }
     var lyricsReloadToken by remember(track.id) { mutableIntStateOf(0) }
+    var suggestions by remember(track.id) {
+        mutableStateOf<List<ovh.delhomme.ytmusic.data.LyricSuggestionDto>>(emptyList())
+    }
+    var searchUrls by remember(track.id) {
+        mutableStateOf<List<ovh.delhomme.ytmusic.data.LyricSearchUrlDto>>(emptyList())
+    }
+    var pasteOpen by remember(track.id) { mutableStateOf(false) }
+    var pasteDraft by remember(track.id) { mutableStateOf("") }
+    var pasteSaving by remember(track.id) { mutableStateOf(false) }
     val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v1") }
     val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v1") }
     var userOffsetMs by remember(track.id) {
@@ -3246,6 +3256,8 @@ private fun InlineSyncedLyrics(
                     }
                     text = it.lyrics
                     lyricsSource = it.source
+                    suggestions = it.suggestions.orEmpty()
+                    searchUrls = it.searchUrls.orEmpty()
                     val apiTimed = it.timed.orEmpty()
                     val raw = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
                     timed = normalizeTimedLines(raw, durationMs.coerceAtLeast(0L))
@@ -3508,52 +3520,164 @@ private fun InlineSyncedLyrics(
             else -> Column(
                 Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp),
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 24.dp, bottom = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("Paroles indisponibles", color = PlayerMuted)
-                Spacer(Modifier.height(12.dp))
+                Text("Paroles introuvables pour ce titre exact", color = PlayerMuted)
+                Spacer(Modifier.height(8.dp))
+                if (suggestions.isNotEmpty()) {
+                    Text(
+                        "Propositions proches — pas forcément le bon titre",
+                        color = PlayerMuted,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    suggestions.take(5).forEach { s ->
+                        val url = s.url.orEmpty()
+                        if (url.isBlank()) return@forEach
+                        TextButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(url),
+                                        ),
+                                    )
+                                }
+                            },
+                        ) {
+                            Text(
+                                buildString {
+                                    append(s.title.orEmpty().ifBlank { "Lien" })
+                                    if (!s.artist.isNullOrBlank()) {
+                                        append(" — ")
+                                        append(s.artist)
+                                    }
+                                },
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 TextButton(
                     onClick = { lyricsReloadToken += 1 },
                     enabled = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline(),
                 ) {
                     Text("Réessayer")
                 }
-                TextButton(
-                    onClick = {
-                        val artist = track.artistLine().takeIf { it != "Artiste" }.orEmpty()
-                        val q = buildString {
-                            if (artist.isNotBlank()) {
-                                append(artist)
-                                append(' ')
-                            }
-                            append(track.title)
+                val links = searchUrls.filter { !it.url.isNullOrBlank() }
+                if (links.isNotEmpty()) {
+                    links.forEach { link ->
+                        TextButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(link.url),
+                                        ),
+                                    )
+                                }
+                            },
+                        ) {
+                            Text(link.label?.ifBlank { "Web" } ?: "Web")
                         }
-                        // Genius d’abord (souvent mieux que Google pour les paroles)
-                        val geniusUri = android.net.Uri.parse(
-                            "https://genius.com/search?q=" +
-                                java.net.URLEncoder.encode(q, Charsets.UTF_8.name()),
-                        )
-                        val googleUri = android.net.Uri.parse(
-                            "https://www.google.com/search?q=" +
-                                java.net.URLEncoder.encode("$q paroles", Charsets.UTF_8.name()),
-                        )
-                        runCatching {
-                            context.startActivity(
-                                android.content.Intent(android.content.Intent.ACTION_VIEW, geniusUri),
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            val artist = track.artistLine().takeIf { it != "Artiste" }.orEmpty()
+                            val q = buildString {
+                                if (artist.isNotBlank()) {
+                                    append(artist)
+                                    append(' ')
+                                }
+                                append(track.title)
+                            }
+                            val geniusUri = android.net.Uri.parse(
+                                "https://genius.com/search?q=" +
+                                    java.net.URLEncoder.encode(q, Charsets.UTF_8.name()),
                             )
-                        }.onFailure {
                             runCatching {
                                 context.startActivity(
-                                    android.content.Intent(android.content.Intent.ACTION_VIEW, googleUri),
+                                    android.content.Intent(android.content.Intent.ACTION_VIEW, geniusUri),
                                 )
                             }
-                        }
-                    },
-                ) {
-                    Text("Chercher sur Genius / le web")
+                        },
+                    ) {
+                        Text("Chercher sur Genius / le web")
+                    }
+                }
+                TextButton(onClick = { pasteOpen = true }) {
+                    Text("Coller les paroles")
                 }
             }
+        }
+        if (pasteOpen) {
+            AlertDialog(
+                onDismissRequest = { if (!pasteSaving) pasteOpen = false },
+                title = { Text("Coller les paroles") },
+                text = {
+                    OutlinedTextField(
+                        value = pasteDraft,
+                        onValueChange = { pasteDraft = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp),
+                        placeholder = { Text("Colle le texte ici — il sera partagé pour tout le monde") },
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = !pasteSaving && pasteDraft.trim().length >= 40,
+                        onClick = {
+                            pasteSaving = true
+                            scope.launch {
+                                val saved = runCatching {
+                                    container.api.saveLyrics(
+                                        track.id,
+                                        ovh.delhomme.ytmusic.data.SaveLyricsBody(
+                                            lyrics = pasteDraft.trim(),
+                                            title = track.title,
+                                            artist = track.artistLine().takeIf { it != "Artiste" },
+                                        ),
+                                    )
+                                }.getOrNull()
+                                pasteSaving = false
+                                val pasted = saved?.lyrics
+                                if (pasted.isNullOrBlank()) {
+                                    Toast.makeText(
+                                        context,
+                                        "Paroles trop courtes ou refusées",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                    return@launch
+                                }
+                                text = pasted
+                                lyricsSource = saved.source ?: "user"
+                                timed = estimateTimedFromPlain(
+                                    pasted,
+                                    durationMs.coerceAtLeast(0L),
+                                )
+                                suggestions = emptyList()
+                                pasteOpen = false
+                                pasteDraft = ""
+                            }
+                        },
+                    ) {
+                        Text(if (pasteSaving) "…" else "Enregistrer")
+                    }
+                },
+                dismissButton = {
+                    TextButton(enabled = !pasteSaving, onClick = { pasteOpen = false }) {
+                        Text("Annuler")
+                    }
+                },
+            )
         }
     }
 }

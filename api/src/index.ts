@@ -37,13 +37,16 @@ import {
   getAlbumRadio,
   getArtistRadio,
   getLyrics,
+  saveUserLyrics,
   getArtist,
   getAlbum,
   getPlaylist,
   getArtistSongs,
   getMoodCategory,
+  hydrateTracks,
   resetYT,
 } from './youtube/yt.js';
+import { isWeakTitle } from './youtube/mappers.js';
 import { identifyAudio } from './media/identify.js';
 import {
   getFullLibrary,
@@ -110,6 +113,7 @@ import {
   deployInfo,
   getApkJob,
   getApkPath,
+  apkPublicInfo,
   getBuildJob,
   publishApkBuffer,
   startApkBuild,
@@ -365,6 +369,47 @@ const authBurst = rateLimit({ windowMs: 60_000, max: 20 });
 const authStrict = rateLimit({ windowMs: 15 * 60_000, max: 40 });
 
 /** Notes de version (Compte / Profil) — source : VERSION_NOTES.json à la racine. */
+app.get('/api/version', (req, res) => {
+  let semver = '';
+  try {
+    semver = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+  } catch {
+    /* ignore */
+  }
+  if (!semver) semver = (process.env.APP_VERSION || '').trim() || '0.0.0';
+  const clientVer = String(req.query.clientVersion || '')
+    .replace(/^[pbd]\+/, '')
+    .trim();
+  const clientCode = Number(req.query.clientVersionCode || 0) || 0;
+  const apk = apkPublicInfo(PORT);
+  const apkName = String(apk.versionName || '')
+    .replace(/^[pbd]\+/, '')
+    .trim();
+  const apkCode = Number(apk.versionCode || 0) || 0;
+  const cmp = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  // Jamais proposer une APK plus vieille que le téléphone.
+  const apkNewerThanPhone =
+    Boolean(apk.ready) &&
+    apkCode > 0 &&
+    (clientCode <= 0 || apkCode >= clientCode) &&
+    (!clientVer || cmp(apkName || semver, clientVer) >= 0);
+  let advertised = semver;
+  if (apkNewerThanPhone && apkName && cmp(apkName, advertised) > 0) advertised = apkName;
+  if (clientVer && cmp(clientVer, advertised) > 0) advertised = clientVer;
+  res.json({
+    version: advertised,
+    appVersion: `p+${advertised}`,
+    minVersion: '1.3.0',
+    forceUpdate: false,
+    apkAvailable: apkNewerThanPhone && cmp(apkName || semver, clientVer || '0') > 0,
+    apkUrl: apkNewerThanPhone ? '/api/deploy/apk' : null,
+    apkVersion: apkNewerThanPhone ? apk.versionName : null,
+    apkVersionCode: apkNewerThanPhone ? apkCode : null,
+    webUrl: 'https://music.hubera.cloud',
+  });
+});
+
 app.get('/api/version-notes', (_req, res) => {
   const candidates = [
     join(ROOT, 'VERSION_NOTES.json'),
@@ -1355,8 +1400,13 @@ app.get('/api/admin/telemetry', requireAdmin, (req, res) => {
   });
 });
 
-app.get('/api/admin/library-health', requireAdmin, (_req, res) => {
-  res.json(libraryHealthStatus());
+app.get('/api/admin/library-health', requireAdmin, async (_req, res) => {
+  try {
+    const { sharedCatalogStats } = await import('./library/sharedCatalog.js');
+    res.json({ ...libraryHealthStatus(), shared: sharedCatalogStats() });
+  } catch {
+    res.json(libraryHealthStatus());
+  }
 });
 
 /** Aperçu / envoi forcé du digest chargement 12h30. */
@@ -2472,6 +2522,26 @@ app.get('/api/track/:id/lyrics', accountRequired, async (req, res) => {
   }
 });
 
+app.post('/api/track/:id/lyrics', accountRequired, async (req, res) => {
+  try {
+    const trackId = p(req.params.id);
+    const body = (req.body || {}) as { lyrics?: string; title?: string; artist?: string };
+    const saved = saveUserLyrics(
+      trackId,
+      String(body.lyrics || ''),
+      String(body.title || ''),
+      String(body.artist || ''),
+    );
+    if (!saved) {
+      res.status(400).json({ error: 'Paroles trop courtes ou invalides' });
+      return;
+    }
+    res.json(saved);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 app.get('/api/lyric-offsets', accountRequired, (req, res) => {
   res.json({ offsets: listLyricOffsets(req.userId!) });
 });
@@ -2546,7 +2616,29 @@ app.get('/api/artist/:id/songs', accountRequired, async (req, res) => {
 
 app.get('/api/album/:id', accountRequired, async (req, res) => {
   try {
-    res.json(await getAlbum(p(req.params.id)));
+    const id = p(req.params.id);
+    let live: { album?: Record<string, unknown>; tracks?: import('./youtube/types.js').Track[] } | null = null;
+    try {
+      live = await getAlbum(id);
+    } catch (err) {
+      console.warn('[album] getAlbum KO', id, String((err as Error).message || err).slice(0, 120));
+    }
+    const { albumFromLibrary, mergeAlbumLiveAndLibrary } = await import('./library/library.js');
+    const fromLib = albumFromLibrary(req.userId!, id);
+    const merged = mergeAlbumLiveAndLibrary(live, fromLib);
+    if (merged && merged.tracks.length) {
+      const weak = merged.tracks.filter((t) => isWeakTitle(t.title, t.id)).length;
+      if (weak) {
+        try {
+          merged.tracks = await hydrateTracks(merged.tracks, { limit: 24, concurrency: 2 });
+        } catch {
+          /* titres biblio déjà là */
+        }
+      }
+      res.json(merged);
+      return;
+    }
+    res.status(502).json({ error: 'Album introuvable (YouTube + biblio)' });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

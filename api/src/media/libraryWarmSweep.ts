@@ -136,9 +136,42 @@ export async function runLibraryWarmSweepOnce(): Promise<{
     console.info(
       `[libraryWarm] sweep users=${users} uniqueIds=${ids.length} likes=${uniqueLikes.length} diskQ likes=${q.likes} gen=${q.generic}`,
     );
+    void warmSharedLyricsForReady(ids.slice(0, 80));
     return { users, ids: ids.length, likes: uniqueLikes.length };
   } finally {
     running = false;
+  }
+}
+
+/** Paroles déjà trouvées + flux complets : une copie gzip pour tous les comptes. */
+async function warmSharedLyricsForReady(priorityIds: string[]): Promise<void> {
+  try {
+    const catalog = await import('../library/sharedCatalog.js');
+    const scan = catalog.scanReadyAudioFromDisk();
+    const missing = [
+      ...priorityIds.filter((id) => !catalog.hasSharedLyrics(id)),
+      ...catalog.listReadyAudioMissingLyrics(40),
+    ].filter((id, i, a) => a.indexOf(id) === i);
+    const { getTrackPayload } = await import('../library/db.js');
+    const { getLyrics } = await import('../youtube/yt.js');
+    let n = 0;
+    for (const id of missing) {
+      if (n >= 24) break;
+      if (isPlaybackHot(90_000)) break;
+      if (catalog.hasSharedLyrics(id)) continue;
+      const meta = getTrackPayload(id);
+      const title = String(meta?.title || '').trim();
+      const artist = (meta?.artists || []).map((a) => a.name).filter(Boolean).join(' ');
+      await getLyrics(id, { title, artist }).catch(() => null);
+      n += 1;
+      await new Promise((r) => setTimeout(r, 3_500));
+    }
+    const st = catalog.sharedCatalogStats();
+    console.info(
+      `[libraryWarm] lyrics scan=${scan.ready} stored=${st.lyrics} audioReady=${st.audioReady} warmed=${n}`,
+    );
+  } catch (err) {
+    console.warn('[libraryWarm] lyrics', String((err as Error).message || err).slice(0, 120));
   }
 }
 

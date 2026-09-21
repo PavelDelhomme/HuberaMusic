@@ -343,17 +343,21 @@ function markHomeAlive(homeBase: string) {
     ok: true,
     base: homeBase.replace(/\/$/, ''),
   };
+  homeAliveTtlMs = 45_000;
   homeSoftFailStreak = 0;
 }
 
-function markHomeDead(homeBase: string, ttlMs = 12_000) {
-  // ttl via `at` dans le passé relatif : isHomeUpstreamReachable re-sonde après ttlMs
+function markHomeDead(homeBase: string, ttlMs = 45_000) {
   homeAliveCache = {
-    at: Date.now() - (45_000 - Math.max(3_000, ttlMs)),
+    at: Date.now(),
     ok: false,
     base: homeBase.replace(/\/$/, ''),
   };
+  homeAliveTtlMs = Math.max(8_000, ttlMs);
 }
+
+let homeAliveTtlMs = 45_000;
+let homeOfflineLoggedAt = 0;
 
 /**
  * Sonde rapide : si le PC maison est éteint, on skip le relais immédiatement
@@ -364,7 +368,7 @@ async function isHomeUpstreamReachable(homeBase: string): Promise<boolean> {
   if (
     homeAliveCache &&
     homeAliveCache.base === base &&
-    Date.now() - homeAliveCache.at < 45_000
+    Date.now() - homeAliveCache.at < homeAliveTtlMs
   ) {
     return homeAliveCache.ok;
   }
@@ -898,6 +902,9 @@ export async function handleStream(req: Request, res: Response) {
         try {
           const size = statSync(cachedEarly).size;
           rememberAdvertisedTotal(videoId, size);
+          import('../library/sharedCatalog.js')
+            .then((m) => m.rememberReadyAudio(videoId, size))
+            .catch(() => {});
           const range = req.headers.range ? String(req.headers.range) : '';
           const { createReadStream } = await import('node:fs');
           if (range) {
@@ -1483,6 +1490,9 @@ export async function handleStream(req: Request, res: Response) {
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('X-PLM-Stream-Cache', 'disk');
         noteStreamSource(res, 'cache disque (entier)');
+        import('../library/sharedCatalog.js')
+          .then((m) => m.rememberReadyAudio(videoId, size))
+          .catch(() => {});
         const { createReadStream } = await import('node:fs');
         const rs = createReadStream(cached);
         rs.on('error', (err) => {
@@ -1511,9 +1521,12 @@ export async function handleStream(req: Request, res: Response) {
   if (homeUpstream) {
     const homeUp = await isHomeUpstreamReachable(homeUpstream);
     if (!homeUp) {
-      console.warn(
-        '[stream] STREAM_UPSTREAM offline (maison) — VPS + proxies gratuits',
-      );
+      if (Date.now() - homeOfflineLoggedAt > 60_000) {
+        homeOfflineLoggedAt = Date.now();
+        console.warn(
+          '[stream] STREAM_UPSTREAM offline (maison) — VPS + proxies gratuits',
+        );
+      }
     } else {
       // Android : first-byte maison COURT puis fallback VPS.
       // Avant 28–35 s : sous charge (Nothing+prefetch) chaque titre brûlait

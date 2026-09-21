@@ -753,7 +753,7 @@ export const api = {
     return req<{
       lyrics: string | null;
       timed?: { startMs: number; text: string }[] | null;
-      source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
+      source?: string | null;
       syncOffsetMs?: number;
       userOffsetMs?: number;
       crowdOffsetMs?: number;
@@ -765,8 +765,29 @@ export const api = {
         offsetMs: number;
       }[];
       segmentsFromUser?: boolean;
+      suggestions?: {
+        title: string;
+        artist: string;
+        url: string;
+        source: string;
+        reason: string;
+        score?: number;
+      }[];
+      searchUrls?: { label: string; url: string }[];
     }>(`/api/track/${id}/lyrics${qs ? `?${qs}` : ''}`);
   },
+  saveLyrics: (id: string, lyrics: string, hints?: { title?: string; artist?: string }) =>
+    req<{ lyrics: string | null; timed?: { startMs: number; text: string }[] | null; source?: string | null }>(
+      `/api/track/${id}/lyrics`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          lyrics,
+          title: hints?.title || undefined,
+          artist: hints?.artist || undefined,
+        }),
+      },
+    ),
   lyricOffsets: () => req<{ offsets: Record<string, number> }>('/api/lyric-offsets'),
   saveLyricOffset: (
     id: string,

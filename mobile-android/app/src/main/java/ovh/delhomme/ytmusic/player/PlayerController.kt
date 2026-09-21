@@ -354,7 +354,7 @@ class PlayerController(
                     base,
                     playable.map { it.id },
                     idx,
-                    count = 6,
+                    count = 3,
                     ignoreQuiet = false,
                 )
             }
@@ -835,7 +835,7 @@ class PlayerController(
                     base,
                     skipQueue.map { it.id },
                     nextIdx,
-                    count = 12,
+                    count = 3,
                     ignoreQuiet = false,
                 )
                 CoverPrefetcher.warmCovers(skipQueue, nextIdx, ahead = 4, behind = 0)
@@ -1520,7 +1520,7 @@ class PlayerController(
                             base,
                             q.map { it.id },
                             idx,
-                            count = 6,
+                            count = 3,
                             ignoreQuiet = true,
                         )
                     }
@@ -1580,7 +1580,7 @@ class PlayerController(
         val base = streamUrl("_").substringBefore("/api/stream/")
         val ids = queue.map { it.id }
         // 16 titres en avant (~10–20 % de tête) pour skip rapide sans BUFFERING
-        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 16)
+        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 3)
         if (
             !StreamPrefetcher.isStreamDown() &&
             !ovh.delhomme.ytmusic.data.BatterySaver.isActive()
@@ -2033,7 +2033,7 @@ class PlayerController(
                 delay(80)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
-                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 16)
+                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 3)
                 if (!ovh.delhomme.ytmusic.data.BatterySaver.isActive()) {
                     runCatching {
                         YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
@@ -2093,7 +2093,7 @@ class PlayerController(
             base,
             queue.map { it.id },
             centerIndex,
-            count = 12,
+            count = 3,
             ignoreQuiet = true,
         )
     }

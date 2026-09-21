@@ -19,8 +19,13 @@ function fold(s: string) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/\badah\b/g, 'adhd')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+function compactFold(s: string) {
+  return fold(s).replace(/\s+/g, '');
 }
 
 function geniusSlug(s: string) {
@@ -68,6 +73,11 @@ export function titleMatchScore(wantT: string, gotT: string): number {
 export function artistMatchScore(wantA: string, gotA: string): number {
   if (!wantA || !gotA) return 0;
   if (gotA === wantA) return 30;
+  const cw = compactFold(wantA);
+  const cg = compactFold(gotA);
+  // InTheLight ↔ In The Light
+  if (cw && cg && cw === cg) return 30;
+  if (cw.length >= 5 && cg.length >= 5 && (cw.includes(cg) || cg.includes(cw))) return 22;
   if (gotA.includes(wantA) || wantA.includes(gotA)) return 18;
   return Math.round(tokenOverlap(wantA, gotA) * 22);
 }
@@ -196,23 +206,15 @@ async function geniusHttpGet(
     })
   ).filter((p): p is string => Boolean(p));
 
-  const batchSize = 3;
-  for (let i = 0; i < proxies.length; i += batchSize) {
-    const batch = proxies.slice(i, i + batchSize);
-    const results = await Promise.all(
-      batch.map(async (proxy) => {
-        const r = await curlFetch(url, { proxy, headers, timeoutMs });
-        return { proxy, r };
-      }),
-    );
-    for (const { proxy, r } of results) {
-      if (r.ok) {
-        markYoutubeProxySuccess(proxy);
-        return r;
-      }
-      if (r.status === 403 || r.status === 429 || r.status === 0 || r.status >= 500) {
-        markYoutubeProxyFailure(proxy);
-      }
+  // Un proxy à la fois (timeout → suivant) — évite de saturer le pool.
+  for (const proxy of proxies) {
+    const r = await curlFetch(url, { proxy, headers, timeoutMs });
+    if (r.ok) {
+      markYoutubeProxySuccess(proxy);
+      return r;
+    }
+    if (r.status === 403 || r.status === 429 || r.status === 0 || r.status >= 500) {
+      markYoutubeProxyFailure(proxy);
     }
   }
   return direct.status ? direct : { ok: false, status: 0, text: '' };
@@ -389,7 +391,10 @@ async function searchGeniusViaDdg(artist: string, title: string): Promise<Genius
     if (wantT && slug.includes(wantT)) score += 20;
     if (wantA) {
       const a0 = wantA.split(' ')[0] || wantA;
-      if (a0.length >= 3 && slug.includes(a0)) score += 20;
+      const slugC = compactFold(slug);
+      const wantC = compactFold(wantA);
+      if (wantC.length >= 5 && slugC.includes(wantC)) score += 22;
+      else if (a0.length >= 3 && slug.includes(a0)) score += 20;
       else continue;
     }
     if (!best || score > best.score) best = { score, url };
@@ -403,8 +408,10 @@ async function searchGenius(artist: string, title: string): Promise<GeniusHit | 
   const main = mainArtist(artist);
   const featured = artistsFromTitle(title);
   // Jamais le titre seul si l’artiste est connu (ADHD vs InTheLight / ABCD ADAH).
+  const spaced = main.replace(/([a-z])([A-Z])/g, '$1 $2');
   const queries = [
     [main, cleaned].filter(Boolean).join(' '),
+    [spaced, cleaned].filter(Boolean).join(' '),
     [artist, cleaned].filter(Boolean).join(' '),
     [cleaned, main].filter(Boolean).join(' '),
     [main, title].filter(Boolean).join(' '),
@@ -420,6 +427,71 @@ async function searchGenius(artist: string, title: string): Promise<GeniusHit | 
   }
 
   return searchGeniusViaDdg(artist, title).catch(() => null);
+}
+
+function scoreLooseHit(
+  r: Record<string, unknown>,
+  artist: string,
+  title: string,
+): { url: string; title: string; artist: string; score: number } | null {
+  const url = String(r.url || (r.path ? `https://genius.com${r.path}` : '')).trim();
+  if (!url.includes('genius.com') || !/lyrics/i.test(url)) return null;
+  const t = String(r.title || r.full_title || '').replace(/\s+by\s+.+$/i, '').trim();
+  const a = String(
+    r.artist_names ||
+      r.primary_artist_names ||
+      (r.primary_artist as { name?: string })?.name ||
+      '',
+  ).trim();
+  const score =
+    titleMatchScore(fold(cleanTitle(title) || title), fold(t)) +
+    artistMatchScore(fold(mainArtist(artist) || artist), fold(a));
+  return { url, title: t || title, artist: a || artist, score };
+}
+
+async function rowsForQuery(q: string): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (const path of [
+    `https://genius.com/api/search/song?q=${encodeURIComponent(q)}`,
+    `https://genius.com/api/search/multi?q=${encodeURIComponent(q)}`,
+  ]) {
+    const res = await geniusHttpGet(path, {
+      accept: 'application/json',
+      timeoutMs: 4500,
+      maxProxies: 2,
+    });
+    if (!res.ok) continue;
+    try {
+      const data = JSON.parse(res.text) as unknown;
+      const rows = path.includes('/song') ? hitsFromSongSearch(data) : hitsFromMultiSearch(data);
+      out.push(...rows);
+    } catch {
+      /* ignore */
+    }
+  }
+  return out;
+}
+
+/** Hits Genius même trop faibles pour auto-prendre — pour proposer une alternative. */
+export async function listGeniusNearMisses(
+  artist: string,
+  title: string,
+): Promise<Array<{ url: string; title: string; artist: string; score: number }>> {
+  const cleaned = cleanTitle(title) || title;
+  const main = mainArtist(artist);
+  const q = [main, cleaned].filter(Boolean).join(' ').trim() || cleaned;
+  if (!q) return [];
+  const rows = await rowsForQuery(q).catch(() => []);
+  const seen = new Set<string>();
+  const scored: Array<{ url: string; title: string; artist: string; score: number }> = [];
+  for (const r of rows) {
+    const hit = scoreLooseHit(r, artist, title);
+    if (!hit || seen.has(hit.url)) continue;
+    seen.add(hit.url);
+    scored.push(hit);
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 8);
 }
 
 function parseGeniusHtml(html: string): string | null {
@@ -492,12 +564,39 @@ async function scrapeGeniusPage(url: string): Promise<string | null> {
   return parseGeniusHtml(res.text);
 }
 
+function artistNameVariants(artist: string): string[] {
+  const main = mainArtist(artist) || artist;
+  const spaced = main.replace(/([a-z])([A-Z])/g, '$1 $2');
+  return [...new Set([main, artist, spaced].map((s) => s.trim()).filter(Boolean))];
+}
+
+function titleVariants(title: string): string[] {
+  const cleaned = cleanTitle(title) || title;
+  return [
+    ...new Set(
+      [cleaned, title, cleaned.replace(/\bADAH\b/gi, 'ADHD'), cleaned.replace(/\bADHD\b/gi, 'ADAH')]
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 /** Construit une URL Genius plausible (slug) si la search rate-limit / rate. */
 function guessGeniusUrl(artist: string, title: string): string | null {
-  const a = geniusSlug(mainArtist(artist) || artist);
-  const t = geniusSlug(cleanTitle(title) || title);
-  if (!a || !t || a.length < 2 || t.length < 2) return null;
-  return `https://genius.com/${a}-${t}-lyrics`;
+  return guessGeniusUrls(artist, title)[0] || null;
+}
+
+function guessGeniusUrls(artist: string, title: string): string[] {
+  const out: string[] = [];
+  for (const aName of artistNameVariants(artist)) {
+    for (const tName of titleVariants(title)) {
+      const a = geniusSlug(aName);
+      const t = geniusSlug(tName);
+      if (!a || !t || a.length < 2 || t.length < 2) continue;
+      out.push(`https://genius.com/${a}-${t}-lyrics`);
+    }
+  }
+  return [...new Set(out)].slice(0, 6);
 }
 
 /**
@@ -509,20 +608,20 @@ export async function fetchGeniusLyrics(
 ): Promise<{ lyrics: string; url: string } | null> {
   if (!title.trim()) return null;
   const deadline = Date.now() + 14_000;
-  const guessed = guessGeniusUrl(artist, title);
-  const [hit, guessedLyrics] = await Promise.all([
+  const guessedUrls = guessGeniusUrls(artist, title);
+  const guessed = guessedUrls[0] || null;
+  const [hit, firstGuess] = await Promise.all([
     searchGenius(artist, title).catch(() => null),
     guessed ? scrapeGeniusPage(guessed).catch(() => null) : Promise.resolve(null),
   ]);
-  if (guessed && guessedLyrics) return { lyrics: guessedLyrics, url: guessed };
+  if (guessed && firstGuess) return { lyrics: firstGuess, url: guessed };
   if (Date.now() > deadline) return null;
   const urls = [
     hit?.url,
-    guessed,
-    guessGeniusUrl(mainArtist(artist), title),
+    ...guessedUrls,
     ...artistsFromTitle(title)
       .slice(0, 1)
-      .map((f) => guessGeniusUrl(f, title)),
+      .flatMap((f) => guessGeniusUrls(f, title)),
   ].filter((u, i, arr): u is string => Boolean(u) && arr.indexOf(u) === i);
 
   for (const url of urls) {

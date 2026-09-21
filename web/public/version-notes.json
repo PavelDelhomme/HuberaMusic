@@ -2,6 +2,47 @@
   "updatedAt": "2026-09-21",
   "versions": [
     {
+      "version": "1.3.274",
+      "date": "2026-09-21",
+      "title": "APK à jour + paroles via catalogue Spotify",
+      "notes": [
+        "L’app mobile et le serveur affichent la même version — plus d’APK plus vieille que le téléphone",
+        "Paroles : on cherche aussi le titre sur Spotify / Deezer / Apple pour coller le bon morceau",
+        "Si le catalogue n’a pas le texte : propositions + collage, partagé pour tout le monde"
+      ]
+    },
+    {
+      "version": "1.3.273",
+      "date": "2026-09-21",
+      "title": "Meilleures paroles, sinon propositions + collage",
+      "notes": [
+        "Le serveur choisit le meilleur texte (Genius, lyrics.ovh, Musixmatch, pages web)",
+        "Si rien ne correspond au titre exact : propositions + liens Genius / Google / Musixmatch",
+        "Tu peux coller les paroles : elles sont partagées compressées pour tous les comptes"
+      ]
+    },
+    {
+      "version": "1.3.272",
+      "date": "2026-09-21",
+      "title": "Paroles Genius partagées + flux déjà prêts",
+      "notes": [
+        "Paroles trouvées une fois (Genius / LRCLIB) : stockées compressées pour tous les comptes",
+        "InTheLight / ABCD ADHD : plus confondu avec le tube ADHD, slugs Genius In The Light + ADAH",
+        "Les .m4a déjà complets sur le serveur sont indexés et resservis sans re-télécharger"
+      ]
+    },
+    {
+      "version": "1.3.271",
+      "date": "2026-09-21",
+      "title": "Tout lire 14k fluide, suivants préchargés, vrais albums",
+      "notes": [
+        "Bibliothèque mobile : liste virtualisée (pas de gel Tout lire / 14k titres)",
+        "File limitée en mémoire (400) — la suite se charge au fil de l’écoute",
+        "Le titre suivant a ~20 s de tête, un seul flux à la fois (plus de rush proxy)",
+        "Album YouTube KO : on reconstitue les titres depuis ta bibliothèque"
+      ]
+    },
+    {
       "version": "1.3.270",
       "date": "2026-09-21",
       "title": "Plus de coupure mid-titre ni de remplacement paroles",

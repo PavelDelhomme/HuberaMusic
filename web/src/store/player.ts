@@ -101,7 +101,7 @@ type PlayerState = {
   mediaPresentation: 'cover' | 'video';
   lyrics: string | null;
   lyricsTimed: { startMs: number; text: string }[] | null;
-  lyricsSource: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
+  lyricsSource: string | null;
   related: Track[];
   /** Seed pour lequel `related` a été fetché (évite de réinjecter une vieille liste). */
   relatedSeedId: string | null;
@@ -1876,7 +1876,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
           set({
             lyrics: r.lyrics || get().lyrics,
             lyricsTimed: r.timed || null,
-            lyricsSource: (r as { source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null }).source ?? null,
+            lyricsSource: (r as { source?: string | null }).source ?? null,
           });
         })
         .catch(() => undefined);

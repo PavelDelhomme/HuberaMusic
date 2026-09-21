@@ -37,8 +37,8 @@ object StreamPrefetcher {
     private const val HEAD_PCT_FAR = 1_200L * 1024L
     /** ~15–20 % — titres proches (+2…+4). */
     private const val HEAD_PCT_NEAR = 2_200L * 1024L
-    /** ~12–15 s — titre suivant pendant lecture. */
-    private const val HEAD_NEXT_PLAYING = 4_200L * 1024L
+    /** ~18–20 s — titre suivant pendant lecture (enchaînement sans BUFFERING). */
+    private const val HEAD_NEXT_PLAYING = 5_600L * 1024L
     /** Tête générique Wi‑Fi (~8 s). */
     private const val HEAD_WIFI = 1_400 * 1024L
     /** Titre suivant Wi‑Fi. */
@@ -51,10 +51,11 @@ object StreamPrefetcher {
     private const val HEAD_METERED = HEAD_3S
     private const val HEAD_NEXT_METERED = 1_600 * 1024L
 
-    private const val MAX_WARM = 16
+    /** 1–2 formats à la fois : ne pas noyer les proxies (timeout → rotation). */
+    private const val MAX_WARM = 2
     /** Fenêtre avant sur Wi‑Fi (file / aléatoire / rolling). */
-    private const val AHEAD_WIFI = 6
-    private const val AHEAD_METERED = 4
+    private const val AHEAD_WIFI = 3
+    private const val AHEAD_METERED = 2
     private const val DISK_CACHE_MB = 48L
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
@@ -84,7 +85,12 @@ object StreamPrefetcher {
 
     private val client: OkHttpClient by lazy {
         val dir = File(YtMusicApp.instance.cacheDir, "stream-prefetch").apply { mkdirs() }
+        val dispatcher = okhttp3.Dispatcher().apply {
+            maxRequests = 2
+            maxRequestsPerHost = 2
+        }
         OkHttpClient.Builder()
+            .dispatcher(dispatcher)
             .cache(okhttp3.Cache(dir, DISK_CACHE_MB * 1024L * 1024L))
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(45, TimeUnit.SECONDS)
@@ -732,7 +738,7 @@ object StreamPrefetcher {
         baseApi: String,
         queueIds: List<String>,
         fromIndex: Int,
-        count: Int = 12,
+        count: Int = 3,
         ignoreQuiet: Boolean = false,
     ) {
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
@@ -744,7 +750,9 @@ object StreamPrefetcher {
         val playing = isPlaybackActive()
         val unmetered = isUnmetered()
         val saver = ovh.delhomme.ytmusic.data.BatterySaver.isActive()
-        val take = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(count.coerceIn(1, 20))
+        val take = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(
+            count.coerceIn(1, AHEAD_WIFI),
+        )
         val upcoming = queueIds.drop(idx + 1).take(take).filter { it.length == 11 && !isLocalOffline(it) }
         upcoming.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
         prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = true)

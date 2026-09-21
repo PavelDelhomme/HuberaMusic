@@ -750,12 +750,11 @@ class PlaybackService : MediaSessionService() {
                             idx,
                             ignoreQuiet = true,
                         )
-                        val ahead = if (ovh.delhomme.ytmusic.data.BatterySaver.isCharging()) 5 else 3
                         StreamPrefetcher.prefetchUpcomingHeadsTiered(
                             resolvedApiBase(),
                             ids,
                             idx,
-                            count = ahead,
+                            count = 3,
                             ignoreQuiet = true,
                         )
                     }
@@ -805,7 +804,7 @@ class PlaybackService : MediaSessionService() {
                 resolvedApiBase(),
                 qIds,
                 curIdx,
-                count = if (ovh.delhomme.ytmusic.data.BatterySaver.isCharging()) 6 else 4,
+                count = 3,
                 ignoreQuiet = true,
             )
             val curDur = Holder.queue.getOrNull(curIdx)?.durationMsOrNull() ?: 0L
@@ -2783,6 +2782,14 @@ class PlaybackService : MediaSessionService() {
 
         /** Mémorise la file complète dont la fenêtre chargée n'est qu'une tranche. */
         fun rememberFullQueue(full: List<TrackDto>, loadedUpTo: Int) {
+            // Ne pas écraser une file 14k par la fenêtre Exo 80/400.
+            if (fullQueue.size > full.size && full.isNotEmpty()) {
+                val ids = full.mapTo(HashSet()) { it.id }
+                if (fullQueue.take(full.size).all { it.id in ids }) {
+                    fullQueueCursor = loadedUpTo.coerceIn(0, fullQueue.size)
+                    return
+                }
+            }
             fullQueue = full
             fullQueueCursor = loadedUpTo.coerceIn(0, full.size)
         }
@@ -3002,12 +3009,12 @@ private class YtmForwardingPlayer(
         if (queue.isEmpty()) return
         val api = PlaybackService.Holder.resolvedApiBase()
         // Seek notif/UI : +1 fort + fenêtre courte (le rolling tick élargit ensuite)
-        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 6, behind = 0)
+        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 3, behind = 0)
         StreamPrefetcher.prefetchUpcomingHeadsTiered(
             api,
             queue.map { it.id },
             index,
-            count = 10,
+            count = 3,
             ignoreQuiet = true,
         )
         CoverPrefetcher.warmCovers(queue, index, ahead = 3, behind = 0)

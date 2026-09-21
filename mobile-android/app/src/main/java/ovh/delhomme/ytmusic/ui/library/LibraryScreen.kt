@@ -405,33 +405,8 @@ fun LibraryScreen(
                     }
                 }
                 val listState = rememberLazyListState()
-                // Fenêtre progressive (~220 puis +200) — scroll plus fluide sans composer 14k items
-                var windowLimit by remember(selected) {
-                    mutableIntStateOf(220.coerceAtMost(content.rows.size.coerceAtLeast(0)))
-                }
                 LaunchedEffect(selected) {
-                    windowLimit = 220.coerceAtMost(content.rows.size.coerceAtLeast(0))
                     listState.scrollToItem(0)
-                }
-                LaunchedEffect(content.rows.size) {
-                    if (content.rows.size <= 280) {
-                        windowLimit = content.rows.size
-                    } else if (windowLimit < 220) {
-                        windowLimit = 220.coerceAtMost(content.rows.size)
-                    }
-                }
-                LaunchedEffect(listState, content.rows.size, selected) {
-                    snapshotFlow {
-                        listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                    }
-                        .distinctUntilChanged()
-                        .collect { lastVisible ->
-                            val total = content.rows.size
-                            if (total <= 280) return@collect
-                            if (lastVisible >= windowLimit - 50 && windowLimit < total) {
-                                windowLimit = (windowLimit + 200).coerceAtMost(total)
-                            }
-                        }
                 }
                 LaunchedEffect(selected, content.playableQueue) {
                     var lastBoostAt = 0L
@@ -535,10 +510,14 @@ fun LibraryScreen(
                                     )
                                 }
                             }
-                            val rowsWindow =
-                                if (content.rows.size > 280) content.rows.take(windowLimit)
-                                else content.rows
-                            itemsIndexed(rowsWindow, key = { i, r -> "${selected.name}-${r.id}-$i" }) { _, row ->
+                            items(
+                                count = content.rows.size,
+                                key = { i ->
+                                    val r = content.rows[i]
+                                    "${selected.name}-${r.id}-$i"
+                                },
+                            ) { i ->
+                                val row = content.rows[i]
                                 TrackRow(
                                     track = row,
                                     onClick = {
@@ -578,16 +557,6 @@ fun LibraryScreen(
                                         }
                                     },
                                 )
-                            }
-                            if (content.rows.size > rowsWindow.size) {
-                                item {
-                                    Text(
-                                        "Affichés ${rowsWindow.size} / ${content.rows.size} — continue de scroller",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                    )
-                                }
                             }
                             item {
                                 Spacer(Modifier.height(12.dp))

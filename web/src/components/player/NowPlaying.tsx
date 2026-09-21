@@ -57,7 +57,7 @@ export function SyncedLyrics({
 }: {
   text: string | null;
   timed?: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
+  source?: string | null;
 }) {
   const audioEl = usePlayer((s) => s.audioEl);
   const isPlaying = usePlayer((s) => s.isPlaying);
@@ -436,9 +436,13 @@ export function NowPlaying({
   const [tab, setTab] = useState<NowPlayingTab>(initialTab);
   const [lyricsText, setLyricsText] = useState<string | null>(null);
   const [lyricsTimed, setLyricsTimed] = useState<{ startMs: number; text: string }[] | null>(null);
-  const [lyricsSource, setLyricsSource] = useState<
-    'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null
-  >(null);
+  const [lyricsSource, setLyricsSource] = useState<string | null>(null);
+  const [lyricsSuggestions, setLyricsSuggestions] = useState<
+    { title: string; artist: string; url: string; reason: string }[]
+  >([]);
+  const [lyricsSearchUrls, setLyricsSearchUrls] = useState<{ label: string; url: string }[]>([]);
+  const [lyricsDraft, setLyricsDraft] = useState('');
+  const [lyricsSaving, setLyricsSaving] = useState(false);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [queueVisible, setQueueVisible] = useState(QUEUE_PAGE);
   const [similarVisible, setSimilarVisible] = useState(10);
@@ -518,6 +522,8 @@ export function NowPlaying({
       setLyricsText(r.lyrics || null);
       setLyricsTimed(r.timed || null);
       setLyricsSource(r.source ?? null);
+      setLyricsSuggestions(r.suggestions || []);
+      setLyricsSearchUrls(r.searchUrls || []);
     };
     const artist = artistNames(current);
     const hints = {
@@ -1105,19 +1111,93 @@ export function NowPlaying({
                   <>
                     <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
                     {!lyricsText && (
-                      <div className="mt-3 flex justify-center px-2">
-                        <a
-                          href={`https://genius.com/search?q=${encodeURIComponent(
-                            [artistNames(current) !== 'Artiste' ? artistNames(current) : '', current.title]
-                              .filter(Boolean)
-                              .join(' '),
-                          )}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="rounded-full border border-yt-border px-3 py-1.5 text-xs text-yt-muted hover:bg-white/10 hover:text-white"
+                      <div className="mt-3 space-y-3 px-2">
+                        {lyricsSuggestions.length > 0 && (
+                          <div className="space-y-1.5">
+                            <p className="text-center text-[11px] uppercase tracking-wide text-yt-muted">
+                              Propositions proches
+                            </p>
+                            {lyricsSuggestions.map((s) => (
+                              <a
+                                key={s.url}
+                                href={s.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded-lg border border-yt-border px-3 py-2 text-xs hover:bg-white/10"
+                              >
+                                <span className="font-medium text-white">
+                                  {s.title}
+                                  {s.artist ? ` — ${s.artist}` : ''}
+                                </span>
+                                <span className="mt-0.5 block text-yt-muted">{s.reason}</span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {(lyricsSearchUrls.length
+                            ? lyricsSearchUrls
+                            : [
+                                {
+                                  label: 'Genius',
+                                  url: `https://genius.com/search?q=${encodeURIComponent(
+                                    [artistNames(current) !== 'Artiste' ? artistNames(current) : '', current.title]
+                                      .filter(Boolean)
+                                      .join(' '),
+                                  )}`,
+                                },
+                              ]
+                          ).map((l) => (
+                            <a
+                              key={l.url}
+                              href={l.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-full border border-yt-border px-3 py-1.5 text-xs text-yt-muted hover:bg-white/10 hover:text-white"
+                            >
+                              {l.label}
+                            </a>
+                          ))}
+                        </div>
+                        <form
+                          className="space-y-2"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            if (!current?.id || lyricsSaving) return;
+                            const draft = lyricsDraft.trim();
+                            if (draft.length < 40) return;
+                            setLyricsSaving(true);
+                            const artist = artistNames(current);
+                            void api
+                              .saveLyrics(current.id, draft, {
+                                title: current.title,
+                                artist: artist !== 'Artiste' ? artist : undefined,
+                              })
+                              .then((r) => {
+                                setLyricsText(r.lyrics || draft);
+                                setLyricsTimed(r.timed || null);
+                                setLyricsSource(r.source || 'user');
+                                setLyricsDraft('');
+                                setLyricsSuggestions([]);
+                              })
+                              .finally(() => setLyricsSaving(false));
+                          }}
                         >
-                          Chercher sur Genius / le web
-                        </a>
+                          <textarea
+                            value={lyricsDraft}
+                            onChange={(e) => setLyricsDraft(e.target.value)}
+                            rows={5}
+                            placeholder="Coller les paroles ici si tu les as (partagées pour tout le monde)"
+                            className="w-full resize-y rounded-lg border border-yt-border bg-black/30 px-3 py-2 text-xs text-white placeholder:text-yt-muted"
+                          />
+                          <button
+                            type="submit"
+                            disabled={lyricsSaving || lyricsDraft.trim().length < 40}
+                            className="mx-auto block rounded-full border border-yt-border px-3 py-1.5 text-xs text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-40"
+                          >
+                            {lyricsSaving ? 'Enregistrement…' : 'Enregistrer ces paroles'}
+                          </button>
+                        </form>
                       </div>
                     )}
                   </>
