@@ -964,8 +964,9 @@ class PlaybackService : MediaSessionService() {
                 // Ne coupe le prefetch / offline qu’après plusieurs 5xx — un seul 502
                 // (getAudioFormat deadline) ne doit pas bloquer 2 min toute la file.
                 // Après appel : sockets/DNS en train de revenir — ne pas geler le flux.
-                if (streak >= 3 && !Holder.isWithinCallResumeGrace()) {
-                    StreamPrefetcher.markStreamDown(90_000L)
+                if (streak >= 5 && !Holder.isWithinCallResumeGrace()) {
+                    // Pause prefetch seulement (20 s) — le titre courant continue de résoudre.
+                    StreamPrefetcher.markStreamDown(20_000L)
                     StreamPrefetcher.cancelIdle()
                     runCatching {
                         ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.cancelOpportunistic()
@@ -1143,10 +1144,10 @@ class PlaybackService : MediaSessionService() {
                 val giveUpStreak = when {
                     // Titre mort (410 / unavailable) : skip dès le 1er échec confirmé.
                     unavailable -> 1
-                    // Cold start + 5xx : 2 retries max (évite 2 min bloqué sur remix mort).
-                    coldStart && httpStatus != null && httpStatus >= 500 -> 2
-                    // 503/502 mid-piste : quelques retries puis skip réel.
-                    httpStatus != null && httpStatus >= 500 -> 4
+                    // 502 getAudioFormat deadline = transitoire (yt-dlp saturé) :
+                    // retenter le MÊME titre, pas skip à 2×.
+                    coldStart && httpStatus != null && httpStatus >= 500 -> 8
+                    httpStatus != null && httpStatus >= 500 -> 8
                     transientNetwork -> Int.MAX_VALUE
                     else -> 8
                 }

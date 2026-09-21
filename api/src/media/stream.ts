@@ -936,27 +936,10 @@ export async function handleStream(req: Request, res: Response) {
             String((e as Error).message || e).slice(0, 120),
           );
         }
-      } else {
-        const known = getReplacementId(videoId);
-        if (known) {
-          // Ne pas rediriger vers un id qui n’a pas de cache si l’actuel en a un partiel OK —
-          // et éviter les chaînes mortes : si le remplaçant n’a ni cache ni format, on ignore.
-          noteStreamSource(res, `remplacement → ${known}`);
-          res.setHeader('Cache-Control', 'no-store');
-          res.setHeader('X-PLM-Replaced-From', videoId);
-          res.redirect(302, streamPathFor(req, known));
-          return;
-        }
       }
-    } else {
-      const known = getReplacementId(videoId);
-      if (known) {
-        noteStreamSource(res, `remplacement → ${known}`);
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('X-PLM-Replaced-From', videoId);
-        res.redirect(302, streamPathFor(req, known));
-        return;
-      }
+      // Pas de 302 remplacement ici : un mapping auto (lyrics / ping-pong)
+      // ne doit pas détourner le titre demandé. Remplacement seulement si
+      // getAudioFormat confirme VIDEO_UNAVAILABLE plus bas.
     }
   }
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
@@ -1026,24 +1009,17 @@ export async function handleStream(req: Request, res: Response) {
           });
           return;
         }
-        // Best-effort ensure court — échec ≠ 410, on continue vers relais/yt-dlp.
+        // Ensure court SANS remplacement : un 302 lyrics (score 78) pendant
+        // un timeout Innertube faisait BUFFERING infini sur le Nothing.
         if (formatOk) {
           try {
             const { ensurePlayableOnDisk } = await import('./ensurePlayable.js');
-            const ensured = await ensurePlayableOnDisk(videoId, {
+            await ensurePlayableOnDisk(videoId, {
               userId: (req as any).userId,
               waitMs: 4_000,
               preferProxies: true,
-              allowReplace: true,
+              allowReplace: false,
             });
-            if (ensured.ok && ensured.playId !== videoId) {
-              noteStreamSource(res, `ensure → ${ensured.playId}`);
-              res.setHeader('Cache-Control', 'no-store');
-              res.setHeader('X-PLM-Replaced-From', videoId);
-              res.setHeader('X-PLM-Ensure', ensured.via);
-              res.redirect(302, streamPathFor(req, ensured.playId));
-              return;
-            }
           } catch {
             /* pipeline */
           }
@@ -1645,12 +1621,7 @@ export async function handleStream(req: Request, res: Response) {
     ensureTime('format');
     let format = wantVideo
       ? await withDeadline('getVideoFormat', getVideoFormat(videoId))
-      : preferProxies
-        ? await withDeadline(
-            'ytDlpUrlFirst',
-            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId }),
-          )
-        : await withDeadline(
+      : await withDeadline(
             'getAudioFormatRace',
             Promise.any([
               getAudioFormat(videoId, {
@@ -1666,7 +1637,7 @@ export async function handleStream(req: Request, res: Response) {
                     preferProxies: true,
                     userId: streamUserId,
                   }).then(resolve, reject);
-                }, 1_200);
+                }, preferProxies ? 2_800 : 1_200);
               }),
             ]),
           );
@@ -1997,20 +1968,7 @@ export async function handleStream(req: Request, res: Response) {
           String((e as Error).message || e).slice(0, 140),
         );
         if (!res.headersSent) {
-          // Remplacement rapide si possible, sinon 502 court.
-          try {
-            const replacement =
-              getReplacementId(videoId) ||
-              (await findReplacementId(videoId, { userId: (req as any).userId }));
-            if (replacement && !res.headersSent) {
-              res.setHeader('Cache-Control', 'no-store');
-              res.setHeader('X-PLM-Replaced-From', videoId);
-              res.redirect(302, streamPathFor(req, replacement));
-              return;
-            }
-          } catch {
-            /* ignore */
-          }
+          // Timeout yt-dlp ≠ titre mort : 502 pour retry, pas un 302 lyrics.
           res.status(502).json({
             error: 'Impossible de streamer audio',
             code: 'STREAM_TEMP_UNAVAILABLE',
@@ -2093,9 +2051,9 @@ export async function handleStream(req: Request, res: Response) {
     if (!res.headersSent) {
       const detail = String(err);
       console.warn('[stream] all backends KO:', String((err as Error).message || err).slice(0, 160));
-      // Remplacement : toujours tenter (unavailable OU transient CDN). Un mapping
-      // déjà connu court-circuite ; sinon findReplacementId pour tout le monde.
-      if (!wantVideo) {
+      // Remplacement UNIQUEMENT si la vidéo est vraiment morte — un timeout
+      // proxy/yt-dlp ne doit pas 302 vers une autre piste (coupe mid-titre).
+      if (!wantVideo && looksUnavailable(detail)) {
         try {
           const replacement =
             getReplacementId(videoId) ||
@@ -2174,15 +2132,17 @@ export async function handleStreamUrl(req: Request, res: Response) {
       } catch (err) {
         console.warn('[stream-url] STREAM_UPSTREAM warm KO:', (err as Error).message);
       }
+      res.json({
+        url: `/api/stream/${videoId}${wantVideo ? '?type=video' : ''}`,
+        expiresAt: Date.now() + 3_600_000,
+        mimeType: wantVideo ? 'video/mp4' : 'audio/mp4',
+        kind: wantVideo ? 'video' : 'audio',
+        via: 'proxy',
+      });
+      return;
     }
-    res.json({
-      url: `/api/stream/${videoId}${wantVideo ? '?type=video' : ''}`,
-      expiresAt: Date.now() + 3_600_000,
-      mimeType: wantVideo ? 'video/mp4' : 'audio/mp4',
-      kind: wantVideo ? 'video' : 'audio',
-      via: 'proxy',
-    });
-    return;
+    // Relais maison configuré mais down : résoudre le format sur le VPS
+    // (sinon /url répond 30 ms sans jamais chauffer Innertube/proxy).
   }
 
   try {

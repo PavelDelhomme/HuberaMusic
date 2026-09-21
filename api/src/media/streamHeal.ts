@@ -14,12 +14,16 @@ const REPLACE_COOLDOWN_MS = 3 * 60_000;
 
 const HEAL_KINDS = new Set([
   'android.player.stall',
-  'android.player',
   'android.player.prefetch_miss',
-  'android.player.cold_next',
   'android.player.early_end',
   'android.player.load_skip',
   'android.player.load_recover',
+]);
+/** Hint UI à 2,5 s : ne PAS lancer ensure/replace (noie yt-dlp pendant le resolve live). */
+const FORMAT_ONLY_KINDS = new Set([
+  'android.player.prefetch_miss',
+  'android.player.load_recover',
+  'android.player.stall',
 ]);
 
 function extractTrackId(meta: unknown): string | null {
@@ -46,8 +50,10 @@ export function healTrackFromTelemetry(opts: {
   message?: string;
 }): void {
   const kind = String(opts.kind || '');
-  if (!HEAL_KINDS.has(kind) && !kind.startsWith('android.player')) return;
-  if (kind === 'android.player' && opts.level === 'info') return;
+  // Uniquement les kinds listés — plus de `android.player*` (cold_next à 2,5 s
+  // lançait ensure+replace et saturait yt-dlp pendant le resolve live).
+  if (!HEAL_KINDS.has(kind)) return;
+  if (opts.level === 'info') return;
   const id = extractTrackId(opts.meta);
   if (!id) return;
   const now = Date.now();
@@ -65,15 +71,21 @@ export function healTrackFromTelemetry(opts: {
   }
   console.log(`[stream-heal] re-warm ${id} kind=${kind}`);
   enqueueStreamWarm([id], opts.userId);
+
+  // Pendant une écoute / 1er stall : format only. ensure+replace noient yt-dlp
+  // (timeouts en cascade → toast « Serveur audio indisponible » + skip).
+  const formatOnly = FORMAT_ONLY_KINDS.has(kind);
+  if (formatOnly) {
+    bumpWarmPriority(id);
+    return;
+  }
   enqueueDiskWarm([id]);
 
-  // load_skip / stall (warn ou error) → tenter remplacement si la vidéo est morte
-  // ou si le CDN refuse en boucle (évite spinner / toast côté client).
+  // Remplacement seulement après un skip confirmé (titre vraiment mort).
   const wantReplace =
     kind === 'android.player.load_skip' ||
-    kind === 'android.player.stall' ||
-    kind === 'android.player.load_recover' ||
-    /unavailable|not available|private|removed|non 2xx|502|403/i.test(String(opts.message || ''));
+    kind === 'android.player.early_end' ||
+    /unavailable|VIDEO_UNAVAILABLE|private|removed/i.test(String(opts.message || ''));
 
   // Pré-télécharge le .m4a intégral (OAuth remux / proxies) avant la prochaine écoute.
   // Remplacement APRÈS ensure — sinon playable() × 6 saturaient getAudioFormat (stall Blue).

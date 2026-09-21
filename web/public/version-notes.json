@@ -2,6 +2,27 @@
   "updatedAt": "2026-09-21",
   "versions": [
     {
+      "version": "1.3.270",
+      "date": "2026-09-21",
+      "title": "Plus de coupure mid-titre ni de remplacement paroles",
+      "notes": [
+        "Un timeout proxy ne remplace plus le morceau par une autre vidéo (paroles / cover)",
+        "On ne change d’identifiant que si YouTube dit vraiment que la vidéo est morte",
+        "Les titres suivants restent le même flux, sans saut au milieu",
+        "Si le relais maison est coupé, on résout d’abord via Innertube (pas yt-dlp seul)"
+      ]
+    },
+    {
+      "version": "1.3.269",
+      "date": "2026-09-21",
+      "title": "Le titre en cours se résout, plus un toast puis skip",
+      "notes": [
+        "Chargement long : on retente le même titre (proxy frais), plus « Serveur audio temporairement indisponible » au bout de 2 s",
+        "Un 502 transitoire ne fait plus passer au suivant",
+        "Le serveur ne lance plus de téléchargement / remplacement pendant que tu attends le flux"
+      ]
+    },
+    {
       "version": "1.3.268",
       "date": "2026-09-21",
       "title": "Reprise du titre en cours, pas un saut au suivant",

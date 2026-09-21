@@ -262,6 +262,13 @@ export async function findReplacementId(
     for (const { t, s } of unique.slice(0, 6)) {
       // Ne pas proposer un id qui pointe déjà vers deadId (boucle).
       if (getReplacementId(t.id) === deadId) continue;
+      // Score < 90 = souvent lyrics / cover (MIL NOCHES → version paroles).
+      if (s < 90) {
+        console.log(
+          `[replacement] ignore score ${s} ${deadId} → ${t.id} « ${t.title} — ${artistLine(t)} »`,
+        );
+        continue;
+      }
       console.log(
         `[replacement] ${deadId} → ${t.id} (score ${s}) « ${t.title} — ${artistLine(t)} »`,
       );
@@ -292,7 +299,10 @@ export async function findReplacementId(
 
 /** Signature d'une erreur « vidéo réellement morte » (par opposition à un souci réseau). */
 export function looksUnavailable(message: string): boolean {
-  return /video unavailable|this video is unavailable|streaming data not available|private video|removed by the uploader|no longer available|has been removed|violating|copyright claim|members?.only|login[_ ]required|sign in to confirm you.re not a bot/i.test(
+  // NE PAS matcher « streaming data not available » / LOGIN_REQUIRED / bot :
+  // c’est le message générique getAudioFormat (timeout / proxy saturé),
+  // pas une vidéo morte — sinon on persiste un remplacement lyrics et on 302.
+  return /this video is unavailable|video unavailable|private video|removed by the uploader|no longer available|has been removed|violating youtube|copyright claim|members?.only/i.test(
     message,
   );
 }

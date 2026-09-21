@@ -263,7 +263,8 @@ class PlayerController(
             ?: PlaybackService.Holder.queue.getOrNull(PlaybackService.Holder.index)?.id
         if (!curId.isNullOrBlank() && curId.length == 11) {
             val base = streamUrl("_").substringBefore("/api/stream/")
-            if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
+            if (base.isNotBlank()) {
+                StreamPrefetcher.markStreamOk()
                 val upcoming = PlaybackService.Holder.queue
                     .drop(PlaybackService.Holder.index + 1)
                     .take(3)
@@ -2200,25 +2201,11 @@ class PlayerController(
                         "Hors ligne — reconnecte le Wi‑Fi ou les données"
                     PlaybackService.Holder.isWithinCallResumeGrace() ->
                         "Reprise du flux après l’appel…"
-                    StreamPrefetcher.isStreamDown() ->
-                        "Serveur audio temporairement indisponible"
                     else -> "Chargement du flux…"
                 }
                 context.toastMain(msg, Toast.LENGTH_SHORT)
-                // Signal fort : titre lent (pas rate-limité) — digéré dans le mail 12h30
-                runCatching {
-                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                        level = "warn",
-                        kind = "android.player.cold_next",
-                        message = "buffering >2.5s id=$trackId",
-                        meta = mapOf(
-                            "trackId" to trackId,
-                            "positionMs" to (_state.value.positionMs),
-                            "title" to (_state.value.track?.title),
-                        ),
-                        force = true,
-                    )
-                }
+                // Pas de telemetry heal ici : cold_next à 2,5 s lançait ensure+replace
+                // et saturait yt-dlp pendant que le titre courant essayait de résoudre.
             }
             delay(5_000L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
@@ -2242,8 +2229,7 @@ class PlayerController(
             )
             if (_state.value.buffering &&
                 _state.value.track?.id == trackId &&
-                ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
-                !StreamPrefetcher.isStreamDown()
+                ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
             ) {
                 if (PlaybackService.Holder.isStreamRecovering(trackId)) {
                     AppLog.i(
@@ -2252,14 +2238,15 @@ class PlayerController(
                     )
                     return@launch
                 }
-                AppLog.i("PlayerController", "buffer stuck → rebind (pas de skip) id=$trackId cold=$coldStart")
+                AppLog.i("PlayerController", "buffer stuck → rebind forceFresh id=$trackId cold=$coldStart")
+                StreamPrefetcher.markStreamOk()
                 val title = _state.value.track?.title
                 val artist = _state.value.track?.artistLine()
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
                         level = "warn",
                         kind = "android.player.load_recover",
-                        message = "buffer stuck → rebind id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
+                        message = "buffer stuck → rebind forceFresh id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
                         meta = mapOf(
                             "trackId" to trackId,
                             "title" to title,
@@ -2269,19 +2256,18 @@ class PlayerController(
                             "action" to "rebind",
                             "reason" to "buffer_stuck",
                         ),
-                        force = true,
+                        force = false,
                     )
                 }
-                // 1) Soft rebind (pas de retry=N → ne pas invalider le format chaud serveur)
+                // 1) Rebind + forceFresh (retry=1) : URL/proxy neuves, pas le format mort en cache
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck",
                         forcePlay = true,
-                        retryN = 0,
-                        wipeCache = false,
+                        retryN = 1,
+                        wipeCache = true,
                     )
                 }
-                // 2) Demande warm serveur immédiat
                 runCatching {
                     val base = PlaybackService.Holder.resolvedApiBase()
                     if (base.isNotBlank() && trackId.length == 11) {
@@ -2291,45 +2277,34 @@ class PlayerController(
                 delay(18_000L)
                 if (!_state.value.buffering || _state.value.track?.id != trackId) return@launch
                 if (PlaybackService.Holder.isStreamRecovering(trackId)) return@launch
-                AppLog.w("PlayerController", "buffer stuck → 2e rebind soft id=$trackId")
+                AppLog.w("PlayerController", "buffer stuck → 2e rebind forceFresh id=$trackId")
+                StreamPrefetcher.markStreamOk()
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck-2",
                         forcePlay = true,
-                        retryN = 0,
-                        wipeCache = coldStart,
+                        retryN = 2,
+                        wipeCache = true,
                     )
                 }
                 delay(28_000L)
-                // Dernier recours : RÉSOUDRE (replace ou rebind+disque) — jamais skip auto
+                // Dernier recours : encore le MÊME titre (forceFresh), jamais skip auto
                 if (_state.value.buffering &&
                     _state.value.track?.id == trackId &&
-                    ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
-                    !StreamPrefetcher.isStreamDown() &&
-                    !PlaybackService.Holder.isStreamRecovering(trackId)
+                    ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
                 ) {
                     AppLog.w(
                         "PlayerController",
-                        "buffer stuck → resolve (pas de skip) id=$trackId",
+                        "buffer stuck → rebind keep (pas de skip) id=$trackId",
                     )
+                    StreamPrefetcher.markStreamOk()
                     runCatching {
-                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                            level = "warn",
-                            kind = "android.player.load_recover",
-                            message = "buffer stuck → resolve keep id=$trackId",
-                            meta = mapOf(
-                                "trackId" to trackId,
-                                "title" to title,
-                                "artist" to artist,
-                                "positionMs" to _state.value.positionMs,
-                                "action" to "resolve_keep",
-                                "reason" to "buffer_stuck_last_resort",
-                            ),
-                            force = false,
+                        PlaybackService.Holder.service?.rebindCurrentStream(
+                            reason = "ui-buffer-stuck-last",
+                            forcePlay = true,
+                            retryN = 3,
+                            wipeCache = true,
                         )
-                    }
-                    runCatching {
-                        PlaybackService.Holder.service?.resolveCurrentKeep("ui-buffer-stuck-last")
                     }
                 }
             }

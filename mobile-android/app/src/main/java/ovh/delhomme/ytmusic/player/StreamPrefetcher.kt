@@ -335,7 +335,7 @@ object StreamPrefetcher {
         upcomingIds: List<String> = emptyList(),
         force: Boolean = false,
     ) {
-        if (currentId.length != 11 || isStreamDown() || isLocalOffline(currentId)) return
+        if (currentId.length != 11 || isLocalOffline(currentId)) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val reallyWarm = hasPlayableHead(currentId) && wasHeadReadyRecently(currentId, withinMs = 45_000L)
         if (!force && reallyWarm) {
@@ -444,8 +444,12 @@ object StreamPrefetcher {
         }
     }
 
-    private fun warmBatch(baseApi: String, trackIds: List<String>) {
-        if (isStreamDown()) return
+    private fun warmBatch(
+        baseApi: String,
+        trackIds: List<String>,
+        ignoreStreamDown: Boolean = false,
+    ) {
+        if (!ignoreStreamDown && isStreamDown()) return
         val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(MAX_WARM)
         if (ids.isEmpty()) return
         val key = "warm:${ids.sorted().joinToString(",")}"
@@ -491,8 +495,9 @@ object StreamPrefetcher {
 
     /** Chauffe le format API sans prefetch Exo (Exo charge le titre courant). */
     fun warmTrackFormatOnly(baseApi: String, trackId: String) {
-        if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
-        warmBatch(baseApi, listOf(trackId))
+        if (trackId.length != 11 || isLocalOffline(trackId)) return
+        // Même si isStreamDown() : le titre courant DOIT encore résoudre.
+        warmBatch(baseApi, listOf(trackId), ignoreStreamDown = true)
     }
 
     fun warmTrack(baseApi: String, trackId: String) {
