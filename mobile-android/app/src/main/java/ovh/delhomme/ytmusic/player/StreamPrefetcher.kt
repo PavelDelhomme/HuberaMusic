@@ -282,6 +282,18 @@ object StreamPrefetcher {
         }
     }
 
+    fun clearHeadReady(trackId: String) {
+        if (trackId.isBlank()) return
+        synchronized(recent) { recent.remove("head:$trackId") }
+    }
+
+    /** Vraie tête jouable — 180 Ko ≈ 1 s, trop peu pour une reprise. */
+    fun hasPlayableHead(trackId: String, minBytes: Long = 700L * 1024L): Boolean {
+        if (trackId.length != 11) return false
+        if (isLocalOffline(trackId)) return true
+        return PlayerCache.cachedBytes(YtMusicApp.instance, trackId, HEAD_NEXT_WIFI) >= minBytes
+    }
+
     /**
      * Prépare Aléatoire : #0 format + tête Exo **bloquants** (1er son immédiat),
      * #1–2 en fire-and-forget pour ne pas retarder le play (skip bientôt chaud).
@@ -321,11 +333,12 @@ object StreamPrefetcher {
         baseApi: String,
         currentId: String,
         upcomingIds: List<String> = emptyList(),
+        force: Boolean = false,
     ) {
         if (currentId.length != 11 || isStreamDown() || isLocalOffline(currentId)) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
-        if (wasHeadReadyRecently(currentId, withinMs = 45_000L)) {
-            // Déjà chaud — ne pas re-saturer getAudioFormat ; juste les suivants.
+        val reallyWarm = hasPlayableHead(currentId) && wasHeadReadyRecently(currentId, withinMs = 45_000L)
+        if (!force && reallyWarm) {
             upcomingIds.filter { it.length == 11 && it != currentId && !isLocalOffline(it) }
                 .take(2)
                 .forEach { warmTrackFormatOnly(baseApi, it) }
@@ -333,8 +346,12 @@ object StreamPrefetcher {
         }
         val base = baseApi.trimEnd('/')
         quietPrefetch(500L)
-        // Coupe le bruit biblio mais préserve un éventuel +1 déjà en cache.
-        cancelIdle(preserveNext = true)
+        // Restore à froid : le courant d’abord (ne pas saturer +1, ça accélère le skip).
+        cancelIdle(preserveNext = !force)
+        if (force && !hasPlayableHead(currentId, minBytes = 400L * 1024L)) {
+            clearHeadReady(currentId)
+            runCatching { PlayerCache.invalidate(YtMusicApp.instance, currentId) }
+        }
         runCatching {
             YtMusicApp.instance.container.downloadManager.cancelOpportunistic()
         }
@@ -342,7 +359,9 @@ object StreamPrefetcher {
         // 1) Format sync puis tête ~10–12 s (priorité absolue)
         warmCurrentBlocking(base, currentId, timeoutMs = 3_200L, wait = true)
         prefetchStartHeadBlocking(app, base, currentId, HEAD_NEXT_WIFI, timeoutMs = 4_500L)
-        markHeadReady(currentId)
+        if (hasPlayableHead(currentId, minBytes = 400L * 1024L)) {
+            markHeadReady(currentId)
+        }
         // 2) +1 prioritaire (warm wait + tête) — transition sans BUFFERING
         val next = upcomingIds
             .distinct()

@@ -93,6 +93,8 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var prevPlayingDurationMs: Long = 0L
     @Volatile private var prevPlayingBufferedMs: Long = 0L
     @Volatile private var earlyEndRetries: Int = 0
+    /** Reprises pos≈0 (app relancée avant le 1er son) — skip seulement après vrais retries. */
+    @Volatile private var endedNeverPlayedRetries: Int = 0
     /** Titre qu’on est en train de reprendre après une fin trop tôt — ne pas reset le compteur. */
     @Volatile private var recoveringTrackId: String = ""
     @Volatile private var serviceFillInFlight: Boolean = false
@@ -270,14 +272,17 @@ class PlaybackService : MediaSessionService() {
             // Cold start (pos≈0) : laisser plus de temps au 1er octet (Blackview / titres GIMS cold).
             // Un titre absent du cache serveur demande une résolution yt-dlp (jusqu’à ~35 s) :
             // rebinder à 11 s relançait la requête sans jamais lui laisser aboutir.
-            val headWarmed = StreamPrefetcher.wasHeadReadyRecently(curId, withinMs = 90_000L)
+            val headWarmed = StreamPrefetcher.wasHeadReadyRecently(curId, withinMs = 90_000L) &&
+                StreamPrefetcher.hasPlayableHead(curId)
+            val neverHeard = pos <= 1_000L && maxPlayingPosMs <= 1_000L
             val nextId = Holder.queue.getOrNull(exo.currentMediaItemIndex + 1)?.id
-            val nextHot = !nextId.isNullOrBlank() &&
+            val nextHot = !neverHeard && !nextId.isNullOrBlank() &&
                 StreamPrefetcher.wasHeadReadyRecently(nextId, withinMs = 120_000L)
-            // 42 s de « Chargement » : trop long. Si +1 est chaud, on lâche le titre mort plus tôt.
+            // Titre jamais écouté (reprise app) : ne pas raccourcir parce que +1 est chaud.
             val coldGraceMs = when {
+                neverHeard -> 22_000L
                 headWarmed -> 12_000L
-                nextHot -> 8_000L
+                nextHot -> 12_000L
                 else -> 16_000L
             }
             if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < coldGraceMs) {
@@ -312,7 +317,8 @@ class PlaybackService : MediaSessionService() {
                 samePos &&
                     (
                         // Cold : laisser plusieurs rebinds (VPS yt-dlp 30–50 s) avant skip.
-                        (coldStuck && stallSessionCount >= 5) ||
+                        (coldStuck && neverHeard && stallSessionCount >= 7) ||
+                            (coldStuck && !neverHeard && stallSessionCount >= 5) ||
                             (!coldStuck && stallSessionCount >= 4)
                     )
             if (stuckHard) {
@@ -349,14 +355,16 @@ class PlaybackService : MediaSessionService() {
             }
             // Escalade = URL fraîche + proxy, JAMAIS seek(0) (utilisateur entendait reprise au début).
             val escalate =
-                stallRebindCount >= 2 ||
+                (neverHeard && stallSessionCount >= 1) ||
+                    stallRebindCount >= 2 ||
                     stallSessionCount >= 2 ||
                     (waited >= 10_000L && posFrozenFor >= 6_000L)
             if (escalate) {
                 // wipeCache après plusieurs escalate (cache / atom MP4 corrompu, code 3003).
-                // Cold start : wipe dès le 2ᵉ escalate (tête poison / 502).
+                // Reprise jamais écoutée : wipe dès le 1er escalate (URL googlevideo périmée).
                 val wipe =
-                    stallSessionCount >= 5 ||
+                    neverHeard ||
+                        stallSessionCount >= 5 ||
                         stallRebindCount >= 6 ||
                         (pos <= 1_000L && stallSessionCount >= 4)
                 AppLog.w(
@@ -697,6 +705,7 @@ class PlaybackService : MediaSessionService() {
                     Holder.streamRecoveringId = ""
                 }
                 StreamPrefetcher.markStreamOk()
+                endedNeverPlayedRetries = 0
                 cancelStallWatch()
                 // Remplace le placeholder FGS par la vraie notif média (titre + boutons).
                 ensureCurrentItemMetadata()
@@ -2066,6 +2075,23 @@ class PlaybackService : MediaSessionService() {
                 "STATE_ENDED peut-être tronqué — 1 retry URL fraîche id=$curId pos=$pos exoDur=$exoDur catalog=$catalog",
             )
             maybeRecoverEarlyEnd(exo, curId, pos, exoDur, lastPlayingBufferedMs, fromStateEnded = true)
+            return
+        }
+        // Relance app sur un titre jamais joué : ENDED à 0 ≠ fin réelle → rebind, pas skip.
+        val neverPlayedEnd = pos < 8_000L && (catalog == null || catalog >= 45_000L || exoDur < 8_000L)
+        if (curId.isNotBlank() && neverPlayedEnd && endedNeverPlayedRetries < 2) {
+            endedNeverPlayedRetries += 1
+            AppLog.w(
+                "PlaybackService",
+                "STATE_ENDED never-played — rebind courant id=$curId pos=$pos try=$endedNeverPlayedRetries",
+            )
+            rebindCurrentStream(
+                reason = "ended-never-played",
+                forcePlay = true,
+                seekPos = 0L,
+                retryN = endedNeverPlayedRetries,
+                wipeCache = true,
+            )
             return
         }
         recoveringTrackId = ""

@@ -615,7 +615,20 @@ class PlayerController(
             if (track != null) {
                 val pos = p.currentPosition.coerceAtLeast(0L)
                 runCatching {
-                    val item = mediaItemFor(track, streamUrl, queueTitle)
+                    val bust = System.currentTimeMillis()
+                    val item = mediaItemFor(
+                        track,
+                        { tid ->
+                            val u = streamUrl(tid)
+                            val sep = if (u.contains('?')) '&' else '?'
+                            "$u${sep}r=$bust"
+                        },
+                        queueTitle,
+                    )
+                    if (pos < 8_000L) {
+                        PlayerCache.invalidate(context, track.id)
+                        StreamPrefetcher.clearHeadReady(track.id)
+                    }
                     p.replaceMediaItem(p.currentMediaItemIndex, item)
                     p.seekTo(p.currentMediaItemIndex, pos)
                     p.prepare()
@@ -1279,7 +1292,12 @@ class PlayerController(
                 val upcoming = tracks.drop(idx + 1).map { it.id }
                 scope.launch(Dispatchers.IO) {
                     // Priorité : ~10 s du titre restauré avant le reste (évite BUFFERING / skip Samsung).
-                    StreamPrefetcher.prepareRestoredCurrent(base, id, upcoming)
+                    StreamPrefetcher.prepareRestoredCurrent(
+                        base,
+                        id,
+                        upcoming,
+                        force = positionMs < 8_000L,
+                    )
                 }
             }
             return
@@ -1973,38 +1991,28 @@ class PlayerController(
         val offlineReady = !currentId.isNullOrBlank() && runCatching {
             YtMusicApp.instance.container.offlineStore.has(currentId)
         }.getOrDefault(false)
+        val coldResume = startPositionMs < 8_000L && !offlineReady
         val cacheReady = !currentId.isNullOrBlank() &&
-            PlayerCache.cachedBytes(context, currentId, StreamPrefetcher.HEAD_3S) >= 180L * 1024L
+            StreamPrefetcher.hasPlayableHead(currentId)
         val headReady = !currentId.isNullOrBlank() && (
-            StreamPrefetcher.wasHeadReadyRecently(currentId, withinMs = 60_000L) ||
-                offlineReady ||
-                cacheReady
+            offlineReady ||
+                (cacheReady && StreamPrefetcher.wasHeadReadyRecently(currentId, withinMs = 60_000L) && !coldResume)
             )
         if (headReady && !currentId.isNullOrBlank()) {
             StreamPrefetcher.markHeadReady(currentId)
         }
         // Si tête déjà là : quiet court. Sinon kick warm IO immédiat (sans bloquer le UI).
         StreamPrefetcher.quietPrefetch(if (headReady) 60L else 200L)
-        if (!currentId.isNullOrBlank() && !headReady) {
+        if (!currentId.isNullOrBlank() && (!headReady || coldResume)) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
-            if (!autoplay) {
-                scope.launch(Dispatchers.IO) {
-                    StreamPrefetcher.prepareRestoredCurrent(
-                        base,
-                        currentId,
-                        window.drop(idx + 1).map { it.id },
-                    )
-                }
-            } else {
-                // Play user : format wait + tête en priorité (thread dédié, Exo en parallèle).
-                scope.launch(Dispatchers.IO) {
-                    StreamPrefetcher.warmCurrentBlocking(base, currentId, timeoutMs = 1_800L, wait = true)
-                    StreamPrefetcher.prefetchStartHead(
-                        base,
-                        currentId,
-                        StreamPrefetcher.HEAD_3S,
-                        priorityNext = true,
-                    )
+            scope.launch(Dispatchers.IO) {
+                StreamPrefetcher.prepareRestoredCurrent(
+                    base,
+                    currentId,
+                    window.drop(idx + 1).map { it.id },
+                    force = coldResume,
+                )
+                if (autoplay) {
                     window.drop(idx + 1).take(2).forEachIndexed { i, t ->
                         StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
                     }

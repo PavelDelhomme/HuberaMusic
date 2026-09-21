@@ -1,6 +1,16 @@
 {
-  "updatedAt": "2026-09-20",
+  "updatedAt": "2026-09-21",
   "versions": [
+    {
+      "version": "1.3.268",
+      "date": "2026-09-21",
+      "title": "Reprise du titre en cours, pas un saut au suivant",
+      "notes": [
+        "Si tu fermes l’app pendant le premier chargement, à la réouverture c’est le même titre qui est rechauffé (URL + flux)",
+        "On ne passe plus au suivant juste parce que le suivant était déjà en cache",
+        "Fin à 0 s sur un titre jamais écouté = nouvel essai, pas un skip"
+      ]
+    },
     {
       "version": "1.3.267",
       "date": "2026-09-20",
