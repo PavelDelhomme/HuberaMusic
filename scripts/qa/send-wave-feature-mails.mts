@@ -151,7 +151,7 @@ for (const f of features) {
         ? 'SKIP'
         : 'OK';
 
-  const subject = `[PLM] ${overall} · ${f.title} — p+${version}`;
+  const subject = `[Hubera Music] ${overall} · ${f.title} — p+${version}`;
 
   const text = `PLM — Validation fonctionnalité
 Statut: ${overall}
@@ -196,7 +196,7 @@ Note session: les scripts QA ADB interactifs ont été STOPPÉS car ils perturba
 
 // Mail synthèse
 {
-  const subject = `[PLM] Synthèse validation vague vidéo/file/batterie — p+${version}`;
+  const subject = `[Hubera Music] Synthèse validation vague vidéo/file/batterie — p+${version}`;
   const rows = sent
     .map((s) => {
       const f = features.find((x) => x.id === s.id)!;

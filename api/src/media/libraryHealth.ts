@@ -21,7 +21,7 @@ import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getTrackPayload } from '../library/db.js';
-import { sendMail } from '../platform/mail.js';
+import { mailBrand, sendMail } from '../platform/mail.js';
 import { getAudioFormat } from '../youtube/yt.js';
 import { findReplacementId, getReplacementId, looksUnavailable } from './trackReplacement.js';
 import { msSinceLastStream } from './stream.js';
@@ -313,7 +313,7 @@ export function buildCycleReport(): CycleReport | null {
   </div>`;
 
   return {
-    subject: `[PLM] Balayage bibliothèque — cycle nº${cycle.cycle_no} terminé`,
+    subject: `[${mailBrand()}] Balayage bibliothèque — cycle nº${cycle.cycle_no} terminé`,
     text,
     html,
     done,

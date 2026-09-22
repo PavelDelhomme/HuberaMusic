@@ -283,6 +283,13 @@ data class SaveLyricsBody(
 )
 
 @JsonClass(generateAdapter = false)
+data class LyricsFeedbackBody(
+    val vote: String,
+    val title: String? = null,
+    val artist: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class LyricsResponse(
     val lyrics: String? = null,
     val timed: List<TimedLyricLine>? = null,
@@ -667,6 +674,12 @@ interface YtMusicApi {
     suspend fun saveLyrics(
         @Path("id") id: String,
         @Body body: SaveLyricsBody,
+    ): LyricsResponse
+
+    @POST("api/track/{id}/lyrics/feedback")
+    suspend fun lyricsFeedback(
+        @Path("id") id: String,
+        @Body body: LyricsFeedbackBody,
     ): LyricsResponse
 
     @GET("api/lyric-offsets")

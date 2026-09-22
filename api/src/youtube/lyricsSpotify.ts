@@ -245,11 +245,22 @@ export async function fetchSpotifyLyrics(
     const color = await fetchSpotifyColorLyrics(hit.spotifyId).catch(() => null);
     if (color) return { lyrics: color, source: 'spotify', url: hit.url };
   }
-  const [lrc, ovh] = await Promise.all([
+  const [lrc, ovh, lrcSearch] = await Promise.all([
     fetchLrclibExact(hit).catch(() => null),
     fetchOvhExact(hit).catch(() => null),
+    fetchJson(
+      `https://lrclib.net/api/search?artist_name=${encodeURIComponent(hit.artist)}&track_name=${encodeURIComponent(hit.title)}`,
+      5500,
+    ).catch(() => null),
   ]);
   if (lrc) return { lyrics: lrc, source: 'lrclib', url: hit.url };
+  const searchHits = Array.isArray(lrcSearch) ? lrcSearch : [];
+  for (const row of searchHits as Array<{ plainLyrics?: string; syncedLyrics?: string; artistName?: string; trackName?: string }>) {
+    const plain = String(row.plainLyrics || row.syncedLyrics || '').trim();
+    if (looksLikeLyrics(plain) && accept(artist, title, String(row.artistName || hit.artist), String(row.trackName || hit.title))) {
+      return { lyrics: plain, source: 'lrclib', url: hit.url };
+    }
+  }
   if (ovh) return { lyrics: ovh, source: 'lyrics.ovh', url: hit.url };
   return null;
 }

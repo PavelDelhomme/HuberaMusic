@@ -126,7 +126,7 @@ function historiqueTitre(trackId: string, autour?: number, maxRequetes = 60): st
   if (meta.durationSeconds) {
     lignes.push(`Durée connue : ${Math.floor(meta.durationSeconds / 60)} min ${meta.durationSeconds % 60} s`);
   }
-  lignes.push(`Écoute PLM   : ${appUrl()}/watch/${trackId}`);
+  lignes.push(`Écoute Hubera Music : ${appUrl()}/watch/${trackId}`);
   lignes.push(`YouTube      : https://music.youtube.com/watch?v=${trackId}`);
   lignes.push(`Flux serveur : ${appUrl()}/api/stream/${trackId}`);
 
@@ -462,7 +462,7 @@ export function buildIncidentReport(opts: {
   const fin = events.length ? Math.max(...events.map((e) => e.created_at)) : now;
 
   const enTete = [
-    'RAPPORT D’INCIDENT — PLM',
+    'RAPPORT D’INCIDENT — Hubera Music',
     trait('═'),
     opts.titre,
     '',
@@ -690,7 +690,7 @@ function htmlDuRapport(opts: {
 </style>
 </head>
 <body>
-  <h1>Rapport d’incident — PLM</h1>
+  <h1>Rapport d’incident — Hubera Music</h1>
   <p class="muted">${escHtml(opts.titre)}</p>
   <div class="meta">
     <p><strong>Établi le</strong> ${escHtml(horodate(opts.now))} · <strong>${escHtml(opts.env)}</strong></p>

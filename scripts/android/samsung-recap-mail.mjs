@@ -49,7 +49,7 @@ const to =
   process.env.BATTERY_REPORT_TO ||
   '';
 
-const subject = `[PLM] Samsung DEV marathon media — ${ok} — ${sum.passed || 0}/${sum.total || 0}`;
+const subject = `[Hubera Music] Samsung DEV marathon media — ${ok} — ${sum.passed || 0}/${sum.total || 0}`;
 
 const text = `Récap test Samsung uniquement (SM-G990B2 / R5CT7263YJL)
 

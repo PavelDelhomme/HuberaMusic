@@ -146,10 +146,19 @@ export function invalidateAudioFormat(videoId: string) {
 
 /** Format encore utilisable en mémoire (évite d’attendre yt-dlp / disque pour rien). */
 export function hasCachedAudioFormat(videoId: string, userId?: string): boolean {
+  return peekCachedAudioFormat(videoId, userId) != null;
+}
+
+/** Lecture synchrone du cache — jamais de getAudioFormat / deadline. */
+export function peekCachedAudioFormat(
+  videoId: string,
+  userId?: string,
+): AudioFormat | null {
   const baseKey = audioCacheKey(videoId);
   const key = userId ? `${baseKey}:u:${userId.slice(0, 8)}` : baseKey;
   const cached = audioFormatCache.get(key) || audioFormatCache.get(baseKey);
-  return Boolean(cached && cached.expiresAt > Date.now() + 90_000);
+  if (cached && cached.expiresAt > Date.now() + 90_000) return cached;
+  return null;
 }
 
 export function clearAudioFormatCache() {
@@ -2038,7 +2047,7 @@ async function parseCaptionTrack(
   };
 }
 
-export type LyricsHints = { title?: string; artist?: string };
+export type LyricsHints = { title?: string; artist?: string; forceRefetch?: boolean };
 
 function lyricsCacheHit(videoId: string, title: string, artist: string): LyricsResult | null {
   const cached = lyricsCache.get(lyricsCacheKey(videoId, title, artist));
@@ -2056,13 +2065,21 @@ function lyricsCacheHit(videoId: string, title: string, artist: string): LyricsR
 export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<LyricsResult> {
   const hintTitle = String(hints?.title || '').trim();
   const hintArtist = String(hints?.artist || '').trim();
-  if (hintTitle) {
+  const forceRefetch = Boolean(hints?.forceRefetch);
+  if (forceRefetch) {
+    forgetLyricsCache(videoId);
+  }
+  if (hintTitle && !forceRefetch) {
     const cached = lyricsCacheHit(videoId, hintTitle, hintArtist);
     if (cached) return cached;
   }
   try {
+    if (forceRefetch) {
+      const { deleteSharedLyrics } = await import('../library/sharedCatalog.js');
+      deleteSharedLyrics(videoId);
+    }
     const { getSharedLyrics } = await import('../library/sharedCatalog.js');
-    const shared = getSharedLyrics(videoId);
+    const shared = forceRefetch ? null : getSharedLyrics(videoId);
     if (shared?.lyrics) {
       const result: LyricsResult = {
         lyrics: shared.lyrics,
@@ -2072,7 +2089,7 @@ export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<L
       putLyricsCache(videoId, result, hintTitle, hintArtist);
       return result;
     }
-    if (!shared?.lyrics && (hintTitle || hintArtist)) {
+    if (!forceRefetch && !shared?.lyrics && (hintTitle || hintArtist)) {
       const { findSharedLyricsByMeta } = await import('../library/sharedCatalog.js');
       const byMeta = findSharedLyricsByMeta(hintTitle, hintArtist);
       if (byMeta?.lyrics) {
@@ -2290,6 +2307,48 @@ export function saveUserLyrics(
     .then((m) => m.putSharedLyrics(videoId, result, title, artist))
     .catch(() => {});
   return result;
+}
+
+export async function submitLyricsFeedback(
+  videoId: string,
+  vote: 'correct' | 'wrong',
+  hints?: LyricsHints,
+): Promise<LyricsResult & { vote: string; refreshed: boolean }> {
+  const title = String(hints?.title || '').trim();
+  const artist = String(hints?.artist || '').trim();
+  if (vote === 'wrong') {
+    forgetLyricsCache(videoId);
+    try {
+      const { deleteSharedLyrics } = await import('../library/sharedCatalog.js');
+      deleteSharedLyrics(videoId);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const { forgetLyricsHit } = await import('./lyricsWeb.js');
+      forgetLyricsHit(artist, title);
+    } catch {
+      /* ignore */
+    }
+    const next = await getLyrics(videoId, { title, artist, forceRefetch: true });
+    return { ...next, vote, refreshed: true };
+  }
+  const cur = await getLyrics(videoId, { title, artist });
+  if (cur.lyrics) {
+    try {
+      const { putSharedLyrics } = await import('../library/sharedCatalog.js');
+      putSharedLyrics(videoId, cur, title, artist);
+    } catch {
+      /* ignore */
+    }
+    try {
+      const { rememberLyricsHit } = await import('./lyricsWeb.js');
+      rememberLyricsHit(artist, title, `shared:${videoId}`, cur.source || 'user');
+    } catch {
+      /* ignore */
+    }
+  }
+  return { ...cur, vote, refreshed: false };
 }
 
 export async function getArtist(artistId: string): Promise<{
@@ -2901,8 +2960,8 @@ export async function getAudioFormat(
       const signed = await getSignedStreamYT(opts?.userId).catch(() => null);
       const innertube = signed || (await getYT());
       const clients = signed
-        ? (['MWEB', 'TV', 'ANDROID'] as const)
-        : (['TV', 'IOS', 'WEB_EMBEDDED', 'MWEB'] as const);
+        ? (['ANDROID', 'IOS', 'TV'] as const)
+        : (['ANDROID', 'IOS', 'TV', 'WEB_EMBEDDED'] as const);
       const ms = signed ? 9_000 : 5_500;
       const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
         const format = await Promise.race([
@@ -2917,6 +2976,10 @@ export async function getAudioFormat(
         ]);
         const url = format.url || (await format.decipher(innertube.session.player));
         if (!url) throw new Error('empty stream url');
+        const mime = String(format.mime_type || '');
+        if (/dash/i.test(mime) || /ftypdash/i.test(mime)) {
+          throw new Error(`innertube ${client} DASH`);
+        }
         return {
           url,
           mimeType: format.mime_type,

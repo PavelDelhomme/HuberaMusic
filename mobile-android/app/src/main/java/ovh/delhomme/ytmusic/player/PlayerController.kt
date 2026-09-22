@@ -1588,7 +1588,7 @@ class PlayerController(
             runCatching {
                 YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
                     queue.drop(idx + 1),
-                    limit = 1,
+                    limit = 3,
                 )
             }
         }
@@ -2038,7 +2038,7 @@ class PlayerController(
                     runCatching {
                         YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
                             window.drop(idx + 1),
-                            limit = 1,
+                            limit = 3,
                         )
                     }
                 }
@@ -2238,7 +2238,7 @@ class PlayerController(
                     )
                     return@launch
                 }
-                AppLog.i("PlayerController", "buffer stuck → rebind forceFresh id=$trackId cold=$coldStart")
+                AppLog.i("PlayerController", "buffer stuck → rebind keepCache id=$trackId cold=$coldStart")
                 StreamPrefetcher.markStreamOk()
                 val title = _state.value.track?.title
                 val artist = _state.value.track?.artistLine()
@@ -2246,7 +2246,7 @@ class PlayerController(
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
                         level = "warn",
                         kind = "android.player.load_recover",
-                        message = "buffer stuck → rebind forceFresh id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
+                        message = "buffer stuck → rebind keepCache id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
                         meta = mapOf(
                             "trackId" to trackId,
                             "title" to title,
@@ -2259,13 +2259,13 @@ class PlayerController(
                         force = false,
                     )
                 }
-                // 1) Rebind + forceFresh (retry=1) : URL/proxy neuves, pas le format mort en cache
+                // 1) Rebind sans wipe : garder les octets déjà reçus, URL neuve seulement.
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck",
                         forcePlay = true,
-                        retryN = 1,
-                        wipeCache = true,
+                        retryN = 0,
+                        wipeCache = false,
                     )
                 }
                 runCatching {

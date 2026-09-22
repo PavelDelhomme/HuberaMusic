@@ -3190,6 +3190,8 @@ private fun InlineSyncedLyrics(
     var pasteOpen by remember(track.id) { mutableStateOf(false) }
     var pasteDraft by remember(track.id) { mutableStateOf("") }
     var pasteSaving by remember(track.id) { mutableStateOf(false) }
+    var voteBusy by remember(track.id) { mutableStateOf(false) }
+    var voteHint by remember(track.id) { mutableStateOf<String?>(null) }
     val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v1") }
     val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v1") }
     var userOffsetMs by remember(track.id) {
@@ -3456,6 +3458,86 @@ private fun InlineSyncedLyrics(
                     Text("+0,25", style = MaterialTheme.typography.labelSmall)
                 }
             }
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                onClick = {
+                    if (voteBusy) return@TextButton
+                    voteBusy = true
+                    voteHint = null
+                    scope.launch {
+                        runCatching {
+                            container.api.lyricsFeedback(
+                                track.id,
+                                ovh.delhomme.ytmusic.data.LyricsFeedbackBody(
+                                    vote = "correct",
+                                    title = track.title,
+                                    artist = track.artistLine().takeIf { it != "Artiste" },
+                                ),
+                            )
+                        }.onSuccess {
+                            voteHint = "Paroles confirmées pour tout le monde"
+                            Toast.makeText(context, voteHint, Toast.LENGTH_SHORT).show()
+                        }.onFailure {
+                            voteHint = "Vote impossible"
+                        }
+                        voteBusy = false
+                    }
+                },
+                enabled = !voteBusy,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            ) {
+                Text("Bonnes paroles", style = MaterialTheme.typography.labelSmall, color = Color(0xFF86EFAC))
+            }
+            TextButton(
+                onClick = {
+                    if (voteBusy) return@TextButton
+                    voteBusy = true
+                    voteHint = "Recherche de nouvelles paroles…"
+                    scope.launch {
+                        runCatching {
+                            container.api.lyricsFeedback(
+                                track.id,
+                                ovh.delhomme.ytmusic.data.LyricsFeedbackBody(
+                                    vote = "wrong",
+                                    title = track.title,
+                                    artist = track.artistLine().takeIf { it != "Artiste" },
+                                ),
+                            )
+                        }.onSuccess { r ->
+                            lyricsReloadToken += 1
+                            voteHint = if (!r.lyrics.isNullOrBlank()) {
+                                "Nouvelles paroles (tous les utilisateurs)"
+                            } else {
+                                "Aucune meilleure source"
+                            }
+                            Toast.makeText(context, voteHint, Toast.LENGTH_SHORT).show()
+                        }.onFailure {
+                            voteHint = "Recherche impossible"
+                        }
+                        voteBusy = false
+                    }
+                },
+                enabled = !voteBusy,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            ) {
+                Text("Mauvaises paroles", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFCD34D))
+            }
+        }
+        if (!voteHint.isNullOrBlank()) {
+            Text(
+                voteHint!!,
+                color = PlayerMuted,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                textAlign = TextAlign.Center,
+            )
         }
         when {
             loading -> Text(

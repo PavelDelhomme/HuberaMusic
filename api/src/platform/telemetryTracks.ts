@@ -100,7 +100,7 @@ async function resolveOembed(id: string): Promise<{ title?: string; artist?: str
     )}&format=json`;
     const r = await fetch(oembed, {
       signal: AbortSignal.timeout(5_000),
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PLM/1.0)' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HuberaMusic/1.0)' },
     });
     if (!r.ok) return null;
     const j = (await r.json()) as { title?: string; author_name?: string };
@@ -205,7 +205,7 @@ export function formatTracksText(tracks: ResolvedTrack[]): string {
       return [
         `${i + 1}. ${t.title}${who}`,
         `   id=${t.id}`,
-        `   PLM : ${t.watchUrl}`,
+        `   Hubera Music : ${t.watchUrl}`,
         `   YTM : ${t.ytUrl}`,
         `   stream : ${t.streamUrl}`,
       ].join('\n');
@@ -223,7 +223,7 @@ export function formatTracksHtml(tracks: ResolvedTrack[]): string {
       return `<li style="margin:0 0 12px">
   <strong>${esc(t.title)}</strong>${who}<br/>
   <code style="font-size:12px">${esc(t.id)}</code><br/>
-  <a href="${esc(t.watchUrl)}">Ouvrir dans PLM</a>
+  <a href="${esc(t.watchUrl)}">Ouvrir dans Hubera Music</a>
   · <a href="${esc(t.ytUrl)}">YouTube Music</a>
   · <a href="${esc(t.streamUrl)}">/api/stream</a>
 </li>`;

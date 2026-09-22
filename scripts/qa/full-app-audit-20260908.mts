@@ -441,7 +441,7 @@ async function main() {
 
   const okN = report.ok;
   const koN = report.ko;
-  const subject = `[PLM] Audit complet p+1.3.184 — ${okN} OK / ${koN} KO — Blackview`;
+  const subject = `[Hubera Music] Audit complet p+1.3.184 — ${okN} OK / ${koN} KO — Blackview`;
   const text = `PLM — Audit application complet
 ${report.at}
 API: ${API}

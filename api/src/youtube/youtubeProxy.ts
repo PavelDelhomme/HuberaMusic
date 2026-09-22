@@ -44,6 +44,8 @@ const POOL_CAP = 600;
 const CANARY_URL = 'https://www.google.com/generate_204';
 
 let cachedFree: { at: number; urls: string[] } | null = null;
+/** Source de liste publique → dernier log KO (anti-spam). */
+const sourceKoAt = new Map<string, number>();
 const pool = new Map<string, ProxyEntry>();
 /** url → userId (lease exclusif). */
 const proxyLease = new Map<string, string>();
@@ -100,7 +102,22 @@ export function isAllowedProxyTarget(hostname: string): boolean {
     .toLowerCase()
     .replace(/^\[|\]$/g, '');
   if (!h || isBlockedProxyHost(h)) return false;
-  const roots = ['google.com', 'googlevideo.com', 'youtube.com', 'youtu.be', 'ytimg.com', 'ggpht.com', 'genius.com'];
+  const roots = [
+    'google.com',
+    'googlevideo.com',
+    'youtube.com',
+    'youtu.be',
+    'ytimg.com',
+    'ggpht.com',
+    'genius.com',
+    'musixmatch.com',
+    'azlyrics.com',
+    'lrclib.net',
+    'lyrics.ovh',
+    'textyl.co',
+    'chartlyrics.com',
+    'lyrist.vercel.app',
+  ];
   return roots.some((d) => h === d || h.endsWith(`.${d}`));
 }
 
@@ -247,7 +264,7 @@ async function refreshFreeProxies(force = false): Promise<string[]> {
   const sources = [
     'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=all&anonymity=all',
     'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=3000&country=all',
-    'https://www.proxy-list.download/api/v1/get?type=http',
+    // proxy-list.download : 502 en boucle — retiré (spam logs, 0 proxy).
     'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
     'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt',
     'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
@@ -267,7 +284,6 @@ async function refreshFreeProxies(force = false): Promise<string[]> {
   ];
 
   const urls: string[] = [];
-  let listKoLogged = false;
   await Promise.all(
     sources.map(async (src) => {
       try {
@@ -277,8 +293,9 @@ async function refreshFreeProxies(force = false): Promise<string[]> {
           if (n) urls.push(n);
         }
       } catch (err) {
-        if (!listKoLogged) {
-          listKoLogged = true;
+        const prev = sourceKoAt.get(src) || 0;
+        if (Date.now() - prev > 30 * 60_000) {
+          sourceKoAt.set(src, Date.now());
           console.warn(
             '[youtubeProxy] list KO',
             src.slice(0, 48),
@@ -340,8 +357,14 @@ export async function ensureYoutubeProxyPool(force = false): Promise<void> {
   if (!youtubeProxyFreeEnabled()) return;
 
   const thin = usableCount() < LOW_POOL_REFRESH;
+  // Ne pas relancer les listes publiques toutes les 8–15 s : ça spammait 502
+  // et saturait le titre en cours. Pool déjà fourni → refresh au TTL seulement.
+  if (force && !thin && Date.now() - lastForceRefreshAt < 60_000) {
+    force = false;
+  }
   if (force || thin) {
     cachedFree = null;
+    lastForceRefreshAt = Date.now();
   }
 
   if (refreshInflight) {
@@ -781,7 +804,7 @@ export function fetchUrlViaProxy(
     return Promise.reject(new Error(`blocked proxy host: ${proxy.hostname}`));
   }
   const proxyPort = Number(proxy.port) || (proxy.protocol === 'https:' ? 443 : 80);
-  const destPort = Number(target.port) || 443;
+  const destPort = Number(target.port) || (target.protocol === 'http:' ? 80 : 443);
 
   return new Promise((resolve, reject) => {
     let settled = false;

@@ -444,6 +444,9 @@ export function NowPlaying({
   const [lyricsDraft, setLyricsDraft] = useState('');
   const [lyricsSaving, setLyricsSaving] = useState(false);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [lyricsNonce, setLyricsNonce] = useState(0);
+  const [lyricsVoteBusy, setLyricsVoteBusy] = useState(false);
+  const [lyricsVoteHint, setLyricsVoteHint] = useState<string | null>(null);
   const [queueVisible, setQueueVisible] = useState(QUEUE_PAGE);
   const [similarVisible, setSimilarVisible] = useState(10);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -555,7 +558,7 @@ export function NowPlaying({
     return () => {
       cancelled = true;
     };
-  }, [open, tab, current?.id]);
+  }, [open, tab, current?.id, lyricsNonce]);
 
   // Mode vidéo : son du clip ; affiche tout de suite le même ID (pas d’attente resolve).
   useEffect(() => {
@@ -1110,6 +1113,63 @@ export function NowPlaying({
                 ) : (
                   <>
                     <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-2 px-2">
+                      <button
+                        type="button"
+                        disabled={lyricsVoteBusy || !current?.id}
+                        onClick={() => {
+                          if (!current?.id) return;
+                          const hints = {
+                            title: current.title,
+                            artist: artistNames(current) !== 'Artiste' ? artistNames(current) : undefined,
+                          };
+                          setLyricsVoteBusy(true);
+                          setLyricsVoteHint(null);
+                          void api
+                            .lyricsFeedback(current.id, 'correct', hints)
+                            .then(() => setLyricsVoteHint('Paroles confirmées pour tout le monde'))
+                            .catch(() => setLyricsVoteHint('Impossible d’enregistrer le vote'))
+                            .finally(() => setLyricsVoteBusy(false));
+                        }}
+                        className="rounded-full border border-emerald-700/60 px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-40"
+                      >
+                        Bonnes paroles
+                      </button>
+                      <button
+                        type="button"
+                        disabled={lyricsVoteBusy || !current?.id}
+                        onClick={() => {
+                          if (!current?.id) return;
+                          const hints = {
+                            title: current.title,
+                            artist: artistNames(current) !== 'Artiste' ? artistNames(current) : undefined,
+                          };
+                          setLyricsVoteBusy(true);
+                          setLyricsVoteHint('Recherche de nouvelles paroles…');
+                          void api
+                            .lyricsFeedback(current.id, 'wrong', hints)
+                            .then((r) => {
+                              setLyricsText(r.lyrics || null);
+                              setLyricsTimed(r.timed || null);
+                              setLyricsSource(r.source ?? null);
+                              setLyricsNonce((n) => n + 1);
+                              setLyricsVoteHint(
+                                r.lyrics
+                                  ? 'Nouvelles paroles chargées (tous les utilisateurs)'
+                                  : 'Aucune meilleure source pour l’instant',
+                              );
+                            })
+                            .catch(() => setLyricsVoteHint('Recherche impossible pour le moment'))
+                            .finally(() => setLyricsVoteBusy(false));
+                        }}
+                        className="rounded-full border border-amber-700/60 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900/30 disabled:opacity-40"
+                      >
+                        Mauvaises paroles
+                      </button>
+                    </div>
+                    {lyricsVoteHint && (
+                      <p className="mt-1 px-2 text-center text-[11px] text-yt-muted">{lyricsVoteHint}</p>
+                    )}
                     {!lyricsText && (
                       <div className="mt-3 space-y-3 px-2">
                         {lyricsSuggestions.length > 0 && (

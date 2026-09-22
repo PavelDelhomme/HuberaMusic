@@ -156,7 +156,7 @@ android {
     productFlavors {
         create("prod") {
             dimension = "channel"
-            resValue("string", "app_name", "Hubera Music")
+            resValue("string", "app_name", "Music")
             manifestPlaceholders["usesCleartext"] = "false"
             val api = resolveProdApiBase()
             versionName = "p+$appSemver"
@@ -169,7 +169,7 @@ android {
         create("preprod") {
             dimension = "channel"
             applicationIdSuffix = ".preprod"
-            resValue("string", "app_name", "Hubera Music Preprod")
+            resValue("string", "app_name", "Music Preprod")
             manifestPlaceholders["usesCleartext"] = "false"
             val api = resolvePreprodApiBase()
             versionName = "b+$appSemver"
@@ -182,7 +182,7 @@ android {
         create("dev") {
             dimension = "channel"
             applicationIdSuffix = ".dev"
-            resValue("string", "app_name", "Hubera Music Dev")
+            resValue("string", "app_name", "Music Dev")
             manifestPlaceholders["usesCleartext"] = "true"
             val api = resolveDevApiBase()
             versionName = "d+$appSemver"

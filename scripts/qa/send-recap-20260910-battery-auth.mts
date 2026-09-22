@@ -8,7 +8,7 @@ const to =
   process.env.BATTERY_REPORT_TO?.trim() ||
   'dev@delhomme.ovh, [SET_VIA_ENV]';
 const subject =
-  '[PLM] Récap détaillé — batterie Samsung, auth/reset, DL, OTA (1.3.198 → 1.3.205)';
+  '[Hubera Music] Récap détaillé — batterie Samsung, auth/reset, DL, OTA (1.3.198 → 1.3.205)';
 
 const iso = new Date().toISOString();
 

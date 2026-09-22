@@ -38,6 +38,7 @@ import {
   getArtistRadio,
   getLyrics,
   saveUserLyrics,
+  submitLyricsFeedback,
   getArtist,
   getAlbum,
   getPlaylist,
@@ -648,18 +649,18 @@ app.get('/verify-email', (req, res) => {
   if (!token) {
     res.status(400).type('html').send(`<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Lien invalide — PLM</title>
+<title>Lien invalide — Hubera Music</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#030303;color:#fff}
 .card{max-width:420px;margin:24px;padding:28px;border-radius:16px;border:1px solid #222;background:#121212}
 .err{color:#f87171}a{color:#ff0033}</style></head>
 <body><div class="card"><h1 class="err">Lien invalide</h1><p>Aucun jeton dans l’URL.</p>
-<p><a href="/">Retour PLM</a></p></div></body></html>`);
+<p><a href="/">Retour Hubera Music</a></p></div></body></html>`);
     return;
   }
 
   res.type('html').send(`<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Validation email — PLM</title>
+<title>Validation email — Hubera Music</title>
 <style>
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
     font-family:system-ui,sans-serif;background:#030303;color:#fff}
@@ -675,7 +676,7 @@ app.get('/verify-email', (req, res) => {
   <p id="msg">Confirmation de ton adresse email.</p>
   <button id="btn" type="button" style="display:none">Valider mon email</button>
   <p class="muted" id="hint"></p>
-  <p style="margin-top:20px"><a href="/">Retour PLM</a></p>
+  <p style="margin-top:20px"><a href="/">Retour Hubera Music</a></p>
 </div>
 <script>
 (function () {
@@ -740,18 +741,18 @@ app.get('/reset-password', (req, res) => {
   if (!token) {
     res.status(400).type('html').send(`<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Lien invalide — PLM</title>
+<title>Lien invalide — Hubera Music</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#030303;color:#fff}
 .card{max-width:420px;margin:24px;padding:28px;border-radius:16px;border:1px solid #222;background:#121212}
 .err{color:#f87171}a{color:#ff0033}</style></head>
 <body><div class="card"><h1 class="err">Lien invalide</h1><p>Aucun jeton dans l’URL.</p>
-<p><a href="/">Retour PLM</a></p></div></body></html>`);
+<p><a href="/">Retour Hubera Music</a></p></div></body></html>`);
     return;
   }
 
   res.type('html').send(`<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Nouveau mot de passe — PLM</title>
+<title>Nouveau mot de passe — Hubera Music</title>
 <style>
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
     font-family:system-ui,sans-serif;background:#030303;color:#fff}
@@ -775,7 +776,7 @@ app.get('/reset-password', (req, res) => {
     <button id="btn" type="submit">Enregistrer</button>
   </form>
   <p class="muted" id="hint" style="margin-top:16px"></p>
-  <p style="margin-top:20px;text-align:center"><a href="/">Retour PLM</a></p>
+  <p style="margin-top:20px;text-align:center"><a href="/">Retour Hubera Music</a></p>
 </div>
 <script>
 (function () {
@@ -1779,7 +1780,7 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
     return;
   }
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  res.setHeader('Content-Disposition', 'attachment; filename="PLM.apk"');
+  res.setHeader('Content-Disposition', 'attachment; filename="Hubera-Music.apk"');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path);
@@ -2537,6 +2538,29 @@ app.post('/api/track/:id/lyrics', accountRequired, async (req, res) => {
       return;
     }
     res.json(saved);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post('/api/track/:id/lyrics/feedback', accountRequired, async (req, res) => {
+  try {
+    const trackId = p(req.params.id);
+    const body = (req.body || {}) as {
+      vote?: string;
+      title?: string;
+      artist?: string;
+    };
+    const vote = String(body.vote || '').toLowerCase();
+    if (vote !== 'correct' && vote !== 'wrong') {
+      res.status(400).json({ error: 'vote=correct|wrong requis' });
+      return;
+    }
+    const result = await submitLyricsFeedback(trackId, vote, {
+      title: String(body.title || ''),
+      artist: String(body.artist || ''),
+    });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -3351,9 +3375,9 @@ server.listen(PORT, '0.0.0.0', () => {
   } catch (err) {
     console.error('[auth] seed sync', err);
   }
-  console.log(`PLM API → http://localhost:${PORT}`);
-  console.log(`PLM LAN → http://0.0.0.0:${PORT} (toutes interfaces)`);
-  console.log(`PLM WS  → ws://localhost:${PORT}/ws`);
+  console.log(`Hubera Music API → http://localhost:${PORT}`);
+  console.log(`Hubera Music LAN → http://0.0.0.0:${PORT} (toutes interfaces)`);
+  console.log(`Hubera Music WS  → ws://localhost:${PORT}/ws`);
   startLibraryHealthScan();
   startGlobalTasteWarmScheduler();
   startPlaybackDigestScheduler();

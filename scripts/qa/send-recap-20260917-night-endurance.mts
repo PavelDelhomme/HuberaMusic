@@ -183,7 +183,7 @@ async function main() {
     deployNote: process.env.DEPLOY_NOTE || '',
   };
   const pdf = await buildPdf(ctx as any);
-  const subject = `[PLM] Récap endurance nuit ${version} — stream healing + EOS`;
+  const subject = `[Hubera Music] Récap endurance nuit ${version} — stream healing + EOS`;
   const html = `
     <p>Bonsoir — récap session nuit (mute/DND actifs pendant les tests).</p>
     <ul>

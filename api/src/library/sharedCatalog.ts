@@ -131,6 +131,15 @@ export function hasSharedLyrics(videoId: string): boolean {
   }
 }
 
+export function deleteSharedLyrics(videoId: string): void {
+  if (!videoId) return;
+  try {
+    db.prepare(`DELETE FROM shared_lyrics WHERE video_id = ?`).run(videoId);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function putSharedLyrics(
   videoId: string,
   result: SharedLyrics,

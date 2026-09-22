@@ -161,7 +161,7 @@ class PlaybackService : MediaSessionService() {
             "PlaybackService",
             "foresight buffer-low ahead=${ahead}ms id=$id → quiet+warm",
         )
-        StreamPrefetcher.quietPrefetch(10_000L)
+        StreamPrefetcher.quietPrefetch(2_000L)
         val base = resolvedApiBase()
         if (base.isNotBlank() && id.length == 11) {
             StreamPrefetcher.warmTrackFormatOnly(base, id)
@@ -2505,7 +2505,7 @@ class PlaybackService : MediaSessionService() {
         if (ahead.isEmpty()) return
         runCatching {
             ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager
-                .enqueueAheadDuringPlayback(ahead, limit = 1)
+                .enqueueAheadDuringPlayback(ahead, limit = 3)
         }
         val p = player ?: return
         promoteUpcomingToLocal(p, fromIndex + 1)

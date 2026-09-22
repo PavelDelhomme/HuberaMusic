@@ -302,7 +302,7 @@ const utfOk =
   raw.includes("Am") || pdfBuf.includes(Buffer.from("Amélie", "utf8")) || slows.some((s) => s.title.includes('é'));
 console.log('pdf bytes', bytes, 'pages', pages, 'font', FONT_REG);
 
-const subject = `[PLM] Rapport COMPLET session — p+${version} · endurance 5h · ${slows.length} SLOW · resolve-not-skip`;
+const subject = `[Hubera Music] Rapport COMPLET session — p+${version} · endurance 5h · ${slows.length} SLOW · resolve-not-skip`;
 const html = `
 <div style="font-family:system-ui,sans-serif;line-height:1.5;color:#111">
   <h2 style="margin:0 0 8px">Rapport complet densifié (UTF-8)</h2>

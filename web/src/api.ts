@@ -788,6 +788,26 @@ export const api = {
         }),
       },
     ),
+  lyricsFeedback: (
+    id: string,
+    vote: 'correct' | 'wrong',
+    hints?: { title?: string; artist?: string },
+  ) =>
+    req<{
+      lyrics: string | null;
+      timed?: { startMs: number; text: string }[] | null;
+      source?: string | null;
+      vote: string;
+      refreshed: boolean;
+    }>(`/api/track/${id}/lyrics/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({
+        vote,
+        title: hints?.title || undefined,
+        artist: hints?.artist || undefined,
+      }),
+      timeoutMs: 45_000,
+    }),
   lyricOffsets: () => req<{ offsets: Record<string, number> }>('/api/lyric-offsets'),
   saveLyricOffset: (
     id: string,

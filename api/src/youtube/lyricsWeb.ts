@@ -4,6 +4,9 @@
  * alternatives + liens de recherche. Ne vole jamais un hit « ADHD »
  * d’un autre artiste pour InTheLight.
  */
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { looksLikeLyrics } from './lyricsTiming.js';
 import {
   artistMatchScore,
@@ -17,6 +20,62 @@ import {
   fetchSpotifyLyrics,
   resolveStreamingCatalog,
 } from './lyricsSpotify.js';
+import {
+  fetchUrlViaProxy,
+  youtubeProxyAttempts,
+} from './youtubeProxy.js';
+
+const LEARN_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data', 'lyrics-learn.json');
+type LearnRow = { url: string; source: string; artist: string; title: string; at: number };
+let learnMem: Record<string, LearnRow> | null = null;
+
+function learnKey(artist: string, title: string) {
+  return `${fold(artist)}|${fold(title)}`;
+}
+
+function loadLearn(): Record<string, LearnRow> {
+  if (learnMem) return learnMem;
+  try {
+    if (existsSync(LEARN_PATH)) {
+      learnMem = JSON.parse(readFileSync(LEARN_PATH, 'utf8')) as Record<string, LearnRow>;
+    }
+  } catch {
+    learnMem = {};
+  }
+  if (!learnMem) learnMem = {};
+  return learnMem;
+}
+
+export function rememberLyricsHit(
+  artist: string,
+  title: string,
+  url: string,
+  source: string,
+): void {
+  if (!artist.trim() || !title.trim() || !url) return;
+  const db = loadLearn();
+  db[learnKey(artist, title)] = { url, source, artist, title, at: Date.now() };
+  try {
+    mkdirSync(dirname(LEARN_PATH), { recursive: true });
+    writeFileSync(LEARN_PATH, JSON.stringify(db));
+  } catch {
+    /* volume read-only edge */
+  }
+}
+
+/** Vote « mauvaises paroles » : oublier l’URL apprise pour forcer une autre source. */
+export function forgetLyricsHit(artist: string, title: string): void {
+  const db = loadLearn();
+  const k = learnKey(artist, title);
+  if (!db[k]) return;
+  delete db[k];
+  try {
+    mkdirSync(dirname(LEARN_PATH), { recursive: true });
+    writeFileSync(LEARN_PATH, JSON.stringify(db));
+  } catch {
+    /* ignore */
+  }
+}
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -34,7 +93,17 @@ export type LyricSearchLink = { label: string; url: string };
 
 export type WebLyricsPick = {
   lyrics: string;
-  source: 'genius' | 'lyrics.ovh' | 'musixmatch' | 'web' | 'lyrist' | 'azlyrics' | 'spotify' | 'lrclib';
+  source:
+    | 'genius'
+    | 'lyrics.ovh'
+    | 'musixmatch'
+    | 'web'
+    | 'lyrist'
+    | 'azlyrics'
+    | 'spotify'
+    | 'lrclib'
+    | 'textyl'
+    | 'chartlyrics';
   url?: string;
 };
 
@@ -86,18 +155,33 @@ async function fetchText(
   url: string,
   opts?: { timeoutMs?: number; accept?: string },
 ): Promise<{ ok: boolean; status: number; text: string }> {
-  const res = await fetch(url, {
-    signal: AbortSignal.timeout(opts?.timeoutMs ?? 6000),
-    redirect: 'follow',
-    headers: {
-      'User-Agent': UA,
-      Accept: opts?.accept || 'text/html,application/json,*/*',
-      'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
-    },
-  }).catch(() => null);
-  if (!res) return { ok: false, status: 0, text: '' };
-  const text = await res.text().catch(() => '');
-  return { ok: res.ok, status: res.status, text };
+  const headers = {
+    'User-Agent': UA,
+    Accept: opts?.accept || 'text/html,application/json,*/*',
+    'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+  };
+  const timeoutMs = opts?.timeoutMs ?? 6000;
+  const read = async (proxy: string | null) => {
+    const res = await fetchUrlViaProxy(url, proxy, {
+      method: 'GET',
+      headers,
+      timeoutMs,
+    }).catch(() => null);
+    if (!res) return { ok: false, status: 0, text: '' };
+    const text = await res.text().catch(() => '');
+    return { ok: res.ok, status: res.status, text };
+  };
+  const direct = await read(null);
+  if (direct.ok) return direct;
+  if (direct.status === 404) return direct;
+  const proxies = (
+    await youtubeProxyAttempts({ max: 3, includeDirect: false, shuffle: true }).catch(() => [])
+  ).filter((p): p is string => Boolean(p));
+  for (const proxy of proxies) {
+    const r = await read(proxy);
+    if (r.ok) return r;
+  }
+  return direct;
 }
 
 function decodeHtml(s: string) {
@@ -189,6 +273,38 @@ async function tryLyrist(artist: string, title: string): Promise<WebLyricsPick |
   } catch {
     /* ignore */
   }
+  return null;
+}
+
+async function tryTextyl(artist: string, title: string): Promise<WebLyricsPick | null> {
+  const q = `${artistVariants(artist)[0] || artist} ${titleVariants(title)[0] || title}`.trim();
+  if (!q) return null;
+  const url = `https://api.textyl.co/api/lyrics?q=${encodeURIComponent(q)}`;
+  const res = await fetchText(url, { timeoutMs: 5000, accept: 'application/json' });
+  if (!res.ok) return null;
+  try {
+    const rows = JSON.parse(res.text) as Array<{ lyrics?: string }>;
+    const lyrics = (Array.isArray(rows) ? rows : [])
+      .map((r) => String(r.lyrics || '').trim())
+      .filter(Boolean)
+      .join('\n');
+    if (looksLikeLyrics(lyrics)) return { lyrics, source: 'textyl', url };
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+async function tryChartLyrics(artist: string, title: string): Promise<WebLyricsPick | null> {
+  const a = artistVariants(artist)[0] || artist;
+  const t = titleVariants(title)[0] || title;
+  if (!a || !t) return null;
+  const url = `http://api.chartlyrics.com/apiv1.asmx/SearchLyricDirect?artist=${encodeURIComponent(a)}&song=${encodeURIComponent(t)}`;
+  const res = await fetchText(url, { timeoutMs: 5000, accept: 'text/xml' });
+  if (!res.ok) return null;
+  const m = res.text.match(/<Lyric>([\s\S]*?)<\/Lyric>/i);
+  const lyrics = decodeHtml(m?.[1] || '').trim();
+  if (looksLikeLyrics(lyrics)) return { lyrics, source: 'chartlyrics', url };
   return null;
 }
 
@@ -322,6 +438,17 @@ export async function findBestWebLyrics(
   const suggestions: LyricSuggestion[] = [];
   if (!title.trim()) return { pick: null, suggestions, searchUrls };
 
+  const done = (pick: WebLyricsPick | null) => {
+    if (pick?.lyrics) rememberLyricsHit(artist, title, pick.url || '', pick.source);
+    return { pick, suggestions: suggestions.slice(0, 6), searchUrls };
+  };
+
+  const learned = loadLearn()[learnKey(artist, title)];
+  if (learned?.url) {
+    const scraped = await scrapeLyricUrl(learned.url, artist, title).catch(() => ({ pick: null }));
+    if (scraped.pick) return done(scraped.pick);
+  }
+
   const deadline = Date.now() + 16_000;
 
   const wave1 = await Promise.all([
@@ -331,27 +458,29 @@ export async function findBestWebLyrics(
     listGeniusNearMisses(artist, title).catch(() => []),
     fetchSpotifyLyrics(artist, title).catch(() => null),
     resolveStreamingCatalog(artist, title).catch(() => null),
+    tryTextyl(artist, title).catch(() => null),
+    tryChartLyrics(artist, title).catch(() => null),
   ]);
 
   const genius = wave1[0];
   if (genius?.lyrics && looksLikeLyrics(genius.lyrics)) {
-    return {
-      pick: { lyrics: genius.lyrics, source: 'genius', url: genius.url },
-      suggestions,
-      searchUrls,
-    };
+    return done({ lyrics: genius.lyrics, source: 'genius', url: genius.url });
   }
   const ovh = wave1[1];
-  if (ovh) return { pick: ovh, suggestions, searchUrls };
+  if (ovh) return done(ovh);
   const lyrist = wave1[2];
-  if (lyrist) return { pick: lyrist, suggestions, searchUrls };
+  if (lyrist) return done(lyrist);
+  const textyl = wave1[6];
+  if (textyl) return done(textyl);
+  const chart = wave1[7];
+  if (chart) return done(chart);
   const spotify = wave1[4];
   if (spotify?.lyrics && looksLikeLyrics(spotify.lyrics)) {
-    return {
-      pick: { lyrics: spotify.lyrics, source: spotify.source === 'lrclib' ? 'lrclib' : spotify.source },
-      suggestions,
-      searchUrls: [...searchUrls, ...catalogSearchLinks(wave1[5], artist, title)],
-    };
+    searchUrls.push(...catalogSearchLinks(wave1[5], artist, title));
+    return done({
+      lyrics: spotify.lyrics,
+      source: spotify.source === 'lrclib' ? 'lrclib' : spotify.source,
+    });
   }
   const catalog = wave1[5];
   if (catalog) {
@@ -380,7 +509,7 @@ export async function findBestWebLyrics(
     });
     if (hit.score >= 72) {
       const scraped = await scrapeLyricUrl(hit.url, artist, title);
-      if (scraped.pick) return { pick: scraped.pick, suggestions, searchUrls };
+      if (scraped.pick) return done(scraped.pick);
     }
   }
 
@@ -392,7 +521,7 @@ export async function findBestWebLyrics(
   for (const url of pages.slice(0, 8)) {
     if (Date.now() > deadline) break;
     const scraped = await scrapeLyricUrl(url, artist, title).catch(() => ({ pick: null }));
-    if (scraped.pick) return { pick: scraped.pick, suggestions: suggestions.slice(0, 6), searchUrls };
+    if (scraped.pick) return done(scraped.pick);
     if (scraped.suggestion) suggestions.push(scraped.suggestion);
   }
 

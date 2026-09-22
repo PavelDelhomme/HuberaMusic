@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-21",
   "versions": [
     {
+      "version": "1.3.275",
+      "date": "2026-09-21",
+      "time": "15:35",
+      "at": "2026-09-21T15:35:00+02:00",
+      "title": "Flux qui charge vraiment + nom Music",
+      "notes": [
+        "Rebind sans vider le cache : plus de boucle « Chargement du flux… » sur Samsung / Blackview",
+        "Icône lanceur : Music (Preprod / Dev), pas un pavé Hubera Music",
+        "Paroles : catalogue Spotify/Deezer/Apple + LRCLIB élargi"
+      ]
+    },
+    {
       "version": "1.3.274",
       "date": "2026-09-21",
       "title": "APK à jour + paroles via catalogue Spotify",

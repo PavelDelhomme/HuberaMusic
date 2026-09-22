@@ -8,7 +8,7 @@ const qaPath = join(root, 'logs/player-qa-20260902-222816/REPORT.md');
 const qaMd = existsSync(qaPath) ? readFileSync(qaPath, 'utf8') : '(rapport QA non trouvé)';
 
 const to = process.env.MAIL_TO || process.env.REPORT_TO || process.env.BATTERY_REPORT_TO || '';
-const subject = '[PLM] Rapport de session complet — 1.3.129 → 1.3.134 (2 sept. 2026)';
+const subject = '[Hubera Music] Rapport de session complet — 1.3.129 → 1.3.134 (2 sept. 2026)';
 
 const text = `PLM — Rapport de session complet
 Date: ${new Date().toISOString()}

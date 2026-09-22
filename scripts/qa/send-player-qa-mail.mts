@@ -10,7 +10,7 @@ const reportMd = readFileSync(
 );
 
 const to = process.env.MAIL_TO || process.env.REPORT_TO || process.env.BATTERY_REPORT_TO || '';
-const subject = '[PLM] Récap QA lecteur multimédia — 1.3.133 (Samsung)';
+const subject = '[Hubera Music] Récap QA lecteur multimédia — 1.3.133 (Samsung)';
 const html = `<div style="font-family:system-ui,sans-serif;line-height:1.45;max-width:720px">
 <h2>Récap QA lecteur — <code>p+1.3.133</code></h2>
 <p>Session ${new Date().toISOString()} — Samsung, son muet pendant les tests.</p>

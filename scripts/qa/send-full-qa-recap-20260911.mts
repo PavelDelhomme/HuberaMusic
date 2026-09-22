@@ -217,7 +217,7 @@ console.log('PDF', pdfPath, 'pages', pages);
 const bv = blackview ? `${blackview.passes}P/${blackview.fails}F/${blackview.warns}W` : 'n/a';
 const nt = nothing ? `${nothing.passes}P/${nothing.fails}F/${nothing.warns}W` : 'n/a';
 
-const subject = `[PLM] QA complète p+${version} — Blackview ${bv} · Nothing ${nt} · Samsung partiel`;
+const subject = `[Hubera Music] QA complète p+${version} — Blackview ${bv} · Nothing ${nt} · Samsung partiel`;
 const text = `PLM QA complète
 Version: p+${version}
 Date: ${iso}

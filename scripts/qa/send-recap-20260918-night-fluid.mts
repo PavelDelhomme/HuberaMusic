@@ -223,7 +223,7 @@ async function main() {
     /* ignore */
   }
   const pdf = await buildPdf({ endurance, apk });
-  const subject = `[PLM] Récap nuit fluidité ${version} — Samsung → 02h`;
+  const subject = `[Hubera Music] Récap nuit fluidité ${version} — Samsung → 02h`;
   const html = `
     <p>Bonjour — récap session nuit (musique muette, <b>alarmes autorisées</b> zen=3).</p>
     <ul>

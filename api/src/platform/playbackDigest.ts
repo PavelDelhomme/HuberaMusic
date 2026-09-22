@@ -20,7 +20,7 @@
  *  PLAYBACK_DIGEST_SKIP_EMPTY=0  → 1 = n’envoie rien s’il n’y a aucun problème
  */
 import { db } from '../library/db.js';
-import { sendMail } from './mail.js';
+import { mailBrand, sendMail } from './mail.js';
 import {
   extractTrackIds,
   resolveTracksForTelemetry,
@@ -345,17 +345,18 @@ export async function buildPlaybackDigest(opts?: {
     timeZone: process.env.PLAYBACK_DIGEST_TZ || 'Europe/Paris',
   });
   const total = rows.length + earlySkipEvents;
+  const brand = mailBrand();
   const subject =
     total === 0
-      ? `[PLM] Digest lecture 12h30 — aucun problème (24 h)`
-      : `[PLM] Digest lecture 12h30 — ${total} signal${total > 1 ? 's' : ''} · ${ranked.length} titre${ranked.length > 1 ? 's' : ''}`;
+      ? `[${brand}] Digest lecture 12h30 — aucun problème (24 h)`
+      : `[${brand}] Digest lecture 12h30 — ${total} signal${total > 1 ? 's' : ''} · ${ranked.length} titre${ranked.length > 1 ? 's' : ''}`;
 
   const kindLines = Object.entries(byKind)
     .sort((a, b) => b[1] - a[1])
     .map(([k, n]) => `  · ${kindLabel(k)} : ${n}`);
 
   const textLines = [
-    `PLM — Digest chargement / lecture`,
+    `${brand} — Digest chargement / lecture`,
     `Généré : ${when}`,
     `Fenêtre : dernières 24 h`,
     '',
@@ -437,7 +438,7 @@ export async function buildPlaybackDigest(opts?: {
 <body style="margin:0;padding:0;background:#f4f4f5">
   <div style="max-width:720px;margin:20px auto;background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;font-family:Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif;color:#18181b;line-height:1.5">
     <div style="background:#18181b;color:#fafafa;padding:20px 24px">
-      <div style="font-size:12px;opacity:0.75;text-transform:uppercase;letter-spacing:0.04em">PLM · Digest automatique 12h30</div>
+      <div style="font-size:12px;opacity:0.75;text-transform:uppercase;letter-spacing:0.04em">${escapeHtml(brand)} · Digest automatique 12h30</div>
       <h1 style="margin:6px 0 0;font-size:20px">Chargement / lecture — dernières 24 h</h1>
       <p style="margin:8px 0 0;font-size:13px;opacity:0.85">${escapeHtml(when)}</p>
     </div>

@@ -161,7 +161,7 @@ async function buildPdf(): Promise<{ path: string; pages: number; bytes: number 
 const { path: pdfPath, pages, bytes } = await buildPdf();
 const pdfBuf = readFileSync(pdfPath);
 
-const subject = `[PLM] Récap ${dateLabel} — lecture OK (yt-dlp formats) · ${version}`;
+const subject = `[Hubera Music] Récap ${dateLabel} — lecture OK (yt-dlp formats) · ${version}`;
 
 const text = `PLM — Récap session ${dateLabel}
 Version: ${version}

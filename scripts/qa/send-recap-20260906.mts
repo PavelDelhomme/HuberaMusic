@@ -8,7 +8,7 @@ import { sendMail } from '../../api/src/platform/mail.ts';
 
 const to = process.env.MAIL_TO || process.env.REPORT_TO || process.env.BATTERY_REPORT_TO || '';
 const subject =
-  '[PLM] Récapitulatif complet — 1.3.142 → 1.3.161 (paroles, vidéo, PLM/ytmusic, session, permissions)';
+  '[Hubera Music] Récapitulatif complet — 1.3.142 → 1.3.161 (paroles, vidéo, PLM/ytmusic, session, permissions)';
 
 type Bloc = { titre: string; lignes: string[] };
 
