@@ -280,10 +280,10 @@ class PlaybackService : MediaSessionService() {
                 StreamPrefetcher.wasHeadReadyRecently(nextId, withinMs = 120_000L)
             // Titre jamais écouté (reprise app) : ne pas raccourcir parce que +1 est chaud.
             val coldGraceMs = when {
-                neverHeard -> 22_000L
-                headWarmed -> 12_000L
-                nextHot -> 12_000L
-                else -> 16_000L
+                neverHeard -> 6_000L
+                headWarmed -> 8_000L
+                nextHot -> 8_000L
+                else -> 10_000L
             }
             if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < coldGraceMs) {
                 armStallWatch(exo)
@@ -316,10 +316,10 @@ class PlaybackService : MediaSessionService() {
             val stuckHard =
                 samePos &&
                     (
-                        // Cold : laisser plusieurs rebinds (VPS yt-dlp 30–50 s) avant skip.
-                        (coldStuck && neverHeard && stallSessionCount >= 7) ||
-                            (coldStuck && !neverHeard && stallSessionCount >= 5) ||
-                            (!coldStuck && stallSessionCount >= 4)
+                        // Cold mort (410 / format timeout) : skip vite, pas 7×16 s de BUFFERING.
+                        (coldStuck && neverHeard && stallSessionCount >= 2) ||
+                            (coldStuck && !neverHeard && stallSessionCount >= 2) ||
+                            (!coldStuck && stallSessionCount >= 3)
                     )
             if (stuckHard) {
                 AppLog.w(

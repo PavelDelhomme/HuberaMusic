@@ -1,6 +1,6 @@
 {
   "name": "@hubera/music",
-  "version": "1.3.279",
+  "version": "1.3.283",
   "private": true,
   "description": "Hubera Music / MHC (anciennement PLM) — web, API, Android & desktop",
   "scripts": {

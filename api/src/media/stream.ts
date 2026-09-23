@@ -45,6 +45,7 @@ import {
   safeDiskRangeBounds,
 } from './streamHeadCache.js';
 import { findReplacementId, getReplacementId, looksUnavailable } from './trackReplacement.js';
+import { findAtlasEquivalent, rememberAtlasPlayable } from './trackAtlas.js';
 import { noteStreamNote, noteStreamSource, watchStreamRequest } from './streamLog.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -55,6 +56,38 @@ const STREAM_UPSTREAM_FILE = join(ROOT, 'data', 'stream-upstream.url');
 
 /** Dernière lecture servie — les travaux de fond s'effacent devant une écoute en cours. */
 let lastStreamAtMs = 0;
+
+/** Innertube/format saturé : les titres froids skippent sans 18 s de BUFFERING. */
+let formatTimeoutStreak = 0;
+let formatCircuitUntil = 0;
+
+function noteFormatTimeout(): void {
+  formatTimeoutStreak += 1;
+  if (formatTimeoutStreak >= 2) {
+    formatCircuitUntil = Date.now() + 45_000;
+  }
+}
+
+function noteFormatOk(): void {
+  formatTimeoutStreak = 0;
+  formatCircuitUntil = 0;
+}
+
+function formatCircuitOpen(): boolean {
+  return Date.now() < formatCircuitUntil;
+}
+
+function sendStreamUnavailable(res: Response, videoId: string, detail: string): boolean {
+  if (res.headersSent) return false;
+  console.warn(`[stream] 410 skip ${videoId} (${detail.slice(0, 60)})`);
+  res.status(410).json({
+    error: 'Impossible de streamer audio',
+    code: 'VIDEO_UNAVAILABLE',
+    detail: detail.slice(0, 240),
+    hint: 'Titre indisponible ou trop lent — passage au suivant',
+  });
+  return true;
+}
 
 export function msSinceLastStream(): number {
   return lastStreamAtMs ? Date.now() - lastStreamAtMs : Number.MAX_SAFE_INTEGER;
@@ -1113,9 +1146,39 @@ export async function handleStream(req: Request, res: Response) {
           );
         }
       }
-      // Pas de 302 remplacement ici : un mapping auto (lyrics / ping-pong)
-      // ne doit pas détourner le titre demandé. Remplacement seulement si
-      // getAudioFormat confirme VIDEO_UNAVAILABLE plus bas.
+      // Cartographie : un autre id du même morceau est déjà sur disque → 302
+      // immédiat, même si YouTube est saturé (le circuit 410 ne doit pas gagner).
+      const mapped =
+        getReplacementId(videoId) || findAtlasEquivalent(videoId);
+      if (mapped && mapped !== videoId) {
+        const mappedPath = cachePath(mapped);
+        if (isCompleteEnoughDisk(mappedPath) && !isDashBrandFile(mappedPath)) {
+          try {
+            const size = statSync(mappedPath).size;
+            rememberAdvertisedTotal(mapped, size);
+            const { createReadStream } = await import('node:fs');
+            res.status(200);
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Content-Length', size);
+            res.setHeader('Content-Type', 'audio/mp4');
+            res.setHeader('X-PLM-Stream-Cache', 'atlas-disk');
+            res.setHeader('X-PLM-Replaced-From', videoId);
+            noteStreamSource(res, 'atlas disque');
+            createReadStream(mappedPath).pipe(res);
+            return;
+          } catch {
+            /* 302 ci-dessous */
+          }
+        }
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-PLM-Replaced-From', videoId);
+        res.redirect(302, streamPathFor(req, mapped));
+        return;
+      }
+      if (formatCircuitOpen() && !isCompleteEnoughDisk(cachedEarly)) {
+        sendStreamUnavailable(res, videoId, 'format circuit');
+        return;
+      }
     }
   }
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
@@ -1141,9 +1204,10 @@ export async function handleStream(req: Request, res: Response) {
         try {
           const fmt = await Promise.race([
             getAudioFormat(videoId, { live: true, userId: (req as any).userId }),
-            new Promise<null>((r) => setTimeout(() => r(null), 4_000)),
+            new Promise<null>((r) => setTimeout(() => r(null), 1_500)),
           ]);
           formatOk = Boolean(fmt?.url);
+          if (formatOk) noteFormatOk();
         } catch (probeErr) {
           const pmsg = String((probeErr as Error).message || probeErr);
           if (looksUnavailable(pmsg)) {
@@ -1175,14 +1239,14 @@ export async function handleStream(req: Request, res: Response) {
             }
           }
         }
-        // Titre mort confirmé sans format : 410. Sinon (timeout / contention) → pipeline.
-        if (!formatOk && unavailable && !res.headersSent) {
-          res.status(410).json({
-            error: 'Impossible de streamer audio',
-            code: 'VIDEO_UNAVAILABLE',
-            detail: 'audio format unavailable',
-            hint: 'Titre inaccessible — passage au suivant côté app',
-          });
+        // Timeout format = même chose qu’un titre mort pour l’écoute : skip vite.
+        if (!formatOk && !res.headersSent) {
+          noteFormatTimeout();
+          sendStreamUnavailable(
+            res,
+            videoId,
+            unavailable ? 'audio format unavailable' : 'timeout getAudioFormat probe',
+          );
           return;
         }
         // Ensure court SANS remplacement : un 302 lyrics (score 78) pendant
@@ -1331,9 +1395,8 @@ export async function handleStream(req: Request, res: Response) {
         String(req.headers['x-ytm-client'] || '') === 'android' ||
         /PLM-Android/i.test(String(req.headers['user-agent'] || '')) ||
         String(req.query?.client || '') === 'android';
-      if (diskBytes <= 1024 * 1024) {
+      if (diskBytes <= 256 * 1024) {
         // Android : attente courte seulement — 45 s bloquait derrière nginx → 504 Exo.
-        // Si format/tête déjà chauds → ne PAS attendre le .m4a (volait 2.5 s à Exo).
         const formatHot = hasCachedAudioFormat(videoId, (req as any).userId);
         const head = peekStreamHead(videoId);
         let ramHot = false;
@@ -1344,21 +1407,22 @@ export async function handleStream(req: Request, res: Response) {
             ramHot = true;
           }
         }
-        // Android : un peu plus long pour obtenir un .m4a progressif (anti-DASH).
-        const waitMs = isAndroid && !formatHot && !ramHot ? 4_000 : 0;
+        const waitMs = isAndroid && !formatHot && !ramHot && !formatCircuitOpen() ? 6_000 : 0;
         if (waitMs > 0) {
-          try {
-            await Promise.race([
-              downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).then(() => true),
-              new Promise<boolean>((r) => setTimeout(() => r(false), waitMs)),
-            ]);
-          } catch {
-            /* ignore */
+          void downloadTrack(videoId, {
+            progressiveOnly: true,
+            preferProxies,
+            userId: streamUserId,
+          }).catch(() => {});
+          const t0 = Date.now();
+          while (Date.now() - t0 < waitMs) {
+            refreshDisk();
+            if (diskBytes >= 256 * 1024) break;
+            await new Promise((r) => setTimeout(r, 250));
           }
-          refreshDisk();
         }
       }
-      if (diskBytes > 1024 * 1024) {
+      if (diskBytes > 256 * 1024) {
         if (/^bytes=0-$/i.test(rangeRaw)) {
           req.headers.range = `bytes=0-${diskBytes - 1}`;
         }
@@ -1823,9 +1887,10 @@ export async function handleStream(req: Request, res: Response) {
                 }, preferProxies ? 2_800 : 1_200);
               }),
             ]),
-            18_000,
+            8_000,
           );
     if (format.url) {
+      noteFormatOk();
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).
       // URL liée à un proxy : ne pas 302 le téléphone (IP ≠ proxy → 403).
@@ -2002,37 +2067,23 @@ export async function handleStream(req: Request, res: Response) {
       console.warn('[stream] format/proxy KO:', msg.slice(0, 160));
     }
     // Titre mort : remplacer tout de suite (évite 60–100 s de proxies inutiles).
-    if (!wantVideo && looksUnavailable(msg)) {
+    // Timeout format : 410 immédiat pour skip Android. Le remplaçant se cherche en fond.
+    if (!wantVideo && (looksUnavailable(msg) || /timeout getAudioFormatRace|timeout getAudioFormat/i.test(msg))) {
       try {
-        const replacement =
-          getReplacementId(videoId) ||
-          (await Promise.race([
-            findReplacementId(videoId, { userId: (req as any).userId }),
-            // Cap court : l’app doit recevoir 410 vite pour skipper (Nothing).
-            new Promise<null>((r) => setTimeout(() => r(null), 2_500)),
-          ]));
-        if (replacement && !res.headersSent) {
+        const known = getReplacementId(videoId);
+        if (known && !res.headersSent) {
           res.setHeader('Cache-Control', 'no-store');
           res.setHeader('X-PLM-Replaced-From', videoId);
-          res.redirect(302, streamPathFor(req, replacement));
+          res.redirect(302, streamPathFor(req, known));
           return;
         }
-      } catch (replErr) {
-        console.warn(
-          '[stream] remplacement early KO:',
-          String((replErr as Error).message || replErr).slice(0, 140),
-        );
+      } catch {
+        /* 410 ci-dessous */
       }
-      // Pas de remplaçant : 410 immédiat — le client skip sans 6× retries / 50 s.
-      if (!res.headersSent) {
-        res.status(410).json({
-          error: 'Impossible de streamer audio',
-          code: 'VIDEO_UNAVAILABLE',
-          detail: msg.slice(0, 240),
-          hint: 'Titre retiré / privé — passage au suivant côté app',
-        });
-        return;
-      }
+      void findReplacementId(videoId, { userId: (req as any).userId }).catch(() => null);
+      noteFormatTimeout();
+      sendStreamUnavailable(res, videoId, msg);
+      return;
     }
   }
 

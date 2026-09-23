@@ -3382,6 +3382,9 @@ server.listen(PORT, '0.0.0.0', () => {
   startGlobalTasteWarmScheduler();
   startPlaybackDigestScheduler();
   startLibraryWarmSweep();
+  void import('./media/trackAtlas.js')
+    .then((m) => m.startTrackAtlas())
+    .catch((err) => console.warn('[atlas] import KO', String((err as Error).message || err).slice(0, 80)));
   void import('./youtube/youtubeProxy.js')
     .then((m) => {
       m.startYoutubeProxyBackgroundRefresh();

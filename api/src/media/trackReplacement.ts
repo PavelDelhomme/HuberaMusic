@@ -15,6 +15,7 @@ import { db, getTrackPayload } from '../library/db.js';
 import { getAudioFormat, getTrack, search } from '../youtube/yt.js';
 import type { Track } from '../youtube/types.js';
 import { artistLine, scoreCandidate } from './trackMatch.js';
+import { findAtlasEquivalent, rememberAtlasPlayable } from './trackAtlas.js';
 
 const CACHE_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -32,6 +33,8 @@ const MIN_SCORE = 70;
 
 let schemaReady = false;
 const inflight = new Map<string, Promise<string | null>>();
+/** Une seule recherche YouTube à la fois — sinon health + lecture saturent. */
+let heavySearches = 0;
 
 export function ensureTrackReplacementSchema() {
   if (schemaReady) return;
@@ -108,7 +111,7 @@ async function playable(id: string): Promise<boolean> {
   // Déjà sur disque : inutile d'interroger YouTube.
   try {
     const file = join(CACHE_DIR, `${id}.m4a`);
-    if (existsSync(file) && statSync(file).size > 1024 * 1024) return true;
+    if (existsSync(file) && statSync(file).size > 256 * 1024) return true;
   } catch {
     /* pas de cache lisible */
   }
@@ -234,11 +237,29 @@ export async function findReplacementId(
 
   const known = getReplacementId(deadId);
   if (known) return known;
+  const fromDisk = findAtlasEquivalent(deadId);
+  if (fromDisk) {
+    const meta = getTrackPayload(deadId);
+    saveReplacement(
+      deadId,
+      fromDisk,
+      meta?.title || '',
+      meta ? artistLine(meta) : '',
+      95,
+    );
+    return fromDisk;
+  }
 
   const running = inflight.get(deadId);
   if (running) return running;
 
   const job = (async (): Promise<string | null> => {
+    if (heavySearches >= 1) {
+      console.warn(`[replacement] file pleine, skip search ${deadId}`);
+      return null;
+    }
+    heavySearches += 1;
+    try {
     const { title, artist, durationSec } = await metaFor(deadId, hints);
     if (!title || !artist) {
       console.warn(`[replacement] ${deadId} : métadonnées insuffisantes`);
@@ -260,33 +281,35 @@ export async function findReplacementId(
     const unique = ranked.filter(({ t }) => (seen.has(t.id) ? false : seen.add(t.id)));
 
     for (const { t, s } of unique.slice(0, 6)) {
-      // Ne pas proposer un id qui pointe déjà vers deadId (boucle).
       if (getReplacementId(t.id) === deadId) continue;
-      // Score < 90 = souvent lyrics / cover (MIL NOCHES → version paroles).
-      if (s < 90) {
-        console.log(
-          `[replacement] ignore score ${s} ${deadId} → ${t.id} « ${t.title} — ${artistLine(t)} »`,
-        );
-        continue;
+      // Disque seulement — plus de getAudioFormat 8 s × 6 (ça saturait /api/health).
+      try {
+        const file = join(CACHE_DIR, `${t.id}.m4a`);
+        if (existsSync(file) && statSync(file).size > 256 * 1024) {
+          console.log(
+            `[replacement] ${deadId} → ${t.id} disque (score ${s}) « ${t.title} — ${artistLine(t)} »`,
+          );
+          saveReplacement(deadId, t.id, title, artist, s);
+          rememberAtlasPlayable(t.id, t.title || title, artistLine(t) || artist);
+          return t.id;
+        }
+      } catch {
+        /* suivant */
       }
-      console.log(
-        `[replacement] ${deadId} → ${t.id} (score ${s}) « ${t.title} — ${artistLine(t)} »`,
-      );
-      saveReplacement(deadId, t.id, title, artist, s);
-      return t.id;
     }
 
-    // Ne jamais renvoyer un candidat non vérifié : le handleStream ferait un 302
-    // vers un id mort (ex. medley MTV) avant même le cache disque.
-    const rejected = candidates
-      .slice(0, 4)
-      .map((t) => `${t.id}:${scoreCandidate(t, title, artist, durationSec)} « ${t.title} — ${artistLine(t)} »`)
-      .join(' | ');
-    console.warn(
-      `[replacement] ${deadId} « ${title} — ${artist} » : aucun remplaçant fiable ` +
-        `écartés: ${rejected || 'aucun résultat'}`,
-    );
+    const best = unique[0];
+    if (best) {
+      console.warn(
+        `[replacement] mémorise sans probe ${deadId} → ${best.t.id} score=${best.s}`,
+      );
+      saveReplacement(deadId, best.t.id, title, artist, best.s);
+      return best.t.id;
+    }
     return null;
+    } finally {
+      heavySearches = Math.max(0, heavySearches - 1);
+    }
   })();
 
   inflight.set(deadId, job);
