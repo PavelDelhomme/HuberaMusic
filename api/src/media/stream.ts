@@ -1243,6 +1243,7 @@ export async function handleStream(req: Request, res: Response) {
           }
         }
         // Timeout format = même chose qu’un titre mort pour l’écoute : skip vite.
+        if (!formatOk && !res.headersSent) {
           noteFormatTimeout(videoId);
           sendStreamUnavailable(
             res,
