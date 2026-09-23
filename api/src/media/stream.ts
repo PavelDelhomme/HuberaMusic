@@ -57,24 +57,27 @@ const STREAM_UPSTREAM_FILE = join(ROOT, 'data', 'stream-upstream.url');
 /** Dernière lecture servie — les travaux de fond s'effacent devant une écoute en cours. */
 let lastStreamAtMs = 0;
 
-/** Innertube/format saturé : les titres froids skippent sans 18 s de BUFFERING. */
-let formatTimeoutStreak = 0;
-let formatCircuitUntil = 0;
+/** Innertube/format saturé **pour cet id** : skip sans 18 s de BUFFERING.
+ *  Jamais un circuit global — un timeout n’empoisonne pas le reste de la biblio. */
+const formatCircuitUntilById = new Map<string, number>();
 
-function noteFormatTimeout(): void {
-  formatTimeoutStreak += 1;
-  if (formatTimeoutStreak >= 2) {
-    formatCircuitUntil = Date.now() + 45_000;
+function noteFormatTimeout(videoId: string): void {
+  if (!videoId) return;
+  formatCircuitUntilById.set(videoId, Date.now() + 45_000);
+}
+
+function noteFormatOk(videoId?: string): void {
+  if (videoId) formatCircuitUntilById.delete(videoId);
+}
+
+function formatCircuitOpen(videoId: string): boolean {
+  const until = formatCircuitUntilById.get(videoId) || 0;
+  if (!until) return false;
+  if (Date.now() >= until) {
+    formatCircuitUntilById.delete(videoId);
+    return false;
   }
-}
-
-function noteFormatOk(): void {
-  formatTimeoutStreak = 0;
-  formatCircuitUntil = 0;
-}
-
-function formatCircuitOpen(): boolean {
-  return Date.now() < formatCircuitUntil;
+  return true;
 }
 
 function sendStreamUnavailable(res: Response, videoId: string, detail: string): boolean {
@@ -1175,7 +1178,7 @@ export async function handleStream(req: Request, res: Response) {
         res.redirect(302, streamPathFor(req, mapped));
         return;
       }
-      if (formatCircuitOpen() && !isCompleteEnoughDisk(cachedEarly)) {
+      if (formatCircuitOpen(videoId) && !isCompleteEnoughDisk(cachedEarly)) {
         sendStreamUnavailable(res, videoId, 'format circuit');
         return;
       }
@@ -1207,7 +1210,7 @@ export async function handleStream(req: Request, res: Response) {
             new Promise<null>((r) => setTimeout(() => r(null), 1_500)),
           ]);
           formatOk = Boolean(fmt?.url);
-          if (formatOk) noteFormatOk();
+          if (formatOk) noteFormatOk(videoId);
         } catch (probeErr) {
           const pmsg = String((probeErr as Error).message || probeErr);
           if (looksUnavailable(pmsg)) {
@@ -1240,8 +1243,7 @@ export async function handleStream(req: Request, res: Response) {
           }
         }
         // Timeout format = même chose qu’un titre mort pour l’écoute : skip vite.
-        if (!formatOk && !res.headersSent) {
-          noteFormatTimeout();
+          noteFormatTimeout(videoId);
           sendStreamUnavailable(
             res,
             videoId,
@@ -1407,7 +1409,7 @@ export async function handleStream(req: Request, res: Response) {
             ramHot = true;
           }
         }
-        const waitMs = isAndroid && !formatHot && !ramHot && !formatCircuitOpen() ? 6_000 : 0;
+        const waitMs = isAndroid && !formatHot && !ramHot && !formatCircuitOpen(videoId) ? 6_000 : 0;
         if (waitMs > 0) {
           void downloadTrack(videoId, {
             progressiveOnly: true,
@@ -1890,7 +1892,7 @@ export async function handleStream(req: Request, res: Response) {
             8_000,
           );
     if (format.url) {
-      noteFormatOk();
+      noteFormatOk(videoId);
       // Clients natifs (Android ExoPlayer) : 302 direct googlevideo = plus rapide.
       // Navigateur web : proxy (CORS / Workbox).
       // URL liée à un proxy : ne pas 302 le téléphone (IP ≠ proxy → 403).
@@ -2081,7 +2083,7 @@ export async function handleStream(req: Request, res: Response) {
         /* 410 ci-dessous */
       }
       void findReplacementId(videoId, { userId: (req as any).userId }).catch(() => null);
-      noteFormatTimeout();
+      noteFormatTimeout(videoId);
       sendStreamUnavailable(res, videoId, msg);
       return;
     }
