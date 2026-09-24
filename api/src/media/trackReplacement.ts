@@ -254,7 +254,7 @@ export async function findReplacementId(
   if (running) return running;
 
   const job = (async (): Promise<string | null> => {
-    if (heavySearches >= 1) {
+    if (heavySearches >= 3) {
       console.warn(`[replacement] file pleine, skip search ${deadId}`);
       return null;
     }

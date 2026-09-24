@@ -2752,16 +2752,31 @@ async function audioFormatViaYtDlpFast(
   };
 
   if (live) {
-    const stripe = (await youtubeProxyStripe(userId, 3)).filter((p): p is string => Boolean(p));
-    // Un seul proxy à la fois : timeout → rotation (évite de saturer le pool).
-    for (const proxy of stripe) {
+    const stripe = (await youtubeProxyStripe(userId, 4)).filter((p): p is string => Boolean(p));
+    // 2 proxies en parallèle (rotation réelle), paires successives — timeout 6 s.
+    for (let i = 0; i < stripe.length; i += 2) {
+      const batch = stripe.slice(i, i + 2);
       try {
-        return await Promise.race([
-          tryProxy(proxy),
-          new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error('proxy timeout 8s')), 8_000),
+        return await Promise.any(
+          batch.map(
+            (proxy) =>
+              new Promise<AudioFormat>((resolve, reject) => {
+                const t = setTimeout(() => {
+                  markYoutubeProxyFailure(proxy);
+                  reject(new Error('proxy timeout 6s'));
+                }, 6_000);
+                tryProxy(proxy)
+                  .then((v) => {
+                    clearTimeout(t);
+                    resolve(v);
+                  })
+                  .catch((e) => {
+                    clearTimeout(t);
+                    reject(e);
+                  });
+              }),
           ),
-        ]);
+        );
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (
@@ -2993,18 +3008,12 @@ export async function getAudioFormat(
 
     const resolveFast = async (): Promise<AudioFormat | null> => {
       try {
-        // Live écoute : OAuth/Innertube d’abord (VPS ~1 s, sans PC maison).
-        // yt-dlp (+proxies) seulement si Innertube échoue — évite timeout 35 s.
-        if (live) {
-          try {
-            return await tryInnertubeFast();
-          } catch {
-            return await audioFormatViaYtDlpFast(videoId, { live: true, userId: opts?.userId });
-          }
-        }
+        // Live : Innertube ET yt-dlp+proxies EN PARALLÈLE.
+        // L’IP datacenter bloque souvent Innertube → avant, les proxies
+        // n’étaient lancés qu’après l’échec (trop tard pour le probe Android).
         return await Promise.any([
           tryInnertubeFast(),
-          audioFormatViaYtDlpFast(videoId, { userId: opts?.userId }),
+          audioFormatViaYtDlpFast(videoId, { live: true, userId: opts?.userId }),
         ]);
       } catch {
         return null;

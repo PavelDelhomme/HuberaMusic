@@ -3212,7 +3212,19 @@ app.put('/api/session/state', accountRequired, (req, res) => {
 });
 
 const clientDist = join(ROOT, 'web', 'dist');
+const huberaLanding = join(ROOT, 'web', 'hubera-landing.html');
 if (existsSync(clientDist)) {
+  app.get('/', (req, res, next) => {
+    if (existsSync(huberaLanding)) {
+      res.type('html');
+      res.sendFile(huberaLanding);
+      return;
+    }
+    next();
+  });
+  app.get('/app', (_req, res) => {
+    res.sendFile(join(clientDist, 'index.html'));
+  });
   app.use(express.static(clientDist));
   // Ne jamais servir le SPA pour /api ou well-known (sinon 200 HTML sur routes API manquantes)
   app.get(/.*/, (req, res) => {
