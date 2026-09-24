@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-24",
   "versions": [
     {
+      "version": "1.3.289",
+      "date": "2026-09-24",
+      "time": "20:45",
+      "at": "2026-09-24T20:45:00+02:00",
+      "title": "Premier chunk 512 Ko tout de suite, plus de file unique",
+      "notes": [
+        "Le gagnant de la course écrit 512 Ko sur le disque — plus un probe vide bytes=0-0.",
+        "Les morceaux suivants arrivent en parallèle sur le même proxy (comme un torrent, une seule IP).",
+        "Un titre froid n’attend plus que le titre d’avant ait fini YouTube."
+      ]
+    },
+    {
       "version": "1.3.288",
       "date": "2026-09-24",
       "time": "20:25",

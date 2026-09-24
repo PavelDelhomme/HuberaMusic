@@ -260,13 +260,29 @@ async function fetchGooglevideo(
 }
 
 /**
- * Téléchargement « swarm » : le PC maison offline est **normal**.
- * Le VPS découpe le googlevideo en Ranges et les récupère en parallèle
- * via plusieurs proxies gratuits (chaîne auto, IPs différentes), puis
- * reconstitue le .m4a sur le disque VPS — l’utilisateur lit ensuite le cache.
+ * Swarm « torrent » : Ranges 512 Ko en parallèle, TOUS via le même boundProxy
+ * (URL googlevideo collée à une IP — 3 proxies sur la même URL = 403).
+ * Le 1er chunk s’écrit tout de suite : le téléphone lit dès 256 Ko.
  */
 const SWARM_CHUNK_BYTES = 512 * 1024;
 const SWARM_PARALLEL = 4;
+
+type HedgeHead = { url: string; viaProxy: string; head: Buffer; total: number; at: number };
+const hedgeHeadsById = new Map<string, HedgeHead>();
+
+function rememberHedgeHead(videoId: string, head: HedgeHead): void {
+  hedgeHeadsById.set(videoId, head);
+  setTimeout(() => {
+    const cur = hedgeHeadsById.get(videoId);
+    if (cur && cur.at === head.at) hedgeHeadsById.delete(videoId);
+  }, 45_000);
+}
+
+function takeHedgeHead(videoId: string): HedgeHead | undefined {
+  const h = hedgeHeadsById.get(videoId);
+  if (h) hedgeHeadsById.delete(videoId);
+  return h;
+}
 
 async function fetchSwarmChunk(
   url: string,
@@ -274,11 +290,12 @@ async function fetchSwarmChunk(
   end: number,
   opts?: { userId?: string; boundProxy?: string | null },
 ): Promise<Buffer | null> {
+  if (!opts?.boundProxy) return null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetchGooglevideo(url, `bytes=${start}-${end}`, {
         preferProxies: true,
-        boundProxy: attempt === 0 ? opts?.boundProxy : undefined,
+        boundProxy: opts.boundProxy,
         userId: opts?.userId,
       });
       if (res.status !== 206 && res.status !== 200) {
@@ -287,14 +304,18 @@ async function fetchSwarmChunk(
         } catch {
           /* ignore */
         }
+        if (res.status === 403 || res.status === 429) {
+          markYoutubeProxyFailure(opts.boundProxy, 'gv');
+        }
         continue;
       }
       const buf = Buffer.from(await res.arrayBuffer());
       const expect = end - start + 1;
       if (buf.length < Math.min(8, expect)) continue;
+      markYoutubeProxySuccess(opts.boundProxy, 'gv');
       return buf.subarray(0, Math.min(buf.length, expect));
     } catch {
-      /* autre IP */
+      /* retry même proxy */
     }
   }
   return null;
@@ -303,42 +324,44 @@ async function fetchSwarmChunk(
 async function downloadViaProxyChunks(
   url: string,
   out: string,
-  opts?: { userId?: string; boundProxy?: string | null },
+  opts?: { userId?: string; boundProxy?: string | null; head?: Buffer; total?: number },
 ): Promise<boolean> {
-  if (!url || !youtubeProxyFreeEnabled()) return false;
+  if (!url || !youtubeProxyFreeEnabled() || !opts?.boundProxy) return false;
   try {
-    const probe = await fetchGooglevideo(url, 'bytes=0-0', {
-      preferProxies: true,
-      boundProxy: opts?.boundProxy,
-      userId: opts?.userId,
-    });
-    const cr = probe.headers.get('content-range') || '';
-    const cl = Number(probe.headers.get('content-length') || 0);
-    try {
-      await probe.body?.cancel();
-    } catch {
-      /* ignore */
-    }
-    const totalMatch = /\/(\d+)\s*$/.exec(cr);
-    const total = totalMatch ? Number(totalMatch[1]) : cl;
-    if (!Number.isFinite(total) || total < 256_000) return false;
+    const videoId = out.replace(/^.*\//, '').replace(/\.m4a$/, '');
+    const pre = opts.head ? undefined : takeHedgeHead(videoId);
+    let head = opts.head || pre?.head;
+    let total = opts.total || pre?.total || 0;
 
-    // Pas de Range (200 plein fichier) : un seul flux, on ne swarm pas.
-    if (probe.status === 200 && !totalMatch) return false;
-
-    const parts: Array<{ start: number; end: number }> = [];
-    for (let s = 0; s < total; s += SWARM_CHUNK_BYTES) {
-      parts.push({ start: s, end: Math.min(total - 1, s + SWARM_CHUNK_BYTES - 1) });
+    if (!head || !total) {
+      const res = await fetchGooglevideo(url, `bytes=0-${SWARM_CHUNK_BYTES - 1}`, {
+        preferProxies: true,
+        boundProxy: opts.boundProxy,
+        userId: opts?.userId,
+      });
+      const cr = res.headers.get('content-range') || '';
+      const cl = Number(res.headers.get('content-length') || 0);
+      if (res.status !== 206 && res.status !== 200) {
+        try {
+          await res.body?.cancel();
+        } catch {
+          /* ignore */
+        }
+        return false;
+      }
+      head = Buffer.from(await res.arrayBuffer());
+      const totalMatch = /\/(\d+)\s*$/.exec(cr);
+      total = totalMatch ? Number(totalMatch[1]) : cl || head.length;
+      if (res.status === 200 && !totalMatch) total = head.length;
+      markYoutubeProxySuccess(opts.boundProxy, 'gv');
     }
-    rememberAdvertisedTotal(
-      out.replace(/^.*\//, '').replace(/\.m4a$/, ''),
-      total,
-    );
-    // Fichier = préfixe contigu seulement (pas de ftruncate plein de zéros).
-    // Exo lit le .m4a qui grossit pendant que les chunks suivants arrivent.
+    if (!head || !Number.isFinite(total) || total < 256_000 || head.length < 64_000) return false;
+
+    rememberAdvertisedTotal(videoId, total);
     const pending = new Map<number, Buffer>();
     let contiguous = 0;
-    const fd = openSync(out, 'w');
+    const existing = existsSync(out) ? statSync(out).size : 0;
+    const fd = openSync(out, existing > 0 ? 'r+' : 'w');
     const flush = (start: number, buf: Buffer) => {
       pending.set(start, buf);
       while (pending.has(contiguous)) {
@@ -354,13 +377,15 @@ async function downloadViaProxyChunks(
       }
     };
     try {
-      const first = parts[0];
-      if (first) {
-        const head = await fetchSwarmChunk(url, first.start, first.end, opts);
-        if (!head) throw new Error('swarm tête 0 KO');
-        flush(first.start, head);
+      if (existing >= head.length) {
+        contiguous = existing;
+      } else {
+        flush(0, head);
       }
-      const rest = parts.slice(1);
+      const rest: Array<{ start: number; end: number }> = [];
+      for (let s = contiguous; s < total; s += SWARM_CHUNK_BYTES) {
+        rest.push({ start: s, end: Math.min(total - 1, s + SWARM_CHUNK_BYTES - 1) });
+      }
       let failed = 0;
       const queue = [...rest];
       const worker = async () => {
@@ -385,7 +410,7 @@ async function downloadViaProxyChunks(
       closeSync(fd);
     }
     console.log(
-      `[stream] swarm OK ${out.split('/').pop()} bytes=${contiguous} parts=${parts.length} (maison offline = normal)`,
+      `[stream] swarm OK ${out.split('/').pop()} bytes=${contiguous} parts=${Math.ceil(total / SWARM_CHUNK_BYTES)} boundProxy (maison offline = normal)`,
     );
     return existsSync(out) && statSync(out).size >= Math.min(total, 256_000);
   } catch (err) {
@@ -542,7 +567,7 @@ function purgeTinyOrDashCache(videoId: string): void {
   try {
     if (!existsSync(p)) return;
     const size = statSync(p).size;
-    if (size > 0 && size < MIN_COMPLETE_DISK_BYTES) {
+    if (size > 0 && size < 256 * 1024) {
       unlinkSync(p);
       console.warn(`[stream] purge tiny cache ${videoId} size=${size}`);
       return;
@@ -1503,7 +1528,7 @@ export async function handleStream(req: Request, res: Response) {
             ramHot = true;
           }
         }
-        const waitMs = isAndroid && !formatHot && !ramHot && !formatCircuitOpen(videoId) ? 6_000 : 0;
+        const waitMs = isAndroid && !formatHot && !ramHot && !formatCircuitOpen(videoId) ? 8_000 : 0;
         if (waitMs > 0) {
           void downloadTrack(videoId, {
             progressiveOnly: true,
@@ -2954,12 +2979,11 @@ function midRangeWaitMs(videoId: string): number {
 }
 
 /**
- * Une seule résolution d’URL googlevideo à la fois (8 s).
- * 1.3.276 = N deadlines 16 s en parallèle (stampede).
- * 1.3.277 = zéro getAudioFormat → swarm jamais pour un titre froid.
- * Ici : file unique, le titre en cours passe devant, le suivant attend.
+ * Une résolution hedge par videoId (partagée). Plus de file globale :
+ * un skip ne doit pas attendre que le titre d’avant ait fini YouTube.
+ * Le plafond yt-dlp (slots live) reste le garde-fou.
  */
-let formatResolveTail: Promise<unknown> = Promise.resolve();
+const liveFormatInflight = new Map<string, Promise<ReturnType<typeof peekCachedAudioFormat>>>();
 
 async function resolveFormatForSwarm(
   videoId: string,
@@ -2967,21 +2991,21 @@ async function resolveFormatForSwarm(
   signal?: AbortSignal,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   const peeked = peekCachedAudioFormat(videoId, userId);
-  if (peeked?.url) return peeked;
-  const run = async () => {
+  if (peeked?.url && peeked.viaProxy) return peeked;
+  const pending = liveFormatInflight.get(videoId);
+  if (pending) return await pending;
+  const job = (async () => {
     const again = peekCachedAudioFormat(videoId, userId);
-    if (again?.url) return again;
+    if (again?.url && again.viaProxy) return again;
     try {
       return await resolveFormatHedged(videoId, userId, signal);
     } catch {
       return null;
     }
-  };
-  const job = formatResolveTail.then(run, run);
-  formatResolveTail = job.then(
-    () => undefined,
-    () => undefined,
-  );
+  })().finally(() => {
+    liveFormatInflight.delete(videoId);
+  });
+  liveFormatInflight.set(videoId, job);
   return await job;
 }
 
@@ -2990,8 +3014,9 @@ function aborted(signal?: AbortSignal): boolean {
 }
 
 /**
- * Course : Innertube + proxy A (hot) à t=0, proxy B à t=2,5 s, proxy C à t=5 s.
- * Chaque jambe résout SA propre URL. Premier 206 gagne. Timeout 12 s.
+ * Course boundProxy : chaque jambe résout SA URL puis écrit le 1er chunk 512 Ko.
+ * Premier 206 réel gagne (winner-lock). Pas d’Innertube sans proxy (URL VPS = 403).
+ * Timeout 12 s. Jambes 0 / 2,5 / 5 s.
  */
 async function resolveFormatHedged(
   videoId: string,
@@ -3015,6 +3040,8 @@ async function resolveFormatHedged(
   const onUserAbort = () => abortAll();
   userSignal?.addEventListener('abort', onUserAbort, { once: true });
 
+  type Fmt = NonNullable<ReturnType<typeof peekCachedAudioFormat>>;
+  type LegWin = { fmt: Fmt; head: Buffer; total: number; proxy: string; ms: number };
   let winner: ReturnType<typeof peekCachedAudioFormat> = null;
   const abortLosers = (losers: AbortController[]) => {
     for (const loser of losers) {
@@ -3025,21 +3052,42 @@ async function resolveFormatHedged(
       }
     }
   };
-  const take = (
-    fmt: NonNullable<ReturnType<typeof peekCachedAudioFormat>>,
-    losers: AbortController[],
-  ) => {
+  const take = (leg: LegWin, losers: AbortController[]) => {
     if (winner) {
       abortLosers(losers);
       throw new Error('lost race');
     }
-    winner = fmt;
+    winner = leg.fmt;
     abortLosers(losers);
-    return fmt;
+    rememberHedgeHead(videoId, {
+      url: leg.fmt.url,
+      viaProxy: leg.proxy,
+      head: leg.head,
+      total: leg.total,
+      at: Date.now(),
+    });
+    try {
+      const early = cachePath(videoId);
+      const already = existsSync(early) ? statSync(early).size : 0;
+      const efd = openSync(early, already > 0 ? 'r+' : 'w');
+      try {
+        writeSync(efd, leg.head, 0, leg.head.length, 0);
+        if (already < leg.head.length) ftruncateSync(efd, leg.head.length);
+      } finally {
+        closeSync(efd);
+      }
+    } catch {
+      /* swarm réécrira */
+    }
+    console.info(
+      `[stream] hedge win ${videoId} head=${leg.head.length} total=${leg.total} ms=${leg.ms}`,
+    );
+    return leg.fmt;
   };
 
-  const viaProxy = async (proxy: string, sig: AbortSignal) => {
+  const viaProxy = async (proxy: string, sig: AbortSignal): Promise<LegWin> => {
     if (aborted(sig) || aborted(userSignal)) throw new Error('aborted');
+    const t0 = Date.now();
     const fmt = await getAudioFormat(videoId, {
       userId,
       live: true,
@@ -3047,20 +3095,34 @@ async function resolveFormatHedged(
       signal: sig,
     });
     if (!fmt?.url) throw new Error('no url');
-    const probe = await fetchGooglevideo(fmt.url, 'bytes=0-0', {
+    const res = await fetchGooglevideo(fmt.url, `bytes=0-${SWARM_CHUNK_BYTES - 1}`, {
       preferProxies: true,
       boundProxy: proxy,
       userId,
     });
-    try {
-      await probe.body?.cancel();
-    } catch {
-      /* ignore */
+    if (res.status !== 206 && res.status !== 200) {
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* ignore */
+      }
+      if (res.status === 403 || res.status === 429) markYoutubeProxyFailure(proxy, 'gv');
+      throw new Error(`hedge ${res.status}`);
     }
-    if (probe.status !== 206 && probe.status !== 200) {
-      throw new Error(`probe ${probe.status}`);
-    }
-    return { ...fmt, viaProxy: proxy || fmt.viaProxy };
+    const buf = Buffer.from(await res.arrayBuffer());
+    const cr = res.headers.get('content-range') || '';
+    const cl = Number(res.headers.get('content-length') || 0);
+    const totalMatch = /\/(\d+)\s*$/.exec(cr);
+    const total = totalMatch ? Number(totalMatch[1]) : cl || buf.length;
+    if (buf.length < 64_000) throw new Error('hedge head tiny');
+    markYoutubeProxySuccess(proxy, 'gv');
+    return {
+      fmt: { ...fmt, viaProxy: proxy },
+      head: buf,
+      total: Number.isFinite(total) && total > 0 ? total : buf.length,
+      proxy,
+      ms: Date.now() - t0,
+    };
   };
 
   const delayed = (
@@ -3070,14 +3132,14 @@ async function resolveFormatHedged(
     delayMs: number,
     label: string,
   ) =>
-    new Promise<NonNullable<ReturnType<typeof peekCachedAudioFormat>>>((resolve, reject) => {
+    new Promise<Fmt>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (winner || aborted(userSignal) || aborted(ctrl.signal) || !proxy) {
           reject(new Error(`hedge ${label} skip`));
           return;
         }
         viaProxy(proxy, ctrl.signal)
-          .then((fmt) => resolve(take(fmt, losers)))
+          .then((leg) => resolve(take(leg, losers)))
           .catch(reject);
       }, delayMs);
       userSignal?.addEventListener(
@@ -3090,12 +3152,9 @@ async function resolveFormatHedged(
       );
     });
 
-  const primary = Promise.any([
-    getAudioFormat(videoId, { userId, live: true, signal: ctrlA.signal }),
-    hot[0]
-      ? viaProxy(hot[0], ctrlA.signal)
-      : Promise.reject(new Error('no hot A')),
-  ]).then((fmt) => take(fmt, [ctrlB, ctrlC]));
+  const primary = hot[0]
+    ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg, [ctrlB, ctrlC]))
+    : Promise.reject(new Error('no hot A'));
 
   const delayedB = delayed(hot[1], ctrlB, [ctrlA, ctrlC], 2_500, 'B');
   const delayedC = delayed(hot[2], ctrlC, [ctrlA, ctrlB], 5_000, 'C');
@@ -3105,12 +3164,9 @@ async function resolveFormatHedged(
       Promise.any([primary, delayedB, delayedC]).catch(() => null),
       new Promise<null>((r) => setTimeout(() => r(null), 12_000)),
     ])) as ReturnType<typeof peekCachedAudioFormat>;
-    if (fmt?.url) return fmt;
-    if (winner?.url) return winner;
-    return (await Promise.race([
-      getAudioFormat(videoId, { userId, live: true, signal: userSignal }),
-      new Promise<null>((r) => setTimeout(() => r(null), 6_000)),
-    ])) as ReturnType<typeof peekCachedAudioFormat>;
+    if (fmt?.url && fmt.viaProxy) return fmt;
+    if (winner?.url && winner.viaProxy) return winner;
+    return null;
   } finally {
     userSignal?.removeEventListener('abort', onUserAbort);
   }
@@ -3136,7 +3192,7 @@ export async function downloadTrack(
   }
   if (existsSync(out)) {
     if (isCompleteEnoughDisk(out) && !downloadInflight.has(videoId)) return out;
-    if (!downloadInflight.has(videoId) && !isCompleteEnoughDisk(out)) {
+    if (!downloadInflight.has(videoId) && !isCompleteEnoughDisk(out) && !isGrowingDiskServable(out)) {
       try {
         unlinkSync(out);
       } catch {
@@ -3206,6 +3262,11 @@ export async function downloadTrack(
           boundProxy: format.viaProxy || null,
         });
         if (swarmOk && isCompleteEnoughDisk(out) && !isDashBrandFile(out)) {
+          downloadFailUntil.delete(videoId);
+          midRangeBudgetById.set(videoId, MID_RANGE_BUDGET_MAX_MS);
+          return out;
+        }
+        if (isGrowingDiskServable(out) && !isDashBrandFile(out)) {
           downloadFailUntil.delete(videoId);
           midRangeBudgetById.set(videoId, MID_RANGE_BUDGET_MAX_MS);
           return out;
