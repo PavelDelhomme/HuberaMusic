@@ -196,7 +196,7 @@ suspend fun playQueueWithLead(
     val window = if (playable.size > PLAY_RAM_CAP) playable.subList(from, to) else playable
     val localIdx = if (playable.size > PLAY_RAM_CAP) 0 else idx
     val base = container.resolvedApiBase()
-    val lead = window.drop(localIdx).take(3).map { it.id }
+    val lead = window.drop(localIdx).take(20).map { it.id }
     val lead0 = lead.firstOrNull().orEmpty()
     val ctx = YtMusicApp.instance
     val hot = lead0.isNotEmpty() && (
@@ -208,13 +208,21 @@ suspend fun playQueueWithLead(
     StreamPrefetcher.quietPrefetch(if (hot) 160L else 380L)
     onPlay(window, localIdx)
     ovh.delhomme.ytmusic.player.PlaybackService.Holder.rememberFullQueue(playable, from + window.size)
+    container.libraryHeadPrefetcher.warmDisplayedList(lead)
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
             runCatching { container.downloadManager.cancelOpportunistic() }
+            StreamPrefetcher.prefetchNextDuringPlayback(
+                base,
+                window.map { it.id },
+                localIdx,
+                ignoreQuiet = true,
+            )
             withTimeoutOrNull(LEAD_WARM_TIMEOUT_MS) {
-                runCatching { StreamPrefetcher.prepareShuffleLead(base, lead) }
+                runCatching { StreamPrefetcher.prepareShuffleLead(base, lead.take(3)) }
             }
-            StreamPrefetcher.warmFormatsLight(base, window.drop(localIdx + 3).take(3).map { it.id }, limit = 3)
+            StreamPrefetcher.warmFormatsLight(base, lead.drop(3).take(8), limit = 8)
+            StreamPrefetcher.warmHeads3s(base, lead, limit = 16)
         }
     }
 }

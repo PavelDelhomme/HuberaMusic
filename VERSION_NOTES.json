@@ -2,7 +2,17 @@
   "updatedAt": "2026-09-24",
   "versions": [
     {
-      "version": "1.3.290",
+      "version": "1.3.291",
+      "date": "2026-09-24",
+      "time": "21:40",
+      "at": "2026-09-24T21:40:00+02:00",
+      "title": "Tout lire : 20 premiers débuts toujours au chaud",
+      "notes": [
+        "Les 20 premiers titres d’une liste (A–Z, album, artiste, singles) sont préchargés sur le VPS et le téléphone dès qu’ils s’affichent.",
+        "Seuls les débuts (512 Ko) restent en mémoire par compte, mis à jour régulièrement — le reste se charge via le même proxy avant le trou.",
+        "L’aléatoire garde son batch rotatif ; Tout lire ne part plus à froid."
+      ]
+    },
       "date": "2026-09-24",
       "time": "21:20",
       "at": "2026-09-24T21:20:00+02:00",

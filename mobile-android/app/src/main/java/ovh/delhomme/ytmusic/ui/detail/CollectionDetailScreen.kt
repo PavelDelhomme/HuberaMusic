@@ -446,6 +446,8 @@ fun CollectionDetailScreen(
 
     LaunchedEffect(tracks) {
         if (tracks.isEmpty()) return@LaunchedEffect
+        val ids = tracks.map { it.id }.filter { it.length == 11 }.take(20)
+        container.libraryHeadPrefetcher.warmDisplayedList(ids)
         val base = container.resolvedApiBase()
         ovh.delhomme.ytmusic.player.StreamPrefetcher.warmAround(
             base,
@@ -456,8 +458,8 @@ fun CollectionDetailScreen(
         )
         ovh.delhomme.ytmusic.player.StreamPrefetcher.warmHeads3s(
             base,
-            tracks.map { it.id }.filter { it.length == 11 }.take(48),
-            limit = 36,
+            ids,
+            limit = 16,
         )
     }
 

@@ -1232,14 +1232,29 @@ export async function handleStream(req: Request, res: Response) {
         // Servir IMMÉDIATEMENT (surtout relais maison) — avant bumpWarm / ensure /
         // open-ended wait qui bloquent l’event loop et font abort le VPS à 2 s.
         try {
+          const growing = !isCompleteEnoughDisk(cachedEarly);
+          if (growing && !isWarmPrefetch) {
+            downloadTrack(videoId, {
+              progressiveOnly: true,
+              preferProxies: true,
+              userId,
+              signal: userSignal,
+              live: true,
+            }).catch(() => {});
+          }
           const size = statSync(cachedEarly).size;
-          rememberAdvertisedTotal(videoId, size);
-          persistAtlas(videoId, size);
-          import('../library/sharedCatalog.js')
-            .then((m) => m.rememberReadyAudio(videoId, size))
-            .catch(() => {});
+          const total = stableContentTotal(videoId, size, { incomplete: growing });
+          if (!growing) {
+            rememberAdvertisedTotal(videoId, size);
+            persistAtlas(videoId, size);
+            import('../library/sharedCatalog.js')
+              .then((m) => m.rememberReadyAudio(videoId, size))
+              .catch(() => {});
+          }
           const range = req.headers.range ? String(req.headers.range) : '';
           const { createReadStream } = await import('node:fs');
+          const cacheTag = growing ? 'disk-growing' : 'disk-early';
+          const note = growing ? 'disque qui grossit' : 'cache disque (early)';
           if (range) {
             const bounds = safeDiskRangeBounds(size, range);
             if (bounds.ok) {
@@ -1247,26 +1262,36 @@ export async function handleStream(req: Request, res: Response) {
               res.status(206);
               res.setHeader(
                 'Content-Range',
-                `bytes ${bounds.start}-${bounds.end}/${size}`,
+                `bytes ${bounds.start}-${bounds.end}/${total}`,
               );
               res.setHeader('Accept-Ranges', 'bytes');
               res.setHeader('Content-Length', len);
               res.setHeader('Content-Type', 'audio/mp4');
-              res.setHeader('X-PLM-Stream-Cache', isCompleteEnoughDisk(cachedEarly) ? 'disk-early' : 'disk-growing');
-              noteStreamSource(res, isCompleteEnoughDisk(cachedEarly) ? 'cache disque (early)' : 'disque qui grossit');
+              res.setHeader('X-PLM-Stream-Cache', cacheTag);
+              noteStreamSource(res, note);
               createReadStream(cachedEarly, {
                 start: bounds.start,
                 end: bounds.end,
               }).pipe(res);
               return;
             }
+          } else if (growing && total > size) {
+            res.status(206);
+            res.setHeader('Content-Range', `bytes 0-${size - 1}/${total}`);
+            res.setHeader('Accept-Ranges', 'bytes');
+            res.setHeader('Content-Length', size);
+            res.setHeader('Content-Type', 'audio/mp4');
+            res.setHeader('X-PLM-Stream-Cache', cacheTag);
+            noteStreamSource(res, note);
+            createReadStream(cachedEarly).pipe(res);
+            return;
           } else {
             res.status(200);
             res.setHeader('Accept-Ranges', 'bytes');
             res.setHeader('Content-Length', size);
             res.setHeader('Content-Type', 'audio/mp4');
-            res.setHeader('X-PLM-Stream-Cache', isCompleteEnoughDisk(cachedEarly) ? 'disk-early' : 'disk-growing');
-            noteStreamSource(res, isCompleteEnoughDisk(cachedEarly) ? 'cache disque (early)' : 'disque qui grossit');
+            res.setHeader('X-PLM-Stream-Cache', cacheTag);
+            noteStreamSource(res, note);
             createReadStream(cachedEarly).pipe(res);
             return;
           }
@@ -2582,6 +2607,8 @@ const nextDiskWarmQueued = new Set<string>();
 /** Pre-warm 1er hit recherche — sous PLAYING et NEXT_FILE. */
 const searchWarmQueue: string[] = [];
 const searchWarmQueued = new Set<string>();
+const listHeadWarmQueue: string[] = [];
+const listHeadWarmQueued = new Set<string>();
 let diskWarmBusyCount = 0;
 const DISK_WARM_CONCURRENCY = 2;
 
@@ -2597,7 +2624,13 @@ async function runDiskWarmWorker() {
   if (diskWarmBusyCount >= DISK_WARM_CONCURRENCY) return;
   diskWarmBusyCount += 1;
   try {
-    while (nextDiskWarmQueue.length || searchWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
+    while (
+      nextDiskWarmQueue.length ||
+      listHeadWarmQueue.length ||
+      searchWarmQueue.length ||
+      likesDiskWarmQueue.length ||
+      diskWarmQueue.length
+    ) {
       const nextId = nextDiskWarmQueue.shift();
       if (nextId) {
         nextDiskWarmQueued.delete(nextId);
@@ -2608,6 +2641,17 @@ async function runDiskWarmWorker() {
         }
         if (nextDiskWarmQueue.length) void runDiskWarmWorker();
         await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 200 : 120));
+        continue;
+      }
+      const listId = listHeadWarmQueue.shift();
+      if (listId) {
+        listHeadWarmQueued.delete(listId);
+        try {
+          await warmTrackPrefix(listId);
+        } catch {
+          /* best-effort */
+        }
+        await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 280 : 140));
         continue;
       }
       const searchId = searchWarmQueue.shift();
@@ -2657,7 +2701,13 @@ async function runDiskWarmWorker() {
     }
   } finally {
     diskWarmBusyCount = Math.max(0, diskWarmBusyCount - 1);
-    if (nextDiskWarmQueue.length || searchWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
+    if (
+      nextDiskWarmQueue.length ||
+      listHeadWarmQueue.length ||
+      searchWarmQueue.length ||
+      likesDiskWarmQueue.length ||
+      diskWarmQueue.length
+    ) {
       void runDiskWarmWorker();
     }
   }
@@ -2687,8 +2737,70 @@ export function enqueueNextDiskWarm(ids: string[]) {
     nextDiskWarmQueued.add(id);
     nextDiskWarmQueue.push(id);
   }
-  if (nextDiskWarmQueue.length || searchWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
+  if (
+    nextDiskWarmQueue.length ||
+    listHeadWarmQueue.length ||
+    searchWarmQueue.length ||
+    likesDiskWarmQueue.length ||
+    diskWarmQueue.length
+  ) {
     void runDiskWarmWorker();
+  }
+}
+
+/**
+ * Débuts de liste « Tout lire » (10–20 titres) : 512 Ko sur disque, pas le fichier entier.
+ * Le reste se remplit au play (boundProxy) avant que le téléphone arrive au trou.
+ */
+export function enqueueListHeadWarm(ids: string[], opts?: { front?: boolean }) {
+  const cap = 24;
+  for (const id of ids) {
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
+    if (listHeadWarmQueued.has(id) || nextDiskWarmQueued.has(id)) continue;
+    try {
+      const p = cachePath(id);
+      if (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) continue;
+    } catch {
+      /* continue */
+    }
+    const gi = diskWarmQueue.indexOf(id);
+    if (gi >= 0) {
+      diskWarmQueue.splice(gi, 1);
+      diskWarmQueued.delete(id);
+    }
+    if (listHeadWarmQueue.length >= cap) {
+      if (!opts?.front) break;
+      const dropped = listHeadWarmQueue.pop();
+      if (dropped) listHeadWarmQueued.delete(dropped);
+    }
+    listHeadWarmQueued.add(id);
+    if (opts?.front) listHeadWarmQueue.unshift(id);
+    else listHeadWarmQueue.push(id);
+  }
+  if (listHeadWarmQueue.length) void runDiskWarmWorker();
+}
+
+async function warmTrackPrefix(videoId: string): Promise<void> {
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return;
+  const out = cachePath(videoId);
+  try {
+    if (isCompleteEnoughDisk(out) || isGrowingDiskServable(out)) return;
+  } catch {
+    /* continue */
+  }
+  const sig = addDownloadConsumer(videoId, 'warm:listhead');
+  try {
+    await resolveFormatHedged(videoId, undefined, sig, false);
+    try {
+      if (existsSync(out) && statSync(out).size >= 64_000) {
+        const head = readFileSync(out).subarray(0, Math.min(statSync(out).size, SWARM_CHUNK_BYTES));
+        putStreamHead(videoId, head, { totalSize: getAdvertisedTotal(videoId) });
+      }
+    } catch {
+      /* RAM head optionnel */
+    }
+  } finally {
+    removeDownloadConsumer(videoId, 'warm:listhead');
   }
 }
 
@@ -2781,11 +2893,15 @@ export function enqueueLikesDiskWarm(ids: string[]) {
 export function diskWarmQueueStats(): {
   generic: number;
   likes: number;
+  listHeads: number;
+  next: number;
   busy: boolean;
 } {
   return {
     generic: diskWarmQueue.length,
     likes: likesDiskWarmQueue.length,
+    listHeads: listHeadWarmQueue.length,
+    next: nextDiskWarmQueue.length,
     busy: diskWarmBusyCount > 0,
   };
 }
@@ -2808,7 +2924,7 @@ export function suspendBackgroundDiskWarm(keepCurrentId?: string) {
     likesDiskWarmQueued.add(id);
     likesDiskWarmQueue.push(id);
   }
-  // Ne pas vider nextDiskWarmQueue : c’est le titre suivant de la file d’écoute.
+  // Ne pas vider nextDiskWarmQueue (titre suivant) ni listHeadWarmQueue (Tout lire).
 }
 
 async function runWarmWorker() {
@@ -3083,6 +3199,7 @@ async function resolveFormatHedged(
       total: leg.total,
       at: Date.now(),
     });
+    rememberAdvertisedTotal(videoId, leg.total);
     try {
       const early = cachePath(videoId);
       const already = existsSync(early) ? statSync(early).size : 0;

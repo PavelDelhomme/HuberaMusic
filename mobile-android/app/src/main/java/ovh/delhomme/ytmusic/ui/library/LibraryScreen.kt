@@ -74,7 +74,6 @@ import ovh.delhomme.ytmusic.data.OfflineKeeper
 import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.Thumb
 import ovh.delhomme.ytmusic.data.TrackDto
-import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
 import ovh.delhomme.ytmusic.ui.components.TrackRow
@@ -146,21 +145,18 @@ fun LibraryScreen(
     }
     LaunchedEffect(lib?.songs?.size) {
         val songCount = lib?.songs?.size ?: 0
-        if (songCount < 8) return@LaunchedEffect
-        if (libraryPrefetchBlocked()) return@LaunchedEffect
-        val base = container.resolvedApiBase()
-        if (base.isBlank()) return@LaunchedEffect
-        delay(5_000)
-        if (StreamPrefetcher.isStreamDown() || libraryPrefetchBlocked()) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
-            if (songs.size < 8) return@withContext
-            val sample = songs.shuffled().take(12).map { it.id }
-            StreamPrefetcher.warmFormatsLight(base, sample, limit = 12)
-            if (!libraryPrefetchBlocked()) {
-                StreamPrefetcher.warmHeads3s(base, sample.take(4), limit = 4)
-            }
-        }
+        if (songCount < 1) return@LaunchedEffect
+        delay(400)
+        val azIds = lib?.songs.orEmpty()
+            .filter { it.isPlayable() && it.id.length == 11 }
+            .sortedBy { it.title.lowercase() }
+            .take(20)
+            .map { it.id }
+        val recentIds = lib?.songs.orEmpty()
+            .filter { it.isPlayable() && it.id.length == 11 }
+            .take(20)
+            .map { it.id }
+        container.libraryHeadPrefetcher.warmDisplayedList((azIds + recentIds).distinct())
     }
 
     // Sync live des DL locaux → filtre Téléchargés (sans republier 14k titres à chaque DL).
@@ -407,6 +403,14 @@ fun LibraryScreen(
                 val listState = rememberLazyListState()
                 LaunchedEffect(selected) {
                     listState.scrollToItem(0)
+                }
+                LaunchedEffect(selected, content.playableQueue.take(20).map { it.id }) {
+                    val ids = content.playableQueue
+                        .filter { it.isPlayable() && it.id.length == 11 }
+                        .take(20)
+                        .map { it.id }
+                    if (ids.isEmpty()) return@LaunchedEffect
+                    container.libraryHeadPrefetcher.warmDisplayedList(ids)
                 }
                 LaunchedEffect(selected, content.playableQueue) {
                     var lastBoostAt = 0L

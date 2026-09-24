@@ -39,6 +39,9 @@ import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.ui.library.playQueueWithLead
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 /** Liste complète des titres d’un artiste (page dédiée depuis « Plus »). */
 @Composable
@@ -56,6 +59,7 @@ fun ArtistSongsScreen(
     var name by remember { mutableStateOf("Artiste") }
     var cover by remember { mutableStateOf<TrackDto?>(null) }
     var tracks by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(artistId, reloadToken) {
         loading = true
@@ -69,6 +73,12 @@ fun ArtistSongsScreen(
             error = it.message ?: "Impossible de charger les titres"
         }
         loading = false
+    }
+
+    LaunchedEffect(tracks) {
+        val ids = tracks.map { it.id }.filter { it.length == 11 }.take(20)
+        if (ids.isEmpty()) return@LaunchedEffect
+        container.libraryHeadPrefetcher.warmDisplayedList(ids)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -141,7 +151,11 @@ fun ArtistSongsScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     Button(
-                                        onClick = { onPlay(tracks, 0) },
+                                        onClick = {
+                                            scope.launch {
+                                                playQueueWithLead(container, tracks, 0, onPlay)
+                                            }
+                                        },
                                         modifier = Modifier.weight(1f),
                                     ) {
                                         Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
@@ -165,7 +179,11 @@ fun ArtistSongsScreen(
                     itemsIndexed(tracks, key = { i, t -> "all-${t.id}-$i" }) { index, track ->
                         TrackRow(
                             track = track,
-                            onClick = { onPlay(tracks, index) },
+                            onClick = {
+                                scope.launch {
+                                    playQueueWithLead(container, tracks, index, onPlay)
+                                }
+                            },
                             onMore = { onMore(track) },
                             onOpenArtist = { id, n ->
                                 if (id != null && id != artistId) {

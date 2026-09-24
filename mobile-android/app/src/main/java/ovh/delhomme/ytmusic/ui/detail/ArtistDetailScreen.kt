@@ -109,6 +109,11 @@ fun ArtistDetailScreen(
     }
 
     // Prefetch stream des titres visibles (comme biblio)
+    LaunchedEffect(songs) {
+        val ids = songs.map { it.id }.filter { it.length == 11 }.take(20)
+        if (ids.isEmpty()) return@LaunchedEffect
+        container.libraryHeadPrefetcher.warmDisplayedList(ids)
+    }
     LaunchedEffect(songs.size, listState) {
         if (songs.isEmpty()) return@LaunchedEffect
         val base = container.resolvedApiBase()

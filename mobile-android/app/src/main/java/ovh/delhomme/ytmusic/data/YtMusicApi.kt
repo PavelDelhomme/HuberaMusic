@@ -60,6 +60,18 @@ data class ShuffleHeadsResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class ListHeadsResponse(
+    val ids: List<String> = emptyList(),
+    val scope: String? = null,
+    val headN: Int? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class ListHeadsBody(
+    val ids: List<String> = emptyList(),
+)
+
+@JsonClass(generateAdapter = false)
 data class LikeResponse(val liked: Boolean, val library: LibraryResponse? = null)
 
 @JsonClass(generateAdapter = false)
@@ -705,6 +717,15 @@ interface YtMusicApi {
         @Query("warm") warm: Int? = 1,
         @Query("scope") scope: String? = null,
     ): ShuffleHeadsResponse
+
+    @GET("api/library/list-heads")
+    suspend fun listHeads(
+        @Query("warm") warm: Int? = 1,
+        @Query("scope") scope: String? = null,
+    ): ListHeadsResponse
+
+    @POST("api/library/list-heads")
+    suspend fun postListHeads(@Body body: ListHeadsBody): ListHeadsResponse
 
     @POST("api/library/like")
     suspend fun like(@Body track: TrackDto): LikeResponse

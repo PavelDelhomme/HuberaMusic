@@ -109,6 +109,7 @@ import { resolveVisualVideo } from './media/visualResolve.js';
 import { importByKind, importByQueryOrUrl } from './media/import.js';
 import { handleOfflineStatus, startOfflineCollection } from './library/offline.js';
 import { getShuffleHeads, invalidateShuffleHeads } from './library/shuffleHeads.js';
+import { getListHeads, rememberVisibleListHeads, warmUserListHeads } from './library/listHeads.js';
 import { handleImageProxy } from './media/img.js';
 import {
   deployInfo,
@@ -2823,6 +2824,31 @@ app.post('/api/library/shuffle-heads/refresh', accountRequired, (req, res) => {
   }
 });
 
+/**
+ * 10–20 premiers titres d’une liste (Tout lire A–Z / récents / aimés / file affichée).
+ * Préfixe .m4a 256–512 Ko sur le VPS, mis à jour par compte.
+ */
+app.get('/api/library/list-heads', accountRequired, (req, res) => {
+  try {
+    const raw = String(req.query.scope || 'az');
+    const scope = raw === 'recent' || raw === 'liked' ? raw : 'az';
+    const warm = String(req.query.warm || '1') !== '0';
+    res.json(getListHeads(req.userId!, scope, { warm }));
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post('/api/library/list-heads', accountRequired, (req, res) => {
+  try {
+    const raw = (req.body as { ids?: unknown } | undefined)?.ids;
+    const ids = Array.isArray(raw) ? raw.map((x) => String(x)) : [];
+    res.json(rememberVisibleListHeads(req.userId!, ids));
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 app.get('/api/library', accountRequired, async (req, res) => {
   try {
     // light=1 : payload réduit (10–40 titres) pour 1ʳᵉ peinture mobile
@@ -2832,6 +2858,7 @@ app.get('/api/library', accountRequired, async (req, res) => {
       res.json(getLibraryLight(req.userId!, lim));
       scheduleLibraryRepair(req.userId!);
       scheduleUserTasteWarm(req.userId!, [], { disk: 8 });
+      warmUserListHeads(req.userId!);
       return;
     }
     // Réponse immédiate — repair méta / albums en fond (E4 : ne plus bloquer 2–3 s)
@@ -2839,6 +2866,7 @@ app.get('/api/library', accountRequired, async (req, res) => {
     res.json(library);
     scheduleLibraryRepair(req.userId!);
     scheduleUserTasteWarm(req.userId!, [], { disk: 8 });
+    warmUserListHeads(req.userId!);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
