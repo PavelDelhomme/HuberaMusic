@@ -3124,7 +3124,24 @@ fun mediaItemFor(
     }
     return MediaItem.Builder()
         .setMediaId(t.id)
-        .setUri(baseStreamUrl(t.id))
+        .setUri(
+            run {
+                var uri = baseStreamUrl(t.id)
+                if (!uri.contains("title=")) {
+                    val extra = mutableListOf<String>()
+                    if (t.title.isNotBlank()) extra += "title=" + java.net.URLEncoder.encode(t.title, "UTF-8")
+                    val artist = t.artistLine()
+                    if (artist.isNotBlank()) extra += "artist=" + java.net.URLEncoder.encode(artist, "UTF-8")
+                    t.durationMsOrNull()?.takeIf { it > 0L }?.let { ms ->
+                        extra += "duration=${(ms / 1000L).coerceAtLeast(1L)}"
+                    }
+                    if (extra.isNotEmpty()) {
+                        uri += (if (uri.contains("?")) "&" else "?") + extra.joinToString("&")
+                    }
+                }
+                uri
+            }
+        )
         .setCustomCacheKey(PlayerCache.keyFor(t.id))
         .setMediaMetadata(meta.build())
         .build()

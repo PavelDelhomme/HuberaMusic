@@ -32,6 +32,7 @@ import {
   ensureYoutubeProxyPool,
   fetchUrlViaProxy,
   isHttpProxy,
+  pickHotProxies,
 } from '../youtube/youtubeProxy.js';
 import {
   peekStreamHead,
@@ -45,8 +46,15 @@ import {
   safeDiskRangeBounds,
 } from './streamHeadCache.js';
 import { findReplacementId, getReplacementId, looksUnavailable } from './trackReplacement.js';
-import { findAtlasEquivalent, rememberAtlasPlayable } from './trackAtlas.js';
+import { findAtlasEquivalent, findAtlasMatchFromClient, rememberAtlasPlayable } from './trackAtlas.js';
 import { noteStreamNote, noteStreamSource, watchStreamRequest } from './streamLog.js';
+import {
+  beginUserResolution,
+  endUserResolution,
+  addDownloadConsumer,
+  removeDownloadConsumer,
+  canSearchWarm,
+} from './streamOrchestrator.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..', '..');
@@ -172,7 +180,7 @@ async function fetchGooglevideo(
       timeoutMs: 14_000,
     });
     // Status lu avant tout pipe client = détection 5xx amont.
-    if (isUpstream5xx(res.status) || res.status === 0) {
+    if (isUpstream5xx(res.status) || res.status === 0 || res.status === 403 || res.status === 429) {
       if (proxy) markYoutubeProxyFailure(proxy, 'gv');
       try {
         await res.body?.cancel();
@@ -1161,6 +1169,18 @@ export async function handleStream(req: Request, res: Response) {
   }
   watchStreamRequest(req, res, videoId);
 
+  const userId = (req as any).userId as string | undefined;
+  const isWarmPrefetch =
+    String(req.query.warm || '') === '1' ||
+    String(req.headers['x-ytm-warm'] || '') === '1';
+  const userSignal = isWarmPrefetch ? undefined : beginUserResolution(userId);
+  const consumerKey = isWarmPrefetch ? `warm:next:${videoId}` : userId ? `user:${userId}` : `anon:${videoId}`;
+  addDownloadConsumer(videoId, consumerKey);
+  res.on('close', () => {
+    removeDownloadConsumer(videoId, consumerKey);
+    if (!isWarmPrefetch) endUserResolution(userId, userSignal);
+  });
+
   // Cache disque AVANT remplacement : un .m4a local prime sur un mapping
   // (sinon 1-M4Jr → r5MR7 → medley mort, alors que le fichier est déjà là).
   {
@@ -1221,7 +1241,14 @@ export async function handleStream(req: Request, res: Response) {
       // Cartographie : un autre id du même morceau est déjà sur disque → 302
       // immédiat, même si YouTube est saturé (le circuit 410 ne doit pas gagner).
       const mapped =
-        getReplacementId(videoId) || findAtlasEquivalent(videoId);
+        getReplacementId(videoId) ||
+        findAtlasMatchFromClient({
+          videoId,
+          title: String(req.query.title || ''),
+          artist: String(req.query.artist || ''),
+          durationSec: Number(req.query.duration || req.query.durationSec || 0) || undefined,
+        }) ||
+        findAtlasEquivalent(videoId);
       if (mapped && mapped !== videoId) {
         const mappedPath = cachePath(mapped);
         if (
@@ -1286,6 +1313,7 @@ export async function handleStream(req: Request, res: Response) {
           progressiveOnly: true,
           preferProxies: true,
           userId: (req as any).userId,
+          signal: userSignal,
         }).catch(() => {});
         enqueueNextDiskWarm([videoId]);
 
@@ -2500,6 +2528,9 @@ const likesDiskWarmQueued = new Set<string>();
 /** Prochain titre en file d’écoute : warm disque même pendant une lecture (évite 20 s au skip). */
 const nextDiskWarmQueue: string[] = [];
 const nextDiskWarmQueued = new Set<string>();
+/** Pre-warm 1er hit recherche — sous PLAYING et NEXT_FILE. */
+const searchWarmQueue: string[] = [];
+const searchWarmQueued = new Set<string>();
 let diskWarmBusyCount = 0;
 const DISK_WARM_CONCURRENCY = 2;
 
@@ -2515,7 +2546,7 @@ async function runDiskWarmWorker() {
   if (diskWarmBusyCount >= DISK_WARM_CONCURRENCY) return;
   diskWarmBusyCount += 1;
   try {
-    while (nextDiskWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
+    while (nextDiskWarmQueue.length || searchWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
       const nextId = nextDiskWarmQueue.shift();
       if (nextId) {
         nextDiskWarmQueued.delete(nextId);
@@ -2526,6 +2557,17 @@ async function runDiskWarmWorker() {
         }
         if (nextDiskWarmQueue.length) void runDiskWarmWorker();
         await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 200 : 120));
+        continue;
+      }
+      const searchId = searchWarmQueue.shift();
+      if (searchId) {
+        searchWarmQueued.delete(searchId);
+        try {
+          await downloadTrack(searchId, { progressiveOnly: true, preferProxies: true });
+        } catch {
+          /* best-effort */
+        }
+        await new Promise((r) => setTimeout(r, 180));
         continue;
       }
       // Lecture utilisateur : ne PAS consommer de slots yt-dlp génériques (sinon Aléatoire timeout).
@@ -2553,7 +2595,7 @@ async function runDiskWarmWorker() {
     }
   } finally {
     diskWarmBusyCount = Math.max(0, diskWarmBusyCount - 1);
-    if (nextDiskWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
+    if (nextDiskWarmQueue.length || searchWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
       void runDiskWarmWorker();
     }
   }
@@ -2583,9 +2625,27 @@ export function enqueueNextDiskWarm(ids: string[]) {
     nextDiskWarmQueued.add(id);
     nextDiskWarmQueue.push(id);
   }
-  if (nextDiskWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
+  if (nextDiskWarmQueue.length || searchWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
     void runDiskWarmWorker();
   }
+}
+
+export function enqueueSearchWarm(ids: string[], userId?: string) {
+  if (!canSearchWarm(userId)) return;
+  for (const id of ids) {
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
+    if (searchWarmQueued.has(id) || nextDiskWarmQueued.has(id)) continue;
+    try {
+      const p = cachePath(id);
+      if (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) continue;
+    } catch {
+      /* continue */
+    }
+    if (searchWarmQueue.length >= 2) break;
+    searchWarmQueued.add(id);
+    searchWarmQueue.push(id);
+  }
+  if (searchWarmQueue.length) void runDiskWarmWorker();
 }
 
 /** Enfile des téléchargements .m4a (cap file générique). */
@@ -2861,6 +2921,7 @@ let formatResolveTail: Promise<unknown> = Promise.resolve();
 async function resolveFormatForSwarm(
   videoId: string,
   userId?: string,
+  signal?: AbortSignal,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   const peeked = peekCachedAudioFormat(videoId, userId);
   if (peeked?.url) return peeked;
@@ -2868,11 +2929,7 @@ async function resolveFormatForSwarm(
     const again = peekCachedAudioFormat(videoId, userId);
     if (again?.url) return again;
     try {
-      const fmt = await Promise.race([
-        getAudioFormat(videoId, { userId, live: true }),
-        new Promise<null>((r) => setTimeout(() => r(null), 18_000)),
-      ]);
-      return fmt && fmt.url ? fmt : null;
+      return await resolveFormatHedged(videoId, userId, signal);
     } catch {
       return null;
     }
@@ -2885,9 +2942,124 @@ async function resolveFormatForSwarm(
   return await job;
 }
 
+function aborted(signal?: AbortSignal): boolean {
+  return Boolean(signal?.aborted);
+}
+
+/**
+ * Course : Innertube + proxy A (hot) à t=0, proxy B à t=2,5 s.
+ * Chaque jambe résout SA propre URL. Premier 206 gagne. Timeout 12 s.
+ */
+async function resolveFormatHedged(
+  videoId: string,
+  userId?: string,
+  userSignal?: AbortSignal,
+): Promise<ReturnType<typeof peekCachedAudioFormat>> {
+  if (aborted(userSignal)) throw new Error('aborted');
+  const hot = pickHotProxies(2);
+  const ctrlA = new AbortController();
+  const ctrlB = new AbortController();
+  const onUserAbort = () => {
+    try {
+      ctrlA.abort();
+      ctrlB.abort();
+    } catch {
+      /* ignore */
+    }
+  };
+  userSignal?.addEventListener('abort', onUserAbort, { once: true });
+
+  let winner: ReturnType<typeof peekCachedAudioFormat> = null;
+  const take = (fmt: NonNullable<ReturnType<typeof peekCachedAudioFormat>>, loser: AbortController) => {
+    if (winner) {
+      try {
+        loser.abort();
+      } catch {
+        /* ignore */
+      }
+      throw new Error('lost race');
+    }
+    winner = fmt;
+    try {
+      loser.abort();
+    } catch {
+      /* ignore */
+    }
+    return fmt;
+  };
+
+  const viaProxy = async (proxy: string, sig: AbortSignal) => {
+    if (aborted(sig) || aborted(userSignal)) throw new Error('aborted');
+    const fmt = await getAudioFormat(videoId, {
+      userId,
+      live: true,
+      boundProxy: proxy,
+      signal: sig,
+    });
+    if (!fmt?.url) throw new Error('no url');
+    const probe = await fetchGooglevideo(fmt.url, 'bytes=0-0', {
+      preferProxies: true,
+      boundProxy: proxy,
+      userId,
+    });
+    try {
+      await probe.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    if (probe.status !== 206 && probe.status !== 200) {
+      throw new Error(`probe ${probe.status}`);
+    }
+    return { ...fmt, viaProxy: proxy || fmt.viaProxy };
+  };
+
+  const primary = Promise.any([
+    getAudioFormat(videoId, { userId, live: true, signal: ctrlA.signal }),
+    hot[0]
+      ? viaProxy(hot[0], ctrlA.signal)
+      : Promise.reject(new Error('no hot A')),
+  ]).then((fmt) => take(fmt, ctrlB));
+
+  const delayedB = new Promise<NonNullable<ReturnType<typeof peekCachedAudioFormat>>>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (winner || aborted(userSignal) || aborted(ctrlA.signal) || !hot[1]) {
+        reject(new Error('hedge B skip'));
+        return;
+      }
+      viaProxy(hot[1], ctrlB.signal)
+        .then((fmt) => resolve(take(fmt, ctrlA)))
+        .catch(reject);
+    }, 2_500);
+    userSignal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(new Error('aborted'));
+      },
+      { once: true },
+    );
+  });
+
+  try {
+    const fmt = (await Promise.race([
+      primary.catch(() => delayedB),
+      delayedB.catch(() => primary),
+      new Promise<null>((r) => setTimeout(() => r(null), 12_000)),
+    ])) as ReturnType<typeof peekCachedAudioFormat>;
+    if (fmt?.url) return fmt;
+    if (winner?.url) return winner;
+    return (await Promise.race([
+      getAudioFormat(videoId, { userId, live: true, signal: userSignal }),
+      new Promise<null>((r) => setTimeout(() => r(null), 6_000)),
+    ])) as ReturnType<typeof peekCachedAudioFormat>;
+  } finally {
+    userSignal?.removeEventListener('abort', onUserAbort);
+  }
+}
+
 export async function downloadTrack(
   videoId: string,
-  opts?: { progressiveOnly?: boolean; preferProxies?: boolean; userId?: string },
+  opts?: { progressiveOnly?: boolean; preferProxies?: boolean; userId?: string; signal?: AbortSignal },
 ): Promise<string> {
   ensureCache();
   const out = cachePath(videoId);
@@ -2968,7 +3140,7 @@ export async function downloadTrack(
 
     // Swarm : 1 résolution d’URL à la fois (8 s), puis chunks visibles tout de suite.
     try {
-      const format = await resolveFormatForSwarm(videoId, opts?.userId);
+      const format = await resolveFormatForSwarm(videoId, opts?.userId, opts?.signal);
       if (format?.url) {
         const swarmOk = await downloadViaProxyChunks(format.url, out, {
           userId: opts?.userId,

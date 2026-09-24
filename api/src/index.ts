@@ -86,7 +86,7 @@ import {
   scheduleLibraryRepair,
   libraryMembership,
 } from './library/library.js';
-import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm } from './media/stream.js';
+import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, enqueueSearchWarm } from './media/stream.js';
 import {
   scheduleUserTasteWarm,
   startGlobalTasteWarmScheduler,
@@ -2019,7 +2019,14 @@ app.get('/api/search', accountRequired, async (req, res) => {
       // Frappe live / très courte : ne pas polluer l’historique
       q.length < 3;
     if (!noHistory) addSearchHistory(req.userId!, q);
-    res.json(await search(q, String(req.query.filter || 'all'), { userId: req.userId! }));
+    const payload = await search(q, String(req.query.filter || 'all'), { userId: req.userId! });
+    res.json(payload);
+    const firstId =
+      (payload as { songs?: Array<{ id?: string }>; topResult?: { id?: string } })?.songs?.[0]?.id ||
+      (payload as { topResult?: { id?: string } })?.topResult?.id;
+    if (firstId && /^[a-zA-Z0-9_-]{11}$/.test(firstId)) {
+      enqueueSearchWarm([firstId], req.userId!);
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

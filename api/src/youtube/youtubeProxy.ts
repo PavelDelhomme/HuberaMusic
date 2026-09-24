@@ -11,7 +11,7 @@
  * éviction des morts, refresh fond. Direct VPS en dernier si pool free ON.
  * Opt-out : YOUTUBE_HTTP_PROXY_FREE=0
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import http from 'node:http';
 import https from 'node:https';
@@ -61,6 +61,13 @@ const USER_POOL_SIZE = Math.max(
   8,
   Math.min(48, Number(process.env.YOUTUBE_PROXY_USER_POOL || 24) || 24),
 );
+
+const HOT_POOL_PATH = join(process.cwd(), 'data', 'hot_pool.json');
+const HOT_CAP = 30;
+const HOT_EXPIRE_MS = 6 * 60 * 60 * 1000;
+const HOT_MIN = 15;
+let hotLoaded = false;
+let hotPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function hash32(s: string): number {
   let h = 2166136261 >>> 0;
@@ -185,6 +192,104 @@ function pushPool(urls: string[]) {
     if (!n) continue;
     ensureEntry(n);
   }
+}
+
+type HotFileEntry = {
+  url: string;
+  lastSuccess206?: number;
+  gvHits?: number;
+  failCount?: number;
+  deadUntil?: number;
+};
+
+function persistHotPool(): void {
+  try {
+    const now = Date.now();
+    const entries: HotFileEntry[] = [...pool.values()]
+      .filter((e) => (e.gvHits || 0) > 0 && now - (e.lastOkAt || 0) < HOT_EXPIRE_MS)
+      .sort((a, b) => (b.gvHits || 0) - (a.gvHits || 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0))
+      .slice(0, HOT_CAP)
+      .map((e) => ({
+        url: e.url,
+        lastSuccess206: e.lastOkAt,
+        gvHits: e.gvHits,
+        failCount: e.gvMiss || 0,
+        deadUntil: e.deadUntil || 0,
+      }));
+    mkdirSync(join(process.cwd(), 'data'), { recursive: true });
+    writeFileSync(HOT_POOL_PATH, JSON.stringify(entries), 'utf8');
+  } catch {
+    /* volume RO */
+  }
+}
+
+function persistHotSoon(): void {
+  if (hotPersistTimer) return;
+  hotPersistTimer = setTimeout(() => {
+    hotPersistTimer = null;
+    persistHotPool();
+  }, 2_000);
+  if (typeof hotPersistTimer === 'object' && hotPersistTimer && 'unref' in hotPersistTimer) {
+    try {
+      hotPersistTimer.unref();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function loadHotPoolFromDisk(): void {
+  if (hotLoaded) return;
+  hotLoaded = true;
+  try {
+    if (!existsSync(HOT_POOL_PATH)) return;
+    const raw = JSON.parse(readFileSync(HOT_POOL_PATH, 'utf8')) as HotFileEntry[];
+    if (!Array.isArray(raw)) return;
+    const now = Date.now();
+    let n = 0;
+    for (const row of raw) {
+      const url = normalizeProxyUrl(String(row?.url || ''));
+      if (!url) continue;
+      const last = Number(row.lastSuccess206 || 0);
+      if (last && now - last > HOT_EXPIRE_MS) continue;
+      if (Number(row.deadUntil || 0) > now) continue;
+      const e = ensureEntry(url);
+      e.gvHits = Math.max(e.gvHits || 0, Number(row.gvHits || 1) || 1);
+      e.lastOkAt = Math.max(e.lastOkAt || 0, last || now);
+      e.fails = 0;
+      e.deadUntil = 0;
+      n += 1;
+      if (n >= HOT_CAP) break;
+    }
+    if (n) console.info(`[youtubeProxy] hot pool chargé n=${n}`);
+  } catch (err) {
+    console.warn('[youtubeProxy] hot_pool.json', String((err as Error).message || err).slice(0, 80));
+  }
+}
+
+/** 15–30 proxies avec 206 googlevideo récent. Pas de retest des 600 au boot. */
+export function pickHotProxies(n = 2, exclude: Set<string> = new Set()): string[] {
+  const now = Date.now();
+  const hot = [...pool.values()]
+    .filter(
+      (e) =>
+        usable(e) &&
+        isHttpProxy(e.url) &&
+        (e.gvHits || 0) > 0 &&
+        now - (e.lastOkAt || 0) < HOT_EXPIRE_MS &&
+        !exclude.has(e.url),
+    )
+    .sort((a, b) => (b.gvHits || 0) - (a.gvHits || 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0));
+  const out = hot.slice(0, Math.max(n, HOT_MIN)).map((e) => e.url);
+  if (out.length >= n) return out.slice(0, n);
+  const extra = [...pool.values()]
+    .filter((e) => usable(e) && isHttpProxy(e.url) && !exclude.has(e.url) && !out.includes(e.url))
+    .sort((a, b) => (b.connectOkUntil > now ? 1 : 0) - (a.connectOkUntil > now ? 1 : 0));
+  for (const e of extra) {
+    out.push(e.url);
+    if (out.length >= n) break;
+  }
+  return out.slice(0, n);
 }
 
 function loadStaticList(): string[] {
@@ -353,6 +458,7 @@ function evictDead(): void {
 }
 
 export async function ensureYoutubeProxyPool(force = false): Promise<void> {
+  loadHotPoolFromDisk();
   pushPool(loadStaticList());
   if (!youtubeProxyFreeEnabled()) return;
 
@@ -686,6 +792,13 @@ export function markYoutubeProxyFailure(proxy: string | null, kind: 'tcp' | 'gv'
   if (e.fails >= MAX_FAILS) {
     e.deadUntil = Date.now() + COOLDOWN_MS;
   }
+  // Hot pool : 3× 403/timeout googlevideo → quarantaine exponentielle + jitter
+  if (kind === 'gv' && (e.gvHits || 0) > 0 && (e.gvMiss || 0) >= 3) {
+    const exp = Math.min(5, (e.gvMiss || 3) - 3);
+    const base = 15 * 60_000 * Math.pow(2, exp);
+    e.deadUntil = Date.now() + base + Math.floor(Math.random() * 60_000);
+    persistHotSoon();
+  }
   if (e.fails >= EVICT_AFTER_FAILS) {
     dropFromPool(proxy);
     // Recharge en fond pour remplacer
@@ -702,7 +815,11 @@ export function markYoutubeProxySuccess(proxy: string | null, kind: 'tcp' | 'gv'
   e.lastFailAt = 0;
   e.deadUntil = 0;
   e.lastOkAt = Date.now();
-  if (kind === 'gv') e.gvHits = (e.gvHits || 0) + 1;
+  if (kind === 'gv') {
+    e.gvHits = (e.gvHits || 0) + 1;
+    e.gvMiss = 0;
+    persistHotSoon();
+  }
 }
 
 export function youtubeProxyStats(): {
@@ -711,13 +828,17 @@ export function youtubeProxyStats(): {
   usable: number;
   freeEnabled: boolean;
   gvWinners: number;
+  hotPool: number;
   users: number;
   leased: number;
   stewardLoaded: boolean;
 } {
   let gvWinners = 0;
+  let hotPool = 0;
+  const now = Date.now();
   for (const e of pool.values()) {
     if ((e.gvHits || 0) > 0 && usable(e)) gvWinners += 1;
+    if ((e.gvHits || 0) > 0 && usable(e) && now - (e.lastOkAt || 0) < HOT_EXPIRE_MS) hotPool += 1;
   }
   return {
     enabled: Boolean((process.env.YOUTUBE_HTTP_PROXY || '').trim()) || youtubeProxyFreeEnabled(),
@@ -725,6 +846,7 @@ export function youtubeProxyStats(): {
     usable: usableCount(),
     freeEnabled: youtubeProxyFreeEnabled(),
     gvWinners,
+    hotPool: Math.min(HOT_CAP, hotPool),
     users: userLeases.size,
     leased: proxyLease.size,
     stewardLoaded,
@@ -767,9 +889,74 @@ function headersToWeb(raw: http.IncomingHttpHeaders): Headers {
   return h;
 }
 
+/** Agent HTTPS keepAlive par proxy : réutilise CONNECT+TLS vers googlevideo (même IP). */
+const proxyAgents = new Map<string, https.Agent>();
+
+function agentForProxy(proxyUrl: string): https.Agent {
+  const hit = proxyAgents.get(proxyUrl);
+  if (hit) return hit;
+  const proxy = new URL(proxyUrl);
+  const proxyPort = Number(proxy.port) || (proxy.protocol === 'https:' ? 443 : 80);
+  const agent = new https.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 30_000,
+    maxSockets: 8,
+    maxFreeSockets: 4,
+    rejectUnauthorized: true,
+  });
+  agent.createConnection = ((options: tls.ConnectionOptions, callback?: (err: Error | null, socket?: tls.TLSSocket) => void) => {
+    const destHost = String(options.servername || options.host || '');
+    const destPort = Number(options.port) || 443;
+    const fail = (err: Error) => {
+      callback?.(err);
+    };
+    if (!destHost || !isAllowedProxyTarget(destHost) || isBlockedProxyHost(proxy.hostname)) {
+      fail(new Error('proxy target blocked'));
+      return undefined as unknown as tls.TLSSocket;
+    }
+    const connectReq = http.request({
+      host: proxy.hostname,
+      port: proxyPort,
+      method: 'CONNECT',
+      path: `${destHost}:${destPort}`,
+      headers: { Host: `${destHost}:${destPort}` },
+    });
+    connectReq.setTimeout(5_000, () => {
+      connectReq.destroy();
+      fail(new Error('proxy CONNECT timeout'));
+    });
+    connectReq.on('error', (err) => fail(err instanceof Error ? err : new Error(String(err))));
+    connectReq.on('connect', (res, socket) => {
+      if ((res.statusCode || 0) !== 200) {
+        try {
+          socket.destroy();
+        } catch {
+          /* ignore */
+        }
+        fail(new Error(`proxy CONNECT ${res.statusCode}`));
+        return;
+      }
+      const ts = tls.connect(
+        {
+          socket,
+          servername: destHost,
+          rejectUnauthorized: true,
+        },
+        () => callback?.(null, ts),
+      );
+      ts.on('error', (e) => callback?.(e));
+    });
+    connectReq.end();
+    return undefined as unknown as tls.TLSSocket;
+  }) as typeof agent.createConnection;
+  proxyAgents.set(proxyUrl, agent);
+  return agent;
+}
+
 /**
  * GET/HEAD HTTPS via proxy HTTP CONNECT (googlevideo est toujours TLS).
  * SOCKS : non géré ici (yt-dlp --proxy s’en charge).
+ * Tunnel keepAlive : plusieurs Range sur le même boundProxy réutilisent le TLS Google.
  */
 export function fetchUrlViaProxy(
   targetUrl: string,
@@ -799,61 +986,30 @@ export function fetchUrlViaProxy(
       new Error(`proxy target not allowed: ${target.hostname}`),
     );
   }
-  const proxy = new URL(proxyUrl);
-  if (isBlockedProxyHost(proxy.hostname)) {
-    return Promise.reject(new Error(`blocked proxy host: ${proxy.hostname}`));
+  if (isBlockedProxyHost(new URL(proxyUrl).hostname)) {
+    return Promise.reject(new Error(`blocked proxy host: ${new URL(proxyUrl).hostname}`));
   }
-  const proxyPort = Number(proxy.port) || (proxy.protocol === 'https:' ? 443 : 80);
   const destPort = Number(target.port) || (target.protocol === 'http:' ? 80 : 443);
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    const connectReq = http.request({
-      host: proxy.hostname,
-      port: proxyPort,
-      method: 'CONNECT',
-      path: `${target.hostname}:${destPort}`,
-      headers: { Host: `${target.hostname}:${destPort}` },
-    });
     const fail = (err: Error) => {
       if (settled) return;
       settled = true;
-      try {
-        connectReq.destroy();
-      } catch {
-        /* ignore */
-      }
       reject(err);
     };
-    connectReq.setTimeout(Math.min(timeoutMs, 5_000), () => fail(new Error('proxy CONNECT timeout')));
-    connectReq.on('error', (err) => fail(err instanceof Error ? err : new Error(String(err))));
-    connectReq.on('connect', (res, socket) => {
-      if (settled) {
-        socket.destroy();
-        return;
-      }
-      if ((res.statusCode || 500) !== 200) {
-        socket.destroy();
-        fail(new Error(`proxy CONNECT ${res.statusCode}`));
-        return;
-      }
-      const tlsReq = https.request(
-        {
-          host: target.hostname,
-          servername: target.hostname,
-          port: destPort,
-          path: `${target.pathname}${target.search}`,
-          method: init.method || 'GET',
-          headers: { ...(init.headers || {}), Host: target.host },
-          timeout: timeoutMs,
-          createConnection: (_opts, cb) => {
-            const ts = tls.connect({ socket, servername: target.hostname }, () => {
-              cb(null, ts);
-            });
-            ts.on('error', (e) => cb(e));
-            return ts;
-          },
-        },
+    const tlsReq = https.request(
+      {
+        agent: agentForProxy(proxyUrl),
+        host: target.hostname,
+        servername: target.hostname,
+        port: destPort,
+        path: `${target.pathname}${target.search}`,
+        method: init.method || 'GET',
+        headers: { ...(init.headers || {}), Host: target.host },
+        timeout: timeoutMs,
+        rejectUnauthorized: true,
+      },
         (ires) => {
           if (settled) {
             ires.resume();
@@ -882,8 +1038,6 @@ export function fetchUrlViaProxy(
         fail(new Error('proxy TLS timeout'));
       });
       tlsReq.end();
-    });
-    connectReq.end();
   });
 }
 
@@ -948,6 +1102,7 @@ async function canaryWarmSample(): Promise<void> {
 
 /** Démarre le refresh périodique (appelé au listen API). */
 export function startYoutubeProxyBackgroundRefresh(): void {
+  loadHotPoolFromDisk();
   if (bgTimer || !youtubeProxyFreeEnabled()) return;
   bgTimer = setInterval(() => {
     void ensureYoutubeProxyPool(true)

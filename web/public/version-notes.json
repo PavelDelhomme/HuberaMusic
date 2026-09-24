@@ -1,28 +1,17 @@
 {
-  "updatedAt": "2026-09-22",
+  "updatedAt": "2026-09-24",
   "versions": [
     {
-      "version": "1.3.283",
-      "date": "2026-09-23",
-      "time": "17:55",
-      "at": "2026-09-23T17:55:00+02:00",
-      "title": "L’API ne se bloque plus toute seule",
+      "version": "1.3.287",
+      "date": "2026-09-24",
+      "time": "19:50",
+      "at": "2026-09-24T19:50:00+02:00",
+      "title": "Hot pool persisté, skip avorté, atlas client, hedge 2,5 s",
       "notes": [
-        "Une seule recherche de remplaçant à la fois : plus de /api/health qui timeout ni de BUFFERING en masse.",
-        "Les titres déjà en cache VPS restent la priorité. Cartographie 1.3.282 inchangée.",
-        "PC maison offline = normal. Hubera ID : on te demande, login local conservé — pas d’update forcé."
-      ]
-    },
-    {
-      "version": "1.3.282",
-      "date": "2026-09-23",
-      "time": "14:35",
-      "at": "2026-09-23T14:35:00+02:00",
-      "title": "Cartographie des titres : un équivalent déjà en cache joue tout de suite",
-      "notes": [
-        "Les titres déjà téléchargés sur le VPS sont indexés (empreinte titre+artiste). Un id YouTube mort reprend l’autre fichier au lieu de rester bloqué.",
-        "Le coupe-circuit YouTube saturé ne jette plus un titre s’il a déjà un remplaçant en base.",
-        "PC maison offline = normal. Hubera ID : on te demande, login local conservé — pas d’update forcé."
+        "Les meilleurs proxies googlevideo (HTTP 206) sont sauvés dans hot_pool.json.",
+        "Un skip coupe seulement ta résolution YouTube, pas le fichier déjà en cache pour les autres.",
+        "Si le même morceau existe déjà sur le VPS (titre + artiste + durée), lecture immédiate.",
+        "Titre jamais écouté : course de 2 proxies (0 s / 2,5 s), timeout 12 s, même IP pour tout le fichier."
       ]
     },
     {
@@ -32,21 +21,9 @@
       "at": "2026-09-23T14:05:00+02:00",
       "title": "Galactic et titres morts : skip en quelques secondes",
       "notes": [
-        "Si YouTube ne répond pas, le téléphone passe au titre suivant après ~6 s au lieu de rester bloqué plusieurs minutes.",
-        "Le serveur coupe tout de suite les titres froids saturés (plus d’attente 18 s par morceau).",
-        "PC maison offline = normal. Hubera ID : on te demande, login local conservé — pas d’update forcé."
-      ]
-    },
-    {
-      "version": "1.3.280",
-      "date": "2026-09-23",
-      "time": "13:50",
-      "at": "2026-09-23T13:50:00+02:00",
-      "title": "Titre mort → suivant tout de suite (plus de Galactic bloqué)",
-      "notes": [
-        "Si YouTube ne donne pas l’audio (timeout), l’app passe au titre suivant au lieu de rester en chargement.",
-        "Le fichier commence à jouer dès 256 Ko sur le VPS. Autre upload du même morceau acceptée si l’originale est morte.",
-        "PC maison offline = normal. Hubera ID : on te demande, login local conservé — pas d’update forcé."
+        "Skip tampon Android ~6 s (plus 7×16 s).",
+        "Circuit format YouTube saturé → 410 immédiat.",
+        "PC maison offline = normal."
       ]
     },
     {
@@ -56,9 +33,9 @@
       "at": "2026-09-23T13:20:00+02:00",
       "title": "Le titre suivant s’écrit tout de suite sur le VPS",
       "notes": [
-        "Le serveur découpe l’audio et l’écrit au fur et à mesure dans le fichier que tu écoutes — plus d’attente d’un fichier caché invisible.",
-        "Une seule URL YouTube est résolue à la fois (8 s) : le titre en cours passe devant, le suivant se prépare sans noyer la lecture.",
-        "PC maison offline = normal. Hubera ID : on te demande, login local conservé — pas d’update forcé."
+        "Le .m4a grossit pendant le téléchargement (plus de fichier caché).",
+        "Une seule URL YouTube à la fois (8 s).",
+        "PC maison offline = normal."
       ]
     },
     {
@@ -68,9 +45,9 @@
       "at": "2026-09-22T20:05:00+02:00",
       "title": "Pool proxies stable (plus de 502 en boucle)",
       "notes": [
-        "Les listes de proxies publics ne se relancent plus toutes les 8 s (ça saturait le titre en cours).",
-        "Source morte proxy-list.download (502) retirée. Les autres listes + cache disque VPS restent.",
-        "PC maison offline = normal. Hubera ID : on te demande, login local conservé — pas d’update forcé."
+        "Les listes de proxies publics ne se relancent plus toutes les 8 s.",
+        "Source morte proxy-list.download (502) retirée.",
+        "PC maison offline = normal. Hubera ID demandé, login local conservé."
       ]
     },
     {
@@ -80,21 +57,20 @@
       "at": "2026-09-22T19:00:00+02:00",
       "title": "Plus de deadline swarm + pause écran",
       "notes": [
-        "Le serveur ne relance plus getAudioFormat 16 s sur chaque titre de la file (ça noyaient la lecture). Swarm uniquement si l’URL est déjà en mémoire.",
-        "PC maison offline = normal : audio = VPS + proxies gratuits + cache disque",
-        "Hubera ID : on te demande (même email), login local conservé — pas d’update forcé"
+        "Swarm uniquement si l’URL est déjà en mémoire — plus de getAudioFormat 16 s.",
+        "PC maison offline = normal : audio = VPS + proxies gratuits + cache disque."
       ]
     },
     {
       "version": "1.3.276",
-      "date": "2026-09-22",
-      "time": "18:15",
-      "at": "2026-09-22T18:15:00+02:00",
-      "title": "Titres déjà au cache VPS + Hubera ID",
+      "date": "2026-09-21",
+      "time": "15:50",
+      "at": "2026-09-21T15:50:00+02:00",
+      "title": "Flux qui démarre même sans relais maison",
       "notes": [
-        "Après le test Blackview 2 h : 5 skips = titre suivant encore en buffering. Le serveur découpe le son en morceaux et les récupère en parallèle via plusieurs proxies (PC maison offline = normal), puis te sert le fichier déjà sur le VPS",
-        "Les 3 titres suivants de la file sont préparés à l’avance — bouton suivant sans 20 s d’attente",
-        "Hubera ID (optionnel) : même email. On te le demande, login local conservé. Page id.hubera.cloud/migrate.html — pas d’update forcé"
+        "Si le relais audio renvoie un fichier vide, on change de proxy tout de suite au lieu d’attendre",
+        "La résolution d’un titre n’avale plus tout le délai — le lecteur reçoit des octets plus tôt",
+        "Paroles : Genius / sites lyrics aussi via proxy, plus Textyl / ChartLyrics, et on mémorise ce qui a marché"
       ]
     },
     {
@@ -106,8 +82,7 @@
       "notes": [
         "Rebind sans vider le cache : plus de boucle « Chargement du flux… » sur Samsung / Blackview",
         "Icône lanceur : Music (Preprod / Dev), pas un pavé Hubera Music",
-        "Paroles : catalogue Spotify/Deezer/Apple + LRCLIB élargi",
-        "Hubera ID (optionnel) : même email que Music = identité commune. Tes playlists restent ici. Page : id.hubera.cloud — pas de mot de passe à y saisir, pas d’update forcé."
+        "Paroles : catalogue Spotify/Deezer/Apple + LRCLIB élargi"
       ]
     },
     {

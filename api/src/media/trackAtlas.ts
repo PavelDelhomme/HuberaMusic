@@ -7,7 +7,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getTrackPayload } from '../library/db.js';
-import { artistLine, fingerprint, normalize } from './trackMatch.js';
+import { artistLine, fingerprint, normalize, sameVersion, similarity, versionTags } from './trackMatch.js';
 
 const CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data', 'cache');
 const VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/;
@@ -26,10 +26,16 @@ export function ensureTrackAtlasSchema() {
       bytes INTEGER NOT NULL DEFAULT 0,
       title TEXT,
       artist TEXT,
+      duration_sec INTEGER,
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_atlas_vid ON track_atlas(video_id);
   `);
+  try {
+    db.exec('ALTER TABLE track_atlas ADD COLUMN duration_sec INTEGER');
+  } catch {
+    /* already */
+  }
   schemaReady = true;
 }
 
@@ -55,6 +61,7 @@ export function rememberAtlasPlayable(
   title: string,
   artist: string,
   bytes?: number,
+  durationSec?: number,
 ) {
   if (!VIDEO_ID.test(videoId)) return;
   const fp = fpKey(title, artist);
@@ -68,16 +75,21 @@ export function rememberAtlasPlayable(
       .prepare('SELECT video_id, bytes FROM track_atlas WHERE fp = ?')
       .get(fp) as { video_id?: string; bytes?: number } | undefined;
     if (prev?.bytes && prev.bytes > size) return;
+    const dur =
+      typeof durationSec === 'number' && durationSec > 0
+        ? Math.round(durationSec)
+        : getTrackPayload(videoId)?.durationSeconds || null;
     db.prepare(
-      `INSERT INTO track_atlas (fp, video_id, bytes, title, artist, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO track_atlas (fp, video_id, bytes, title, artist, duration_sec, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(fp) DO UPDATE SET
          video_id = excluded.video_id,
          bytes = excluded.bytes,
          title = excluded.title,
          artist = excluded.artist,
+         duration_sec = COALESCE(excluded.duration_sec, track_atlas.duration_sec),
          updated_at = excluded.updated_at`,
-    ).run(fp, videoId, size, title.slice(0, 120), artist.slice(0, 80), now);
+    ).run(fp, videoId, size, title.slice(0, 120), artist.slice(0, 80), dur, now);
   } catch (err) {
     console.warn('[atlas] persist KO', String((err as Error).message || err).slice(0, 120));
   }
@@ -105,6 +117,75 @@ export function findAtlasEquivalent(videoId: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Lookup disque AVANT YouTube, à partir du titre/artiste/durée du client.
+ * Pas de Levenshtein seul : durée ±3 s + sameVersion + similarité ≥ 0.92.
+ */
+export function findAtlasMatchFromClient(opts: {
+  videoId: string;
+  title?: string;
+  artist?: string;
+  durationSec?: number;
+}): string | null {
+  const videoId = opts.videoId;
+  if (!VIDEO_ID.test(videoId)) return null;
+  if (diskBytes(videoId) >= MIN_BYTES) return null;
+  const title = String(opts.title || '').trim();
+  const artist = String(opts.artist || '').trim();
+  if (!title || !artist) return findAtlasEquivalent(videoId);
+  try {
+    ensureTrackAtlasSchema();
+    const exact = fpKey(title, artist);
+    if (exact) {
+      const row = db
+        .prepare('SELECT video_id, bytes, duration_sec, title, artist FROM track_atlas WHERE fp = ?')
+        .get(exact) as
+        | { video_id?: string; bytes?: number; duration_sec?: number; title?: string; artist?: string }
+        | undefined;
+      const id = row?.video_id;
+      if (id && id !== videoId && VIDEO_ID.test(id) && diskBytes(id) >= MIN_BYTES) {
+        if (atlasDurationOk(opts.durationSec, row?.duration_sec) && sameVersion(title, row?.title || title)) {
+          return id;
+        }
+      }
+    }
+    const rows = db
+      .prepare('SELECT video_id, bytes, duration_sec, title, artist FROM track_atlas LIMIT 8000')
+      .all() as Array<{
+      video_id: string;
+      bytes: number;
+      duration_sec?: number;
+      title?: string;
+      artist?: string;
+    }>;
+    const reqNorm = `${normalize(artist)} ${normalize(title)}`;
+    for (const row of rows) {
+      if (!row.video_id || row.video_id === videoId || !VIDEO_ID.test(row.video_id)) continue;
+      if (diskBytes(row.video_id) < MIN_BYTES) continue;
+      if (!atlasDurationOk(opts.durationSec, row.duration_sec)) continue;
+      if (!sameVersion(title, row.title || '')) continue;
+      const candNorm = `${normalize(row.artist || '')} ${normalize(row.title || '')}`;
+      if (similarity(reqNorm, candNorm) < 0.92) continue;
+      const reqTags = versionTags(title);
+      const candTags = versionTags(row.title || '');
+      if (reqTags.size !== candTags.size) continue;
+      let same = true;
+      for (const t of reqTags) if (!candTags.has(t)) same = false;
+      if (!same) continue;
+      return row.video_id;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function atlasDurationOk(want?: number, got?: number): boolean {
+  if (!want || want <= 0) return true;
+  if (!got || got <= 0) return true;
+  return Math.abs(got - want) <= 3;
 }
 
 export function atlasStats(): { rows: number; builtAt: number } {

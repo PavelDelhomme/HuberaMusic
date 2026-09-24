@@ -2643,10 +2643,12 @@ async function ytDlpGetUrl(
   extractorArgs: string[] = [],
   live = false,
   userId?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const { spawn } = await import('node:child_process');
   const { withYtDlpSlot } = await import('../media/ytDlpGate.js');
   const ytdlp = join(ROOT, 'bin', 'yt-dlp');
+  if (signal?.aborted) throw new Error('aborted');
   return withYtDlpSlot(
     () =>
       new Promise<string>((resolve, reject) => {
@@ -2672,8 +2674,22 @@ async function ytDlpGetUrl(
           if (settled) return;
           settled = true;
           clearTimeout(killTimer);
+          try {
+            signal?.removeEventListener('abort', onAbort);
+          } catch {
+            /* ignore */
+          }
           fn();
         };
+        const onAbort = () => {
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            /* ignore */
+          }
+          finish(() => reject(new Error('aborted')));
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
         // Cap dur : une vidéo morte ne doit pas monopoliser le slot 50 s.
         const killTimer = setTimeout(() => {
           try {
@@ -2712,7 +2728,7 @@ async function ytDlpGetUrl(
 
 async function audioFormatViaYtDlpFast(
   videoId: string,
-  opts?: { live?: boolean; userId?: string },
+  opts?: { live?: boolean; userId?: string; boundProxy?: string; signal?: AbortSignal },
 ): Promise<AudioFormat> {
   const { isYtDlpCoolingDown } = await import('../media/ytDlpGate.js');
   if (isYtDlpCoolingDown(opts?.userId)) throw new Error('yt-dlp cooling');
@@ -2733,7 +2749,7 @@ async function audioFormatViaYtDlpFast(
     let err: Error | null = null;
     for (const extractorArgs of extractorSets) {
       try {
-        const url = await ytDlpGetUrl(videoId, format, [], proxy, extractorArgs, live, userId);
+        const url = await ytDlpGetUrl(videoId, format, [], proxy, extractorArgs, live, userId, opts?.signal);
         markYoutubeProxySuccess(proxy);
         return asFormat(url, proxy);
       } catch (e) {
@@ -2750,6 +2766,10 @@ async function audioFormatViaYtDlpFast(
     }
     throw err || new Error('yt-dlp -g fast KO');
   };
+
+  if (opts?.boundProxy) {
+    return await tryProxy(opts.boundProxy);
+  }
 
   if (live) {
     const stripe = (await youtubeProxyStripe(userId, 4)).filter((p): p is string => Boolean(p));
@@ -2941,10 +2961,26 @@ async function audioFormatViaYtDlp(
 
 export async function getAudioFormat(
   videoId: string,
-  opts?: { userId?: string; forceFresh?: boolean; retryN?: number; live?: boolean },
+  opts?: {
+    userId?: string;
+    forceFresh?: boolean;
+    retryN?: number;
+    live?: boolean;
+    boundProxy?: string;
+    signal?: AbortSignal;
+  },
 ): Promise<AudioFormat> {
+  if (opts?.signal?.aborted) throw new Error('aborted');
   const forceFresh = Boolean(opts?.forceFresh || (opts?.retryN ?? 0) > 0);
   const live = opts?.live === true;
+  if (opts?.boundProxy) {
+    return audioFormatViaYtDlpFast(videoId, {
+      live: true,
+      userId: opts.userId,
+      boundProxy: opts.boundProxy,
+      signal: opts.signal,
+    });
+  }
   const proxyRetry = forceFresh
     ? { shuffle: true, directLast: true, live, userId: opts?.userId }
     : live
@@ -3013,7 +3049,7 @@ export async function getAudioFormat(
         // n’étaient lancés qu’après l’échec (trop tard pour le probe Android).
         return await Promise.any([
           tryInnertubeFast(),
-          audioFormatViaYtDlpFast(videoId, { live: true, userId: opts?.userId }),
+          audioFormatViaYtDlpFast(videoId, { live: true, userId: opts?.userId, signal: opts?.signal }),
         ]);
       } catch {
         return null;
