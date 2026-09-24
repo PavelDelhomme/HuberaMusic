@@ -86,7 +86,7 @@ import {
   scheduleLibraryRepair,
   libraryMembership,
 } from './library/library.js';
-import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, enqueueSearchWarm } from './media/stream.js';
+import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, replaceSearchWarm } from './media/stream.js';
 import {
   scheduleUserTasteWarm,
   startGlobalTasteWarmScheduler,
@@ -2025,7 +2025,7 @@ app.get('/api/search', accountRequired, async (req, res) => {
       (payload as { songs?: Array<{ id?: string }>; topResult?: { id?: string } })?.songs?.[0]?.id ||
       (payload as { topResult?: { id?: string } })?.topResult?.id;
     if (firstId && /^[a-zA-Z0-9_-]{11}$/.test(firstId)) {
-      enqueueSearchWarm([firstId], req.userId!);
+      replaceSearchWarm([firstId], req.userId!);
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });

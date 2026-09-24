@@ -54,6 +54,7 @@ import {
   addDownloadConsumer,
   removeDownloadConsumer,
   canSearchWarm,
+  shouldAbortOrphanDownload,
 } from './streamOrchestrator.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1169,6 +1170,18 @@ export async function handleStream(req: Request, res: Response) {
   }
   watchStreamRequest(req, res, videoId);
 
+  const clientTitle = String(req.query.title || '').trim();
+  const clientArtist = String(req.query.artist || '').trim();
+  const clientDurationSec = Number(req.query.duration || req.query.durationSec || 0) || undefined;
+  const persistAtlas = (id: string, bytes?: number) => {
+    if (!clientTitle || !clientArtist) return;
+    try {
+      rememberAtlasPlayable(id, clientTitle, clientArtist, bytes, clientDurationSec);
+    } catch {
+      /* best-effort */
+    }
+  };
+
   const userId = (req as any).userId as string | undefined;
   const isWarmPrefetch =
     String(req.query.warm || '') === '1' ||
@@ -1196,6 +1209,7 @@ export async function handleStream(req: Request, res: Response) {
         try {
           const size = statSync(cachedEarly).size;
           rememberAdvertisedTotal(videoId, size);
+          persistAtlas(videoId, size);
           import('../library/sharedCatalog.js')
             .then((m) => m.rememberReadyAudio(videoId, size))
             .catch(() => {});
@@ -1258,6 +1272,7 @@ export async function handleStream(req: Request, res: Response) {
           try {
             const size = statSync(mappedPath).size;
             rememberAdvertisedTotal(mapped, size);
+            persistAtlas(mapped, size);
             const { createReadStream } = await import('node:fs');
             res.status(200);
             res.setHeader('Accept-Ranges', 'bytes');
@@ -2562,10 +2577,17 @@ async function runDiskWarmWorker() {
       const searchId = searchWarmQueue.shift();
       if (searchId) {
         searchWarmQueued.delete(searchId);
+        const searchSig = addDownloadConsumer(searchId, 'warm:search');
         try {
-          await downloadTrack(searchId, { progressiveOnly: true, preferProxies: true });
+          await downloadTrack(searchId, {
+            progressiveOnly: true,
+            preferProxies: true,
+            signal: searchSig,
+          });
         } catch {
           /* best-effort */
+        } finally {
+          removeDownloadConsumer(searchId, 'warm:search');
         }
         await new Promise((r) => setTimeout(r, 180));
         continue;
@@ -2646,6 +2668,27 @@ export function enqueueSearchWarm(ids: string[], userId?: string) {
     searchWarmQueue.push(id);
   }
   if (searchWarmQueue.length) void runDiskWarmWorker();
+}
+
+/** Nouvelle query : on jette le 1er hit périmé (queue + download orphelin < 256 Ko). */
+export function replaceSearchWarm(ids: string[], userId?: string) {
+  const keep = new Set(ids.filter((id) => /^[a-zA-Z0-9_-]{11}$/.test(id)));
+  const dropped: string[] = [];
+  while (searchWarmQueue.length) {
+    const old = searchWarmQueue.shift()!;
+    searchWarmQueued.delete(old);
+    if (!keep.has(old)) dropped.push(old);
+  }
+  for (const id of dropped) {
+    try {
+      const p = cachePath(id);
+      const bytes = existsSync(p) ? statSync(p).size : 0;
+      shouldAbortOrphanDownload(id, bytes);
+    } catch {
+      shouldAbortOrphanDownload(id, 0);
+    }
+  }
+  enqueueSearchWarm(ids, userId);
 }
 
 /** Enfile des téléchargements .m4a (cap file générique). */
@@ -2947,7 +2990,7 @@ function aborted(signal?: AbortSignal): boolean {
 }
 
 /**
- * Course : Innertube + proxy A (hot) à t=0, proxy B à t=2,5 s.
+ * Course : Innertube + proxy A (hot) à t=0, proxy B à t=2,5 s, proxy C à t=5 s.
  * Chaque jambe résout SA propre URL. Premier 206 gagne. Timeout 12 s.
  */
 async function resolveFormatHedged(
@@ -2956,35 +2999,42 @@ async function resolveFormatHedged(
   userSignal?: AbortSignal,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   if (aborted(userSignal)) throw new Error('aborted');
-  const hot = pickHotProxies(2);
+  const hot = pickHotProxies(3);
   const ctrlA = new AbortController();
   const ctrlB = new AbortController();
-  const onUserAbort = () => {
-    try {
-      ctrlA.abort();
-      ctrlB.abort();
-    } catch {
-      /* ignore */
+  const ctrlC = new AbortController();
+  const abortAll = () => {
+    for (const c of [ctrlA, ctrlB, ctrlC]) {
+      try {
+        c.abort();
+      } catch {
+        /* ignore */
+      }
     }
   };
+  const onUserAbort = () => abortAll();
   userSignal?.addEventListener('abort', onUserAbort, { once: true });
 
   let winner: ReturnType<typeof peekCachedAudioFormat> = null;
-  const take = (fmt: NonNullable<ReturnType<typeof peekCachedAudioFormat>>, loser: AbortController) => {
-    if (winner) {
+  const abortLosers = (losers: AbortController[]) => {
+    for (const loser of losers) {
       try {
         loser.abort();
       } catch {
         /* ignore */
       }
+    }
+  };
+  const take = (
+    fmt: NonNullable<ReturnType<typeof peekCachedAudioFormat>>,
+    losers: AbortController[],
+  ) => {
+    if (winner) {
+      abortLosers(losers);
       throw new Error('lost race');
     }
     winner = fmt;
-    try {
-      loser.abort();
-    } catch {
-      /* ignore */
-    }
+    abortLosers(losers);
     return fmt;
   };
 
@@ -3013,37 +3063,46 @@ async function resolveFormatHedged(
     return { ...fmt, viaProxy: proxy || fmt.viaProxy };
   };
 
+  const delayed = (
+    proxy: string | undefined,
+    ctrl: AbortController,
+    losers: AbortController[],
+    delayMs: number,
+    label: string,
+  ) =>
+    new Promise<NonNullable<ReturnType<typeof peekCachedAudioFormat>>>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (winner || aborted(userSignal) || aborted(ctrl.signal) || !proxy) {
+          reject(new Error(`hedge ${label} skip`));
+          return;
+        }
+        viaProxy(proxy, ctrl.signal)
+          .then((fmt) => resolve(take(fmt, losers)))
+          .catch(reject);
+      }, delayMs);
+      userSignal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(timer);
+          reject(new Error('aborted'));
+        },
+        { once: true },
+      );
+    });
+
   const primary = Promise.any([
     getAudioFormat(videoId, { userId, live: true, signal: ctrlA.signal }),
     hot[0]
       ? viaProxy(hot[0], ctrlA.signal)
       : Promise.reject(new Error('no hot A')),
-  ]).then((fmt) => take(fmt, ctrlB));
+  ]).then((fmt) => take(fmt, [ctrlB, ctrlC]));
 
-  const delayedB = new Promise<NonNullable<ReturnType<typeof peekCachedAudioFormat>>>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      if (winner || aborted(userSignal) || aborted(ctrlA.signal) || !hot[1]) {
-        reject(new Error('hedge B skip'));
-        return;
-      }
-      viaProxy(hot[1], ctrlB.signal)
-        .then((fmt) => resolve(take(fmt, ctrlA)))
-        .catch(reject);
-    }, 2_500);
-    userSignal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(new Error('aborted'));
-      },
-      { once: true },
-    );
-  });
+  const delayedB = delayed(hot[1], ctrlB, [ctrlA, ctrlC], 2_500, 'B');
+  const delayedC = delayed(hot[2], ctrlC, [ctrlA, ctrlB], 5_000, 'C');
 
   try {
     const fmt = (await Promise.race([
-      primary.catch(() => delayedB),
-      delayedB.catch(() => primary),
+      Promise.any([primary, delayedB, delayedC]).catch(() => null),
       new Promise<null>((r) => setTimeout(() => r(null), 12_000)),
     ])) as ReturnType<typeof peekCachedAudioFormat>;
     if (fmt?.url) return fmt;
