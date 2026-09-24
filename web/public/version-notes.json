@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-24",
   "versions": [
     {
+      "version": "1.3.292",
+      "date": "2026-09-24",
+      "time": "21:50",
+      "at": "2026-09-24T21:50:00+02:00",
+      "title": "Le début 512 Ko n’est plus pris pour tout le morceau",
+      "notes": [
+        "Le premier bloc (512 Ko) n’est plus annoncé comme fichier complet — le reste continue via le même proxy.",
+        "Sur Android, on attend jusqu’à 10 s le début disque avant de laisser le lecteur skip.",
+        "Course proxy : 2 jambes (pas 3) pour ne plus saturer YouTube."
+      ]
+    },
+    {
       "version": "1.3.291",
       "date": "2026-09-24",
       "time": "21:40",
@@ -13,6 +25,8 @@
         "L’aléatoire garde son batch rotatif ; Tout lire ne part plus à froid."
       ]
     },
+    {
+      "version": "1.3.290",
       "date": "2026-09-24",
       "time": "21:20",
       "at": "2026-09-24T21:20:00+02:00",

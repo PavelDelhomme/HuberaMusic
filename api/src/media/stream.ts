@@ -471,9 +471,10 @@ function isAndroidClient(req: Request): boolean {
 
 /**
  * .m4a utilisable bout-en-bout (pas une tête tronquée).
- * Seuil bas : une vraie piste AAC 128k ≈ 1 Mo/min — < 512 KiB = quasi sûr partiel.
+ * Le hedge écrit EXACTEMENT 512 KiB : ce n’est pas un titre complet.
+ * En-dessous / égal → préfixe, le swarm doit continuer.
  */
-const MIN_COMPLETE_DISK_BYTES = 512 * 1024;
+const MIN_COMPLETE_DISK_BYTES = 768 * 1024;
 
 function isGrowingDiskServable(path: string): boolean {
   try {
@@ -1223,6 +1224,29 @@ export async function handleStream(req: Request, res: Response) {
   // (sinon 1-M4Jr → r5MR7 → medley mort, alors que le fichier est déjà là).
   {
     const wantVideoEarly = String(req.query.type || req.query.media || '') === 'video';
+    // Android Range 0-N : attendre le préfixe 256 Ko (hedge) — sinon le pipeline
+    // GV/Innertube part à froid pendant que le swarm écrit, et Exo skip.
+    if (
+      !wantVideoEarly &&
+      !isWarmPrefetch &&
+      isAndroidClient(req) &&
+      !formatCircuitOpen(videoId)
+    ) {
+      const pWait = cachePath(videoId);
+      if (!isCompleteEnoughDisk(pWait) && !isGrowingDiskServable(pWait)) {
+        downloadTrack(videoId, {
+          progressiveOnly: true,
+          preferProxies: true,
+          userId,
+          signal: userSignal,
+          live: true,
+        }).catch(() => {});
+        console.warn(
+          `[stream] Android cold ${videoId} — wait prefix 256 Ko (swarm/proxy)`,
+        );
+        await waitUntilDiskServable(videoId, 10_000);
+      }
+    }
     if (!wantVideoEarly) {
       const cachedEarly = cachePath(videoId);
       if (
@@ -1543,18 +1567,10 @@ export async function handleStream(req: Request, res: Response) {
         /PLM-Android/i.test(String(req.headers['user-agent'] || '')) ||
         String(req.query?.client || '') === 'android';
       if (diskBytes <= 256 * 1024) {
-        // Android : attente courte seulement — 45 s bloquait derrière nginx → 504 Exo.
-        const formatHot = hasCachedAudioFormat(videoId, (req as any).userId);
-        const head = peekStreamHead(videoId);
-        let ramHot = false;
-        if (head) {
-          if (isDashBrandBuffer(head.buf)) {
-            invalidateStreamHead(videoId);
-          } else {
-            ramHot = true;
-          }
-        }
-        const waitMs = isAndroid && !formatHot && !ramHot && !formatCircuitOpen(videoId) ? 8_000 : 0;
+        // Android : attente du préfixe même si un format URL est déjà en cache
+        // (URL googlevideo ≠ octets disque — sinon Exo skip pendant le swarm).
+        const waitMs =
+          isAndroid && !formatCircuitOpen(videoId) && diskBytes < 256 * 1024 ? 10_000 : 0;
         if (waitMs > 0) {
           void downloadTrack(videoId, {
             progressiveOnly: true,
@@ -3157,7 +3173,7 @@ async function resolveFormatHedged(
   live = false,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   if (aborted(userSignal)) throw new Error('aborted');
-  const hot = pickHotProxies(3);
+  const hot = pickHotProxies(2);
   const ctrlA = new AbortController();
   const ctrlB = new AbortController();
   const ctrlC = new AbortController();
@@ -3290,13 +3306,12 @@ async function resolveFormatHedged(
     ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg, [ctrlB, ctrlC]))
     : Promise.reject(new Error('no hot A'));
 
-  const delayedB = delayed(hot[1], ctrlB, [ctrlA, ctrlC], 2_500, 'B');
-  const delayedC = delayed(hot[2], ctrlC, [ctrlA, ctrlB], 5_000, 'C');
+  const delayedB = delayed(hot[1], ctrlB, [ctrlA, ctrlC], 2_000, 'B');
 
   try {
     const fmt = (await Promise.race([
-      Promise.any([primary, delayedB, delayedC]).catch(() => null),
-      new Promise<null>((r) => setTimeout(() => r(null), 12_000)),
+      Promise.any([primary, delayedB]).catch(() => null),
+      new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
     ])) as ReturnType<typeof peekCachedAudioFormat>;
     if (fmt?.url && fmt.viaProxy) return fmt;
     if (winner?.url && winner.viaProxy) return winner;

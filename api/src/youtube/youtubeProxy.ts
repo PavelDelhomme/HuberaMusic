@@ -280,8 +280,8 @@ export function pickHotProxies(n = 2, exclude: Set<string> = new Set()): string[
         !exclude.has(e.url),
     )
     .sort((a, b) => (b.gvHits || 0) - (a.gvHits || 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0));
-  const out = hot.slice(0, Math.max(n, HOT_MIN)).map((e) => e.url);
-  if (out.length >= n) return out.slice(0, n);
+  const out = hot.slice(0, n).map((e) => e.url);
+  if (out.length >= n) return out;
   const extra = [...pool.values()]
     .filter((e) => usable(e) && isHttpProxy(e.url) && !exclude.has(e.url) && !out.includes(e.url))
     .sort((a, b) => (b.connectOkUntil > now ? 1 : 0) - (a.connectOkUntil > now ? 1 : 0));
