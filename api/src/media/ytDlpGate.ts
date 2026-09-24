@@ -6,11 +6,11 @@
  * Important : le cooldown ne doit PAS bloquer la rotation de proxies / relais maison.
  * On ne pose le cooldown qu’après épuisement des tentatives (noteYtDlpFailure explicite).
  */
-const MAX = Math.max(1, Math.min(12, Number(process.env.YTDLP_MAX_CONCURRENT || 4) || 4));
-/** Garde ≥1 slot pour l’écoute live — le warm ne doit jamais saturer yt-dlp. */
+const MAX = Math.max(1, Math.min(12, Number(process.env.YTDLP_MAX_CONCURRENT || 6) || 6));
+/** Garde des slots pour l’écoute live — le warm ne doit jamais saturer yt-dlp. */
 const LIVE_RESERVED = Math.max(
   1,
-  Math.min(MAX - 1, Number(process.env.YTDLP_LIVE_RESERVED || 1) || 1),
+  Math.min(MAX - 1, Number(process.env.YTDLP_LIVE_RESERVED || 2) || 2),
 );
 const BOT_COOLDOWN_MS = Math.max(
   30_000,

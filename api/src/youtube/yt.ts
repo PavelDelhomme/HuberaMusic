@@ -2975,7 +2975,7 @@ export async function getAudioFormat(
   const live = opts?.live === true;
   if (opts?.boundProxy) {
     return audioFormatViaYtDlpFast(videoId, {
-      live: true,
+      live: opts.live === true,
       userId: opts.userId,
       boundProxy: opts.boundProxy,
       signal: opts.signal,

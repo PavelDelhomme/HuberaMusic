@@ -1354,6 +1354,7 @@ export async function handleStream(req: Request, res: Response) {
           preferProxies: true,
           userId: (req as any).userId,
           signal: userSignal,
+          live: !isWarmPrefetch,
         }).catch(() => {});
         enqueueNextDiskWarm([videoId]);
 
@@ -1534,6 +1535,8 @@ export async function handleStream(req: Request, res: Response) {
             progressiveOnly: true,
             preferProxies,
             userId: streamUserId,
+            signal: userSignal,
+            live: !isWarmPrefetch,
           }).catch(() => {});
           const t0 = Date.now();
           while (Date.now() - t0 < waitMs) {
@@ -1579,6 +1582,8 @@ export async function handleStream(req: Request, res: Response) {
         progressiveOnly: true,
         preferProxies,
         userId: streamUserId,
+        signal: userSignal,
+        live: !isWarmPrefetch,
       }).catch((err) => {
         const msg = String((err as Error).message || err);
         if (/cooling down|bot\/rate-limit|Sign in to confirm|rate-limited/i.test(msg)) return;
@@ -1623,7 +1628,13 @@ export async function handleStream(req: Request, res: Response) {
     purgeDashCache(videoId);
     const cachedEarly = cachePath(videoId);
     if (!isCompleteEnoughDisk(cachedEarly)) {
-      downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).catch(() => {
+      downloadTrack(videoId, {
+        progressiveOnly: true,
+        preferProxies,
+        userId: streamUserId,
+        signal: userSignal,
+        live: !isWarmPrefetch,
+      }).catch(() => {
         /* fond */
       });
     }
@@ -2601,6 +2612,10 @@ async function runDiskWarmWorker() {
       }
       const searchId = searchWarmQueue.shift();
       if (searchId) {
+        if (isPlaybackHot(60_000)) {
+          searchWarmQueued.delete(searchId);
+          continue;
+        }
         searchWarmQueued.delete(searchId);
         const searchSig = addDownloadConsumer(searchId, 'warm:search');
         try {
@@ -2989,6 +3004,7 @@ async function resolveFormatForSwarm(
   videoId: string,
   userId?: string,
   signal?: AbortSignal,
+  live = false,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   const peeked = peekCachedAudioFormat(videoId, userId);
   if (peeked?.url && peeked.viaProxy) return peeked;
@@ -2998,7 +3014,7 @@ async function resolveFormatForSwarm(
     const again = peekCachedAudioFormat(videoId, userId);
     if (again?.url && again.viaProxy) return again;
     try {
-      return await resolveFormatHedged(videoId, userId, signal);
+      return await resolveFormatHedged(videoId, userId, signal, live);
     } catch {
       return null;
     }
@@ -3022,6 +3038,7 @@ async function resolveFormatHedged(
   videoId: string,
   userId?: string,
   userSignal?: AbortSignal,
+  live = false,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   if (aborted(userSignal)) throw new Error('aborted');
   const hot = pickHotProxies(3);
@@ -3090,7 +3107,7 @@ async function resolveFormatHedged(
     const t0 = Date.now();
     const fmt = await getAudioFormat(videoId, {
       userId,
-      live: true,
+      live,
       boundProxy: proxy,
       signal: sig,
     });
@@ -3174,7 +3191,13 @@ async function resolveFormatHedged(
 
 export async function downloadTrack(
   videoId: string,
-  opts?: { progressiveOnly?: boolean; preferProxies?: boolean; userId?: string; signal?: AbortSignal },
+  opts?: {
+    progressiveOnly?: boolean;
+    preferProxies?: boolean;
+    userId?: string;
+    signal?: AbortSignal;
+    live?: boolean;
+  },
 ): Promise<string> {
   ensureCache();
   const out = cachePath(videoId);
@@ -3255,7 +3278,7 @@ export async function downloadTrack(
 
     // Swarm : 1 résolution d’URL à la fois (8 s), puis chunks visibles tout de suite.
     try {
-      const format = await resolveFormatForSwarm(videoId, opts?.userId, opts?.signal);
+      const format = await resolveFormatForSwarm(videoId, opts?.userId, opts?.signal, opts?.live === true);
       if (format?.url) {
         const swarmOk = await downloadViaProxyChunks(format.url, out, {
           userId: opts?.userId,
