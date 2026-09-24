@@ -521,10 +521,27 @@ fun TrackActionsSheet(
                             songInLibrary = r.saved
                             songLibUserOverrideAt = System.currentTimeMillis()
                             container.bumpLibraryEpoch()
+                            runCatching {
+                                ovh.delhomme.ytmusic.debug.PlaybackTrace.libraryToggle(
+                                    trackId = enriched.id,
+                                    title = enriched.title,
+                                    wantSaved = next,
+                                    ok = true,
+                                )
+                            }
                             context.toastMain(if (r.saved) "Dans la bibliothèque" else "Retiré de la bibliothèque")
                         }.onFailure { e ->
                             if (e is kotlinx.coroutines.CancellationException) throw e
                             songInLibrary = !next
+                            runCatching {
+                                ovh.delhomme.ytmusic.debug.PlaybackTrace.libraryToggle(
+                                    trackId = enriched.id,
+                                    title = enriched.title,
+                                    wantSaved = next,
+                                    ok = false,
+                                    error = e.message,
+                                )
+                            }
                             context.toastMain(e.apiMessage().ifBlank { "Impossible de modifier la bibliothèque" })
                         }
                     }

@@ -779,6 +779,17 @@ class PlaybackService : MediaSessionService() {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             val exo = player ?: return
             val curIdx = exo.currentMediaItemIndex
+            runCatching {
+                val t = Holder.queue.getOrNull(curIdx)
+                val id = mediaItem?.mediaId ?: t?.id
+                if (!id.isNullOrBlank()) {
+                    ovh.delhomme.ytmusic.debug.PlaybackTrace.play(
+                        trackId = id,
+                        title = t?.title ?: mediaItem?.mediaMetadata?.title?.toString(),
+                        artist = t?.artistLine() ?: mediaItem?.mediaMetadata?.artist?.toString(),
+                    )
+                }
+            }
             val skipRecovery =
                 programmaticAdvance ||
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
@@ -1909,6 +1920,15 @@ class PlaybackService : MediaSessionService() {
      */
     private fun skipDeadTrackOrAdvance(exo: Player, deadId: String, nextIdx: Int) {
         val track = Holder.queue.firstOrNull { it.id == deadId }
+        runCatching {
+            ovh.delhomme.ytmusic.debug.PlaybackTrace.skip(
+                trackId = deadId,
+                title = track?.title,
+                artist = track?.artistLine(),
+                reason = "skip_dead",
+                extra = mapOf("nextIdx" to nextIdx),
+            )
+        }
         val repl = if (track != null) {
             StreamPrefetcher.fetchReplacementId(
                 resolvedApiBase(),

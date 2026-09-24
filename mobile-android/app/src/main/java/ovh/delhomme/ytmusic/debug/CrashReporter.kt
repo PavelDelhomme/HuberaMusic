@@ -9,6 +9,7 @@ object CrashReporter {
 
     fun install(context: Context) {
         AppLog.init(context.applicationContext)
+        PlaybackTrace.init(context.applicationContext)
         if (previous != null) return
         previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -30,6 +31,7 @@ object CrashReporter {
                 return@setDefaultUncaughtExceptionHandler
             }
             runCatching { AppLog.crash(throwable, fatal = true) }
+            runCatching { PlaybackTrace.crash(throwable.message ?: throwable.javaClass.simpleName, fatal = true) }
             // Sync disque déjà fait ; POST télémétrie sync (~1.4s) dans AppLog.crash
             try {
                 Thread.sleep(200)
@@ -59,6 +61,7 @@ object CrashReporter {
                 )
             } else {
                 AppLog.crash(t, fatal = false)
+                runCatching { PlaybackTrace.crash(t.message ?: t.javaClass.simpleName, fatal = false) }
             }
         }
 

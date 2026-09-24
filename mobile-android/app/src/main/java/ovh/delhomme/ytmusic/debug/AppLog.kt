@@ -139,6 +139,9 @@ object AppLog {
             appendLine("--- last crash ---")
             appendLine(lastCrashText())
             appendLine()
+            appendLine("--- playback trace / titres coincés ---")
+            appendLine(ovh.delhomme.ytmusic.debug.PlaybackTrace.stuckSummary().ifBlank { "(aucun titre coincé)" })
+            appendLine()
             appendLine("--- breadcrumbs ---")
             breadcrumbs.forEach { appendLine(it) }
             appendLine()

@@ -231,6 +231,7 @@ import {
   createEmailToken,
   insertTelemetry,
   listMailOutbox,
+  listPlaybackTrace,
   listTelemetry,
   markEmailVerified,
   redeemEmailToken,
@@ -1398,6 +1399,13 @@ app.get('/api/admin/telemetry', requireAdmin, (req, res) => {
       limit: Number(req.query.limit || 100),
       offset: Number(req.query.offset || 0),
     }),
+  });
+});
+
+app.get('/api/admin/playback-trace', requireAdmin, (req, res) => {
+  res.json({
+    ok: true,
+    ...listPlaybackTrace({ limit: Number(req.query.limit || 400) }),
   });
 });
 
