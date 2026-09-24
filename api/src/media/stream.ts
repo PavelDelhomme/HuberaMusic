@@ -505,6 +505,25 @@ async function waitUntilDiskServable(videoId: string, ms: number): Promise<strin
   return null;
 }
 
+/** Mid-piste : attendre que le .m4a dépasse `minBytes` (Range au-delà du préfixe). */
+async function waitUntilDiskBytes(videoId: string, minBytes: number, ms: number): Promise<number> {
+  const t0 = Date.now();
+  const p = cachePath(videoId);
+  const read = () => {
+    try {
+      return existsSync(p) && !isDashBrandFile(p) ? statSync(p).size : 0;
+    } catch {
+      return 0;
+    }
+  };
+  let n = read();
+  while (Date.now() - t0 < ms && n < minBytes) {
+    await new Promise((r) => setTimeout(r, 200));
+    n = read();
+  }
+  return n;
+}
+
 async function pipeDiskFile(
   req: Request,
   res: Response,
@@ -1224,13 +1243,19 @@ export async function handleStream(req: Request, res: Response) {
   // (sinon 1-M4Jr → r5MR7 → medley mort, alors que le fichier est déjà là).
   {
     const wantVideoEarly = String(req.query.type || req.query.media || '') === 'video';
-    // Android Range 0-N : attendre le préfixe 256 Ko (hedge) — sinon le pipeline
-    // GV/Innertube part à froid pendant que le swarm écrit, et Exo skip.
+    const rangeHdrEarly = String(req.headers.range || '');
+    const rangeStartEarly = (() => {
+      const m = /bytes=(\d+)/.exec(rangeHdrEarly);
+      return m ? Number(m[1]) : 0;
+    })();
+    const startOfTrack = !rangeHdrEarly || rangeStartEarly < 2048;
+    // Début de titre seulement — un wait 10 s en mid-piste bloque Exo (BUFFERING).
     if (
       !wantVideoEarly &&
       !isWarmPrefetch &&
       isAndroidClient(req) &&
-      !formatCircuitOpen(videoId)
+      !formatCircuitOpen(videoId) &&
+      startOfTrack
     ) {
       const pWait = cachePath(videoId);
       if (!isCompleteEnoughDisk(pWait) && !isGrowingDiskServable(pWait)) {
@@ -1244,7 +1269,30 @@ export async function handleStream(req: Request, res: Response) {
         console.warn(
           `[stream] Android cold ${videoId} — wait prefix 256 Ko (swarm/proxy)`,
         );
-        await waitUntilDiskServable(videoId, 10_000);
+        const ready = await waitUntilDiskServable(videoId, 6_000);
+        if (!ready) noteFormatTimeout(videoId);
+      }
+    } else if (
+      !wantVideoEarly &&
+      !isWarmPrefetch &&
+      isAndroidClient(req) &&
+      rangeStartEarly >= 2048
+    ) {
+      const pMid = cachePath(videoId);
+      try {
+        const sz = existsSync(pMid) && !isDashBrandFile(pMid) ? statSync(pMid).size : 0;
+        if (sz > 0 && sz <= rangeStartEarly) {
+          downloadTrack(videoId, {
+            progressiveOnly: true,
+            preferProxies: true,
+            userId,
+            signal: userSignal,
+            live: true,
+          }).catch(() => {});
+          await waitUntilDiskBytes(videoId, rangeStartEarly + 1, 4_000);
+        }
+      } catch {
+        /* serve plus bas */
       }
     }
     if (!wantVideoEarly) {
@@ -1570,7 +1618,7 @@ export async function handleStream(req: Request, res: Response) {
         // Android : attente du préfixe même si un format URL est déjà en cache
         // (URL googlevideo ≠ octets disque — sinon Exo skip pendant le swarm).
         const waitMs =
-          isAndroid && !formatCircuitOpen(videoId) && diskBytes < 256 * 1024 ? 10_000 : 0;
+          isAndroid && !formatCircuitOpen(videoId) && diskBytes < 256 * 1024 ? 6_000 : 0;
         if (waitMs > 0) {
           void downloadTrack(videoId, {
             progressiveOnly: true,
@@ -2266,10 +2314,18 @@ export async function handleStream(req: Request, res: Response) {
       return;
     }
     if (!wantVideo && !res.headersSent) {
-      const late = await waitUntilDiskServable(videoId, 10_000);
-      if (late) {
-        await pipeDiskFile(req, res, late, videoId, 'disk-after-format');
-        return;
+      const rs = (() => {
+        const m = /bytes=(\d+)/.exec(String(req.headers.range || ''));
+        return m ? Number(m[1]) : 0;
+      })();
+      // Mid-piste : pas 10 s de silence (Exo BUFFERING). Début seulement.
+      if (rs < 2048 && !formatCircuitOpen(videoId)) {
+        const late = await waitUntilDiskServable(videoId, 4_000);
+        if (late) {
+          await pipeDiskFile(req, res, late, videoId, 'disk-after-format');
+          return;
+        }
+        noteFormatTimeout(videoId);
       }
     }
   }

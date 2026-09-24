@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-24",
   "versions": [
     {
+      "version": "1.3.293",
+      "date": "2026-09-24",
+      "time": "23:05",
+      "at": "2026-09-24T23:05:00+02:00",
+      "title": "Plus d’attente 10 s au milieu d’un titre",
+      "notes": [
+        "L’attente du début 256 Ko ne s’applique plus qu’au tout début — plus de BUFFERING bloqué à 3 min.",
+        "Si YouTube ne répond pas en 6 s, le titre est sauté au lieu de retenter 10 s en boucle."
+      ]
+    },
+    {
       "version": "1.3.292",
       "date": "2026-09-24",
       "time": "21:50",
