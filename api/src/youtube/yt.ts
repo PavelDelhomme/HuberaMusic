@@ -2981,7 +2981,14 @@ async function getYTViaBoundProxy(proxy: string): Promise<Innertube> {
   return yt;
 }
 
-/** Innertube sorti par le même proxy que googlevideo — pas de slot yt-dlp. */
+function isProgressiveAacUrl(url: string, mime = ''): boolean {
+  if (/dash/i.test(mime) || /ftypdash/i.test(mime)) return false;
+  if (/[?&]itag=(139|140|141)\b/.test(url)) return true;
+  if (/mime=audio%2Fmp4/i.test(url) && !/\/dash\b/i.test(url)) return true;
+  return false;
+}
+
+/** Innertube sorti par le même proxy que googlevideo — pas de slot yt-dlp. TV+itag 140 = AAC Exo. */
 async function audioFormatViaInnertubeProxy(
   videoId: string,
   proxy: string,
@@ -2989,32 +2996,36 @@ async function audioFormatViaInnertubeProxy(
 ): Promise<AudioFormat> {
   if (signal?.aborted) throw new Error('aborted');
   const innertube = await getYTViaBoundProxy(proxy);
-  const clients = ['ANDROID', 'IOS', 'TV'] as const;
-  const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
+  const tryClient = async (client: 'TV' | 'WEB', itag?: number): Promise<AudioFormat> => {
     const format = await Promise.race([
-      innertube.getStreamingData(videoId, { type: 'audio', quality: 'best', client }),
+      innertube.getStreamingData(videoId, {
+        type: 'audio',
+        quality: 'best',
+        client,
+        ...(itag ? { format: itag } : {}),
+      } as never),
       new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error(`innertube-proxy ${client} timeout`)), 5_500),
+        setTimeout(() => rej(new Error(`innertube-proxy ${client} timeout`)), 2_500),
       ),
     ]);
     if (signal?.aborted) throw new Error('aborted');
     const url = format.url || (await format.decipher(innertube.session.player));
     if (!url) throw new Error('empty stream url');
     const mime = String(format.mime_type || '');
-    if (/dash/i.test(mime) || /ftypdash/i.test(mime)) {
-      throw new Error(`innertube-proxy ${client} DASH`);
+    if (!isProgressiveAacUrl(url, mime)) {
+      throw new Error(`innertube-proxy ${client} not progressive aac`);
     }
     markYoutubeProxySuccess(proxy, 'gv');
     return {
       url,
-      mimeType: format.mime_type,
+      mimeType: format.mime_type || 'audio/mp4',
       bitrate: format.bitrate,
       contentLength: format.content_length,
       expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
       viaProxy: proxy,
     };
   };
-  return await Promise.any(clients.map((c) => tryClient(c)));
+  return await Promise.any([tryClient('TV', 140), tryClient('WEB', 140), tryClient('TV')]);
 }
 
 export async function getAudioFormat(
@@ -3032,18 +3043,22 @@ export async function getAudioFormat(
   const forceFresh = Boolean(opts?.forceFresh || (opts?.retryN ?? 0) > 0);
   const live = opts?.live === true;
   if (opts?.boundProxy) {
+    // Innertube (0 slot) et yt-dlp -g 140 en parallèle — plus 5,5 s d’échec Innertube avant AAC.
     try {
-      const inn = await audioFormatViaInnertubeProxy(videoId, opts.boundProxy, opts.signal);
-      if (inn?.url) return inn;
+      const fmt = await Promise.any([
+        audioFormatViaInnertubeProxy(videoId, opts.boundProxy, opts.signal),
+        audioFormatViaYtDlpFast(videoId, {
+          live: opts.live === true,
+          userId: opts.userId,
+          boundProxy: opts.boundProxy,
+          signal: opts.signal,
+        }),
+      ]);
+      if (fmt?.url) return fmt;
     } catch {
-      /* yt-dlp collé au même proxy */
+      /* les deux ont perdu */
     }
-    return audioFormatViaYtDlpFast(videoId, {
-      live: opts.live === true,
-      userId: opts.userId,
-      boundProxy: opts.boundProxy,
-      signal: opts.signal,
-    });
+    throw new Error('getAudioFormat boundProxy: Innertube + yt-dlp KO');
   }
   const proxyRetry = forceFresh
     ? { shuffle: true, directLast: true, live, userId: opts?.userId }
@@ -3075,8 +3090,8 @@ export async function getAudioFormat(
       const signed = await getSignedStreamYT(opts?.userId).catch(() => null);
       const innertube = signed || (await getYT());
       const clients = signed
-        ? (['ANDROID', 'IOS', 'TV'] as const)
-        : (['ANDROID', 'IOS', 'TV', 'WEB_EMBEDDED'] as const);
+        ? (['TV', 'IOS'] as const)
+        : (['TV', 'WEB_EMBEDDED', 'IOS'] as const);
       const ms = signed ? 9_000 : 5_500;
       const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
         const format = await Promise.race([
@@ -3094,6 +3109,9 @@ export async function getAudioFormat(
         const mime = String(format.mime_type || '');
         if (/dash/i.test(mime) || /ftypdash/i.test(mime)) {
           throw new Error(`innertube ${client} DASH`);
+        }
+        if (!/[?&]itag=(139|140|141)\b/.test(url)) {
+          throw new Error(`innertube ${client} not progressive aac`);
         }
         return {
           url,

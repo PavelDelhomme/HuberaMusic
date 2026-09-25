@@ -282,7 +282,12 @@ export function loadHotPoolFromDisk(): void {
   }
 }
 
-/** 15–30 proxies avec 206 googlevideo récent. Pas de retest des 600 au boot. */
+/** 15–30 proxies avec 206 googlevideo récent. Rotation : YouTube bloque si toujours la même IP. */
+let hotRr = 0;
+/** Dernier usage Innertube/résolution — exclure ~25 s pour ne pas coller à une IP. */
+const recentResolveAt = new Map<string, number>();
+const RESOLVE_COOLDOWN_MS = 25_000;
+
 export function pickHotProxies(n = 2, exclude: Set<string> = new Set()): string[] {
   const now = Date.now();
   const hot = [...pool.values()]
@@ -295,16 +300,45 @@ export function pickHotProxies(n = 2, exclude: Set<string> = new Set()): string[
         !exclude.has(e.url),
     )
     .sort((a, b) => (b.gvHits || 0) - (a.gvHits || 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0));
-  const out = hot.slice(0, n).map((e) => e.url);
-  if (out.length >= n) return out;
+  const window = hot.slice(0, Math.min(hot.length, Math.max(12, n * 6)));
   const extra = [...pool.values()]
-    .filter((e) => usable(e) && isHttpProxy(e.url) && !exclude.has(e.url) && !out.includes(e.url))
-    .sort((a, b) => (b.connectOkUntil > now ? 1 : 0) - (a.connectOkUntil > now ? 1 : 0));
+    .filter((e) => usable(e) && isHttpProxy(e.url) && !exclude.has(e.url) && !window.some((h) => h.url === e.url))
+    .sort((a, b) => (b.connectOkUntil > now ? 1 : 0) - (a.connectOkUntil > now ? 1 : 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0));
+  // Ne jamais réduire le pool à 1 gagnant gv — YouTube bannit cette IP.
+  const poolList = [...window];
   for (const e of extra) {
+    if (poolList.length >= Math.max(12, n * 6)) break;
+    poolList.push(e);
+  }
+  if (!poolList.length) {
+    return extra.slice(0, n).map((e) => e.url);
+  }
+  const cooled = poolList.filter((e) => (recentResolveAt.get(e.url) || 0) + RESOLVE_COOLDOWN_MS < now);
+  const src = cooled.length >= Math.min(n, poolList.length) ? cooled : poolList;
+  const rot = hotRr % src.length;
+  hotRr = (hotRr + 1) >>> 0;
+  const rotated = [...src.slice(rot), ...src.slice(0, rot)];
+  const out: string[] = [];
+  for (const e of rotated) {
+    if (exclude.has(e.url) || out.includes(e.url)) continue;
     out.push(e.url);
     if (out.length >= n) break;
   }
-  return out.slice(0, n);
+  if (out.length < n) {
+    for (const e of extra) {
+      if (out.includes(e.url) || exclude.has(e.url)) continue;
+      out.push(e.url);
+      if (out.length >= n) break;
+    }
+  }
+  const picked = out.slice(0, n);
+  for (const url of picked) recentResolveAt.set(url, now);
+  if (recentResolveAt.size > 80) {
+    for (const [u, t] of recentResolveAt) {
+      if (now - t > RESOLVE_COOLDOWN_MS * 4) recentResolveAt.delete(u);
+    }
+  }
+  return picked;
 }
 
 function loadStaticList(): string[] {

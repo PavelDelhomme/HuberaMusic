@@ -267,7 +267,8 @@ async function fetchGooglevideo(
  */
 const FIRST_BYTES = 256 * 1024;
 const SWARM_CHUNK_BYTES = 256 * 1024;
-const SWARM_PARALLEL = 8;
+/** 8 tuait les proxies gratuits (403 après ~1 Mo). 4 Ranges = parallèle sans bloquer l’IP. */
+const SWARM_PARALLEL = 4;
 
 type HedgeHead = { url: string; viaProxy: string; head: Buffer; total: number; at: number };
 const hedgeHeadsById = new Map<string, HedgeHead>();
@@ -429,31 +430,36 @@ async function downloadViaProxyChunks(
       for (let s = restFrom; s < total; s += SWARM_CHUNK_BYTES) {
         rest.push({ start: s, end: Math.min(total - 1, s + SWARM_CHUNK_BYTES - 1) });
       }
-      let failed = 0;
-      const queue = [...rest];
-      const worker = async () => {
-        while (queue.length) {
-          const p = queue.shift();
-          if (!p) return;
-          const buf = await fetchSwarmChunk(url, p.start, p.end, {
-            userId: opts?.userId,
-            boundProxy: bound,
-          });
-          if (!buf) {
-            failed += 1;
-            continue;
+      let leftover = [...rest];
+      for (let attempt = 0; attempt < 3 && leftover.length; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 700 * attempt));
+        const queue = [...leftover];
+        leftover = [];
+        const worker = async () => {
+          while (queue.length) {
+            const p = queue.shift();
+            if (!p) return;
+            const buf = await fetchSwarmChunk(url, p.start, p.end, {
+              userId: opts?.userId,
+              boundProxy: bound,
+            });
+            if (!buf) {
+              leftover.push(p);
+              continue;
+            }
+            flush(p.start, buf);
           }
-          flush(p.start, buf);
-        }
-      };
-      const restRun = Promise.all(
-        Array.from({ length: Math.min(SWARM_PARALLEL, Math.max(1, rest.length || 1)) }, () => worker()),
-      );
-      if (firstPump) await firstPump;
-      if (rest.length) await restRun;
+        };
+        const nPar = attempt === 0 ? Math.min(SWARM_PARALLEL, Math.max(1, queue.length)) : Math.min(2, queue.length);
+        const restRun = Promise.all(Array.from({ length: nPar }, () => worker()));
+        if (attempt === 0 && firstPump) await firstPump;
+        await restRun;
+        drain();
+      }
+      if (!rest.length && firstPump) await firstPump;
       drain();
-      if (failed > 0 || contiguous < total * 0.92) {
-        throw new Error(`swarm incomplet ${contiguous}/${total} failed=${failed}`);
+      if (leftover.length && contiguous < total * 0.92) {
+        throw new Error(`swarm incomplet ${contiguous}/${total} failed=${leftover.length}`);
       }
     } finally {
       closeSync(fd);
@@ -529,7 +535,7 @@ function isGrowingDiskServable(path: string): boolean {
   try {
     if (!existsSync(path)) return false;
     if (isDashBrandFile(path)) return false;
-    return statSync(path).size >= 256 * 1024;
+    return statSync(path).size >= 64 * 1024;
   } catch {
     return false;
   }
@@ -1318,15 +1324,24 @@ export async function handleStream(req: Request, res: Response) {
         console.warn(
           `[stream] Android cold ${videoId} — wait prefix 256 Ko (swarm/proxy)`,
         );
-        const ready = await waitUntilDiskServable(videoId, 6_000);
-        if (!ready) {
-          const congested = ytDlpActiveCount() >= Math.max(2, ytDlpMaxConcurrent() - 2);
-          if (congested) {
-            const again = await waitUntilDiskServable(videoId, 8_000);
-            if (!again) noteFormatTimeout(videoId);
-          } else {
-            noteFormatTimeout(videoId);
+        const waitMs = downloadInflight.has(videoId) ? 900 : 4_000;
+        const ready = await waitUntilDiskServable(videoId, waitMs);
+        if (ready) {
+          noteFormatOk(videoId);
+        } else {
+          // Exo réessaie (Retry-After) au lieu d’attendre 20 s puis skip. Le DL continue.
+          console.warn(`[stream] Android cold ${videoId} — 503 PREFIX_PREPARING, pas de 410`);
+          if (!res.headersSent) {
+            res.status(503);
+            res.setHeader('Retry-After', '1');
+            res.setHeader('Cache-Control', 'no-store');
+            res.json({
+              error: 'Audio en préparation',
+              code: 'PREFIX_PREPARING',
+              hint: 'Réessayer dans 1 s — préfixe AAC en cours',
+            });
           }
+          return;
         }
       }
     } else if (
@@ -1838,9 +1853,8 @@ export async function handleStream(req: Request, res: Response) {
         }
       })();
       const incomplete = downloadInflight.has(videoId);
-      // Partiel trop petit seulement — un préfixe swarm de plusieurs Mo doit rester
-      // (sinon Exo re-buffer après un cooldown yt-dlp).
-      if (size > 0 && size < MIN_COMPLETE_DISK_BYTES && !incomplete) {
+      // Un préfixe hedge 256 Ko n’est pas « mort » — le jeter = BUFFERING Samsung.
+      if (size > 0 && size < 256 * 1024 && !incomplete) {
         try {
           unlinkSync(cached);
           console.warn(`[stream] purge partiel mort ${videoId} (${size} o)`);
@@ -1852,10 +1866,22 @@ export async function handleStream(req: Request, res: Response) {
     if (
       existsSync(cached) &&
       !isDashBrandFile(cached) &&
-      (isCompleteEnoughDisk(cached) || downloadInflight.has(videoId))
+      (isCompleteEnoughDisk(cached) ||
+        downloadInflight.has(videoId) ||
+        isGrowingDiskServable(cached))
     ) {
       const size = statSync(cached).size;
-      const incomplete = downloadInflight.has(videoId);
+      const incomplete =
+        downloadInflight.has(videoId) ||
+        (isGrowingDiskServable(cached) && !isCompleteEnoughDisk(cached));
+      if (incomplete && !downloadInflight.has(videoId)) {
+        downloadTrack(videoId, {
+          progressiveOnly: true,
+          preferProxies: true,
+          userId: streamUserId,
+          live: true,
+        }).catch(() => {});
+      }
       // Total annoncé = jamais la taille partielle d’un .m4a encore en cours
       // (sinon Exo coupe à ~30 s = fin du partiel, puis « reprise » au rebind).
       const advertised = stableContentTotal(videoId, size, { incomplete });
@@ -2382,7 +2408,7 @@ export async function handleStream(req: Request, res: Response) {
           await pipeDiskFile(req, res, late, videoId, 'disk-after-format');
           return;
         }
-        noteFormatTimeout(videoId);
+        // Timeout format ≠ circuit 410 (YouTube bloque, hedge encore possible).
       }
     }
   }
@@ -2753,13 +2779,14 @@ function likesDiskWarmCap(): number {
 }
 
 async function runDiskWarmWorker() {
-  if (diskWarmBusyCount >= DISK_WARM_CONCURRENCY) return;
+  const maxBusy = isPlaybackHot(90_000) ? 1 : DISK_WARM_CONCURRENCY;
+  if (diskWarmBusyCount >= maxBusy) return;
   diskWarmBusyCount += 1;
   try {
     while (
       nextDiskWarmQueue.length ||
       listHeadWarmQueue.length ||
-      libPrefixWarmQueue.length ||
+      (!isPlaybackHot(90_000) && libPrefixWarmQueue.length) ||
       searchWarmQueue.length ||
       likesDiskWarmQueue.length ||
       diskWarmQueue.length
@@ -2787,7 +2814,7 @@ async function runDiskWarmWorker() {
         await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 280 : 140));
         continue;
       }
-      const prefixId = libPrefixWarmQueue.shift();
+      const prefixId = isPlaybackHot(90_000) ? undefined : libPrefixWarmQueue.shift();
       if (prefixId) {
         libPrefixWarmQueued.delete(prefixId);
         try {
@@ -3365,8 +3392,15 @@ async function resolveFormatHedged(
     } catch {
       /* swarm réécrira */
     }
+    noteFormatOk(videoId);
     console.info(
-      `[stream] hedge win ${videoId} head=${leg.head.length} total=${leg.total} ms=${leg.ms} — swarm parallel ${SWARM_PARALLEL} sameUrl`,
+      `[stream] hedge win ${videoId} head=${leg.head.length} total=${leg.total} ms=${leg.ms} parallel=${SWARM_PARALLEL} proxy=${(() => {
+        try {
+          return new URL(leg.proxy).hostname;
+        } catch {
+          return 'proxy';
+        }
+      })()}`,
     );
     const out = cachePath(videoId);
     if (!downloadInflight.has(videoId)) {
@@ -3413,6 +3447,7 @@ async function resolveFormatHedged(
     const total = parseContentTotal(res);
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length < 64_000) throw new Error('hedge head tiny');
+    if (isDashBrandBuffer(buf)) throw new Error('hedge DASH');
     markYoutubeProxySuccess(proxy, 'gv');
     return {
       fmt: { ...fmt, viaProxy: proxy },
@@ -3454,12 +3489,13 @@ async function resolveFormatHedged(
     ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg, [ctrlB]))
     : Promise.reject(new Error('no hot A'));
 
-  const delayedB = delayed(hot[1], ctrlB, [ctrlA], 2_000, 'B');
+  const delayedB = delayed(hot[1], ctrlB, [ctrlA], 2_500, 'B');
 
   try {
+    const hedgeMs = live ? 12_000 : 8_000;
     const fmt = (await Promise.race([
       Promise.any([primary, delayedB]).catch(() => null),
-      new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
+      new Promise<null>((r) => setTimeout(() => r(null), hedgeMs)),
     ])) as ReturnType<typeof peekCachedAudioFormat>;
     if (fmt?.url && fmt.viaProxy) return fmt;
     if (winner?.url && winner.viaProxy) return winner;
@@ -3485,7 +3521,12 @@ export async function downloadTrack(
   else if (isDashBrandFile(out)) purgeDashCache(videoId);
   // Ne pas traiter une tête tronquée comme « déjà téléchargée ».
   if (isCompleteEnoughDisk(out) && !downloadInflight.has(videoId)) return out;
-  if (existsSync(out) && !isCompleteEnoughDisk(out) && !downloadInflight.has(videoId)) {
+  if (
+    existsSync(out) &&
+    !isCompleteEnoughDisk(out) &&
+    !downloadInflight.has(videoId) &&
+    !isGrowingDiskServable(out)
+  ) {
     purgeTinyOrDashCache(videoId);
   }
 
@@ -3583,6 +3624,13 @@ export async function downloadTrack(
       );
     }
 
+    // Préfixe hedge déjà sur disque : yt-dlp l’écraserait (fichier disparu → BUFFERING).
+    if (isGrowingDiskServable(out) && !isDashBrandFile(out)) {
+      downloadFailUntil.delete(videoId);
+      midRangeBudgetById.set(videoId, MID_RANGE_BUDGET_MAX_MS);
+      return out;
+    }
+
     if (!existsSync(YTDLP)) {
       // Dernier recours sans binaire yt-dlp
       if (!opts?.progressiveOnly) {
@@ -3597,7 +3645,7 @@ export async function downloadTrack(
     }
 
     // Innertube / swarm ont pu laisser un préfixe utile — ne jeter que le tout petit / DASH.
-    if (existsSync(out) && !isCompleteEnoughDisk(out)) {
+    if (existsSync(out) && !isCompleteEnoughDisk(out) && !isGrowingDiskServable(out)) {
       try {
         const sz = statSync(out).size;
         if (sz < 256_000 || isDashBrandFile(out)) unlinkSync(out);
@@ -3678,12 +3726,12 @@ export async function downloadTrack(
                   }),
                 { bypassCooldown: true, noteFailure: false, userId: opts?.userId },
               );
-              if (isCompleteEnoughDisk(out)) {
+              if (isCompleteEnoughDisk(out) || isGrowingDiskServable(out)) {
                 downloadFailUntil.delete(videoId);
                 markYoutubeProxySuccess(proxy);
                 return out;
               }
-              if (existsSync(out)) {
+              if (existsSync(out) && !isGrowingDiskServable(out)) {
                 try {
                   unlinkSync(out);
                 } catch {

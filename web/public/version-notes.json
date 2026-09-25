@@ -2,6 +2,84 @@
   "updatedAt": "2026-09-24",
   "versions": [
     {
+      "version": "1.3.302",
+      "date": "2026-09-25",
+      "time": "09:12",
+      "at": "2026-09-25T09:12:00+02:00",
+      "title": "Skip froid : 503 et réessai, plus le vide",
+      "notes": [
+        "Si le préfixe AAC n’est pas là en 4 s, l’API répond 503 Retry-After 1 s (pas 410). Exo réessaie, le téléchargement continue.",
+        "Innertube itag 140 et yt-dlp partent en parallèle (1.3.301)."
+      ]
+    },
+    {
+      "version": "1.3.301",
+      "date": "2026-09-25",
+      "time": "09:05",
+      "at": "2026-09-25T09:05:00+02:00",
+      "title": "Froid AAC : Innertube 140 et yt-dlp en même temps",
+      "notes": [
+        "Plus d’attendre qu’Innertube échoue 5 s avant yt-dlp : les deux partent ensemble, itag 140 (M4A).",
+        "Le téléphone attend jusqu’à 12 s le préfixe jouable — un skip trop tôt ne part plus dans le vide."
+      ]
+    },
+    {
+      "version": "1.3.300",
+      "date": "2026-09-25",
+      "time": "08:36",
+      "at": "2026-09-25T08:36:00+02:00",
+      "title": "AAC progressif, plus de DASH que le Samsung refuse",
+      "notes": [
+        "Le hedge Innertube ANDROID écrivait ftyp=dash — ExoPlayer reste en BUFFERING.",
+        "On ne garde que itag 140/139/141 (M4A isom). Sinon yt-dlp sur le même proxy."
+      ]
+    },
+    {
+      "version": "1.3.299",
+      "date": "2026-09-25",
+      "time": "08:32",
+      "at": "2026-09-25T08:32:00+02:00",
+      "title": "Préfixe conservé, biblio en pause pendant l’écoute",
+      "notes": [
+        "yt-dlp ne passe plus par-dessus un hedge 256 Ko (le fichier disparaissait, BUFFERING).",
+        "Pendant PLAYING, le balayage biblio s’arrête — les proxies servent le titre en cours."
+      ]
+    },
+    {
+      "version": "1.3.298",
+      "date": "2026-09-25",
+      "time": "08:28",
+      "at": "2026-09-25T08:28:00+02:00",
+      "title": "Ne plus jeter le préfixe 256 Ko",
+      "notes": [
+        "Le hedge écrivait 256 Ko puis une autre requête le supprimait (seuil 768 Ko) — le Samsung restait en BUFFERING.",
+        "yt-dlp ne gomme plus un préfixe déjà jouable."
+      ]
+    },
+    {
+      "version": "1.3.297",
+      "date": "2026-09-25",
+      "time": "08:25",
+      "at": "2026-09-25T08:25:00+02:00",
+      "title": "Plus de 410 après un hedge réussi + rotation vraie",
+      "notes": [
+        "Un préfixe lent n’ouvre plus le circuit 410 — c’est ça qui laissait le Samsung en BUFFERING après un skip.",
+        "Dès qu’un proxy gagne le hedge, le circuit de cet id est levé.",
+        "Le pool ne se réduit plus au premier IP gagnant : au moins 12 proxies, cooldown 25 s entre deux résolutions."
+      ]
+    },
+    {
+      "version": "1.3.296",
+      "date": "2026-09-25",
+      "time": "08:20",
+      "at": "2026-09-25T08:20:00+02:00",
+      "title": "Rotation des proxies + swarm qui finit le fichier",
+      "notes": [
+        "Ce n’est plus toujours le même proxy qui parle à YouTube — rotation dans le pool chaud.",
+        "4 Ranges en parallèle (8 saturait l’IP vers 1 Mo). Les bouts ratés sont retentés."
+      ]
+    },
+    {
       "version": "1.3.295",
       "date": "2026-09-25",
       "time": "08:05",
