@@ -12,12 +12,15 @@
  * Opt-out : YOUTUBE_HTTP_PROXY_FREE=0
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import https from 'node:https';
 import tls from 'node:tls';
 import { connect as netConnect } from 'node:net';
 import { Readable } from 'node:stream';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 type ProxyEntry = {
   url: string;
@@ -62,7 +65,8 @@ const USER_POOL_SIZE = Math.max(
   Math.min(48, Number(process.env.YOUTUBE_PROXY_USER_POOL || 24) || 24),
 );
 
-const HOT_POOL_PATH = join(process.cwd(), 'data', 'hot_pool.json');
+/** Volume Docker `data/` — pas process.cwd() (sinon perdu au restart). */
+const HOT_POOL_PATH = join(ROOT, 'data', 'hot_pool.json');
 const HOT_CAP = 30;
 const HOT_EXPIRE_MS = 6 * 60 * 60 * 1000;
 const HOT_MIN = 15;
@@ -111,6 +115,8 @@ export function isAllowedProxyTarget(hostname: string): boolean {
   if (!h || isBlockedProxyHost(h)) return false;
   const roots = [
     'google.com',
+    'googleapis.com',
+    'gstatic.com',
     'googlevideo.com',
     'youtube.com',
     'youtu.be',
@@ -216,7 +222,7 @@ function persistHotPool(): void {
         failCount: e.gvMiss || 0,
         deadUntil: e.deadUntil || 0,
       }));
-    mkdirSync(join(process.cwd(), 'data'), { recursive: true });
+    mkdirSync(join(ROOT, 'data'), { recursive: true });
     writeFileSync(HOT_POOL_PATH, JSON.stringify(entries), 'utf8');
   } catch {
     /* volume RO */
@@ -242,8 +248,14 @@ export function loadHotPoolFromDisk(): void {
   if (hotLoaded) return;
   hotLoaded = true;
   try {
-    if (!existsSync(HOT_POOL_PATH)) return;
-    const raw = JSON.parse(readFileSync(HOT_POOL_PATH, 'utf8')) as HotFileEntry[];
+    const legacy = join(process.cwd(), 'data', 'hot_pool.json');
+    const path = existsSync(HOT_POOL_PATH)
+      ? HOT_POOL_PATH
+      : existsSync(legacy)
+        ? legacy
+        : '';
+    if (!path) return;
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as HotFileEntry[];
     if (!Array.isArray(raw)) return;
     const now = Date.now();
     let n = 0;
@@ -261,7 +273,10 @@ export function loadHotPoolFromDisk(): void {
       n += 1;
       if (n >= HOT_CAP) break;
     }
-    if (n) console.info(`[youtubeProxy] hot pool chargé n=${n}`);
+    if (n) {
+      console.info(`[youtubeProxy] hot pool chargé n=${n} path=${path === HOT_POOL_PATH ? 'volume' : 'cwd-legacy'}`);
+      persistHotSoon();
+    }
   } catch (err) {
     console.warn('[youtubeProxy] hot_pool.json', String((err as Error).message || err).slice(0, 80));
   }
@@ -965,13 +980,21 @@ export function fetchUrlViaProxy(
     method?: string;
     headers?: Record<string, string>;
     timeoutMs?: number;
+    body?: Buffer | Uint8Array | string;
   } = {},
 ): Promise<globalThis.Response> {
   const timeoutMs = init.timeoutMs ?? 10_000;
+  const bodyBuf =
+    init.body == null
+      ? undefined
+      : typeof init.body === 'string'
+        ? Buffer.from(init.body)
+        : Buffer.from(init.body);
   if (!proxyUrl) {
     return fetch(targetUrl, {
       method: init.method || 'GET',
       headers: init.headers,
+      body: bodyBuf,
       redirect: 'follow',
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -990,6 +1013,10 @@ export function fetchUrlViaProxy(
     return Promise.reject(new Error(`blocked proxy host: ${new URL(proxyUrl).hostname}`));
   }
   const destPort = Number(target.port) || (target.protocol === 'http:' ? 80 : 443);
+  const headers: Record<string, string> = { ...(init.headers || {}), Host: target.host };
+  if (bodyBuf && !headers['Content-Length'] && !headers['content-length']) {
+    headers['Content-Length'] = String(bodyBuf.length);
+  }
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -1006,7 +1033,7 @@ export function fetchUrlViaProxy(
         port: destPort,
         path: `${target.pathname}${target.search}`,
         method: init.method || 'GET',
-        headers: { ...(init.headers || {}), Host: target.host },
+        headers,
         timeout: timeoutMs,
         rejectUnauthorized: true,
       },
@@ -1037,8 +1064,55 @@ export function fetchUrlViaProxy(
         tlsReq.destroy();
         fail(new Error('proxy TLS timeout'));
       });
-      tlsReq.end();
+      if (bodyBuf) tlsReq.end(bodyBuf);
+      else tlsReq.end();
   });
+}
+
+/** fetch() Innertube / youtubei.js collé à un boundProxy (même IP que googlevideo). */
+export function boundProxyFetch(proxyUrl: string): (input: any, init?: any) => Promise<Response> {
+  return async (input, init) => {
+    const req = input instanceof Request ? input : null;
+    const url = req
+      ? req.url
+      : typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : String(input?.url || input);
+    const method = String(init?.method || req?.method || 'GET');
+    const headers: Record<string, string> = {};
+    const src = init?.headers || req?.headers;
+    if (src && typeof src.forEach === 'function') {
+      src.forEach((v: string, k: string) => {
+        headers[k] = v;
+      });
+    } else if (src && typeof src === 'object') {
+      for (const [k, v] of Object.entries(src as Record<string, string>)) {
+        if (v != null) headers[k] = String(v);
+      }
+    }
+    let body: Buffer | undefined;
+    const raw = init?.body;
+    if (raw != null && typeof raw !== 'undefined') {
+      if (typeof raw === 'string') body = Buffer.from(raw);
+      else if (raw instanceof Uint8Array) body = Buffer.from(raw);
+      else if (raw instanceof ArrayBuffer) body = Buffer.from(new Uint8Array(raw));
+    } else if (req) {
+      try {
+        const ab = await req.arrayBuffer();
+        if (ab.byteLength) body = Buffer.from(ab);
+      } catch {
+        /* GET */
+      }
+    }
+    return fetchUrlViaProxy(url, proxyUrl, {
+      method,
+      headers,
+      timeoutMs: 18_000,
+      body,
+    });
+  };
 }
 
 /** Canary Google 204 — détecte un proxy qui atteint vraiment Google (pas seulement TCP ouvert). */

@@ -56,6 +56,7 @@ import {
   canSearchWarm,
   shouldAbortOrphanDownload,
 } from './streamOrchestrator.js';
+import { ytDlpActiveCount, ytDlpMaxConcurrent } from './ytDlpGate.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..', '..', '..');
@@ -269,6 +270,9 @@ const SWARM_PARALLEL = 4;
 
 type HedgeHead = { url: string; viaProxy: string; head: Buffer; total: number; at: number };
 const hedgeHeadsById = new Map<string, HedgeHead>();
+/** Autres proxies : chacun a SA URL googlevideo (IP-lock). Ranges différents, pas la même URL. */
+type SwarmPeer = { url: string; proxy: string };
+const swarmPeersById = new Map<string, SwarmPeer[]>();
 
 function rememberHedgeHead(videoId: string, head: HedgeHead): void {
   hedgeHeadsById.set(videoId, head);
@@ -278,25 +282,38 @@ function rememberHedgeHead(videoId: string, head: HedgeHead): void {
   }, 45_000);
 }
 
+function rememberSwarmPeer(videoId: string, peer: SwarmPeer): void {
+  if (!videoId || !peer?.url || !peer?.proxy) return;
+  const cur = swarmPeersById.get(videoId) || [];
+  if (!cur.some((p) => p.proxy === peer.proxy)) cur.push(peer);
+  swarmPeersById.set(videoId, cur.slice(0, 4));
+}
+
+function swarmPeersFor(videoId: string, fallback?: SwarmPeer): SwarmPeer[] {
+  const cur = [...(swarmPeersById.get(videoId) || [])];
+  if (fallback?.proxy && !cur.some((p) => p.proxy === fallback.proxy)) cur.unshift(fallback);
+  return cur;
+}
+
 function takeHedgeHead(videoId: string): HedgeHead | undefined {
   const h = hedgeHeadsById.get(videoId);
   if (h) hedgeHeadsById.delete(videoId);
   return h;
 }
 
-async function fetchSwarmChunk(
+async function fetchSwarmChunkOnce(
   url: string,
   start: number,
   end: number,
-  opts?: { userId?: string; boundProxy?: string | null },
+  proxy: string,
+  userId?: string,
 ): Promise<Buffer | null> {
-  if (!opts?.boundProxy) return null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetchGooglevideo(url, `bytes=${start}-${end}`, {
         preferProxies: true,
-        boundProxy: opts.boundProxy,
-        userId: opts?.userId,
+        boundProxy: proxy,
+        userId,
       });
       if (res.status !== 206 && res.status !== 200) {
         try {
@@ -304,19 +321,36 @@ async function fetchSwarmChunk(
         } catch {
           /* ignore */
         }
-        if (res.status === 403 || res.status === 429) {
-          markYoutubeProxyFailure(opts.boundProxy, 'gv');
-        }
+        if (res.status === 403 || res.status === 429) markYoutubeProxyFailure(proxy, 'gv');
         continue;
       }
       const buf = Buffer.from(await res.arrayBuffer());
       const expect = end - start + 1;
       if (buf.length < Math.min(8, expect)) continue;
-      markYoutubeProxySuccess(opts.boundProxy, 'gv');
+      markYoutubeProxySuccess(proxy, 'gv');
       return buf.subarray(0, Math.min(buf.length, expect));
     } catch {
       /* retry même proxy */
     }
+  }
+  return null;
+}
+
+async function fetchSwarmChunk(
+  url: string,
+  start: number,
+  end: number,
+  opts?: { userId?: string; boundProxy?: string | null; videoId?: string },
+): Promise<Buffer | null> {
+  const peers = swarmPeersFor(
+    opts?.videoId || '',
+    opts?.boundProxy ? { url, proxy: opts.boundProxy } : undefined,
+  );
+  if (!peers.length && opts?.boundProxy) peers.push({ url, proxy: opts.boundProxy });
+  if (!peers.length) return null;
+  for (const peer of peers) {
+    const buf = await fetchSwarmChunkOnce(peer.url, start, end, peer.proxy, opts?.userId);
+    if (buf) return buf;
   }
   return null;
 }
@@ -392,7 +426,11 @@ async function downloadViaProxyChunks(
         while (queue.length) {
           const p = queue.shift();
           if (!p) return;
-          const buf = await fetchSwarmChunk(url, p.start, p.end, opts);
+          const buf = await fetchSwarmChunk(url, p.start, p.end, {
+            userId: opts?.userId,
+            boundProxy: opts?.boundProxy,
+            videoId,
+          });
           if (!buf) {
             failed += 1;
             continue;
@@ -410,7 +448,7 @@ async function downloadViaProxyChunks(
       closeSync(fd);
     }
     console.log(
-      `[stream] swarm OK ${out.split('/').pop()} bytes=${contiguous} parts=${Math.ceil(total / SWARM_CHUNK_BYTES)} boundProxy (maison offline = normal)`,
+      `[stream] swarm OK ${out.split('/').pop()} bytes=${contiguous} parts=${Math.ceil(total / SWARM_CHUNK_BYTES)} peers=${swarmPeersFor(videoId, opts?.boundProxy ? { url, proxy: opts.boundProxy } : undefined).length} (maison offline = normal)`,
     );
     return existsSync(out) && statSync(out).size >= Math.min(total, 256_000);
   } catch (err) {
@@ -1270,7 +1308,15 @@ export async function handleStream(req: Request, res: Response) {
           `[stream] Android cold ${videoId} — wait prefix 256 Ko (swarm/proxy)`,
         );
         const ready = await waitUntilDiskServable(videoId, 6_000);
-        if (!ready) noteFormatTimeout(videoId);
+        if (!ready) {
+          const congested = ytDlpActiveCount() >= Math.max(2, ytDlpMaxConcurrent() - 2);
+          if (congested) {
+            const again = await waitUntilDiskServable(videoId, 8_000);
+            if (!again) noteFormatTimeout(videoId);
+          } else {
+            noteFormatTimeout(videoId);
+          }
+        }
       }
     } else if (
       !wantVideoEarly &&
@@ -2682,7 +2728,10 @@ const searchWarmQueued = new Set<string>();
 const listHeadWarmQueue: string[] = [];
 const listHeadWarmQueued = new Set<string>();
 let diskWarmBusyCount = 0;
-const DISK_WARM_CONCURRENCY = 2;
+const DISK_WARM_CONCURRENCY = 3;
+const libPrefixWarmQueue: string[] = [];
+const libPrefixWarmQueued = new Set<string>();
+const LIB_PREFIX_CAP = 8_000;
 
 function diskWarmCap(): number {
   return Math.max(40, Math.min(400, Number(process.env.TASTE_WARM_DISK_QUEUE || 200) || 200));
@@ -2699,6 +2748,7 @@ async function runDiskWarmWorker() {
     while (
       nextDiskWarmQueue.length ||
       listHeadWarmQueue.length ||
+      libPrefixWarmQueue.length ||
       searchWarmQueue.length ||
       likesDiskWarmQueue.length ||
       diskWarmQueue.length
@@ -2724,6 +2774,17 @@ async function runDiskWarmWorker() {
           /* best-effort */
         }
         await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 280 : 140));
+        continue;
+      }
+      const prefixId = libPrefixWarmQueue.shift();
+      if (prefixId) {
+        libPrefixWarmQueued.delete(prefixId);
+        try {
+          await warmTrackPrefix(prefixId);
+        } catch {
+          /* best-effort */
+        }
+        await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 700 : 180));
         continue;
       }
       const searchId = searchWarmQueue.shift();
@@ -2776,6 +2837,7 @@ async function runDiskWarmWorker() {
     if (
       nextDiskWarmQueue.length ||
       listHeadWarmQueue.length ||
+      libPrefixWarmQueue.length ||
       searchWarmQueue.length ||
       likesDiskWarmQueue.length ||
       diskWarmQueue.length
@@ -2825,7 +2887,7 @@ export function enqueueNextDiskWarm(ids: string[]) {
  * Le reste se remplit au play (boundProxy) avant que le téléphone arrive au trou.
  */
 export function enqueueListHeadWarm(ids: string[], opts?: { front?: boolean }) {
-  const cap = 24;
+  const cap = 80;
   for (const id of ids) {
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
     if (listHeadWarmQueued.has(id) || nextDiskWarmQueued.has(id)) continue;
@@ -2849,7 +2911,25 @@ export function enqueueListHeadWarm(ids: string[], opts?: { front?: boolean }) {
     if (opts?.front) listHeadWarmQueue.unshift(id);
     else listHeadWarmQueue.push(id);
   }
-  if (listHeadWarmQueue.length) void runDiskWarmWorker();
+  if (listHeadWarmQueue.length || libPrefixWarmQueue.length) void runDiskWarmWorker();
+}
+
+/** Préfixes 256 Ko (~quelques secondes AAC) partagés par tous les comptes. */
+export function enqueueLibraryPrefixWarm(ids: string[]) {
+  for (const id of ids) {
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
+    if (libPrefixWarmQueued.has(id) || listHeadWarmQueued.has(id) || nextDiskWarmQueued.has(id)) continue;
+    try {
+      const p = cachePath(id);
+      if (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) continue;
+    } catch {
+      /* continue */
+    }
+    if (libPrefixWarmQueue.length >= LIB_PREFIX_CAP) break;
+    libPrefixWarmQueued.add(id);
+    libPrefixWarmQueue.push(id);
+  }
+  if (libPrefixWarmQueue.length || listHeadWarmQueue.length) void runDiskWarmWorker();
 }
 
 async function warmTrackPrefix(videoId: string): Promise<void> {
@@ -2966,6 +3046,7 @@ export function diskWarmQueueStats(): {
   generic: number;
   likes: number;
   listHeads: number;
+  libPrefix: number;
   next: number;
   busy: boolean;
 } {
@@ -2973,30 +3054,18 @@ export function diskWarmQueueStats(): {
     generic: diskWarmQueue.length,
     likes: likesDiskWarmQueue.length,
     listHeads: listHeadWarmQueue.length,
+    libPrefix: libPrefixWarmQueue.length,
     next: nextDiskWarmQueue.length,
     busy: diskWarmBusyCount > 0,
   };
 }
 
-/** Pendant une écoute : vider le warm générique pour libérer yt-dlp (Aléatoire / cold). */
-export function suspendBackgroundDiskWarm(keepCurrentId?: string) {
-  const keep = keepCurrentId && /^[a-zA-Z0-9_-]{11}$/.test(keepCurrentId) ? keepCurrentId : '';
-  while (diskWarmQueue.length) {
-    const id = diskWarmQueue.shift()!;
-    diskWarmQueued.delete(id);
+/** Pendant une écoute : ne plus jeter le préchauffage biblio (multi-user). */
+export function suspendBackgroundDiskWarm(_keepCurrentId?: string) {
+  while (searchWarmQueue.length) {
+    const id = searchWarmQueue.shift()!;
+    searchWarmQueued.delete(id);
   }
-  // Likes : ne garder que le titre courant (sinon la file likes monopolise aussi).
-  const keptLikes: string[] = [];
-  while (likesDiskWarmQueue.length) {
-    const id = likesDiskWarmQueue.shift()!;
-    likesDiskWarmQueued.delete(id);
-    if (id === keep && keptLikes.length === 0) keptLikes.push(id);
-  }
-  for (const id of keptLikes) {
-    likesDiskWarmQueued.add(id);
-    likesDiskWarmQueue.push(id);
-  }
-  // Ne pas vider nextDiskWarmQueue (titre suivant) ni listHeadWarmQueue (Tout lire).
 }
 
 async function runWarmWorker() {
@@ -3218,9 +3287,9 @@ function aborted(signal?: AbortSignal): boolean {
 }
 
 /**
- * Course boundProxy : chaque jambe résout SA URL puis écrit le 1er chunk 512 Ko.
- * Premier 206 réel gagne (winner-lock). Pas d’Innertube sans proxy (URL VPS = 403).
- * Timeout 12 s. Jambes 0 / 2,5 / 5 s.
+ * Course boundProxy : chaque jambe résout SA URL puis le 1er chunk 512 Ko.
+ * Premier 206 réel gagne. Les autres URLs restent pour d’autres Ranges (pas la même URL × 3).
+ * Timeout 10 s. Jambes 0 / 2 / 3,5 s.
  */
 async function resolveFormatHedged(
   videoId: string,
@@ -3229,7 +3298,7 @@ async function resolveFormatHedged(
   live = false,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   if (aborted(userSignal)) throw new Error('aborted');
-  const hot = pickHotProxies(2);
+  const hot = pickHotProxies(3);
   const ctrlA = new AbortController();
   const ctrlB = new AbortController();
   const ctrlC = new AbortController();
@@ -3247,23 +3316,11 @@ async function resolveFormatHedged(
 
   type Fmt = NonNullable<ReturnType<typeof peekCachedAudioFormat>>;
   type LegWin = { fmt: Fmt; head: Buffer; total: number; proxy: string; ms: number };
-  let winner: ReturnType<typeof peekCachedAudioFormat> = null;
-  const abortLosers = (losers: AbortController[]) => {
-    for (const loser of losers) {
-      try {
-        loser.abort();
-      } catch {
-        /* ignore */
-      }
-    }
-  };
-  const take = (leg: LegWin, losers: AbortController[]) => {
-    if (winner) {
-      abortLosers(losers);
-      throw new Error('lost race');
-    }
+  let winner: Fmt | null = null;
+  const take = (leg: LegWin) => {
+    rememberSwarmPeer(videoId, { url: leg.fmt.url, proxy: leg.proxy });
+    if (winner) throw new Error('lost race');
     winner = leg.fmt;
-    abortLosers(losers);
     rememberHedgeHead(videoId, {
       url: leg.fmt.url,
       viaProxy: leg.proxy,
@@ -3288,6 +3345,14 @@ async function resolveFormatHedged(
     console.info(
       `[stream] hedge win ${videoId} head=${leg.head.length} total=${leg.total} ms=${leg.ms}`,
     );
+    const extras = pickHotProxies(3, new Set([leg.proxy]));
+    for (const proxy of extras) {
+      void getAudioFormat(videoId, { userId, live, boundProxy: proxy, signal: userSignal })
+        .then((fmt) => {
+          if (fmt?.url) rememberSwarmPeer(videoId, { url: fmt.url, proxy });
+        })
+        .catch(() => {});
+    }
     return leg.fmt;
   };
 
@@ -3301,6 +3366,8 @@ async function resolveFormatHedged(
       signal: sig,
     });
     if (!fmt?.url) throw new Error('no url');
+    rememberSwarmPeer(videoId, { url: fmt.url, proxy });
+    if (winner) throw new Error('lost race');
     const res = await fetchGooglevideo(fmt.url, `bytes=0-${SWARM_CHUNK_BYTES - 1}`, {
       preferProxies: true,
       boundProxy: proxy,
@@ -3334,18 +3401,17 @@ async function resolveFormatHedged(
   const delayed = (
     proxy: string | undefined,
     ctrl: AbortController,
-    losers: AbortController[],
     delayMs: number,
     label: string,
   ) =>
     new Promise<Fmt>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (winner || aborted(userSignal) || aborted(ctrl.signal) || !proxy) {
+        if (aborted(userSignal) || aborted(ctrl.signal) || !proxy) {
           reject(new Error(`hedge ${label} skip`));
           return;
         }
         viaProxy(proxy, ctrl.signal)
-          .then((leg) => resolve(take(leg, losers)))
+          .then((leg) => resolve(take(leg)))
           .catch(reject);
       }, delayMs);
       userSignal?.addEventListener(
@@ -3359,14 +3425,15 @@ async function resolveFormatHedged(
     });
 
   const primary = hot[0]
-    ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg, [ctrlB, ctrlC]))
+    ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg))
     : Promise.reject(new Error('no hot A'));
 
-  const delayedB = delayed(hot[1], ctrlB, [ctrlA, ctrlC], 2_000, 'B');
+  const delayedB = delayed(hot[1], ctrlB, 2_000, 'B');
+  const delayedC = delayed(hot[2], ctrlC, 3_500, 'C');
 
   try {
     const fmt = (await Promise.race([
-      Promise.any([primary, delayedB]).catch(() => null),
+      Promise.any([primary, delayedB, delayedC]).catch(() => null),
       new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
     ])) as ReturnType<typeof peekCachedAudioFormat>;
     if (fmt?.url && fmt.viaProxy) return fmt;

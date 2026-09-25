@@ -10,6 +10,7 @@ import {
   markYoutubeProxySuccess,
   youtubeProxyAttempts,
   youtubeProxyStripe,
+  boundProxyFetch,
 } from './youtubeProxy.js';
 import { estimateTimedFromPlain, looksLikeLyrics, snapPlainToCaptions } from './lyricsTiming.js';
 
@@ -2959,6 +2960,63 @@ async function audioFormatViaYtDlp(
   throw lastErr || new Error('yt-dlp audio URL indisponible');
 }
 
+const innertubeProxyCache = new Map<string, { yt: Innertube; at: number }>();
+
+async function getYTViaBoundProxy(proxy: string): Promise<Innertube> {
+  const hit = innertubeProxyCache.get(proxy);
+  if (hit && Date.now() - hit.at < 45 * 60_000) return hit.yt;
+  installYoutubeJsEvaluator();
+  const cookie = resolveYoutubeCookieHeader();
+  const yt = await Innertube.create({
+    generate_session_locally: true,
+    client_type: ClientType.WEB,
+    fetch: boundProxyFetch(proxy) as typeof fetch,
+    ...(cookie ? { cookie } : {}),
+  });
+  innertubeProxyCache.set(proxy, { yt, at: Date.now() });
+  if (innertubeProxyCache.size > 12) {
+    const oldest = [...innertubeProxyCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+    if (oldest) innertubeProxyCache.delete(oldest[0]);
+  }
+  return yt;
+}
+
+/** Innertube sorti par le même proxy que googlevideo — pas de slot yt-dlp. */
+async function audioFormatViaInnertubeProxy(
+  videoId: string,
+  proxy: string,
+  signal?: AbortSignal,
+): Promise<AudioFormat> {
+  if (signal?.aborted) throw new Error('aborted');
+  const innertube = await getYTViaBoundProxy(proxy);
+  const clients = ['ANDROID', 'IOS', 'TV'] as const;
+  const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
+    const format = await Promise.race([
+      innertube.getStreamingData(videoId, { type: 'audio', quality: 'best', client }),
+      new Promise<never>((_, rej) =>
+        setTimeout(() => rej(new Error(`innertube-proxy ${client} timeout`)), 5_500),
+      ),
+    ]);
+    if (signal?.aborted) throw new Error('aborted');
+    const url = format.url || (await format.decipher(innertube.session.player));
+    if (!url) throw new Error('empty stream url');
+    const mime = String(format.mime_type || '');
+    if (/dash/i.test(mime) || /ftypdash/i.test(mime)) {
+      throw new Error(`innertube-proxy ${client} DASH`);
+    }
+    markYoutubeProxySuccess(proxy, 'gv');
+    return {
+      url,
+      mimeType: format.mime_type,
+      bitrate: format.bitrate,
+      contentLength: format.content_length,
+      expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
+      viaProxy: proxy,
+    };
+  };
+  return await Promise.any(clients.map((c) => tryClient(c)));
+}
+
 export async function getAudioFormat(
   videoId: string,
   opts?: {
@@ -2974,6 +3032,12 @@ export async function getAudioFormat(
   const forceFresh = Boolean(opts?.forceFresh || (opts?.retryN ?? 0) > 0);
   const live = opts?.live === true;
   if (opts?.boundProxy) {
+    try {
+      const inn = await audioFormatViaInnertubeProxy(videoId, opts.boundProxy, opts.signal);
+      if (inn?.url) return inn;
+    } catch {
+      /* yt-dlp collé au même proxy */
+    }
     return audioFormatViaYtDlpFast(videoId, {
       live: opts.live === true,
       userId: opts.userId,

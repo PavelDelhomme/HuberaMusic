@@ -2,6 +2,19 @@
   "updatedAt": "2026-09-24",
   "versions": [
     {
+      "version": "1.3.294",
+      "date": "2026-09-25",
+      "time": "07:30",
+      "at": "2026-09-25T07:30:00+02:00",
+      "title": "Plusieurs utilisateurs, bouts en parallèle, biblio préchauffée",
+      "notes": [
+        "Même morceau : chaque proxy a sa propre URL, puis télécharge un autre bout — pas 3 fois la même URL (403).",
+        "Innertube passe par le proxy (plus besoin d’attendre yt-dlp pour démarrer).",
+        "Jusqu’à 10 yt-dlp dont 6 pour l’écoute live : deux téléphones en même temps ne se bloquent plus.",
+        "Toute la biblio se préchauffe en débuts 256 Ko partagés (tous les comptes)."
+      ]
+    },
+    {
       "version": "1.3.293",
       "date": "2026-09-24",
       "time": "23:05",

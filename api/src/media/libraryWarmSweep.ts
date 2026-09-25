@@ -1,19 +1,18 @@
 /**
- * Balayage warm multi-comptes : tous les utilisateurs, têtes Aléatoire + likes.
- * Complète libraryHealth (remplacement vidéos mortes) en préchauffant les flux
- * pour que l’Aléatoire / lecture ne tombe plus sur des titres froids.
+ * Balayage préfixes ~3 s (256 Ko AAC) — tous les comptes, cache VPS partagé.
+ * Un titre chaud pour paul@ l’est aussi pour les autres. Pas le fichier entier.
  *
  * Env :
  *  LIBRARY_WARM_SWEEP=0          → off
- *  LIBRARY_WARM_INTERVAL_MS      → défaut 6 h
- *  LIBRARY_WARM_START_DELAY_MS   → défaut 180 s
+ *  LIBRARY_WARM_INTERVAL_MS      → défaut 45 min
+ *  LIBRARY_WARM_START_DELAY_MS   → défaut 45 s
  */
 import { db } from '../library/db.js';
 import { getShuffleHeads } from '../library/shuffleHeads.js';
 import {
   enqueueStreamWarm,
-  enqueueDiskWarm,
-  enqueueLikesDiskWarm,
+  enqueueListHeadWarm,
+  enqueueLibraryPrefixWarm,
   isPlaybackHot,
   diskWarmQueueStats,
 } from './stream.js';
@@ -37,35 +36,38 @@ function allUserIds(): string[] {
   }
 }
 
-function likesLimit(): number {
-  return Math.max(50, Math.min(5000, Number(process.env.LIBRARY_WARM_LIKES_LIMIT || 1500) || 1500));
+function validId(id: string): boolean {
+  return /^[a-zA-Z0-9_-]{11}$/.test(id);
 }
 
-function likedIds(userId: string, limit = likesLimit()): string[] {
+function allSharedLibraryIds(limit = 20_000): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const push = (id: string) => {
+    if (!validId(id) || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
   try {
-    return (
-      db
-        .prepare(
-          `SELECT track_id FROM liked_tracks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
-        )
-        .all(userId, limit) as { track_id: string }[]
-    )
-      .map((r) => r.track_id)
-      .filter((id) => /^[a-zA-Z0-9_-]{11}$/.test(id));
+    const lib = db
+      .prepare(`SELECT DISTINCT track_id FROM library_tracks LIMIT ?`)
+      .all(limit) as { track_id: string }[];
+    for (const r of lib) push(r.track_id);
   } catch {
-    return [];
+    /* sqlite/pg */
   }
+  try {
+    const likes = db
+      .prepare(`SELECT DISTINCT track_id FROM liked_tracks LIMIT ?`)
+      .all(limit) as { track_id: string }[];
+    for (const r of likes) push(r.track_id);
+  } catch {
+    /* ignore */
+  }
+  return out;
 }
 
-async function waitIfPlaybackHot(): Promise<void> {
-  let spins = 0;
-  while (isPlaybackHot(90_000) && spins < 40) {
-    spins += 1;
-    await new Promise((r) => setTimeout(r, 3_000));
-  }
-}
-
-/** Une passe : shuffle-heads + recent + likes (disque prioritaire) + taste. */
+/** Une passe : préfixes 256 Ko de toute la biblio union, têtes Aléatoire en priorité. */
 export async function runLibraryWarmSweepOnce(): Promise<{
   users: number;
   ids: number;
@@ -73,71 +75,38 @@ export async function runLibraryWarmSweepOnce(): Promise<{
 }> {
   if (running) return { users: 0, ids: lastStats.ids, likes: lastStats.likes };
   running = true;
-  const seen = new Set<string>();
-  let users = 0;
   try {
-    await waitIfPlaybackHot();
     const uids = allUserIds();
-    const lim = likesLimit();
-    const uniqueLikes: string[] = [];
+    const front: string[] = [];
+    const frontSeen = new Set<string>();
     for (const uid of uids) {
-      users += 1;
-      const userHeads: string[] = [];
-      const userLikes: string[] = [];
       try {
         const heads = getShuffleHeads(uid, { warm: false, scope: 'all' });
-        for (const id of (heads.ids || []).slice(0, 64)) {
-          if (!seen.has(id)) {
-            seen.add(id);
-            userHeads.push(id);
+        for (const id of (heads.ids || []).slice(0, 24)) {
+          if (!frontSeen.has(id) && validId(id)) {
+            frontSeen.add(id);
+            front.push(id);
           }
-        }
-        const recent = getShuffleHeads(uid, { warm: false, scope: 'recent' });
-        for (const id of (recent.ids || []).slice(0, 40)) {
-          if (!seen.has(id)) {
-            seen.add(id);
-            userHeads.push(id);
-          }
-        }
-        for (const id of likedIds(uid, lim)) {
-          if (!seen.has(id)) {
-            seen.add(id);
-            userHeads.push(id);
-          }
-          userLikes.push(id);
-          uniqueLikes.push(id);
         }
         scheduleUserTasteWarm(uid);
-      } catch (err) {
-        console.warn(
-          `[libraryWarm] user ${uid.slice(0, 8)}…`,
-          String((err as Error).message || err).slice(0, 100),
-        );
-      }
-      await new Promise((r) => setTimeout(r, 400));
-      for (let i = 0; i < userLikes.length; i += 16) {
-        await waitIfPlaybackHot();
-        enqueueLikesDiskWarm(userLikes.slice(i, i + 16));
-        enqueueStreamWarm(userLikes.slice(i, i + 16), uid);
-        await new Promise((r) => setTimeout(r, 600));
-      }
-      for (let i = 0; i < userHeads.length; i += 8) {
-        await waitIfPlaybackHot();
-        const chunk = userHeads.slice(i, i + 8);
-        enqueueStreamWarm(chunk, uid);
-        enqueueDiskWarm(chunk);
-        await new Promise((r) => setTimeout(r, 1_000));
+      } catch {
+        /* un compte KO n’arrête pas les autres */
       }
     }
-    const ids = [...seen];
+    const all = allSharedLibraryIds();
+    enqueueListHeadWarm(front, { front: true });
+    enqueueStreamWarm(front.slice(0, 16));
+    for (let i = 0; i < all.length; i += 80) {
+      enqueueLibraryPrefixWarm(all.slice(i, i + 80));
+    }
     lastRunAt = Date.now();
-    lastStats = { users, ids: ids.length, likes: uniqueLikes.length, at: lastRunAt };
+    lastStats = { users: uids.length, ids: all.length, likes: 0, at: lastRunAt };
     const q = diskWarmQueueStats();
     console.info(
-      `[libraryWarm] sweep users=${users} uniqueIds=${ids.length} likes=${uniqueLikes.length} diskQ likes=${q.likes} gen=${q.generic}`,
+      `[libraryWarm] prefix users=${uids.length} uniqueIds=${all.length} heads=${front.length} q prefix=${q.libPrefix} list=${q.listHeads}`,
     );
-    void warmSharedLyricsForReady(ids.slice(0, 80));
-    return { users, ids: ids.length, likes: uniqueLikes.length };
+    void warmSharedLyricsForReady(front.slice(0, 40));
+    return { users: uids.length, ids: all.length, likes: 0 };
   } finally {
     running = false;
   }
@@ -182,12 +151,12 @@ export function startLibraryWarmSweep(): void {
   }
   if (timer) return;
   const everyMs = Math.max(
-    60 * 60_000,
-    Math.min(24 * 3600_000, Number(process.env.LIBRARY_WARM_INTERVAL_MS || 3 * 3600_000) || 3 * 3600_000),
+    20 * 60_000,
+    Math.min(6 * 3600_000, Number(process.env.LIBRARY_WARM_INTERVAL_MS || 45 * 60_000) || 45 * 60_000),
   );
   const startDelay = Math.max(
-    30_000,
-    Number(process.env.LIBRARY_WARM_START_DELAY_MS || 120_000) || 120_000,
+    20_000,
+    Number(process.env.LIBRARY_WARM_START_DELAY_MS || 45_000) || 45_000,
   );
   setTimeout(() => {
     void runLibraryWarmSweepOnce();
@@ -212,6 +181,6 @@ export function libraryWarmSweepStatus() {
     lastRunAt,
     ...lastStats,
     diskQueue: diskWarmQueueStats(),
-    likesLimit: likesLimit(),
+    likesLimit: 0,
   };
 }
