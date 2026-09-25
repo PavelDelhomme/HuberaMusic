@@ -261,18 +261,16 @@ async function fetchGooglevideo(
 }
 
 /**
- * Swarm « torrent » : Ranges 512 Ko en parallèle, TOUS via le même boundProxy
- * (URL googlevideo collée à une IP — 3 proxies sur la même URL = 403).
- * Le 1er chunk s’écrit tout de suite : le téléphone lit dès 256 Ko.
+ * Swarm : UNE URL, UN boundProxy, plusieurs Ranges HTTP en parallèle (keep-alive).
+ * 3 proxies sur la même URL = 403. Résoudre 3 URLs = 3× le temps de démarrage.
+ * Les bouts partent dès les en-têtes Content-Range, pas après le 1er body.
  */
-const SWARM_CHUNK_BYTES = 512 * 1024;
-const SWARM_PARALLEL = 4;
+const FIRST_BYTES = 256 * 1024;
+const SWARM_CHUNK_BYTES = 256 * 1024;
+const SWARM_PARALLEL = 8;
 
 type HedgeHead = { url: string; viaProxy: string; head: Buffer; total: number; at: number };
 const hedgeHeadsById = new Map<string, HedgeHead>();
-/** Autres proxies : chacun a SA URL googlevideo (IP-lock). Ranges différents, pas la même URL. */
-type SwarmPeer = { url: string; proxy: string };
-const swarmPeersById = new Map<string, SwarmPeer[]>();
 
 function rememberHedgeHead(videoId: string, head: HedgeHead): void {
   hedgeHeadsById.set(videoId, head);
@@ -282,38 +280,34 @@ function rememberHedgeHead(videoId: string, head: HedgeHead): void {
   }, 45_000);
 }
 
-function rememberSwarmPeer(videoId: string, peer: SwarmPeer): void {
-  if (!videoId || !peer?.url || !peer?.proxy) return;
-  const cur = swarmPeersById.get(videoId) || [];
-  if (!cur.some((p) => p.proxy === peer.proxy)) cur.push(peer);
-  swarmPeersById.set(videoId, cur.slice(0, 4));
-}
-
-function swarmPeersFor(videoId: string, fallback?: SwarmPeer): SwarmPeer[] {
-  const cur = [...(swarmPeersById.get(videoId) || [])];
-  if (fallback?.proxy && !cur.some((p) => p.proxy === fallback.proxy)) cur.unshift(fallback);
-  return cur;
-}
-
 function takeHedgeHead(videoId: string): HedgeHead | undefined {
   const h = hedgeHeadsById.get(videoId);
   if (h) hedgeHeadsById.delete(videoId);
   return h;
 }
 
-async function fetchSwarmChunkOnce(
+function parseContentTotal(res: globalThis.Response, fallbackLen = 0): number {
+  const cr = res.headers.get('content-range') || '';
+  const cl = Number(res.headers.get('content-length') || 0);
+  const totalMatch = /\/(\d+)\s*$/.exec(cr);
+  if (totalMatch) return Number(totalMatch[1]);
+  if (res.status === 200 && cl > 0) return cl;
+  return fallbackLen;
+}
+
+async function fetchSwarmChunk(
   url: string,
   start: number,
   end: number,
-  proxy: string,
-  userId?: string,
+  opts?: { userId?: string; boundProxy?: string | null },
 ): Promise<Buffer | null> {
+  if (!opts?.boundProxy) return null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetchGooglevideo(url, `bytes=${start}-${end}`, {
         preferProxies: true,
-        boundProxy: proxy,
-        userId,
+        boundProxy: opts.boundProxy,
+        userId: opts?.userId,
       });
       if (res.status !== 206 && res.status !== 200) {
         try {
@@ -321,13 +315,13 @@ async function fetchSwarmChunkOnce(
         } catch {
           /* ignore */
         }
-        if (res.status === 403 || res.status === 429) markYoutubeProxyFailure(proxy, 'gv');
+        if (res.status === 403 || res.status === 429) markYoutubeProxyFailure(opts.boundProxy, 'gv');
         continue;
       }
       const buf = Buffer.from(await res.arrayBuffer());
       const expect = end - start + 1;
       if (buf.length < Math.min(8, expect)) continue;
-      markYoutubeProxySuccess(proxy, 'gv');
+      markYoutubeProxySuccess(opts.boundProxy, 'gv');
       return buf.subarray(0, Math.min(buf.length, expect));
     } catch {
       /* retry même proxy */
@@ -336,23 +330,30 @@ async function fetchSwarmChunkOnce(
   return null;
 }
 
-async function fetchSwarmChunk(
-  url: string,
+async function pumpBodyToOffset(
+  res: globalThis.Response,
+  fd: number,
   start: number,
-  end: number,
-  opts?: { userId?: string; boundProxy?: string | null; videoId?: string },
-): Promise<Buffer | null> {
-  const peers = swarmPeersFor(
-    opts?.videoId || '',
-    opts?.boundProxy ? { url, proxy: opts.boundProxy } : undefined,
-  );
-  if (!peers.length && opts?.boundProxy) peers.push({ url, proxy: opts.boundProxy });
-  if (!peers.length) return null;
-  for (const peer of peers) {
-    const buf = await fetchSwarmChunkOnce(peer.url, start, end, peer.proxy, opts?.userId);
-    if (buf) return buf;
+  onBytes?: (written: number) => void,
+): Promise<number> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length) writeSync(fd, buf, 0, buf.length, start);
+    onBytes?.(buf.length);
+    return buf.length;
   }
-  return null;
+  let written = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value?.byteLength) continue;
+    const buf = Buffer.from(value);
+    writeSync(fd, buf, 0, buf.length, start + written);
+    written += buf.length;
+    onBytes?.(written);
+  }
+  return written;
 }
 
 async function downloadViaProxyChunks(
@@ -361,43 +362,17 @@ async function downloadViaProxyChunks(
   opts?: { userId?: string; boundProxy?: string | null; head?: Buffer; total?: number },
 ): Promise<boolean> {
   if (!url || !youtubeProxyFreeEnabled() || !opts?.boundProxy) return false;
+  const bound = opts.boundProxy;
   try {
     const videoId = out.replace(/^.*\//, '').replace(/\.m4a$/, '');
     const pre = opts.head ? undefined : takeHedgeHead(videoId);
     let head = opts.head || pre?.head;
     let total = opts.total || pre?.total || 0;
-
-    if (!head || !total) {
-      const res = await fetchGooglevideo(url, `bytes=0-${SWARM_CHUNK_BYTES - 1}`, {
-        preferProxies: true,
-        boundProxy: opts.boundProxy,
-        userId: opts?.userId,
-      });
-      const cr = res.headers.get('content-range') || '';
-      const cl = Number(res.headers.get('content-length') || 0);
-      if (res.status !== 206 && res.status !== 200) {
-        try {
-          await res.body?.cancel();
-        } catch {
-          /* ignore */
-        }
-        return false;
-      }
-      head = Buffer.from(await res.arrayBuffer());
-      const totalMatch = /\/(\d+)\s*$/.exec(cr);
-      total = totalMatch ? Number(totalMatch[1]) : cl || head.length;
-      if (res.status === 200 && !totalMatch) total = head.length;
-      markYoutubeProxySuccess(opts.boundProxy, 'gv');
-    }
-    if (!head || !Number.isFinite(total) || total < 256_000 || head.length < 64_000) return false;
-
-    rememberAdvertisedTotal(videoId, total);
-    const pending = new Map<number, Buffer>();
-    let contiguous = 0;
     const existing = existsSync(out) ? statSync(out).size : 0;
     const fd = openSync(out, existing > 0 ? 'r+' : 'w');
-    const flush = (start: number, buf: Buffer) => {
-      pending.set(start, buf);
+    const pending = new Map<number, Buffer>();
+    let contiguous = existing > 0 ? existing : 0;
+    const drain = () => {
       while (pending.has(contiguous)) {
         const b = pending.get(contiguous)!;
         pending.delete(contiguous);
@@ -410,14 +385,48 @@ async function downloadViaProxyChunks(
         }
       }
     };
+    const flush = (start: number, buf: Buffer) => {
+      pending.set(start, buf);
+      drain();
+    };
     try {
-      if (existing >= head.length) {
-        contiguous = existing;
+      let firstPump: Promise<void> | null = null;
+      if (!total || (!head && existing < FIRST_BYTES)) {
+        const res = await fetchGooglevideo(url, `bytes=0-${FIRST_BYTES - 1}`, {
+          preferProxies: true,
+          boundProxy: bound,
+          userId: opts?.userId,
+        });
+        if (res.status !== 206 && res.status !== 200) {
+          try {
+            await res.body?.cancel();
+          } catch {
+            /* ignore */
+          }
+          return false;
+        }
+        total = parseContentTotal(res, total);
+        if (!Number.isFinite(total) || total < 64_000) return false;
+        rememberAdvertisedTotal(videoId, total);
+        markYoutubeProxySuccess(bound, 'gv');
+        firstPump = (async () => {
+          const n = await pumpBodyToOffset(res, fd, 0);
+          contiguous = Math.max(contiguous, n);
+          try {
+            ftruncateSync(fd, Math.max(contiguous, existing));
+          } catch {
+            /* ignore */
+          }
+          drain();
+        })();
       } else {
-        flush(0, head);
+        rememberAdvertisedTotal(videoId, total);
+        if (head && existing < head.length) flush(0, head);
       }
+
+      const restFrom = Math.max(contiguous, head?.length || 0, existing, firstPump ? FIRST_BYTES : 0);
       const rest: Array<{ start: number; end: number }> = [];
-      for (let s = contiguous; s < total; s += SWARM_CHUNK_BYTES) {
+      for (let s = restFrom; s < total; s += SWARM_CHUNK_BYTES) {
         rest.push({ start: s, end: Math.min(total - 1, s + SWARM_CHUNK_BYTES - 1) });
       }
       let failed = 0;
@@ -428,8 +437,7 @@ async function downloadViaProxyChunks(
           if (!p) return;
           const buf = await fetchSwarmChunk(url, p.start, p.end, {
             userId: opts?.userId,
-            boundProxy: opts?.boundProxy,
-            videoId,
+            boundProxy: bound,
           });
           if (!buf) {
             failed += 1;
@@ -438,9 +446,12 @@ async function downloadViaProxyChunks(
           flush(p.start, buf);
         }
       };
-      await Promise.all(
-        Array.from({ length: Math.min(SWARM_PARALLEL, Math.max(1, rest.length)) }, () => worker()),
+      const restRun = Promise.all(
+        Array.from({ length: Math.min(SWARM_PARALLEL, Math.max(1, rest.length || 1)) }, () => worker()),
       );
+      if (firstPump) await firstPump;
+      if (rest.length) await restRun;
+      drain();
       if (failed > 0 || contiguous < total * 0.92) {
         throw new Error(`swarm incomplet ${contiguous}/${total} failed=${failed}`);
       }
@@ -448,7 +459,7 @@ async function downloadViaProxyChunks(
       closeSync(fd);
     }
     console.log(
-      `[stream] swarm OK ${out.split('/').pop()} bytes=${contiguous} parts=${Math.ceil(total / SWARM_CHUNK_BYTES)} peers=${swarmPeersFor(videoId, opts?.boundProxy ? { url, proxy: opts.boundProxy } : undefined).length} (maison offline = normal)`,
+      `[stream] swarm OK ${out.split('/').pop()} bytes=${contiguous} parts=${Math.ceil(total / SWARM_CHUNK_BYTES)} parallel=${SWARM_PARALLEL} sameUrl`,
     );
     return existsSync(out) && statSync(out).size >= Math.min(total, 256_000);
   } catch (err) {
@@ -3287,9 +3298,8 @@ function aborted(signal?: AbortSignal): boolean {
 }
 
 /**
- * Course boundProxy : chaque jambe résout SA URL puis le 1er chunk 512 Ko.
- * Premier 206 réel gagne. Les autres URLs restent pour d’autres Ranges (pas la même URL × 3).
- * Timeout 10 s. Jambes 0 / 2 / 3,5 s.
+ * Course : 2 proxies max pour le 1er octet (le plus rapide gagne, l’autre abort).
+ * Ensuite UN SEUL URL : 8 Ranges en parallèle. Pas 3 résolutions.
  */
 async function resolveFormatHedged(
   videoId: string,
@@ -3298,12 +3308,11 @@ async function resolveFormatHedged(
   live = false,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   if (aborted(userSignal)) throw new Error('aborted');
-  const hot = pickHotProxies(3);
+  const hot = pickHotProxies(2);
   const ctrlA = new AbortController();
   const ctrlB = new AbortController();
-  const ctrlC = new AbortController();
   const abortAll = () => {
-    for (const c of [ctrlA, ctrlB, ctrlC]) {
+    for (const c of [ctrlA, ctrlB]) {
       try {
         c.abort();
       } catch {
@@ -3317,10 +3326,22 @@ async function resolveFormatHedged(
   type Fmt = NonNullable<ReturnType<typeof peekCachedAudioFormat>>;
   type LegWin = { fmt: Fmt; head: Buffer; total: number; proxy: string; ms: number };
   let winner: Fmt | null = null;
-  const take = (leg: LegWin) => {
-    rememberSwarmPeer(videoId, { url: leg.fmt.url, proxy: leg.proxy });
-    if (winner) throw new Error('lost race');
+  const abortLosers = (losers: AbortController[]) => {
+    for (const loser of losers) {
+      try {
+        loser.abort();
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  const take = (leg: LegWin, losers: AbortController[]) => {
+    if (winner) {
+      abortLosers(losers);
+      throw new Error('lost race');
+    }
     winner = leg.fmt;
+    abortLosers(losers);
     rememberHedgeHead(videoId, {
       url: leg.fmt.url,
       viaProxy: leg.proxy,
@@ -3334,8 +3355,10 @@ async function resolveFormatHedged(
       const already = existsSync(early) ? statSync(early).size : 0;
       const efd = openSync(early, already > 0 ? 'r+' : 'w');
       try {
-        writeSync(efd, leg.head, 0, leg.head.length, 0);
-        if (already < leg.head.length) ftruncateSync(efd, leg.head.length);
+        if (leg.head.length) {
+          writeSync(efd, leg.head, 0, leg.head.length, 0);
+          if (already < leg.head.length) ftruncateSync(efd, leg.head.length);
+        }
       } finally {
         closeSync(efd);
       }
@@ -3343,15 +3366,21 @@ async function resolveFormatHedged(
       /* swarm réécrira */
     }
     console.info(
-      `[stream] hedge win ${videoId} head=${leg.head.length} total=${leg.total} ms=${leg.ms}`,
+      `[stream] hedge win ${videoId} head=${leg.head.length} total=${leg.total} ms=${leg.ms} — swarm parallel ${SWARM_PARALLEL} sameUrl`,
     );
-    const extras = pickHotProxies(3, new Set([leg.proxy]));
-    for (const proxy of extras) {
-      void getAudioFormat(videoId, { userId, live, boundProxy: proxy, signal: userSignal })
-        .then((fmt) => {
-          if (fmt?.url) rememberSwarmPeer(videoId, { url: fmt.url, proxy });
-        })
-        .catch(() => {});
+    const out = cachePath(videoId);
+    if (!downloadInflight.has(videoId)) {
+      const job = downloadViaProxyChunks(leg.fmt.url, out, {
+        userId,
+        boundProxy: leg.proxy,
+        head: leg.head,
+        total: leg.total,
+      })
+        .then(() => out)
+        .finally(() => {
+          if (downloadInflight.get(videoId) === job) downloadInflight.delete(videoId);
+        });
+      downloadInflight.set(videoId, job);
     }
     return leg.fmt;
   };
@@ -3366,9 +3395,8 @@ async function resolveFormatHedged(
       signal: sig,
     });
     if (!fmt?.url) throw new Error('no url');
-    rememberSwarmPeer(videoId, { url: fmt.url, proxy });
     if (winner) throw new Error('lost race');
-    const res = await fetchGooglevideo(fmt.url, `bytes=0-${SWARM_CHUNK_BYTES - 1}`, {
+    const res = await fetchGooglevideo(fmt.url, `bytes=0-${FIRST_BYTES - 1}`, {
       preferProxies: true,
       boundProxy: proxy,
       userId,
@@ -3382,11 +3410,8 @@ async function resolveFormatHedged(
       if (res.status === 403 || res.status === 429) markYoutubeProxyFailure(proxy, 'gv');
       throw new Error(`hedge ${res.status}`);
     }
+    const total = parseContentTotal(res);
     const buf = Buffer.from(await res.arrayBuffer());
-    const cr = res.headers.get('content-range') || '';
-    const cl = Number(res.headers.get('content-length') || 0);
-    const totalMatch = /\/(\d+)\s*$/.exec(cr);
-    const total = totalMatch ? Number(totalMatch[1]) : cl || buf.length;
     if (buf.length < 64_000) throw new Error('hedge head tiny');
     markYoutubeProxySuccess(proxy, 'gv');
     return {
@@ -3401,17 +3426,18 @@ async function resolveFormatHedged(
   const delayed = (
     proxy: string | undefined,
     ctrl: AbortController,
+    losers: AbortController[],
     delayMs: number,
     label: string,
   ) =>
     new Promise<Fmt>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (aborted(userSignal) || aborted(ctrl.signal) || !proxy) {
+        if (winner || aborted(userSignal) || aborted(ctrl.signal) || !proxy) {
           reject(new Error(`hedge ${label} skip`));
           return;
         }
         viaProxy(proxy, ctrl.signal)
-          .then((leg) => resolve(take(leg)))
+          .then((leg) => resolve(take(leg, losers)))
           .catch(reject);
       }, delayMs);
       userSignal?.addEventListener(
@@ -3425,16 +3451,15 @@ async function resolveFormatHedged(
     });
 
   const primary = hot[0]
-    ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg))
+    ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg, [ctrlB]))
     : Promise.reject(new Error('no hot A'));
 
-  const delayedB = delayed(hot[1], ctrlB, 2_000, 'B');
-  const delayedC = delayed(hot[2], ctrlC, 3_500, 'C');
+  const delayedB = delayed(hot[1], ctrlB, [ctrlA], 2_000, 'B');
 
   try {
     const fmt = (await Promise.race([
-      Promise.any([primary, delayedB, delayedC]).catch(() => null),
-      new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+      Promise.any([primary, delayedB]).catch(() => null),
+      new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
     ])) as ReturnType<typeof peekCachedAudioFormat>;
     if (fmt?.url && fmt.viaProxy) return fmt;
     if (winner?.url && winner.viaProxy) return winner;
