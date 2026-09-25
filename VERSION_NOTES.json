@@ -1,6 +1,19 @@
 {
-  "updatedAt": "2026-09-24",
+  "updatedAt": "2026-09-25",
   "versions": [
+    {
+      "version": "1.3.306",
+      "date": "2026-09-25",
+      "time": "18:45",
+      "at": "2026-09-25T18:45:00+02:00",
+      "title": "Froid Android : plus de 503 JSON, live ≠ warm",
+      "notes": [
+        "Exo ne reçoit plus un JSON 503/502 (Source error → skip). On attend le préfixe AAC sur disque.",
+        "getAudioFormat live n’hérite plus d’un inflight warm déjà presque mort.",
+        "Grace BUFFERING allongée sur un titre jamais entendu. Overlay -r, pas de forceUpdate.",
+        "Le warm biblio s’efface si une lecture est en cours."
+      ]
+    },
     {
       "version": "1.3.303",
       "date": "2026-09-25",

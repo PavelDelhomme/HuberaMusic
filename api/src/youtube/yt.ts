@@ -3070,6 +3070,9 @@ export async function getAudioFormat(
 
   const baseKey = audioCacheKey(videoId);
   const key = opts?.userId ? `${baseKey}:u:${opts.userId.slice(0, 8)}` : baseKey;
+  // Live ne doit JAMAIS hériter d’un inflight warm (deadline 16 s déjà presque morte
+  // → « getAudioFormat deadline » en 100–200 ms → Exo BUFFERING pos=33 / 502 JSON).
+  const inflightKey = `${key}:${live ? 'live' : 'bg'}`;
   if (forceFresh) {
     invalidateAudioFormat(videoId);
   } else {
@@ -3080,7 +3083,7 @@ export async function getAudioFormat(
     }
   }
 
-  const pending = forceFresh ? undefined : audioFormatInflight.get(key) || audioFormatInflight.get(baseKey);
+  const pending = forceFresh ? undefined : audioFormatInflight.get(inflightKey);
   if (pending) return pending;
 
   const job = (async (): Promise<AudioFormat> => {
@@ -3198,12 +3201,10 @@ export async function getAudioFormat(
       setTimeout(() => rej(new Error('getAudioFormat deadline')), deadlineMs),
     ),
   ]).finally(() => {
-    audioFormatInflight.delete(key);
-    audioFormatInflight.delete(baseKey);
+    audioFormatInflight.delete(inflightKey);
   });
 
-  audioFormatInflight.set(key, capped);
-  audioFormatInflight.set(baseKey, capped);
+  audioFormatInflight.set(inflightKey, capped);
   return capped;
 }
 

@@ -1324,24 +1324,17 @@ export async function handleStream(req: Request, res: Response) {
         console.warn(
           `[stream] Android cold ${videoId} — wait prefix 256 Ko (swarm/proxy)`,
         );
-        const waitMs = downloadInflight.has(videoId) ? 900 : 4_000;
+        // downloadTrack a déjà lancé getAudioFormat (live). Attendre le préfixe
+        // ici ne retarde pas une 2ᵉ résolution — ça évite de répondre vide à Exo.
+        // Ne PAS 503/502 JSON : Exo = Source error → skip_dead.
+        const waitMs = downloadInflight.has(videoId) ? 4_000 : 6_000;
         const ready = await waitUntilDiskServable(videoId, waitMs);
         if (ready) {
           noteFormatOk(videoId);
         } else {
-          // Exo réessaie (Retry-After) au lieu d’attendre 20 s puis skip. Le DL continue.
-          console.warn(`[stream] Android cold ${videoId} — 503 PREFIX_PREPARING, pas de 410`);
-          if (!res.headersSent) {
-            res.status(503);
-            res.setHeader('Retry-After', '1');
-            res.setHeader('Cache-Control', 'no-store');
-            res.json({
-              error: 'Audio en préparation',
-              code: 'PREFIX_PREPARING',
-              hint: 'Réessayer dans 1 s — préfixe AAC en cours',
-            });
-          }
-          return;
+          console.warn(
+            `[stream] Android cold ${videoId} — pas encore de préfixe, course format/disk (pas de 503)`,
+          );
         }
       }
     } else if (
@@ -2403,7 +2396,10 @@ export async function handleStream(req: Request, res: Response) {
       })();
       // Mid-piste : pas 10 s de silence (Exo BUFFERING). Début seulement.
       if (rs < 2048 && !formatCircuitOpen(videoId)) {
-        const late = await waitUntilDiskServable(videoId, 4_000);
+        const late = await waitUntilDiskServable(
+          videoId,
+          isAndroidClient(req) ? 12_000 : 4_000,
+        );
         if (late) {
           await pipeDiskFile(req, res, late, videoId, 'disk-after-format');
           return;
@@ -2535,7 +2531,16 @@ export async function handleStream(req: Request, res: Response) {
           String((e as Error).message || e).slice(0, 140),
         );
         if (!res.headersSent) {
-          // Timeout yt-dlp ≠ titre mort : 502 pour retry, pas un 302 lyrics.
+          // Timeout yt-dlp ≠ titre mort. JSON 502 = Source error Exo → skip_dead.
+          if (isAndroidClient(req)) {
+            const late = await waitUntilDiskServable(videoId, 8_000);
+            if (late) {
+              await pipeDiskFile(req, res, late, videoId, 'disk-after-ytdlp');
+              return;
+            }
+            console.warn(`[stream] Android ${videoId} — yt-dlp KO, pas de JSON 502 (course disque perdue)`);
+            return;
+          }
           res.status(502).json({
             error: 'Impossible de streamer audio',
             code: 'STREAM_TEMP_UNAVAILABLE',

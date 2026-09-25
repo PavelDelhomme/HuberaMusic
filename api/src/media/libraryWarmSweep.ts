@@ -73,6 +73,10 @@ export async function runLibraryWarmSweepOnce(): Promise<{
   ids: number;
   likes: number;
 }> {
+  if (isPlaybackHot(120_000)) {
+    console.info('[libraryWarm] skip sweep — lecture en cours');
+    return { users: 0, ids: lastStats.ids, likes: lastStats.likes };
+  }
   if (running) return { users: 0, ids: lastStats.ids, likes: lastStats.likes };
   running = true;
   try {
