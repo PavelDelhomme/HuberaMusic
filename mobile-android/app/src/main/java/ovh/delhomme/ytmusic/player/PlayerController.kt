@@ -18,6 +18,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -818,16 +819,14 @@ class PlayerController(
         }
         if (!nid.isNullOrBlank()) {
             val base = streamUrl("_").substringBefore("/api/stream/")
-            // Skip : pas de warmAround(12) avant seek — ça vole la bande à Exo
             StreamPrefetcher.cancelIdle(preserveNext = true)
-            StreamPrefetcher.quietPrefetch(280L)
+            StreamPrefetcher.quietPrefetch(80L)
             StreamPrefetcher.warmTrackFormatOnly(base, nid)
-            StreamPrefetcher.prefetchStartHead(base, nid, StreamPrefetcher.HEAD_3S, priorityNext = true)
+            StreamPrefetcher.prefetchStartHead(base, nid, StreamPrefetcher.HEAD_NEXT_PLAYING, priorityNext = true)
             skipQueue.getOrNull(nextIdx + 1)?.id?.takeIf { it.length == 11 }?.let { n2 ->
                 StreamPrefetcher.warmTrackFormatOnly(base, n2)
                 StreamPrefetcher.prefetchStartHead(base, n2, StreamPrefetcher.HEAD_3S)
             }
-            // Far-prefetch après le seek (quand Exo a repris le réseau)
             scope.launch {
                 delay(450L)
                 if (player()?.currentMediaItem?.mediaId != nid) return@launch
@@ -836,12 +835,24 @@ class PlayerController(
                     skipQueue.map { it.id },
                     nextIdx,
                     count = 3,
-                    ignoreQuiet = false,
+                    ignoreQuiet = true,
                 )
                 CoverPrefetcher.warmCovers(skipQueue, nextIdx, ahead = 4, behind = 0)
             }
+            if (!StreamPrefetcher.hasPlayableHead(nid, 280L * 1024L)) {
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StreamPrefetcher.ensureHeadBeforeSkip(base, nid, timeoutMs = 2_800L)
+                    }
+                    applySkipSeek(p, nextIdx)
+                }
+                return
+            }
         }
-        // REPEAT_MODE_ONE bloque le next ExoPlayer : on le désactive le temps du saut
+        applySkipSeek(p, nextIdx)
+    }
+
+    private fun applySkipSeek(p: Player, nextIdx: Int) {
         val wasOne = repeatMode == RepeatMode.One
         if (wasOne) p.repeatMode = Player.REPEAT_MODE_OFF
         when {
@@ -1588,7 +1599,7 @@ class PlayerController(
         val base = streamUrl("_").substringBefore("/api/stream/")
         val ids = queue.map { it.id }
         // 16 titres en avant (~10–20 % de tête) pour skip rapide sans BUFFERING
-        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 3)
+        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 8)
         if (
             !StreamPrefetcher.isStreamDown() &&
             !ovh.delhomme.ytmusic.data.BatterySaver.isActive()

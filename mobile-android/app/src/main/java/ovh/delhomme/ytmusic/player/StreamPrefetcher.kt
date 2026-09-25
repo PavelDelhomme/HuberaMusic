@@ -38,7 +38,7 @@ object StreamPrefetcher {
     /** ~15–20 % — titres proches (+2…+4). */
     private const val HEAD_PCT_NEAR = 2_200L * 1024L
     /** ~18–20 s — titre suivant pendant lecture (enchaînement sans BUFFERING). */
-    private const val HEAD_NEXT_PLAYING = 5_600L * 1024L
+    const val HEAD_NEXT_PLAYING = 5_600L * 1024L
     /** Tête générique Wi‑Fi (~8 s). */
     private const val HEAD_WIFI = 1_400 * 1024L
     /** Titre suivant Wi‑Fi. */
@@ -54,7 +54,7 @@ object StreamPrefetcher {
     /** 2–3 formats à la fois : rotation proxy parallèle côté API. */
     private const val MAX_WARM = 3
     /** Fenêtre avant sur Wi‑Fi (file / aléatoire / rolling). */
-    private const val AHEAD_WIFI = 5
+    private const val AHEAD_WIFI = 8
     private const val AHEAD_METERED = 2
     private const val DISK_CACHE_MB = 48L
     private val JSON = "application/json; charset=utf-8".toMediaType()
@@ -400,6 +400,25 @@ object StreamPrefetcher {
         if (trackId.length != 11 || isLocalOffline(trackId)) return
         val url = streamPrefetchUrl(baseApi, trackId)
         PlayerCache.prefetchHeadBlocking(context, url, trackId, bytes, timeoutMs = timeoutMs)
+    }
+
+    /** Attend une tête jouable avant skip (évite BUFFERING Exo sur titre froid). */
+    fun ensureHeadBeforeSkip(baseApi: String, trackId: String, timeoutMs: Long = 2_800L): Boolean {
+        if (trackId.length != 11) return false
+        if (isLocalOffline(trackId) || hasPlayableHead(trackId, 280L * 1024L)) return true
+        if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return false
+        warmTrackFormatOnly(baseApi, trackId)
+        prefetchStartHead(baseApi, trackId, HEAD_NEXT_PLAYING, priorityNext = true)
+        val t0 = System.currentTimeMillis()
+        while (System.currentTimeMillis() - t0 < timeoutMs) {
+            if (hasPlayableHead(trackId, 280L * 1024L)) return true
+            try {
+                Thread.sleep(80L)
+            } catch (_: InterruptedException) {
+                break
+            }
+        }
+        return hasPlayableHead(trackId, 280L * 1024L)
     }
 
     /** Fire-and-forget (scroll biblio). */
