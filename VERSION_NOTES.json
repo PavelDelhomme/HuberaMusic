@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-25",
   "versions": [
     {
+      "version": "1.3.307",
+      "date": "2026-09-25",
+      "time": "20:20",
+      "at": "2026-09-25T20:20:00+02:00",
+      "title": "MediaSession en pause pour Maps",
+      "notes": [
+        "La file restaurée sans play expose encore titre, artiste et session (dock Maps).",
+        "Overlay -r, pas de forceUpdate, pas de recreate API."
+      ]
+    },
+    {
       "version": "1.3.306",
       "date": "2026-09-25",
       "time": "18:45",

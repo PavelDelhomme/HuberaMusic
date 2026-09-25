@@ -1266,14 +1266,14 @@ class PlayerController(
         }
         val wantPlay = autoplay || userWantsPlaying == true
         if (!wantPlay) {
-            // Restauration silencieuse (sync multi-appareils) : pas de MediaSession.
-            // On garde quand même Holder.queue pour qu’un play utilisateur puisse démarrer Exo.
+            // Restauration silencieuse : MediaSession en pause (titre/artiste pour Maps).
             val idx = startIndex.coerceIn(0, tracks.lastIndex)
             val curTrack = tracks.getOrNull(idx)
             val metaDur = curTrack?.durationMsOrNull()?.coerceAtLeast(0L) ?: 0L
             pending = tracks to idx
             pendingSeekMs = positionMs
             pendingAutoplay = false
+            userWantsPlaying = false
             PlaybackService.Holder.queue = tracks
             PlaybackService.Holder.index = idx
             PlaybackService.Holder.queueTitle = queueTitle
@@ -1288,11 +1288,19 @@ class PlayerController(
                 userQueueEnd = this.userQueueEnd,
                 queueSize = tracks.size,
             )
+            ensureServiceAndConnect()
+            val c = controller ?: PlaybackService.Holder.player
+            if (c != null) {
+                playNow(c, tracks, idx, autoplay = false, startPositionMs = positionMs)
+                c.pause()
+                syncFrom(c)
+                pending = null
+                pendingSeekMs = 0L
+            }
             curTrack?.id?.takeIf { it.length == 11 }?.let { id ->
                 val base = streamUrl("_").substringBefore("/api/stream/")
                 val upcoming = tracks.drop(idx + 1).map { it.id }
                 scope.launch(Dispatchers.IO) {
-                    // Priorité : ~10 s du titre restauré avant le reste (évite BUFFERING / skip Samsung).
                     StreamPrefetcher.prepareRestoredCurrent(
                         base,
                         id,
