@@ -2761,6 +2761,8 @@ class PlaybackService : MediaSessionService() {
         @Volatile var onLikedIdsChanged: ((Set<String>) -> Unit)? = null
         /** Skip à la fin de file (1 titre) → fill autoplay côté UI. */
         @Volatile var onSkipAtEnd: (() -> Unit)? = null
+        /** Next hardware / notif → PlayerController.skipNext (tête AAC avant seek). */
+        @Volatile var onSkipNext: (() -> Unit)? = null
         /** Shuffle « suite only » / cycle repeat — délégué au PlayerController UI. */
         @Volatile var onToggleShuffle: (() -> Unit)? = null
         @Volatile var onCycleRepeat: (() -> Unit)? = null
@@ -2960,6 +2962,15 @@ private class YtmForwardingPlayer(
     override fun seekToNext() = seekToNextMediaItem()
 
     override fun seekToNextMediaItem() {
+        val gated = PlaybackService.Holder.onSkipNext
+        if (gated != null) {
+            gated.invoke()
+            return
+        }
+        seekToNextImmediate()
+    }
+
+    private fun seekToNextImmediate() {
         val wasOne = exo.repeatMode == Player.REPEAT_MODE_ONE
         if (wasOne) exo.repeatMode = Player.REPEAT_MODE_OFF
         val cur = exo.currentMediaItemIndex

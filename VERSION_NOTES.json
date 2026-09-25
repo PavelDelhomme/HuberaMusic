@@ -2,6 +2,17 @@
   "updatedAt": "2026-09-25",
   "versions": [
     {
+      "version": "1.3.310",
+      "date": "2026-09-25",
+      "time": "22:20",
+      "at": "2026-09-25T22:20:00+02:00",
+      "title": "Skip notif / clavier : même attente AAC que le bouton UI",
+      "notes": [
+        "Le suivant (casque, notif, KEYCODE) passait directement dans Exo → BUFFERING à froid.",
+        "Il passe maintenant par skipNext : tête 280 Ko avant le seek. Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
       "version": "1.3.309",
       "date": "2026-09-25",
       "time": "22:00",
@@ -13,6 +24,8 @@
         "Overlay -r, pas de forceUpdate."
       ]
     },
+    {
+      "version": "1.3.308",
       "date": "2026-09-25",
       "time": "21:45",
       "at": "2026-09-25T21:45:00+02:00",

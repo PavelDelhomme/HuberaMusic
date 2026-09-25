@@ -149,6 +149,7 @@ class PlayerController(
 
     fun connect() {
         PlaybackService.Holder.onSkipAtEnd = { fillThenSkipFromEnd(fromUserSkip = true) }
+        PlaybackService.Holder.onSkipNext = { skipNext() }
         PlaybackService.Holder.onToggleShuffle = { toggleShuffle() }
         PlaybackService.Holder.onCycleRepeat = { cycleRepeat() }
         val alreadyRunning =
@@ -219,6 +220,7 @@ class PlayerController(
         if (PlaybackService.Holder.onSkipAtEnd != null) {
             PlaybackService.Holder.onSkipAtEnd = null
         }
+        PlaybackService.Holder.onSkipNext = null
         PlaybackService.Holder.onToggleShuffle = null
         PlaybackService.Holder.onCycleRepeat = null
         controller?.removeListener(listener)
@@ -853,40 +855,42 @@ class PlayerController(
     }
 
     private fun applySkipSeek(p: Player, nextIdx: Int) {
+        // Seek sur l’Exo brut : le ForwardingPlayer MediaSession reroute next → skipNext().
+        val exo = PlaybackService.Holder.player ?: p
         val wasOne = repeatMode == RepeatMode.One
-        if (wasOne) p.repeatMode = Player.REPEAT_MODE_OFF
+        if (wasOne) exo.repeatMode = Player.REPEAT_MODE_OFF
         when {
-            p.hasNextMediaItem() -> {
-                p.seekToNextMediaItem()
-                if (p.playbackState == Player.STATE_IDLE) p.prepare()
-                p.playWhenReady = true
-                p.play()
+            exo.hasNextMediaItem() -> {
+                exo.seekToNextMediaItem()
+                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
+                exo.playWhenReady = true
+                exo.play()
             }
-            repeatMode == RepeatMode.All && p.mediaItemCount > 0 -> {
-                p.seekTo(0, 0L)
-                if (p.playbackState == Player.STATE_IDLE) p.prepare()
-                p.playWhenReady = true
-                p.play()
+            repeatMode == RepeatMode.All && exo.mediaItemCount > 0 -> {
+                exo.seekTo(0, 0L)
+                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
+                exo.playWhenReady = true
+                exo.play()
             }
-            p.mediaItemCount > 1 -> {
-                p.seekTo(nextIdx, 0L)
-                if (p.playbackState == Player.STATE_IDLE) p.prepare()
-                p.playWhenReady = true
-                p.play()
+            exo.mediaItemCount > 1 -> {
+                exo.seekTo(nextIdx, 0L)
+                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
+                exo.playWhenReady = true
+                exo.play()
             }
             else -> {
                 val savedQ = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
-                val cur = p.currentMediaItemIndex.coerceAtLeast(0)
+                val cur = exo.currentMediaItemIndex.coerceAtLeast(0)
                 if (savedQ.size > cur + 1) {
                     userWantsPlaying = true
-                    playNow(p, savedQ, cur + 1, autoplay = true)
+                    playNow(exo, savedQ, cur + 1, autoplay = true)
                 } else {
                     fillThenSkipFromEnd(fromUserSkip = true)
                 }
             }
         }
         if (wasOne) {
-            p.repeatMode = Player.REPEAT_MODE_ONE
+            exo.repeatMode = Player.REPEAT_MODE_ONE
             repeatMode = RepeatMode.One
         }
         syncFrom(p)
