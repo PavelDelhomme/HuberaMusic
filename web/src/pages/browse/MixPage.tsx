@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Loader2, Radio } from 'lucide-react';
 import { api, type Track } from '../../api';
-import { TrackRow } from '../../components/media/TrackRow';
+import { VirtualTrackList } from '../../components/media/VirtualTrackList';
 import { CoverImage } from '../../components/media/CoverImage';
 import { usePlayer } from '../../store/player';
 import { useLibrary } from '../../store/library';
@@ -235,18 +235,11 @@ export function MixPage() {
         <p className="mb-3 text-xs text-yt-muted">Chargement de la suite…</p>
       )}
 
-      <div className="space-y-0.5">
-        {tracks.map((t, i) => (
-          <TrackRow
-            key={`${t.id}-${i}`}
-            track={t}
-            index={i + 1}
-            queue={tracks}
-            alwaysActions
-            onPlay={() => playAt(i)}
-          />
-        ))}
-      </div>
+      <VirtualTrackList
+        tracks={tracks}
+        alwaysActions
+        onPlayAt={(i) => playAt(i)}
+      />
 
       {!loading && !tracks.length && !error && (
         <p className="text-sm text-yt-muted">

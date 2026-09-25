@@ -20,6 +20,14 @@ export function normalize(s: string): string {
     .trim();
 }
 
+/** Empreinte compacte titre+artiste pour la cartographie des équivalents. */
+export function fingerprint(title: string, artist: string): string {
+  const t = normalize(title);
+  const a = normalize(artist);
+  if (!t) return '';
+  return a ? `${t}|${a}` : t;
+}
+
 const VERSION_MARKERS: [RegExp, string][] = [
   [/\bremix(e|ed)?\b|\bmix\b/i, 'remix'],
   [/\blive\b|\ben concert\b|\bconcert\b|\bsession\b/i, 'live'],

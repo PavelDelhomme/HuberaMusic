@@ -41,9 +41,10 @@ export default defineConfig(({ mode }) => {
       devOptions: { enabled: false },
       includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
-        name: 'PLM',
-        short_name: 'PLM',
-        description: 'PLM — musique sans pubs, web et mobile',
+        id: 'cloud.hubera.music',
+        name: 'Hubera Music',
+        short_name: 'MHC',
+        description: 'MHC — Music Hubera Cloud (anciennement PLM)',
         theme_color: '#030303',
         background_color: '#030303',
         display: 'standalone',
@@ -55,7 +56,7 @@ export default defineConfig(({ mode }) => {
         related_applications: [
           {
             platform: 'webapp',
-            url: 'https://ytmusic.delhomme.ovh/install',
+            url: 'https://music.hubera.cloud/install',
           },
         ],
         icons: [

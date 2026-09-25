@@ -68,7 +68,7 @@ export async function sendBatteryOptimizationMail(payload: BatteryReportPayload)
   const s = payload.session || {};
   const st = payload.stats || {};
   const stamp = s.stamp || new Date().toISOString();
-  const subject = `[PLM batterie] ${d.model || d.name || 'device'} · ${st.levelDelta ?? '?'}% · ${stamp}`;
+  const subject = `[Hubera Music batterie] ${d.model || d.name || 'device'} · ${st.levelDelta ?? '?'}% · ${stamp}`;
 
   const pctH = st.percentPerHour;
   const pctColor =
@@ -137,10 +137,10 @@ export async function sendBatteryOptimizationMail(payload: BatteryReportPayload)
 
   const html = `<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Rapport batterie PLM</title></head>
+<title>Rapport batterie Hubera Music</title></head>
 <body style="margin:0;padding:0;background:#0a0c10;color:#e8eaed;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;-webkit-text-size-adjust:100%;">
   <div style="max-width:420px;margin:0 auto;padding:20px 14px 32px;box-sizing:border-box;">
-    <p style="margin:0 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;">PLM batterie</p>
+    <p style="margin:0 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;">Hubera Music batterie</p>
     <h1 style="margin:0 0 6px;font-size:22px;color:#fff;font-weight:800;">${esc(d.model || d.name || 'Device')}</h1>
     <p style="margin:0 0 16px;font-size:13px;color:#9ca3af;line-height:1.45;">${esc(payload.notes || 'Session optimisation conso.')}</p>
 
@@ -172,7 +172,7 @@ export async function sendBatteryOptimizationMail(payload: BatteryReportPayload)
 </body></html>`;
 
   const textLines = [
-    `PLM batterie ${d.model || d.name || ''}`,
+    `Hubera Music batterie ${d.model || d.name || ''}`,
     payload.notes || '',
     `%/h: ${pctH ?? '—'}`,
     `Level: ${st.levelStart} → ${st.levelEnd} (${st.levelDelta})`,

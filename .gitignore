@@ -33,3 +33,17 @@ api/data/yt-cache-stream/
 docs/reports/*/
 plm-telemetry-50337389.pdf
 data/backups/
+
+# Locaux / dumps — ne pas versionner
+tmp/
+portainer-backup*.tar.gz
+.cursor/
+NOTES.md
+cloudity-suite-integration-*.pdf
+rapport-suite-*.pdf
+
+# Runtime proxy-steward (secrets / IPs live) — ne jamais committer
+data/proxy-steward/live.json
+
+# Cache Python du steward proxy
+scripts/proxy-steward/__pycache__/

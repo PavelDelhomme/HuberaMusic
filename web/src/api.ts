@@ -41,6 +41,10 @@ export type LibraryData = {
   /** Playlists / albums / mixes lancés récemment. */
   recentEntities: Track[];
   downloaded: string[];
+  /** Réponse GET /api/library?light=1 */
+  partial?: boolean;
+  totalSongs?: number;
+  totalLiked?: number;
 };
 
 export type User = {
@@ -738,11 +742,18 @@ export const api = {
       artist: { id: string; name: string; subscribers?: string; thumbnails: Track['thumbnails']; description?: string };
       tracks: Track[];
     }>(`/api/artist/${id}/songs${limit ? `?limit=${limit}` : ''}`),
-  lyrics: (id: string) =>
-    req<{
+  lyrics: (id: string, hints?: { title?: string; artist?: string }) => {
+    const q = new URLSearchParams();
+    if (hints?.title?.trim()) q.set('title', hints.title.trim());
+    const artist = hints?.artist?.trim();
+    if (artist && !/^(artiste|artist|inconnu|unknown|n\/a)$/i.test(artist)) {
+      q.set('artist', artist);
+    }
+    const qs = q.toString();
+    return req<{
       lyrics: string | null;
       timed?: { startMs: number; text: string }[] | null;
-      source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
+      source?: string | null;
       syncOffsetMs?: number;
       userOffsetMs?: number;
       crowdOffsetMs?: number;
@@ -754,7 +765,49 @@ export const api = {
         offsetMs: number;
       }[];
       segmentsFromUser?: boolean;
-    }>(`/api/track/${id}/lyrics`),
+      suggestions?: {
+        title: string;
+        artist: string;
+        url: string;
+        source: string;
+        reason: string;
+        score?: number;
+      }[];
+      searchUrls?: { label: string; url: string }[];
+    }>(`/api/track/${id}/lyrics${qs ? `?${qs}` : ''}`);
+  },
+  saveLyrics: (id: string, lyrics: string, hints?: { title?: string; artist?: string }) =>
+    req<{ lyrics: string | null; timed?: { startMs: number; text: string }[] | null; source?: string | null }>(
+      `/api/track/${id}/lyrics`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          lyrics,
+          title: hints?.title || undefined,
+          artist: hints?.artist || undefined,
+        }),
+      },
+    ),
+  lyricsFeedback: (
+    id: string,
+    vote: 'correct' | 'wrong',
+    hints?: { title?: string; artist?: string },
+  ) =>
+    req<{
+      lyrics: string | null;
+      timed?: { startMs: number; text: string }[] | null;
+      source?: string | null;
+      vote: string;
+      refreshed: boolean;
+    }>(`/api/track/${id}/lyrics/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({
+        vote,
+        title: hints?.title || undefined,
+        artist: hints?.artist || undefined,
+      }),
+      timeoutMs: 45_000,
+    }),
   lyricOffsets: () => req<{ offsets: Record<string, number> }>('/api/lyric-offsets'),
   saveLyricOffset: (
     id: string,
@@ -864,6 +917,8 @@ export const api = {
       body: JSON.stringify(entity),
     }),
   library: () => req<LibraryData>('/api/library'),
+  libraryLight: (limit = 40) =>
+    req<LibraryData>(`/api/library?light=1&limit=${Math.max(10, Math.min(40, limit))}`),
   /** Têtes Aléatoire biblio (~100) — rotation serveur ~30 min. */
   shuffleHeads: (warm = true) =>
     req<{

@@ -28,7 +28,7 @@ const to =
   '';
 
 const version = 'p+1.3.112';
-const subject = `[PLM] Récap fluidité & erreurs — ${version} — Nothing + Samsung OK`;
+const subject = `[Hubera Music] Récap fluidité & erreurs — ${version} — Nothing + Samsung OK`;
 
 const text = `PLM — récapitulatif problèmes → correctifs → tests
 Date: 31 août 2026 · Prod live: ${version}

@@ -107,7 +107,7 @@ export function publicMaintenanceStatus() {
     message:
       s.maintenanceMessage ||
       (s.maintenance
-        ? 'PLM est en maintenance — réessaie dans un instant.'
+        ? 'Hubera Music est en maintenance — réessaie dans un instant.'
         : null),
     until: s.maintenanceUntil,
     blockPlayback: s.maintenance === true && s.maintenanceBlockPlayback === true,

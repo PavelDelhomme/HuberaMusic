@@ -417,6 +417,13 @@ export async function saveAlbumWithTracks(
     }
   }
 
+  const fromLib = albumFromLibrary(userId, id);
+  const merged = mergeAlbumLiveAndLibrary({ album: meta, tracks }, fromLib);
+  if (merged?.tracks.length) {
+    tracks = merged.tracks;
+    meta = { ...meta, ...merged.album, type: 'album' };
+  }
+
   const saved = saveAlbum(userId, { ...meta, type: 'album', tracks: undefined });
   let tracksAdded = 0;
   let tracksLinked = 0;
@@ -510,6 +517,158 @@ function linkAlbumTrack(userId: string, albumId: string, trackId: string): boole
     `INSERT INTO library_album_tracks (user_id, album_id, track_id, created_at) VALUES (?, ?, ?, ?)`,
   ).run(userId, albumId, trackId, Date.now());
   return true;
+}
+
+/**
+ * Reconstruit un album depuis la biblio (liaisons + payloads titres)
+ * quand getAlbum YouTube 403 / incomplet.
+ */
+export function albumFromLibrary(
+  userId: string,
+  albumId: string,
+): { album: Record<string, unknown>; tracks: Track[] } | null {
+  if (!userId || !albumId) return null;
+  const stored = db
+    .prepare('SELECT payload FROM library_albums WHERE user_id = ? AND album_id = ?')
+    .get(userId, albumId) as { payload?: string } | undefined;
+  let meta: Record<string, unknown> = stored?.payload
+    ? (JSON.parse(stored.payload) as Record<string, unknown>)
+    : { id: albumId, title: 'Album', type: 'album' };
+
+  let ids = (
+    db
+      .prepare(
+        'SELECT track_id FROM library_album_tracks WHERE user_id = ? AND album_id = ? ORDER BY created_at',
+      )
+      .all(userId, albumId) as { track_id: string }[]
+  ).map((r) => r.track_id);
+
+  if (!ids.length) {
+    const rows = db
+      .prepare(
+        `SELECT l.track_id AS track_id, t.payload AS payload
+         FROM library_tracks l
+         LEFT JOIN tracks_cache t ON t.id = l.track_id
+         WHERE l.user_id = ?`,
+      )
+      .all(userId) as { track_id: string; payload: string | null }[];
+    const want = albumId.toLowerCase();
+    const wantTitle = String(meta.title || meta.name || '')
+      .trim()
+      .toLowerCase();
+    const genericTitle = !wantTitle || /^(album|unknown|sans titre|untitled)$/i.test(wantTitle);
+    ids = rows
+      .filter((r) => {
+        if (!r.payload) return false;
+        try {
+          const t = JSON.parse(r.payload) as {
+            album?: { id?: string; name?: string };
+          };
+          const aid = String(t.album?.id || '').toLowerCase();
+          const an = String(t.album?.name || '')
+            .trim()
+            .toLowerCase();
+          if (aid && aid === want) return true;
+          if (!genericTitle && an && an === wantTitle) return true;
+          return false;
+        } catch {
+          return false;
+        }
+      })
+      .map((r) => r.track_id);
+  }
+
+  const tracks: Track[] = [];
+  for (const tid of ids) {
+    const row = db
+      .prepare(
+        `SELECT l.track_id AS track_id, t.payload AS payload
+         FROM library_tracks l
+         LEFT JOIN tracks_cache t ON t.id = l.track_id
+         WHERE l.user_id = ? AND l.track_id = ?`,
+      )
+      .get(userId, tid) as { track_id: string; payload: string | null } | undefined;
+    const parsed = row ? parseTrack(row) : getTrackPayload(tid);
+    if (!parsed) continue;
+    const t = sanitizeTrack(parsed);
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(t.id)) continue;
+    if (!t.album) t.album = { name: String(meta.title || meta.name || 'Album'), id: albumId };
+    tracks.push(t);
+    linkAlbumTrack(userId, albumId, t.id);
+  }
+  if (!tracks.length) return stored?.payload ? { album: { ...meta, type: 'album' }, tracks: [] } : null;
+  if (!meta.title || isWeakTitle(String(meta.title))) {
+    meta.title = tracks[0]!.album?.name || meta.title || 'Album';
+  }
+  meta.type = 'album';
+  meta.id = albumId;
+  if (!Array.isArray(meta.artists) || !(meta.artists as unknown[]).length) {
+    meta.artists = tracks[0]!.artists || [];
+  }
+  if (!Array.isArray(meta.thumbnails) || !(meta.thumbnails as unknown[]).length) {
+    meta.thumbnails = tracks[0]!.thumbnails || [];
+  }
+  try {
+    saveAlbum(userId, { ...meta, tracks: undefined });
+  } catch {
+    /* ignore persist */
+  }
+  return { album: meta, tracks };
+}
+
+/** Fusionne YouTube + biblio : ids officiels, titres réels (pas « Sans titre »). */
+export function mergeAlbumLiveAndLibrary(
+  live: { album?: Record<string, unknown>; tracks?: Track[] } | null | undefined,
+  lib: { album?: Record<string, unknown>; tracks?: Track[] } | null | undefined,
+): { album: Record<string, unknown>; tracks: Track[] } | null {
+  const liveTracks = (live?.tracks || []).filter((t) => t && /^[a-zA-Z0-9_-]{11}$/.test(t.id));
+  const libTracks = (lib?.tracks || []).filter((t) => t && /^[a-zA-Z0-9_-]{11}$/.test(t.id));
+  if (!liveTracks.length && !libTracks.length) return null;
+  const libById = new Map(libTracks.map((t) => [t.id, t]));
+  const seen = new Set<string>();
+  const tracks: Track[] = [];
+  const push = (t: Track) => {
+    if (seen.has(t.id)) return;
+    seen.add(t.id);
+    tracks.push(t);
+  };
+  for (const t of liveTracks) {
+    const fromLib = libById.get(t.id);
+    if (fromLib && (isWeakTitle(t.title, t.id) || !(t.artists || []).length)) {
+      push({
+        ...t,
+        title: isWeakTitle(t.title, t.id) ? fromLib.title : t.title,
+        artists: (t.artists || []).length ? t.artists : fromLib.artists,
+        album: t.album || fromLib.album,
+        thumbnails: t.thumbnails?.length ? t.thumbnails : fromLib.thumbnails,
+        duration: t.duration || fromLib.duration,
+        durationSeconds: t.durationSeconds ?? fromLib.durationSeconds,
+      });
+    } else {
+      push(t);
+    }
+  }
+  for (const t of libTracks) push(t);
+  const liveAlbum = (live?.album || {}) as Record<string, unknown>;
+  const libAlbum = (lib?.album || {}) as Record<string, unknown>;
+  const liveTitle = String(liveAlbum.title || liveAlbum.name || '');
+  const libTitle = String(libAlbum.title || libAlbum.name || '');
+  const album: Record<string, unknown> = {
+    ...libAlbum,
+    ...liveAlbum,
+    type: 'album',
+    title: !isWeakTitle(liveTitle) ? liveTitle : libTitle || liveTitle || 'Album',
+    artists:
+      (Array.isArray(liveAlbum.artists) && (liveAlbum.artists as unknown[]).length
+        ? liveAlbum.artists
+        : libAlbum.artists) || tracks[0]?.artists || [],
+    thumbnails:
+      (Array.isArray(liveAlbum.thumbnails) && (liveAlbum.thumbnails as unknown[]).length
+        ? liveAlbum.thumbnails
+        : libAlbum.thumbnails) || tracks[0]?.thumbnails || [],
+  };
+  if (!album.id) album.id = tracks[0]?.album?.id || libAlbum.id || liveAlbum.id;
+  return { album, tracks };
 }
 
 const LIKED_PLAYLIST_DESC = 'system:liked';

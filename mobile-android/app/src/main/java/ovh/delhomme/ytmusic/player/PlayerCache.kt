@@ -117,7 +117,7 @@ object PlayerCache {
             props["Authorization"] = "Bearer $token"
         }
         return DefaultHttpDataSource.Factory()
-            .setUserAgent("PLM-Android")
+            .setUserAgent("HuberaMusic-Android")
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(12_000)
             .setReadTimeoutMs(120_000)
@@ -144,7 +144,7 @@ object PlayerCache {
         }
         // Timeouts plus serrés que l’audio : échec → fallback ID plus vite
         val http = DefaultHttpDataSource.Factory()
-            .setUserAgent("PLM-Android")
+            .setUserAgent("HuberaMusic-Android")
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(8_000)
             .setReadTimeoutMs(45_000)

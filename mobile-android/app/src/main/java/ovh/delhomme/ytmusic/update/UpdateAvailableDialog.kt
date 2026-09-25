@@ -107,7 +107,7 @@ fun UpdateAvailableDialog(
                 Text(
                     ui.message.ifBlank {
                         versionName?.let { "Version $it prête à installer." }
-                            ?: "Une nouvelle version PLM / Hubera Music est disponible."
+                            ?: "Une nouvelle version de Hubera Music est disponible."
                     },
                 )
                 updater.lastHuberaMessage()?.let { notice ->

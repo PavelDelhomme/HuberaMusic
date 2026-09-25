@@ -14,26 +14,35 @@ export function getAppEnv() {
 }
 
 /** Parse `Name <addr@host>` ou adresse seule → objet nodemailer. */
+export function mailBrand(): string {
+  const raw = (process.env.SMTP_FROM_NAME || process.env.MAIL_BRAND || 'Hubera Music').trim();
+  if (!raw || /^(plm|ytmusic|youtube music|pue la merde)$/i.test(raw)) return 'Hubera Music';
+  return raw.replace(/\bPLM\b/gi, 'Hubera Music').replace(/\bYTMusic\b/gi, 'Hubera Music');
+}
+
+function normalizeFromName(name: string): string {
+  const brand = mailBrand();
+  const n = name.replace(/^["']|["']$/g, '').trim();
+  if (!n || /^(plm|ytmusic|youtube music)$/i.test(n)) return brand;
+  return n.replace(/\bPLM\b/gi, brand).replace(/\bYTMusic\b/gi, brand);
+}
+
 export function parseFromAddress(raw: string): { name: string; address: string } {
   const s = String(raw || '').trim();
+  const brand = mailBrand();
   const m = s.match(/^(.*?)\s*<([^>]+)>\s*$/);
   if (m) {
-    let name = m[1].replace(/^["']|["']$/g, '').trim() || 'PLM';
-    if (/ytmusic/i.test(name)) name = 'PLM';
-    return { name, address: m[2].trim() };
+    return { name: normalizeFromName(m[1]), address: m[2].trim() };
   }
   if (s.includes('@')) {
-    let name = 'PLM';
     const angle = s.match(/^(.+?)\s+<?([^>]+@[^>]+)>?$/);
     if (angle) {
-      name = angle[1].trim().replace(/^["']|["']$/g, '') || 'PLM';
-      if (/ytmusic/i.test(name)) name = 'PLM';
-      return { name, address: angle[2].trim() };
+      return { name: normalizeFromName(angle[1]), address: angle[2].trim() };
     }
-    return { name, address: s };
+    return { name: brand, address: s };
   }
   return {
-    name: 'PLM',
+    name: brand,
     address: process.env.SMTP_USER || 'noreply@localhost',
   };
 }
@@ -47,10 +56,11 @@ export function smtpPublicConfig() {
     process.env.SMTP_SECURE === 'true' ||
     useSsl ||
     port === 465;
+  const brand = mailBrand();
   const fromRaw =
     process.env.SMTP_FROM ||
-    (process.env.SMTP_USER ? `PLM <${process.env.SMTP_USER}>` : 'PLM <noreply@localhost>');
-  const from = parseFromAddress(fromRaw.replace(/YTMusic/gi, 'PLM'));
+    (process.env.SMTP_USER ? `${brand} <${process.env.SMTP_USER}>` : `${brand} <noreply@localhost>`);
+  const from = parseFromAddress(fromRaw);
   return {
     configured: Boolean(host),
     host: host || null,
@@ -113,13 +123,12 @@ export async function sendMail(opts: {
     return { ok: true, mode: 'outbox' as const, id, from: cfg.from };
   }
 
-  // From structuré : nom affiché « PLM » (pas le display name OVH JobbingTrack)
   const info = await tx.sendMail({
     from: { name: from.name, address: from.address },
     sender: from.address,
     to: opts.to,
     replyTo: cfg.replyTo || from.address,
-    subject: opts.subject,
+    subject: opts.subject.replace(/\[PLM\]/g, `[${from.name}]`),
     html: opts.html,
     text: opts.text,
     attachments: opts.attachments?.map((a) => ({
@@ -128,8 +137,9 @@ export async function sendMail(opts: {
       contentType: a.contentType,
     })),
     headers: {
-      'X-Mailer': 'PLM',
-      'X-PLM-Env': getAppEnv(),
+      'X-Mailer': from.name,
+      'X-Hubera-Product': 'music',
+      'X-Hubera-Env': getAppEnv(),
     },
   });
 
@@ -148,6 +158,7 @@ export async function sendMail(opts: {
 }
 
 export async function sendVerificationEmail(email: string, name: string, rawToken: string) {
+  const brand = mailBrand();
   const link = `${appUrl()}/verify-email?token=${encodeURIComponent(rawToken)}`;
   const apiHint =
     getAppEnv() === 'local'
@@ -155,11 +166,11 @@ export async function sendVerificationEmail(email: string, name: string, rawToke
       : '\n';
   return sendMail({
     to: email,
-    subject: 'Confirme ton adresse — PLM',
-    text: `Salut ${name},\n\nConfirme ton email : ${link}${apiHint}\nLien valable 48h.\n\n— PLM`,
+    subject: `Confirme ton adresse — ${brand}`,
+    text: `Salut ${name},\n\nConfirme ton email : ${link}${apiHint}\nLien valable 48h.\n\n— ${brand}`,
     html: `
       <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">
-        <h2 style="color:#111">Bienvenue sur PLM</h2>
+        <h2 style="color:#111">Bienvenue sur ${brand}</h2>
         <p>Salut <strong>${name}</strong>, confirme ton adresse email :</p>
         <p><a href="${link}" style="display:inline-block;background:#ff0033;color:#fff;padding:12px 20px;border-radius:999px;text-decoration:none">Valider mon email</a></p>
         <p style="color:#666;font-size:12px">Ou copie ce lien :<br>${link}</p>
@@ -168,25 +179,26 @@ export async function sendVerificationEmail(email: string, name: string, rawToke
             ? '<p style="color:#666;font-size:12px">Local + téléphone : <code>adb reverse tcp:8787 tcp:8787</code> puis ouvre le lien.</p>'
             : ''
         }
-        <p style="color:#666;font-size:12px">Envoyé par <strong>PLM</strong> via ${cfgDomain()} · ${getAppEnv()}</p>
+        <p style="color:#666;font-size:12px">Envoyé par <strong>${brand}</strong> via ${cfgDomain()} · ${getAppEnv()}</p>
       </div>`,
   });
 }
 
 export async function sendPasswordResetEmail(email: string, name: string, rawToken: string) {
+  const brand = mailBrand();
   const link = `${appUrl()}/reset-password?token=${encodeURIComponent(rawToken)}`;
   return sendMail({
     to: email,
-    subject: 'Réinitialisation du mot de passe — PLM',
-    text: `Salut ${name},\n\nRéinitialise ton mot de passe PLM :\n${link}\n\nLien valable 2 h. Si tu n’as rien demandé, ignore ce message.\n\n— PLM`,
+    subject: `Réinitialisation du mot de passe — ${brand}`,
+    text: `Salut ${name},\n\nRéinitialise ton mot de passe ${brand} :\n${link}\n\nLien valable 2 h. Si tu n’as rien demandé, ignore ce message.\n\n— ${brand}`,
     html: `
       <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">
-        <h2 style="color:#111">Mot de passe PLM</h2>
+        <h2 style="color:#111">Mot de passe ${brand}</h2>
         <p>Salut <strong>${escapeHtml(name)}</strong>, tu as demandé à réinitialiser ton mot de passe.</p>
         <p><a href="${link}" style="display:inline-block;background:#ff0033;color:#fff;padding:12px 20px;border-radius:999px;text-decoration:none">Choisir un nouveau mot de passe</a></p>
         <p style="color:#666;font-size:12px">Ou copie ce lien :<br>${link}</p>
         <p style="color:#666;font-size:12px">Lien valable <strong>2 heures</strong>. Si tu n’es pas à l’origine de cette demande, ignore cet email.</p>
-        <p style="color:#666;font-size:12px">Envoyé par <strong>PLM</strong> via ${cfgDomain()} · ${getAppEnv()}</p>
+        <p style="color:#666;font-size:12px">Envoyé par <strong>${brand}</strong> via ${cfgDomain()} · ${getAppEnv()}</p>
       </div>`,
   });
 }
@@ -223,10 +235,10 @@ export async function testSmtp(to?: string) {
     if (to) {
       sent = await sendMail({
         to,
-        subject: `[PLM] Test SMTP · ${getAppEnv()} · ${new Date().toISOString()}`,
-        text: `Test PLM OK.\nFrom configuré : ${cfg.from}\nHost : ${cfg.host}:${cfg.port}\nSi le nom d’affichage est faux, vide le cache du client mail.`,
+        subject: `[${mailBrand()}] Test SMTP · ${getAppEnv()} · ${new Date().toISOString()}`,
+        text: `Test ${mailBrand()} OK.\nFrom configuré : ${cfg.from}\nHost : ${cfg.host}:${cfg.port}\nSi le nom d’affichage est faux, vide le cache du client mail.`,
         html: `<div style="font-family:system-ui,sans-serif">
-          <p><strong>Test PLM OK</strong></p>
+          <p><strong>Test ${mailBrand()} OK</strong></p>
           <p>From configuré : <code>${cfg.from}</code></p>
           <p>Host : ${cfg.host}:${cfg.port} (${getAppEnv()})</p>
           <p style="color:#666;font-size:12px">Si le nom d’affichage est incorrect, c’est souvent le cache du client mail / le display name côté fournisseur SMTP — pas SMTP_FROM.</p>

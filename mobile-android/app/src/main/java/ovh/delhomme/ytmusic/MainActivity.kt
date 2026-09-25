@@ -204,17 +204,33 @@ class MainActivity : ComponentActivity() {
             "plm.delhomme.ovh",
             "ytmusic.delhomme.ovh",
             "pue-la-merde.delhomme.ovh",
+            "ytmusic-preprod.delhomme.ovh",
+            "music.hubera.cloud",
         )
+
+        private fun isLoginDeviceHost(host: String): Boolean {
+            if (host.isEmpty()) return false
+            if (host in LOGIN_DEVICE_HOSTS) return true
+            if (host == "hubera.cloud" || host.endsWith(".hubera.cloud")) return true
+            if (host.endsWith(".delhomme.ovh")) return true
+            return host == "localhost" || host == "127.0.0.1"
+        }
 
         fun parseDeviceLogin(uri: Uri?): DeviceLoginDeepLink? {
             if (uri == null) return null
             val host = uri.host?.lowercase().orEmpty()
+            val path = uri.path.orEmpty()
+            val isLoginPath =
+                path.startsWith("/login-device") ||
+                    path.contains("login-device") ||
+                    host == "login-device"
             val isHttps =
                 (uri.scheme == "https" || uri.scheme == "http") &&
-                    host in LOGIN_DEVICE_HOSTS &&
-                    (uri.path?.startsWith("/login-device") == true)
+                    isLoginPath &&
+                    (isLoginDeviceHost(host) || isLoginPath)
             val isCustom =
-                (uri.scheme == "ytmusic" || uri.scheme == "plm") && uri.host == "login-device"
+                (uri.scheme == "ytmusic" || uri.scheme == "plm" || uri.scheme == "hubera") &&
+                    (host == "login-device" || isLoginPath)
             if (!isHttps && !isCustom) return null
             val claim = uri.getQueryParameter("claim")?.trim().orEmpty()
             if (claim.isNotEmpty()) return DeviceLoginDeepLink.Claim(claim)
@@ -524,7 +540,7 @@ fun YtMusicAppContent(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    "PLM",
+                    "Hubera Music",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -611,7 +627,7 @@ fun YtMusicAppContent(
                         Toast.makeText(
                             context,
                             if (ok) {
-                                "Regarde l’écran Confirmer (derrière PLM parfois)"
+                                "Regarde l’écran Confirmer (parfois derrière l’app)"
                             } else {
                                 "Écran système introuvable — appuie Plus tard ou réessaie dans Compte"
                             },
@@ -895,6 +911,7 @@ private fun MainTabs(
     var forceOnboarding by remember { mutableStateOf(false) }
     var onboardingChecked by remember { mutableStateOf(false) }
     var showGoogleLink by remember { mutableStateOf(false) }
+    var showHuberaNotice by remember { mutableStateOf(false) }
 
     var sessionHydrated by remember { mutableStateOf(false) }
     var pendingRemoteLabel by remember { mutableStateOf<String?>(null) }
@@ -970,6 +987,10 @@ private fun MainTabs(
             // Dialog opt-in seulement — jamais de navigation auto vers OAuth (écran bloquant)
             if (me != null && !guest && !streamReady && !cool && !forceOnboarding) {
                 showGoogleLink = true
+            }
+            val huberaPrefs = container.sharedPrefs("hubera_notice")
+            if (me != null && !guest && !huberaPrefs.getBoolean("seen_v1", false)) {
+                showHuberaNotice = true
             }
         }
         if (!sessionHydrated) {
@@ -1657,6 +1678,7 @@ private fun MainTabs(
             composable("help_limits") {
                 ovh.delhomme.ytmusic.ui.components.HelpLimitsScreen(
                     onBack = { nav.popBackStack() },
+                    huberaMessage = container.apkUpdateManager.lastHuberaMessage(),
                 )
             }
             composable("history") {
@@ -1912,6 +1934,35 @@ private fun MainTabs(
         CastSheet(container = container, player = player, onDismiss = { showCast = false })
     }
 
+    if (showHuberaNotice && !forceOnboarding) {
+        AlertDialog(
+            onDismissRequest = {
+                container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                showHuberaNotice = false
+            },
+            title = { Text("Hubera Music") },
+            text = {
+                Text(
+                    "Hubera Music. Ton compte et tes playlists restent. " +
+                        "Détails dans Compte → Aide & limites. Le login local continue : rien n’est fusionné.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                    showHuberaNotice = false
+                    nav.navigate("help_limits")
+                }) { Text("Aide & limites") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                    showHuberaNotice = false
+                }) { Text("OK") }
+            },
+        )
+    }
+
     if (showGoogleLink && !forceOnboarding) {
         AlertDialog(
             onDismissRequest = {
@@ -1923,7 +1974,7 @@ private fun MainTabs(
             text = {
                 Text(
                     "Une fois : choisis ton compte Google sur le téléphone (code appareil, sans mot de passe). " +
-                        "PLM signe tes streams avec ton compte — ça reste actif après les mises à jour. " +
+                        "L’app signe tes streams avec ton compte — ça reste actif après les mises à jour. " +
                         "Option biblio : likes / playlists ensuite.",
                 )
             },

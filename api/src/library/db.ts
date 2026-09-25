@@ -206,6 +206,16 @@ try {
 }
 } // end !usingPostgres() bootstrap
 
+if (!usingPostgres()) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_email_aliases (
+      email TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+}
+
 export function upsertTrack(track: Track) {
   const clean = sanitizeTrack(track);
   const prev = getTrackPayload(clean.id);
@@ -262,7 +272,23 @@ export type UserRow = {
 };
 
 export function findUserByEmail(email: string): UserRow | undefined {
-  return db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined;
+  const e = String(email || '')
+    .toLowerCase()
+    .trim();
+  if (!e) return undefined;
+  const primary = db.prepare('SELECT * FROM users WHERE email = ?').get(e) as UserRow | undefined;
+  if (primary) return primary;
+  try {
+    return db
+      .prepare(
+        `SELECT u.* FROM users u
+         JOIN user_email_aliases a ON a.user_id = u.id
+         WHERE a.email = ?`,
+      )
+      .get(e) as UserRow | undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function findUserById(id: string): UserRow | undefined {
@@ -362,12 +388,25 @@ db.exec(`
   );
 `);
 }
+function aliasEmailsForUser(userId: string): string[] {
+  try {
+    return (
+      db.prepare('SELECT email FROM user_email_aliases WHERE user_id = ?').all(userId) as {
+        email: string;
+      }[]
+    ).map((r) => r.email.toLowerCase());
+  } catch {
+    return [];
+  }
+}
+
 export function isAdminUser(u: UserRow) {
   const adminEmails = (process.env.ADMIN_EMAILS || '')
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
   if (adminEmails.includes(u.email.toLowerCase())) return true;
+  if (aliasEmailsForUser(u.id).some((e) => adminEmails.includes(e))) return true;
   const row = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(u.id) as
     | { is_admin: number }
     | undefined;
@@ -400,8 +439,9 @@ export function promoteAdminIfNeeded(email: string) {
     .split(',')
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  if (admins.includes(email.toLowerCase())) {
-    db.prepare('UPDATE users SET is_admin = 1 WHERE email = ?').run(email.toLowerCase());
+  const user = findUserByEmail(email);
+  if (user && admins.includes(email.toLowerCase())) {
+    db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(user.id);
   }
   // First real user becomes admin
   const realCount = (
@@ -409,7 +449,111 @@ export function promoteAdminIfNeeded(email: string) {
       c: number;
     }
   ).c;
-  if (realCount <= 1) {
-    db.prepare(`UPDATE users SET is_admin = 1 WHERE email = ?`).run(email.toLowerCase());
+  if (realCount <= 1 && user) {
+    db.prepare(`UPDATE users SET is_admin = 1 WHERE id = ?`).run(user.id);
   }
+}
+
+/**
+ * Copie la bibliothèque (likes, titres, playlists) d’un compte vers un autre.
+ * Le compte cible est d’abord vidé. Pas de mot de passe, pas de volumes.
+ */
+export function copyUserLibrary(
+  fromUserId: string,
+  toUserId: string,
+): { liked: number; library: number; playlists: number; playlistTracks: number } {
+  if (!fromUserId || !toUserId || fromUserId === toUserId) {
+    throw new Error('copyUserLibrary: comptes invalides');
+  }
+  const from = findUserById(fromUserId);
+  const to = findUserById(toUserId);
+  if (!from || !to) throw new Error('copyUserLibrary: utilisateur introuvable');
+
+  const stats = { liked: 0, library: 0, playlists: 0, playlistTracks: 0 };
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM liked_tracks WHERE user_id = ?').run(toUserId);
+    db.prepare('DELETE FROM library_tracks WHERE user_id = ?').run(toUserId);
+    db.prepare('DELETE FROM liked_playlists WHERE user_id = ?').run(toUserId);
+    db.prepare('DELETE FROM library_albums WHERE user_id = ?').run(toUserId);
+    db.prepare('DELETE FROM library_artists WHERE user_id = ?').run(toUserId);
+    db.prepare('DELETE FROM library_mixes WHERE user_id = ?').run(toUserId);
+    try {
+      db.prepare('DELETE FROM library_album_tracks WHERE user_id = ?').run(toUserId);
+    } catch {
+      /* table optionnelle */
+    }
+    const destPl = db
+      .prepare('SELECT id FROM playlists WHERE user_id = ?')
+      .all(toUserId) as { id: string }[];
+    for (const p of destPl) {
+      db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ?').run(p.id);
+    }
+    db.prepare('DELETE FROM playlists WHERE user_id = ?').run(toUserId);
+
+    stats.liked = db
+      .prepare(
+        `INSERT OR IGNORE INTO liked_tracks (user_id, track_id, created_at)
+         SELECT ?, track_id, created_at FROM liked_tracks WHERE user_id = ?`,
+      )
+      .run(toUserId, fromUserId).changes;
+    stats.library = db
+      .prepare(
+        `INSERT OR IGNORE INTO library_tracks (user_id, track_id, created_at)
+         SELECT ?, track_id, created_at FROM library_tracks WHERE user_id = ?`,
+      )
+      .run(toUserId, fromUserId).changes;
+    try {
+      db.prepare(
+        `INSERT OR IGNORE INTO liked_playlists (user_id, playlist_id, payload, created_at)
+         SELECT ?, playlist_id, payload, created_at FROM liked_playlists WHERE user_id = ?`,
+      ).run(toUserId, fromUserId);
+      db.prepare(
+        `INSERT OR IGNORE INTO library_albums (user_id, album_id, payload, created_at)
+         SELECT ?, album_id, payload, created_at FROM library_albums WHERE user_id = ?`,
+      ).run(toUserId, fromUserId);
+      db.prepare(
+        `INSERT OR IGNORE INTO library_artists (user_id, artist_id, payload, created_at)
+         SELECT ?, artist_id, payload, created_at FROM library_artists WHERE user_id = ?`,
+      ).run(toUserId, fromUserId);
+      db.prepare(
+        `INSERT OR IGNORE INTO library_mixes (user_id, mix_id, payload, created_at)
+         SELECT ?, mix_id, payload, created_at FROM library_mixes WHERE user_id = ?`,
+      ).run(toUserId, fromUserId);
+    } catch {
+      /* colonnes payload variables */
+    }
+
+    const srcPl = db
+      .prepare(
+        `SELECT id, name, description, cover_url, created_at, updated_at
+         FROM playlists WHERE user_id = ?`,
+      )
+      .all(fromUserId) as {
+      id: string;
+      name: string;
+      description: string;
+      cover_url: string | null;
+      created_at: number;
+      updated_at: number;
+    }[];
+    const insPl = db.prepare(
+      `INSERT INTO playlists (id, user_id, name, description, cover_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insPt = db.prepare(
+      `INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_id, position, added_at)
+       SELECT ?, track_id, position, added_at FROM playlist_tracks WHERE playlist_id = ?`,
+    );
+    for (const pl of srcPl) {
+      const nid = randomUUID();
+      insPl.run(nid, toUserId, pl.name, pl.description || '', pl.cover_url, pl.created_at, pl.updated_at);
+      stats.playlists += 1;
+      stats.playlistTracks += insPt.run(nid, pl.id).changes;
+    }
+  });
+  tx();
+  console.log(
+    `[library] copie ${from.email} → ${to.email} likes=${stats.liked} lib=${stats.library} pl=${stats.playlists}`,
+  );
+  return stats;
 }

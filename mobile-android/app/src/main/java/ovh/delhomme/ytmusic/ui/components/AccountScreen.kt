@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -41,6 +42,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -77,6 +79,8 @@ import ovh.delhomme.ytmusic.auth.PasskeyAuth
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.RefreshBody
 import ovh.delhomme.ytmusic.data.UserDto
+import ovh.delhomme.ytmusic.debug.AppLog
+import ovh.delhomme.ytmusic.debug.TelemetryReporter
 import ovh.delhomme.ytmusic.ui.auth.QrScannerScreen
 import ovh.delhomme.ytmusic.ui.util.toastMain
 import ovh.delhomme.ytmusic.update.ApkUpdateManager
@@ -107,6 +111,9 @@ fun AccountScreen(
     var showQrScanner by remember { mutableStateOf(false) }
     var inviteClaimUrl by remember { mutableStateOf<String?>(null) }
     var inviteBusy by remember { mutableStateOf(false) }
+    var showReportProblem by remember { mutableStateOf(false) }
+    var reportNote by remember { mutableStateOf("") }
+    var reportBusy by remember { mutableStateOf(false) }
     var ytmLinked by remember {
         mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
     }
@@ -189,11 +196,66 @@ fun AccountScreen(
                     is DeviceLoginDeepLink.Claim -> {
                         context.toastMain("Ce QR est une invite — scanne-le depuis l’écran de login")
                     }
-                    null -> context.toastMain("QR non reconnu")
+                    null -> context.toastMain("QR non reconnu — ce n’est pas un QR de connexion Hubera Music")
                 }
             },
         )
         return
+    }
+
+    if (showReportProblem) {
+        AlertDialog(
+            onDismissRequest = { if (!reportBusy) showReportProblem = false },
+            title = { Text("Signaler un problème") },
+            text = {
+                Column {
+                    Text(
+                        "Décris ce qui cloche (optionnel). On envoie aussi le journal de cet appareil " +
+                            "(version, erreurs, ce qui s’est passé) pour qu’on puisse voir.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedTextField(
+                        value = reportNote,
+                        onValueChange = { reportNote = it.take(2_000) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp),
+                        minLines = 3,
+                        maxLines = 6,
+                        enabled = !reportBusy,
+                        placeholder = { Text("Ex. la lecture coupe, le QR ne marche plus…") },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !reportBusy,
+                    onClick = {
+                        reportBusy = true
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    TelemetryReporter.reportUserProblem(reportNote)
+                                }
+                                context.toastMain("Problème signalé — merci")
+                                showReportProblem = false
+                                reportNote = ""
+                            }.onFailure {
+                                AppLog.w("user-report", it.message ?: "fail", it)
+                                context.toastMain(it.message ?: "Envoi impossible — réessaie")
+                            }
+                            reportBusy = false
+                        }
+                    },
+                ) { Text(if (reportBusy) "Envoi…" else "Envoyer") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !reportBusy,
+                    onClick = { showReportProblem = false },
+                ) { Text("Annuler") }
+            },
+        )
     }
 
     LaunchedEffect(Unit) {
@@ -336,11 +398,10 @@ fun AccountScreen(
                         Text(
                             when (BuildConfig.APP_CHANNEL) {
                                 "d" ->
-                                    "Canal Dev (d+) — l’OTA serveur met à jour l’app « PLM », pas « PLM Dev ». " +
-                                        "Usage quotidien : ouvre l’icône PLM (p+)."
+                                    "Canal Dev — la mise à jour serveur va sur Hubera Music (prod), pas cette icône Dev."
                                 "b" ->
-                                    "Canal Preprod (b+) — l’OTA serveur met à jour l’app « PLM » (prod)."
-                                else -> "Canal non-prod — OTA cible PLM (prod)."
+                                    "Canal Preprod — la mise à jour serveur va sur Hubera Music (prod)."
+                                else -> "Canal hors production — la mise à jour cible Hubera Music (prod)."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = accentRed,
@@ -461,10 +522,22 @@ fun AccountScreen(
                 AccountRow(
                     icon = { Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null) },
                     title = "Aide & limites",
-                    subtitle = "Pourquoi un titre charge lentement, hors-ligne, versions…",
+                    subtitle = "Hubera, hors-ligne, versions, lecture…",
                     onClick = {
                         onOpenHelp?.invoke()
                             ?: context.toastMain("Ouvre Compte depuis Accueil")
+                    },
+                )
+            }
+
+            item {
+                AccountRow(
+                    icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
+                    title = "Signaler un problème",
+                    subtitle = "Envoie un journal de cet appareil à l’équipe",
+                    onClick = {
+                        reportNote = ""
+                        showReportProblem = true
                     },
                 )
             }

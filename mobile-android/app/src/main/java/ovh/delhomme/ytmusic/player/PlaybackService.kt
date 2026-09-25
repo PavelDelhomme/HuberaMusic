@@ -93,6 +93,8 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var prevPlayingDurationMs: Long = 0L
     @Volatile private var prevPlayingBufferedMs: Long = 0L
     @Volatile private var earlyEndRetries: Int = 0
+    /** Reprises pos≈0 (app relancée avant le 1er son) — skip seulement après vrais retries. */
+    @Volatile private var endedNeverPlayedRetries: Int = 0
     /** Titre qu’on est en train de reprendre après une fin trop tôt — ne pas reset le compteur. */
     @Volatile private var recoveringTrackId: String = ""
     @Volatile private var serviceFillInFlight: Boolean = false
@@ -159,7 +161,7 @@ class PlaybackService : MediaSessionService() {
             "PlaybackService",
             "foresight buffer-low ahead=${ahead}ms id=$id → quiet+warm",
         )
-        StreamPrefetcher.quietPrefetch(10_000L)
+        StreamPrefetcher.quietPrefetch(2_000L)
         val base = resolvedApiBase()
         if (base.isNotBlank() && id.length == 11) {
             StreamPrefetcher.warmTrackFormatOnly(base, id)
@@ -229,6 +231,10 @@ class PlaybackService : MediaSessionService() {
                 stallSessionCount = 0
                 stallSessionAnchorPos = -1L
             }
+            val base = resolvedApiBase()
+            if (base.isNotBlank() && id.length == 11) {
+                StreamPrefetcher.kickStartCurrent(base, id)
+            }
         }
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
         val r = Runnable {
@@ -266,8 +272,19 @@ class PlaybackService : MediaSessionService() {
             // Cold start (pos≈0) : laisser plus de temps au 1er octet (Blackview / titres GIMS cold).
             // Un titre absent du cache serveur demande une résolution yt-dlp (jusqu’à ~35 s) :
             // rebinder à 11 s relançait la requête sans jamais lui laisser aboutir.
-            val headWarmed = StreamPrefetcher.wasHeadReadyRecently(curId, withinMs = 90_000L)
-            val coldGraceMs = if (headWarmed) 18_000L else 42_000L
+            val headWarmed = StreamPrefetcher.wasHeadReadyRecently(curId, withinMs = 90_000L) &&
+                StreamPrefetcher.hasPlayableHead(curId)
+            val neverHeard = pos <= 1_000L && maxPlayingPosMs <= 1_000L
+            val nextId = Holder.queue.getOrNull(exo.currentMediaItemIndex + 1)?.id
+            val nextHot = !neverHeard && !nextId.isNullOrBlank() &&
+                StreamPrefetcher.wasHeadReadyRecently(nextId, withinMs = 120_000L)
+            // Titre jamais écouté (reprise app) : ne pas raccourcir parce que +1 est chaud.
+            val coldGraceMs = when {
+                neverHeard -> 32_000L
+                headWarmed -> 12_000L
+                nextHot -> 10_000L
+                else -> 14_000L
+            }
             if (pos <= 1_000L && bufferedPositionSafe(exo) <= 1_024L && waited < coldGraceMs) {
                 armStallWatch(exo)
                 return@Runnable
@@ -299,9 +316,10 @@ class PlaybackService : MediaSessionService() {
             val stuckHard =
                 samePos &&
                     (
-                        // Cold : laisser plusieurs rebinds (VPS yt-dlp 30–50 s) avant skip.
-                        (coldStuck && stallSessionCount >= 5) ||
-                            (!coldStuck && stallSessionCount >= 4)
+                        // Cold mort (410 / format timeout) : skip vite, pas 7×16 s de BUFFERING.
+                        (coldStuck && neverHeard && stallSessionCount >= 5) ||
+                            (coldStuck && !neverHeard && stallSessionCount >= 3) ||
+                            (!coldStuck && stallSessionCount >= 3)
                     )
             if (stuckHard) {
                 AppLog.w(
@@ -337,14 +355,16 @@ class PlaybackService : MediaSessionService() {
             }
             // Escalade = URL fraîche + proxy, JAMAIS seek(0) (utilisateur entendait reprise au début).
             val escalate =
-                stallRebindCount >= 2 ||
+                (neverHeard && stallSessionCount >= 1) ||
+                    stallRebindCount >= 2 ||
                     stallSessionCount >= 2 ||
                     (waited >= 10_000L && posFrozenFor >= 6_000L)
             if (escalate) {
                 // wipeCache après plusieurs escalate (cache / atom MP4 corrompu, code 3003).
-                // Cold start : wipe dès le 2ᵉ escalate (tête poison / 502).
+                // Reprise jamais écoutée : wipe dès le 1er escalate (URL googlevideo périmée).
                 val wipe =
-                    stallSessionCount >= 5 ||
+                    neverHeard ||
+                        stallSessionCount >= 5 ||
                         stallRebindCount >= 6 ||
                         (pos <= 1_000L && stallSessionCount >= 4)
                 AppLog.w(
@@ -685,6 +705,7 @@ class PlaybackService : MediaSessionService() {
                     Holder.streamRecoveringId = ""
                 }
                 StreamPrefetcher.markStreamOk()
+                endedNeverPlayedRetries = 0
                 cancelStallWatch()
                 // Remplace le placeholder FGS par la vraie notif média (titre + boutons).
                 ensureCurrentItemMetadata()
@@ -707,7 +728,7 @@ class PlaybackService : MediaSessionService() {
                     }
                 if (d > 0L && d != C.TIME_UNSET) {
                     val rem = d - posNow
-                    if (rem in 8_000L..45_000L) {
+                    if (rem in 8_000L..60_000L) {
                         val now = android.os.SystemClock.elapsedRealtime()
                         if (now - lastNearEndWarmMs > 3_500L) {
                             lastNearEndWarmMs = now
@@ -715,16 +736,25 @@ class PlaybackService : MediaSessionService() {
                         }
                     }
                 }
-                // Pendant toute la lecture : maintient le titre suivant (ignore quiet).
+                // Pendant toute la lecture : maintient +1 (et +2…+4 en charge).
                 val nowMid = android.os.SystemClock.elapsedRealtime()
                 if (nowMid - lastMidTrackPrefetchMs > 5_000L) {
                     lastMidTrackPrefetchMs = nowMid
                     val q = Holder.queue
                     if (q.isNotEmpty()) {
+                        val ids = q.map { it.id }
+                        val idx = player.currentMediaItemIndex
                         StreamPrefetcher.prefetchNextDuringPlayback(
                             resolvedApiBase(),
-                            q.map { it.id },
-                            player.currentMediaItemIndex,
+                            ids,
+                            idx,
+                            ignoreQuiet = true,
+                        )
+                        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                            resolvedApiBase(),
+                            ids,
+                            idx,
+                            count = 3,
                             ignoreQuiet = true,
                         )
                     }
@@ -749,6 +779,17 @@ class PlaybackService : MediaSessionService() {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             val exo = player ?: return
             val curIdx = exo.currentMediaItemIndex
+            runCatching {
+                val t = Holder.queue.getOrNull(curIdx)
+                val id = mediaItem?.mediaId ?: t?.id
+                if (!id.isNullOrBlank()) {
+                    ovh.delhomme.ytmusic.debug.PlaybackTrace.play(
+                        trackId = id,
+                        title = t?.title ?: mediaItem?.mediaMetadata?.title?.toString(),
+                        artist = t?.artistLine() ?: mediaItem?.mediaMetadata?.artist?.toString(),
+                    )
+                }
+            }
             val skipRecovery =
                 programmaticAdvance ||
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
@@ -764,16 +805,22 @@ class PlaybackService : MediaSessionService() {
             val snapPrevDur = prevPlayingDurationMs.takeIf { it > 0L } ?: lastPlayingDurationMs
             val snapPrevBuf = prevPlayingBufferedMs.takeIf { it > 0L } ?: lastPlayingBufferedMs
             promoteUpcomingToLocal(exo, exo.currentMediaItemIndex + 1)
-            // Nouveau +1 : pin cache + prefetch immédiat
-            val nextId = Holder.queue.getOrNull(curIdx + 1)?.id
+            // Nouveau +1…+4 : pin + têtes (titre court = pas le temps d’attendre le tick 5 s)
+            val qIds = Holder.queue.map { it.id }
+            val nextId = qIds.getOrNull(curIdx + 1)
             if (nextId != null && nextId.length == 11) {
                 PlayerCache.pinTrack(nextId)
-                StreamPrefetcher.prefetchNextDuringPlayback(
-                    resolvedApiBase(),
-                    Holder.queue.map { it.id },
-                    curIdx,
-                    ignoreQuiet = true,
-                )
+            }
+            StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                resolvedApiBase(),
+                qIds,
+                curIdx,
+                count = 3,
+                ignoreQuiet = true,
+            )
+            val curDur = Holder.queue.getOrNull(curIdx)?.durationMsOrNull() ?: 0L
+            if (curDur in 1L..90_000L || curDur <= 0L) {
+                warmExclusiveNext(curIdx)
             }
             if (skipRecovery) {
                 recoveringTrackId = ""
@@ -927,8 +974,9 @@ class PlaybackService : MediaSessionService() {
                 // Ne coupe le prefetch / offline qu’après plusieurs 5xx — un seul 502
                 // (getAudioFormat deadline) ne doit pas bloquer 2 min toute la file.
                 // Après appel : sockets/DNS en train de revenir — ne pas geler le flux.
-                if (streak >= 3 && !Holder.isWithinCallResumeGrace()) {
-                    StreamPrefetcher.markStreamDown(90_000L)
+                if (streak >= 5 && !Holder.isWithinCallResumeGrace()) {
+                    // Pause prefetch seulement (20 s) — le titre courant continue de résoudre.
+                    StreamPrefetcher.markStreamDown(20_000L)
                     StreamPrefetcher.cancelIdle()
                     runCatching {
                         ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.cancelOpportunistic()
@@ -1106,10 +1154,10 @@ class PlaybackService : MediaSessionService() {
                 val giveUpStreak = when {
                     // Titre mort (410 / unavailable) : skip dès le 1er échec confirmé.
                     unavailable -> 1
-                    // Cold start + 5xx : 2 retries max (évite 2 min bloqué sur remix mort).
-                    coldStart && httpStatus != null && httpStatus >= 500 -> 2
-                    // 503/502 mid-piste : quelques retries puis skip réel.
-                    httpStatus != null && httpStatus >= 500 -> 4
+                    // 502 getAudioFormat deadline = transitoire (yt-dlp saturé) :
+                    // retenter le MÊME titre, pas skip à 2×.
+                    coldStart && httpStatus != null && httpStatus >= 500 -> 8
+                    httpStatus != null && httpStatus >= 500 -> 8
                     transientNetwork -> Int.MAX_VALUE
                     else -> 8
                 }
@@ -1481,7 +1529,9 @@ class PlaybackService : MediaSessionService() {
         val exo = player
         val hasMedia = exo != null && exo.mediaItemCount > 0
         val title = exo?.currentMediaItem?.mediaMetadata?.title?.toString()?.trim().orEmpty()
-        val hasRealTitle = title.isNotBlank() && title != "…" && !title.equals("PLM", ignoreCase = true)
+        val hasRealTitle = title.isNotBlank() && title != "…" &&
+            !title.equals("PLM", ignoreCase = true) &&
+            !title.equals("Hubera Music", ignoreCase = true)
         if (hasMedia && (hasRealTitle || session != null)) {
             // Remet / rafraîchit la vraie notif transport (évite rester sur le placeholder).
             runCatching { ensureCurrentItemMetadata() }
@@ -1518,7 +1568,7 @@ class PlaybackService : MediaSessionService() {
                         setShowBadge(false)
                         setSound(null, null)
                         enableVibration(false)
-                        description = "Lecteur multimédia PLM"
+                        description = "Lecteur Hubera Music"
                     }
                     nm.createNotificationChannel(ch)
                 }
@@ -1527,7 +1577,7 @@ class PlaybackService : MediaSessionService() {
                 this,
                 DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID,
             )
-                .setContentTitle("PLM")
+                .setContentTitle("Hubera Music")
                 .setContentText("Lecture…")
                 .setSmallIcon(R.drawable.ic_stat_play)
                 .setContentIntent(sessionActivityPendingIntent())
@@ -1870,6 +1920,15 @@ class PlaybackService : MediaSessionService() {
      */
     private fun skipDeadTrackOrAdvance(exo: Player, deadId: String, nextIdx: Int) {
         val track = Holder.queue.firstOrNull { it.id == deadId }
+        runCatching {
+            ovh.delhomme.ytmusic.debug.PlaybackTrace.skip(
+                trackId = deadId,
+                title = track?.title,
+                artist = track?.artistLine(),
+                reason = "skip_dead",
+                extra = mapOf("nextIdx" to nextIdx),
+            )
+        }
         val repl = if (track != null) {
             StreamPrefetcher.fetchReplacementId(
                 resolvedApiBase(),
@@ -2036,6 +2095,23 @@ class PlaybackService : MediaSessionService() {
                 "STATE_ENDED peut-être tronqué — 1 retry URL fraîche id=$curId pos=$pos exoDur=$exoDur catalog=$catalog",
             )
             maybeRecoverEarlyEnd(exo, curId, pos, exoDur, lastPlayingBufferedMs, fromStateEnded = true)
+            return
+        }
+        // Relance app sur un titre jamais joué : ENDED à 0 ≠ fin réelle → rebind, pas skip.
+        val neverPlayedEnd = pos < 8_000L && (catalog == null || catalog >= 45_000L || exoDur < 8_000L)
+        if (curId.isNotBlank() && neverPlayedEnd && endedNeverPlayedRetries < 2) {
+            endedNeverPlayedRetries += 1
+            AppLog.w(
+                "PlaybackService",
+                "STATE_ENDED never-played — rebind courant id=$curId pos=$pos try=$endedNeverPlayedRetries",
+            )
+            rebindCurrentStream(
+                reason = "ended-never-played",
+                forcePlay = true,
+                seekPos = 0L,
+                retryN = endedNeverPlayedRetries,
+                wipeCache = true,
+            )
             return
         }
         recoveringTrackId = ""
@@ -2421,7 +2497,14 @@ class PlaybackService : MediaSessionService() {
             fromIndex,
             ignoreQuiet = true,
         )
-        CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 1, behind = 0)
+        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+            resolvedApiBase(),
+            ids,
+            fromIndex,
+            count = 3,
+            ignoreQuiet = true,
+        )
+        CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 2, behind = 0)
     }
 
     /** Télécharge silencieusement +1 titre offline (Wi‑Fi, hors BatterySaver / near-end). */
@@ -2442,7 +2525,7 @@ class PlaybackService : MediaSessionService() {
         if (ahead.isEmpty()) return
         runCatching {
             ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager
-                .enqueueAheadDuringPlayback(ahead, limit = 1)
+                .enqueueAheadDuringPlayback(ahead, limit = 3)
         }
         val p = player ?: return
         promoteUpcomingToLocal(p, fromIndex + 1)
@@ -2719,6 +2802,14 @@ class PlaybackService : MediaSessionService() {
 
         /** Mémorise la file complète dont la fenêtre chargée n'est qu'une tranche. */
         fun rememberFullQueue(full: List<TrackDto>, loadedUpTo: Int) {
+            // Ne pas écraser une file 14k par la fenêtre Exo 80/400.
+            if (fullQueue.size > full.size && full.isNotEmpty()) {
+                val ids = full.mapTo(HashSet()) { it.id }
+                if (fullQueue.take(full.size).all { it.id in ids }) {
+                    fullQueueCursor = loadedUpTo.coerceIn(0, fullQueue.size)
+                    return
+                }
+            }
             fullQueue = full
             fullQueueCursor = loadedUpTo.coerceIn(0, full.size)
         }
@@ -2938,12 +3029,12 @@ private class YtmForwardingPlayer(
         if (queue.isEmpty()) return
         val api = PlaybackService.Holder.resolvedApiBase()
         // Seek notif/UI : +1 fort + fenêtre courte (le rolling tick élargit ensuite)
-        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 6, behind = 0)
+        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 3, behind = 0)
         StreamPrefetcher.prefetchUpcomingHeadsTiered(
             api,
             queue.map { it.id },
             index,
-            count = 10,
+            count = 3,
             ignoreQuiet = true,
         )
         CoverPrefetcher.warmCovers(queue, index, ahead = 3, behind = 0)
@@ -3033,7 +3124,24 @@ fun mediaItemFor(
     }
     return MediaItem.Builder()
         .setMediaId(t.id)
-        .setUri(baseStreamUrl(t.id))
+        .setUri(
+            run {
+                var uri = baseStreamUrl(t.id)
+                if (!uri.contains("title=")) {
+                    val extra = mutableListOf<String>()
+                    if (t.title.isNotBlank()) extra += "title=" + java.net.URLEncoder.encode(t.title, "UTF-8")
+                    val artist = t.artistLine()
+                    if (artist.isNotBlank()) extra += "artist=" + java.net.URLEncoder.encode(artist, "UTF-8")
+                    t.durationMsOrNull()?.takeIf { it > 0L }?.let { ms ->
+                        extra += "duration=${(ms / 1000L).coerceAtLeast(1L)}"
+                    }
+                    if (extra.isNotEmpty()) {
+                        uri += (if (uri.contains("?")) "&" else "?") + extra.joinToString("&")
+                    }
+                }
+                uri
+            }
+        )
         .setCustomCacheKey(PlayerCache.keyFor(t.id))
         .setMediaMetadata(meta.build())
         .build()

@@ -286,6 +286,70 @@ export function listTelemetry(opts: { level?: string; limit?: number; offset?: n
     .all(limit, offset);
 }
 
+export function listPlaybackTrace(opts: { limit?: number } = {}) {
+  const limit = Math.min(opts.limit || 400, 800);
+  const rows = db
+    .prepare(
+      `SELECT id, created_at, level, kind, message, user_id, device_id, meta
+       FROM telemetry_events
+       WHERE kind LIKE 'android.player%'
+          OR kind LIKE 'android.playback%'
+          OR kind LIKE 'android.crash%'
+          OR kind = 'crash'
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(limit) as Array<{
+    id: string;
+    created_at: number;
+    level: string;
+    kind: string;
+    message: string | null;
+    user_id: string | null;
+    device_id: string | null;
+    meta: string | null;
+  }>;
+  const stuck = new Map<
+    string,
+    { trackId: string; title?: string; skips: number; lastKind: string; lastAt: number; lastMessage?: string }
+  >();
+  for (const row of rows) {
+    let meta: Record<string, unknown> = {};
+    try {
+      meta = row.meta ? (JSON.parse(row.meta) as Record<string, unknown>) : {};
+    } catch {
+      meta = {};
+    }
+    const trackId = String(meta.trackId || meta.id || '').trim();
+    if (!trackId || trackId.length < 8) continue;
+    const title = String(meta.title || '').trim() || undefined;
+    const isSkip =
+      row.kind.includes('load_skip') ||
+      String(meta.traceKind || '') === 'skip' ||
+      String(meta.traceKind || '') === 'stuck_in_library';
+    const cur = stuck.get(trackId) || {
+      trackId,
+      title,
+      skips: 0,
+      lastKind: row.kind,
+      lastAt: row.created_at,
+      lastMessage: row.message || undefined,
+    };
+    if (title && !cur.title) cur.title = title;
+    if (isSkip) cur.skips += 1;
+    if (row.created_at >= cur.lastAt) {
+      cur.lastKind = row.kind;
+      cur.lastAt = row.created_at;
+      cur.lastMessage = row.message || undefined;
+    }
+    stuck.set(trackId, cur);
+  }
+  return {
+    events: rows,
+    stuck: [...stuck.values()].filter((s) => s.skips >= 2).sort((a, b) => b.skips - a.skips),
+  };
+}
+
 export function telemetryStats() {
   const byLevel = db
     .prepare(

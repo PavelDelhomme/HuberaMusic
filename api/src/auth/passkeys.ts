@@ -12,7 +12,7 @@ import type {
 import { randomUUID } from 'node:crypto';
 import { db } from '../library/db.js';
 
-const RP_NAME = 'PLM';
+const RP_NAME = 'Hubera Music';
 const challenges = new Map<string, { challenge: string; userId?: string; expires: number }>();
 
 function cleanChallenges() {

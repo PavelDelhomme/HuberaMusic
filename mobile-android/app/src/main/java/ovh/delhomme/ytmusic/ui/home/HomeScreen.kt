@@ -200,7 +200,7 @@ fun HomeScreen(
 
     Column(Modifier.fillMaxSize()) {
         AppTopBar(
-            title = "PLM",
+            title = "Hubera Music",
             showBrandLogo = true,
             userPictureUrl = userPicture,
             onAccountClick = onOpenAccount,

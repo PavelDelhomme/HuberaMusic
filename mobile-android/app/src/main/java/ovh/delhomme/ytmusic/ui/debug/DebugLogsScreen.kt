@@ -52,6 +52,7 @@ import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.NetworkMonitor
 import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.debug.PerfSnapshot
+import ovh.delhomme.ytmusic.debug.PlaybackTrace
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,7 +63,7 @@ fun DebugLogsScreen(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableStateOf(0) } // 0 crash, 1 log, 2 perf
+    var tab by remember { mutableStateOf(0) } // 0 crash, 1 log, 2 perf, 3 trace
     var content by remember { mutableStateOf("") }
     var apiUrl by remember { mutableStateOf(container.resolvedApiBase()) }
     var probeMsg by remember { mutableStateOf<String?>(null) }
@@ -72,6 +73,7 @@ fun DebugLogsScreen(
         content = when (tab) {
             0 -> AppLog.lastCrashText()
             2 -> PerfSnapshot.capture(context)
+            3 -> PlaybackTrace.recentText()
             else -> AppLog.recentLogText()
         }
     }
@@ -326,6 +328,8 @@ fun DebugLogsScreen(
                 else OutlinedButton(onClick = { tab = 1 }) { Text("Journal") }
                 if (tab == 2) Button(onClick = { tab = 2 }) { Text("Perf") }
                 else OutlinedButton(onClick = { tab = 2 }) { Text("Perf") }
+                if (tab == 3) Button(onClick = { tab = 3 }) { Text("Trace") }
+                else OutlinedButton(onClick = { tab = 3 }) { Text("Trace") }
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -343,7 +347,7 @@ fun DebugLogsScreen(
                     onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, "PLM debug logs")
+                            putExtra(Intent.EXTRA_SUBJECT, "Hubera Music debug logs")
                             putExtra(Intent.EXTRA_TEXT, AppLog.exportBundle())
                         }
                         context.startActivity(Intent.createChooser(send, "Partager les logs"))

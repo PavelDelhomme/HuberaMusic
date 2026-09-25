@@ -263,7 +263,8 @@ class PlayerController(
             ?: PlaybackService.Holder.queue.getOrNull(PlaybackService.Holder.index)?.id
         if (!curId.isNullOrBlank() && curId.length == 11) {
             val base = streamUrl("_").substringBefore("/api/stream/")
-            if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
+            if (base.isNotBlank()) {
+                StreamPrefetcher.markStreamOk()
                 val upcoming = PlaybackService.Holder.queue
                     .drop(PlaybackService.Holder.index + 1)
                     .take(3)
@@ -353,7 +354,7 @@ class PlayerController(
                     base,
                     playable.map { it.id },
                     idx,
-                    count = 6,
+                    count = 3,
                     ignoreQuiet = false,
                 )
             }
@@ -615,7 +616,20 @@ class PlayerController(
             if (track != null) {
                 val pos = p.currentPosition.coerceAtLeast(0L)
                 runCatching {
-                    val item = mediaItemFor(track, streamUrl, queueTitle)
+                    val bust = System.currentTimeMillis()
+                    val item = mediaItemFor(
+                        track,
+                        { tid ->
+                            val u = streamUrl(tid)
+                            val sep = if (u.contains('?')) '&' else '?'
+                            "$u${sep}r=$bust"
+                        },
+                        queueTitle,
+                    )
+                    if (pos < 8_000L) {
+                        PlayerCache.invalidate(context, track.id)
+                        StreamPrefetcher.clearHeadReady(track.id)
+                    }
                     p.replaceMediaItem(p.currentMediaItemIndex, item)
                     p.seekTo(p.currentMediaItemIndex, pos)
                     p.prepare()
@@ -821,7 +835,7 @@ class PlayerController(
                     base,
                     skipQueue.map { it.id },
                     nextIdx,
-                    count = 12,
+                    count = 3,
                     ignoreQuiet = false,
                 )
                 CoverPrefetcher.warmCovers(skipQueue, nextIdx, ahead = 4, behind = 0)
@@ -1279,7 +1293,12 @@ class PlayerController(
                 val upcoming = tracks.drop(idx + 1).map { it.id }
                 scope.launch(Dispatchers.IO) {
                     // Priorité : ~10 s du titre restauré avant le reste (évite BUFFERING / skip Samsung).
-                    StreamPrefetcher.prepareRestoredCurrent(base, id, upcoming)
+                    StreamPrefetcher.prepareRestoredCurrent(
+                        base,
+                        id,
+                        upcoming,
+                        force = positionMs < 8_000L,
+                    )
                 }
             }
             return
@@ -1481,6 +1500,33 @@ class PlayerController(
             }
             _state.value = _state.value.copy(shuffle = false)
         }
+        // File réordonnée : chauffer +1…+4 tout de suite (sinon BUFFERING à la fin du titre).
+        val p = player()
+        if (p != null) {
+            val q = PlaybackService.Holder.queue
+            val idx = p.currentMediaItemIndex.coerceAtLeast(0)
+            if (q.isNotEmpty()) {
+                warmAround(q, idx)
+                val base = PlaybackService.Holder.resolvedApiBase()
+                if (base.isNotBlank()) {
+                    scope.launch(Dispatchers.IO) {
+                        StreamPrefetcher.prefetchNextDuringPlayback(
+                            base,
+                            q.map { it.id },
+                            idx,
+                            ignoreQuiet = true,
+                        )
+                        StreamPrefetcher.prefetchUpcomingHeadsTiered(
+                            base,
+                            q.map { it.id },
+                            idx,
+                            count = 3,
+                            ignoreQuiet = true,
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun cycleRepeat() {
@@ -1534,7 +1580,7 @@ class PlayerController(
         val base = streamUrl("_").substringBefore("/api/stream/")
         val ids = queue.map { it.id }
         // 16 titres en avant (~10–20 % de tête) pour skip rapide sans BUFFERING
-        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 16)
+        StreamPrefetcher.maintainRollingPrefetch(base, ids, idx, window = 3)
         if (
             !StreamPrefetcher.isStreamDown() &&
             !ovh.delhomme.ytmusic.data.BatterySaver.isActive()
@@ -1542,7 +1588,7 @@ class PlayerController(
             runCatching {
                 YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
                     queue.drop(idx + 1),
-                    limit = 1,
+                    limit = 3,
                 )
             }
         }
@@ -1619,7 +1665,14 @@ class PlayerController(
         if (!lyricsWarmed.add(trackId)) return
         scope.launch(Dispatchers.IO) {
             runCatching {
-                val r = YtMusicApp.instance.container.api.lyrics(trackId)
+                val hint = PlaybackService.Holder.queue.find { it.id == trackId }
+                    ?: _state.value.queue.find { it.id == trackId }
+                    ?: _state.value.track?.takeIf { it.id == trackId }
+                val r = YtMusicApp.instance.container.api.lyrics(
+                    trackId,
+                    hint?.title,
+                    hint?.artistLine()?.takeIf { it != "Artiste" },
+                )
                 val timed = r.timed.orEmpty()
                 val prefs = context.getSharedPreferences("plm_lyrics_cache_v5", Context.MODE_PRIVATE)
                 prefs.edit()
@@ -1939,38 +1992,28 @@ class PlayerController(
         val offlineReady = !currentId.isNullOrBlank() && runCatching {
             YtMusicApp.instance.container.offlineStore.has(currentId)
         }.getOrDefault(false)
+        val coldResume = startPositionMs < 8_000L && !offlineReady
         val cacheReady = !currentId.isNullOrBlank() &&
-            PlayerCache.cachedBytes(context, currentId, StreamPrefetcher.HEAD_3S) >= 180L * 1024L
+            StreamPrefetcher.hasPlayableHead(currentId)
         val headReady = !currentId.isNullOrBlank() && (
-            StreamPrefetcher.wasHeadReadyRecently(currentId, withinMs = 60_000L) ||
-                offlineReady ||
-                cacheReady
+            offlineReady ||
+                (cacheReady && StreamPrefetcher.wasHeadReadyRecently(currentId, withinMs = 60_000L) && !coldResume)
             )
         if (headReady && !currentId.isNullOrBlank()) {
             StreamPrefetcher.markHeadReady(currentId)
         }
         // Si tête déjà là : quiet court. Sinon kick warm IO immédiat (sans bloquer le UI).
         StreamPrefetcher.quietPrefetch(if (headReady) 60L else 200L)
-        if (!currentId.isNullOrBlank() && !headReady) {
+        if (!currentId.isNullOrBlank() && (!headReady || coldResume)) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
-            if (!autoplay) {
-                scope.launch(Dispatchers.IO) {
-                    StreamPrefetcher.prepareRestoredCurrent(
-                        base,
-                        currentId,
-                        window.drop(idx + 1).map { it.id },
-                    )
-                }
-            } else {
-                // Play user : format wait + tête en priorité (thread dédié, Exo en parallèle).
-                scope.launch(Dispatchers.IO) {
-                    StreamPrefetcher.warmCurrentBlocking(base, currentId, timeoutMs = 1_800L, wait = true)
-                    StreamPrefetcher.prefetchStartHead(
-                        base,
-                        currentId,
-                        StreamPrefetcher.HEAD_3S,
-                        priorityNext = true,
-                    )
+            scope.launch(Dispatchers.IO) {
+                StreamPrefetcher.prepareRestoredCurrent(
+                    base,
+                    currentId,
+                    window.drop(idx + 1).map { it.id },
+                    force = coldResume,
+                )
+                if (autoplay) {
                     window.drop(idx + 1).take(2).forEachIndexed { i, t ->
                         StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
                     }
@@ -1990,12 +2033,12 @@ class PlayerController(
                 delay(80)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
-                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 16)
+                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 3)
                 if (!ovh.delhomme.ytmusic.data.BatterySaver.isActive()) {
                     runCatching {
                         YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
                             window.drop(idx + 1),
-                            limit = 1,
+                            limit = 3,
                         )
                     }
                 }
@@ -2050,7 +2093,7 @@ class PlayerController(
             base,
             queue.map { it.id },
             centerIndex,
-            count = 12,
+            count = 3,
             ignoreQuiet = true,
         )
     }
@@ -2158,25 +2201,11 @@ class PlayerController(
                         "Hors ligne — reconnecte le Wi‑Fi ou les données"
                     PlaybackService.Holder.isWithinCallResumeGrace() ->
                         "Reprise du flux après l’appel…"
-                    StreamPrefetcher.isStreamDown() ->
-                        "Serveur audio temporairement indisponible"
                     else -> "Chargement du flux…"
                 }
                 context.toastMain(msg, Toast.LENGTH_SHORT)
-                // Signal fort : titre lent (pas rate-limité) — digéré dans le mail 12h30
-                runCatching {
-                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                        level = "warn",
-                        kind = "android.player.cold_next",
-                        message = "buffering >2.5s id=$trackId",
-                        meta = mapOf(
-                            "trackId" to trackId,
-                            "positionMs" to (_state.value.positionMs),
-                            "title" to (_state.value.track?.title),
-                        ),
-                        force = true,
-                    )
-                }
+                // Pas de telemetry heal ici : cold_next à 2,5 s lançait ensure+replace
+                // et saturait yt-dlp pendant que le titre courant essayait de résoudre.
             }
             delay(5_000L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
@@ -2200,8 +2229,7 @@ class PlayerController(
             )
             if (_state.value.buffering &&
                 _state.value.track?.id == trackId &&
-                ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
-                !StreamPrefetcher.isStreamDown()
+                ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
             ) {
                 if (PlaybackService.Holder.isStreamRecovering(trackId)) {
                     AppLog.i(
@@ -2210,14 +2238,15 @@ class PlayerController(
                     )
                     return@launch
                 }
-                AppLog.i("PlayerController", "buffer stuck → rebind (pas de skip) id=$trackId cold=$coldStart")
+                AppLog.i("PlayerController", "buffer stuck → rebind keepCache id=$trackId cold=$coldStart")
+                StreamPrefetcher.markStreamOk()
                 val title = _state.value.track?.title
                 val artist = _state.value.track?.artistLine()
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
                         level = "warn",
                         kind = "android.player.load_recover",
-                        message = "buffer stuck → rebind id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
+                        message = "buffer stuck → rebind keepCache id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
                         meta = mapOf(
                             "trackId" to trackId,
                             "title" to title,
@@ -2227,10 +2256,10 @@ class PlayerController(
                             "action" to "rebind",
                             "reason" to "buffer_stuck",
                         ),
-                        force = true,
+                        force = false,
                     )
                 }
-                // 1) Soft rebind (pas de retry=N → ne pas invalider le format chaud serveur)
+                // 1) Rebind sans wipe : garder les octets déjà reçus, URL neuve seulement.
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck",
@@ -2239,7 +2268,6 @@ class PlayerController(
                         wipeCache = false,
                     )
                 }
-                // 2) Demande warm serveur immédiat
                 runCatching {
                     val base = PlaybackService.Holder.resolvedApiBase()
                     if (base.isNotBlank() && trackId.length == 11) {
@@ -2249,45 +2277,34 @@ class PlayerController(
                 delay(18_000L)
                 if (!_state.value.buffering || _state.value.track?.id != trackId) return@launch
                 if (PlaybackService.Holder.isStreamRecovering(trackId)) return@launch
-                AppLog.w("PlayerController", "buffer stuck → 2e rebind soft id=$trackId")
+                AppLog.w("PlayerController", "buffer stuck → 2e rebind forceFresh id=$trackId")
+                StreamPrefetcher.markStreamOk()
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck-2",
                         forcePlay = true,
-                        retryN = 0,
-                        wipeCache = coldStart,
+                        retryN = 2,
+                        wipeCache = true,
                     )
                 }
                 delay(28_000L)
-                // Dernier recours : RÉSOUDRE (replace ou rebind+disque) — jamais skip auto
+                // Dernier recours : encore le MÊME titre (forceFresh), jamais skip auto
                 if (_state.value.buffering &&
                     _state.value.track?.id == trackId &&
-                    ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() &&
-                    !StreamPrefetcher.isStreamDown() &&
-                    !PlaybackService.Holder.isStreamRecovering(trackId)
+                    ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
                 ) {
                     AppLog.w(
                         "PlayerController",
-                        "buffer stuck → resolve (pas de skip) id=$trackId",
+                        "buffer stuck → rebind keep (pas de skip) id=$trackId",
                     )
+                    StreamPrefetcher.markStreamOk()
                     runCatching {
-                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                            level = "warn",
-                            kind = "android.player.load_recover",
-                            message = "buffer stuck → resolve keep id=$trackId",
-                            meta = mapOf(
-                                "trackId" to trackId,
-                                "title" to title,
-                                "artist" to artist,
-                                "positionMs" to _state.value.positionMs,
-                                "action" to "resolve_keep",
-                                "reason" to "buffer_stuck_last_resort",
-                            ),
-                            force = false,
+                        PlaybackService.Holder.service?.rebindCurrentStream(
+                            reason = "ui-buffer-stuck-last",
+                            forcePlay = true,
+                            retryN = 3,
+                            wipeCache = true,
                         )
-                    }
-                    runCatching {
-                        PlaybackService.Holder.service?.resolveCurrentKeep("ui-buffer-stuck-last")
                     }
                 }
             }

@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import type { IncomingHttpHeaders } from 'node:http';
 
 export type DeviceLoginStatus = 'pending' | 'approved' | 'consumed' | 'expired';
 
@@ -44,6 +45,23 @@ function isPrivateOrLocalUrl(url: string): boolean {
   }
 }
 
+const PUBLIC_HOSTS = new Set([
+  'plm.delhomme.ovh',
+  'ytmusic.delhomme.ovh',
+  'pue-la-merde.delhomme.ovh',
+  'ytmusic-preprod.delhomme.ovh',
+  'music.hubera.cloud',
+]);
+
+export function isPublicMusicHost(hostname: string): boolean {
+  const h = String(hostname || '').trim().toLowerCase();
+  if (!h) return false;
+  if (PUBLIC_HOSTS.has(h)) return true;
+  if (h === 'hubera.cloud' || h.endsWith('.hubera.cloud')) return true;
+  if (h.endsWith('.delhomme.ovh') && /^(plm|ytmusic|pue-la-merde)([.-]|$)/.test(h)) return true;
+  return false;
+}
+
 /** URL publique pour QR / liens (jamais une IP Docker / localhost). */
 function publicBase(): string {
   const candidates = [
@@ -52,6 +70,7 @@ function publicBase(): string {
     process.env.PUBLIC_APP_URL,
     process.env.PROD_APP_URL,
     process.env.APP_URL,
+    'https://music.hubera.cloud',
     'https://plm.delhomme.ovh',
   ]
     .map((x) => String(x || '').trim().replace(/\/$/, ''))
@@ -60,27 +79,36 @@ function publicBase(): string {
   for (const c of candidates) {
     if (!isPrivateOrLocalUrl(c)) return c;
   }
-  return 'https://plm.delhomme.ovh';
+  return 'https://music.hubera.cloud';
 }
 
-/** Origin de la requête si c’est un alias public connu — sinon canon PLM. */
+/** Origin de la requête si c’est un alias public connu (Hubera + historiques). */
 function resolvePublicOrigin(publicOrigin?: string): string {
-  const raw = String(publicOrigin || '').trim().replace(/\/$/, '')
+  const raw = String(publicOrigin || '').trim().replace(/\/$/, '');
   if (raw && !isPrivateOrLocalUrl(raw)) {
     try {
-      const h = new URL(raw).hostname.toLowerCase()
-      if (
-        h === 'plm.delhomme.ovh' ||
-        h === 'ytmusic.delhomme.ovh' ||
-        h === 'pue-la-merde.delhomme.ovh'
-      ) {
-        return raw
-      }
+      const h = new URL(raw).hostname.toLowerCase();
+      if (isPublicMusicHost(h)) return `https://${h}`;
     } catch {
       /* ignore */
     }
   }
-  return publicBase()
+  return publicBase();
+}
+
+/** Origin / Host du navigateur qui a demandé le QR. */
+export function publicOriginFromRequest(req: {
+  headers: IncomingHttpHeaders;
+  body?: { origin?: string };
+}): string | undefined {
+  const origin = String(req.headers.origin || req.body?.origin || '').trim();
+  const xf = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
+  const fromHost = xf && !isPrivateOrLocalUrl(`https://${xf}`) ? `https://${xf}` : '';
+  return origin || fromHost || undefined;
 }
 
 export function startDeviceLogin(publicOrigin?: string): {

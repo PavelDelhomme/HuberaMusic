@@ -1,4 +1,4 @@
-import { sendMail, getAppEnv, appUrl } from './mail.js';
+import { mailBrand, sendMail, getAppEnv, appUrl } from './mail.js';
 import { buildTextPdf } from './textPdf.js';
 import {
   buildIncidentReport,
@@ -272,7 +272,7 @@ export async function maybeAlertTelemetryError(ev: {
   const tracksHtml = formatTracksHtml(tracks);
 
   const fullDump = [
-    `PLM telemetry alert`,
+    `${mailBrand()} telemetry alert`,
     `id=${ev.id}`,
     `env=${env} level=${level} kind=${ev.kind}`,
     `device=${ev.deviceId || '—'} user=${ev.userId || '—'}`,
@@ -309,10 +309,10 @@ export async function maybeAlertTelemetryError(ev: {
       : tracks[0]
         ? ` · ${tracks[0].id}`
         : '';
-  const subject = `[PLM ${env}] ${level.toUpperCase()} · ${diagnosis.family} · ${ev.kind}${subjectTrack}`;
+  const subject = `[${mailBrand()} ${env}] ${level.toUpperCase()} · ${diagnosis.family} · ${ev.kind}${subjectTrack}`;
 
   const textSummary = [
-    `PLM · ${env} · ${level} · ${ev.kind}`,
+    `${mailBrand()} · ${env} · ${level} · ${ev.kind}`,
     `id=${ev.id}`,
     `device=${ev.deviceId || '—'}  user=${ev.userId || '—'}`,
     '',
@@ -339,7 +339,7 @@ export async function maybeAlertTelemetryError(ev: {
 
   const html = `
 <div style="font-family:system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.45;color:#111;max-width:720px">
-  <p style="margin:0 0 4px"><strong>PLM ${esc(env)}</strong>
+  <p style="margin:0 0 4px"><strong>${esc(mailBrand())} ${esc(env)}</strong>
     <span style="color:#666"> · ${esc(level)} · ${esc(ev.kind)} · ${esc(diagnosis.family)}</span></p>
   <p style="margin:0 0 16px;color:#444;font-size:13px">
     id=<code>${esc(ev.id)}</code><br/>
@@ -394,7 +394,7 @@ export async function maybeAlertTelemetryError(ev: {
   if (heavy || !ev.stack || logsRaw.length > 2_000) {
     try {
       const pdf = buildTextPdf({
-        title: `PLM ${env} · ${level} · ${ev.kind} · ${ev.id}`,
+        title: `${mailBrand()} ${env} · ${level} · ${ev.kind} · ${ev.id}`,
         sections: [
           {
             heading: 'Résumé',
@@ -543,7 +543,7 @@ export async function maybeAlertTelemetryDigest(opts: {
     console.error('[telemetry-alert] rapport digest KO', err);
   }
 
-  const subject = `[PLM ${env}] ${n} erreur${n > 1 ? 's' : ''} cumulée${n > 1 ? 's' : ''} hors-ligne`;
+  const subject = `[${mailBrand()} ${env}] ${n} erreur${n > 1 ? 's' : ''} cumulée${n > 1 ? 's' : ''} hors-ligne`;
   const text = [
     `Digest télémétrie (appareil hors-ligne puis reconnecté).`,
     `device=${opts.deviceId || '—'} user=${opts.userId || '—'}`,

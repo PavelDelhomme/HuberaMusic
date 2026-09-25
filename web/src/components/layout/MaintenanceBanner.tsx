@@ -46,7 +46,7 @@ export function MaintenanceBanner() {
       role="status"
       className="border-b border-amber-500/40 bg-amber-500/15 px-4 py-2 text-center text-sm text-amber-100"
     >
-      {maint.message || 'PLM est en maintenance — réessaie dans un instant.'}
+      {maint.message || 'MHC est en maintenance — réessaie dans un instant.'}
       {until ? <span className="text-amber-200/80"> · fin prévue ~{until}</span> : null}
     </div>
   );

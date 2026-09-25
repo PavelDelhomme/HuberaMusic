@@ -38,6 +38,9 @@ object BatterySaver {
 
     fun batteryPercent(): Int = batteryPct
 
+    /** Branché / pleine charge : on peut précharger plus loin sans vider la batterie. */
+    fun isCharging(): Boolean = charging
+
     fun start(context: Context) {
         if (started) return
         started = true
@@ -120,6 +123,8 @@ object BatterySaver {
     fun streamPrefetchAhead(normal: Int): Int {
         if (isActive()) return 1.coerceAtMost(normal)
         if (isSoft()) return (normal / 2).coerceAtLeast(1).coerceAtMost(normal)
+        // En charge : +2 titres (reste borné) — hors charge on garde le budget normal.
+        if (charging) return (normal + 1).coerceAtMost(3)
         return normal
     }
 

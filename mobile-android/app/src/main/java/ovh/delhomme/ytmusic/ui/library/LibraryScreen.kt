@@ -74,7 +74,6 @@ import ovh.delhomme.ytmusic.data.OfflineKeeper
 import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.Thumb
 import ovh.delhomme.ytmusic.data.TrackDto
-import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
 import ovh.delhomme.ytmusic.ui.components.TrackRow
@@ -146,21 +145,18 @@ fun LibraryScreen(
     }
     LaunchedEffect(lib?.songs?.size) {
         val songCount = lib?.songs?.size ?: 0
-        if (songCount < 8) return@LaunchedEffect
-        if (libraryPrefetchBlocked()) return@LaunchedEffect
-        val base = container.resolvedApiBase()
-        if (base.isBlank()) return@LaunchedEffect
-        delay(5_000)
-        if (StreamPrefetcher.isStreamDown() || libraryPrefetchBlocked()) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            val songs = lib?.songs.orEmpty().filter { it.isPlayable() && it.id.length == 11 }
-            if (songs.size < 8) return@withContext
-            val sample = songs.shuffled().take(12).map { it.id }
-            StreamPrefetcher.warmFormatsLight(base, sample, limit = 12)
-            if (!libraryPrefetchBlocked()) {
-                StreamPrefetcher.warmHeads3s(base, sample.take(4), limit = 4)
-            }
-        }
+        if (songCount < 1) return@LaunchedEffect
+        delay(400)
+        val azIds = lib?.songs.orEmpty()
+            .filter { it.isPlayable() && it.id.length == 11 }
+            .sortedBy { it.title.lowercase() }
+            .take(20)
+            .map { it.id }
+        val recentIds = lib?.songs.orEmpty()
+            .filter { it.isPlayable() && it.id.length == 11 }
+            .take(20)
+            .map { it.id }
+        container.libraryHeadPrefetcher.warmDisplayedList((azIds + recentIds).distinct())
     }
 
     // Sync live des DL locaux → filtre Téléchargés (sans republier 14k titres à chaque DL).
@@ -405,33 +401,16 @@ fun LibraryScreen(
                     }
                 }
                 val listState = rememberLazyListState()
-                // Fenêtre progressive (~220 puis +200) — scroll plus fluide sans composer 14k items
-                var windowLimit by remember(selected) {
-                    mutableIntStateOf(220.coerceAtMost(content.rows.size.coerceAtLeast(0)))
-                }
                 LaunchedEffect(selected) {
-                    windowLimit = 220.coerceAtMost(content.rows.size.coerceAtLeast(0))
                     listState.scrollToItem(0)
                 }
-                LaunchedEffect(content.rows.size) {
-                    if (content.rows.size <= 280) {
-                        windowLimit = content.rows.size
-                    } else if (windowLimit < 220) {
-                        windowLimit = 220.coerceAtMost(content.rows.size)
-                    }
-                }
-                LaunchedEffect(listState, content.rows.size, selected) {
-                    snapshotFlow {
-                        listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                    }
-                        .distinctUntilChanged()
-                        .collect { lastVisible ->
-                            val total = content.rows.size
-                            if (total <= 280) return@collect
-                            if (lastVisible >= windowLimit - 50 && windowLimit < total) {
-                                windowLimit = (windowLimit + 200).coerceAtMost(total)
-                            }
-                        }
+                LaunchedEffect(selected, content.playableQueue.take(20).map { it.id }) {
+                    val ids = content.playableQueue
+                        .filter { it.isPlayable() && it.id.length == 11 }
+                        .take(20)
+                        .map { it.id }
+                    if (ids.isEmpty()) return@LaunchedEffect
+                    container.libraryHeadPrefetcher.warmDisplayedList(ids)
                 }
                 LaunchedEffect(selected, content.playableQueue) {
                     var lastBoostAt = 0L
@@ -535,10 +514,14 @@ fun LibraryScreen(
                                     )
                                 }
                             }
-                            val rowsWindow =
-                                if (content.rows.size > 280) content.rows.take(windowLimit)
-                                else content.rows
-                            itemsIndexed(rowsWindow, key = { i, r -> "${selected.name}-${r.id}-$i" }) { _, row ->
+                            items(
+                                count = content.rows.size,
+                                key = { i ->
+                                    val r = content.rows[i]
+                                    "${selected.name}-${r.id}-$i"
+                                },
+                            ) { i ->
+                                val row = content.rows[i]
                                 TrackRow(
                                     track = row,
                                     onClick = {
@@ -578,16 +561,6 @@ fun LibraryScreen(
                                         }
                                     },
                                 )
-                            }
-                            if (content.rows.size > rowsWindow.size) {
-                                item {
-                                    Text(
-                                        "Affichés ${rowsWindow.size} / ${content.rows.size} — continue de scroller",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                    )
-                                }
                             }
                             item {
                                 Spacer(Modifier.height(12.dp))
@@ -1073,7 +1046,7 @@ private fun buildLibraryContent(
             headline = "Fichiers de l'appareil",
             rows = emptyList(),
             playableQueue = emptyList(),
-            emptyMessage = "Import téléphone bientôt. Utilise Téléchargements PLM pour l’instant.",
+            emptyMessage = "Import téléphone bientôt. Utilise Téléchargements pour l’instant.",
             comingSoon = null,
         )
     }

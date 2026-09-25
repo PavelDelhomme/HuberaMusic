@@ -35,11 +35,13 @@ class LibraryHeadPrefetcher(
             delay(START_DELAY_MS)
             // Têtes Aléatoire d’abord (ids en prefs) — avant le burst formats qui peut être long
             runCatching { warmServerShuffleHeads(force = true, warmClient = true) }
+            runCatching { warmServerListHeads(force = true) }
             runCatching { warmFormatsBurst() }
             runCatching { warmServerRecentHeads() }
             while (true) {
                 runCatching { tick(reason = "periodic") }
                 runCatching { warmServerShuffleHeads(force = false) }
+                runCatching { warmServerListHeads(force = false) }
                 runCatching { warmServerRecentHeads() }
                 delay(INTERVAL_MS)
             }
@@ -98,6 +100,48 @@ class LibraryHeadPrefetcher(
             StreamPrefetcher.warmHeads3s(base, ids.take(10), limit = 10)
         }
         AppLog.i("LibHeads", "shuffle-heads recent n=${ids.size} pool=${r.poolSize}")
+    }
+
+    /** A–Z / récents / aimés : 20 débuts sur le VPS + têtes téléphone. */
+    private suspend fun warmServerListHeads(force: Boolean) {
+        if (!NetworkMonitor.isOnline()) return
+        if (StreamPrefetcher.isStreamDown()) return
+        val now = System.currentTimeMillis()
+        if (!force && now - prefs.getLong(KEY_LIST_FETCH, 0L) < 4 * 60_000L) return
+        runCatching { container.ensureFreshToken() }
+        val az = runCatching { container.api.listHeads(warm = 1, scope = "az") }.getOrNull()?.ids.orEmpty()
+        val recent = runCatching { container.api.listHeads(warm = 1, scope = "recent") }.getOrNull()?.ids.orEmpty()
+        val liked = runCatching { container.api.listHeads(warm = 1, scope = "liked") }.getOrNull()?.ids.orEmpty()
+        val ids = (az + recent + liked).filter { it.length == 11 }.distinct()
+        if (ids.isEmpty()) return
+        prefs.edit().putLong(KEY_LIST_FETCH, now).apply()
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return
+        StreamPrefetcher.warmFormatsLight(base, ids.take(20), limit = 20)
+        StreamPrefetcher.warmHeads3s(base, ids.take(16), limit = 16)
+        AppLog.i("LibHeads", "list-heads az=${az.size} recent=${recent.size} liked=${liked.size}")
+    }
+
+    /**
+     * File affichée (Tout lire, album, artiste, singles) : VPS + téléphone en parallèle.
+     */
+    fun warmDisplayedList(ids: List<String>) {
+        val clean = ids.filter { it.length == 11 }.distinct().take(20)
+        if (clean.isEmpty()) return
+        boostVisible(clean)
+        scope.launch(Dispatchers.IO) {
+            if (!NetworkMonitor.isOnline()) return@launch
+            if (StreamPrefetcher.isStreamDown()) return@launch
+            runCatching { container.ensureFreshToken() }
+            runCatching { container.api.postListHeads(ListHeadsBody(clean)) }
+            val base = container.resolvedApiBase()
+            if (base.isBlank()) return@launch
+            StreamPrefetcher.warmFormatsLight(base, clean, limit = 20)
+            if (!PlaybackService.Holder.isPlaybackActiveSafe()) {
+                StreamPrefetcher.warmHeads3s(base, clean, limit = 16)
+            }
+            AppLog.i("LibHeads", "visible-list n=${clean.size}")
+        }
     }
 
     /** Ids serveur pour amorcer Aléatoire (null si créneau périmé / vide). */
@@ -241,10 +285,17 @@ class LibraryHeadPrefetcher(
             container.libraryRepo.ensureLoaded(force = false)
             container.libraryRepo.library.value
         }.getOrNull()
+        val azSongs = (lib?.songs.orEmpty() + lib?.liked.orEmpty())
+            .filter { it.id.length == 11 }
+            .sortedBy { it.title.lowercase() }
+            .map { it.id }
+            .distinct()
+            .take(20)
         if (lib == null) {
             val remote = runCatching { container.api.library() }.getOrNull()
-                ?: return pins.filter { it.length == 11 }
+                ?: return (pins.filter { it.length == 11 } + azSongs).distinct()
             return buildList {
+                addAll(azSongs)
                 addAll(pins)
                 addAll(remote.liked.orEmpty().map { it.id })
                 addAll(remote.songs.orEmpty().map { it.id })
@@ -254,7 +305,7 @@ class LibraryHeadPrefetcher(
                 .distinct()
         }
         return buildList {
-            // pins → liked → songs → history
+            addAll(azSongs)
             addAll(pins)
             addAll(lib.liked.map { it.id })
             addAll(lib.songs.map { it.id })
@@ -275,5 +326,6 @@ class LibraryHeadPrefetcher(
         private const val KEY_SHUFFLE_EXPIRES = "shuffle_head_expires"
         private const val KEY_SHUFFLE_FETCH = "shuffle_head_fetch"
         private const val KEY_RECENT_FETCH = "shuffle_recent_fetch"
+        private const val KEY_LIST_FETCH = "list_head_fetch"
     }
 }

@@ -60,6 +60,18 @@ data class ShuffleHeadsResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class ListHeadsResponse(
+    val ids: List<String> = emptyList(),
+    val scope: String? = null,
+    val headN: Int? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class ListHeadsBody(
+    val ids: List<String> = emptyList(),
+)
+
+@JsonClass(generateAdapter = false)
 data class LikeResponse(val liked: Boolean, val library: LibraryResponse? = null)
 
 @JsonClass(generateAdapter = false)
@@ -260,6 +272,36 @@ data class TimedLyricLine(
 }
 
 @JsonClass(generateAdapter = false)
+data class LyricSuggestionDto(
+    val title: String? = null,
+    val artist: String? = null,
+    val url: String? = null,
+    val source: String? = null,
+    val reason: String? = null,
+    val score: Int? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class LyricSearchUrlDto(
+    val label: String? = null,
+    val url: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class SaveLyricsBody(
+    val lyrics: String,
+    val title: String? = null,
+    val artist: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class LyricsFeedbackBody(
+    val vote: String,
+    val title: String? = null,
+    val artist: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class LyricsResponse(
     val lyrics: String? = null,
     val timed: List<TimedLyricLine>? = null,
@@ -270,6 +312,8 @@ data class LyricsResponse(
     val personalOffsetMs: Long? = null,
     val segments: List<LyricSegmentDto>? = null,
     val segmentsFromUser: Boolean? = null,
+    val suggestions: List<LyricSuggestionDto>? = null,
+    val searchUrls: List<LyricSearchUrlDto>? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -632,7 +676,23 @@ interface YtMusicApi {
     suspend fun upNext(@Path("id") id: String): TracksResponse
 
     @GET("api/track/{id}/lyrics")
-    suspend fun lyrics(@Path("id") id: String): LyricsResponse
+    suspend fun lyrics(
+        @Path("id") id: String,
+        @Query("title") title: String? = null,
+        @Query("artist") artist: String? = null,
+    ): LyricsResponse
+
+    @POST("api/track/{id}/lyrics")
+    suspend fun saveLyrics(
+        @Path("id") id: String,
+        @Body body: SaveLyricsBody,
+    ): LyricsResponse
+
+    @POST("api/track/{id}/lyrics/feedback")
+    suspend fun lyricsFeedback(
+        @Path("id") id: String,
+        @Body body: LyricsFeedbackBody,
+    ): LyricsResponse
 
     @GET("api/lyric-offsets")
     suspend fun lyricOffsets(): LyricOffsetsResponse
@@ -657,6 +717,15 @@ interface YtMusicApi {
         @Query("warm") warm: Int? = 1,
         @Query("scope") scope: String? = null,
     ): ShuffleHeadsResponse
+
+    @GET("api/library/list-heads")
+    suspend fun listHeads(
+        @Query("warm") warm: Int? = 1,
+        @Query("scope") scope: String? = null,
+    ): ListHeadsResponse
+
+    @POST("api/library/list-heads")
+    suspend fun postListHeads(@Body body: ListHeadsBody): ListHeadsResponse
 
     @POST("api/library/like")
     suspend fun like(@Body track: TrackDto): LikeResponse

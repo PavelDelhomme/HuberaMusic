@@ -57,7 +57,7 @@ export function SyncedLyrics({
 }: {
   text: string | null;
   timed?: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
+  source?: string | null;
 }) {
   const audioEl = usePlayer((s) => s.audioEl);
   const isPlaying = usePlayer((s) => s.isPlaying);
@@ -436,10 +436,17 @@ export function NowPlaying({
   const [tab, setTab] = useState<NowPlayingTab>(initialTab);
   const [lyricsText, setLyricsText] = useState<string | null>(null);
   const [lyricsTimed, setLyricsTimed] = useState<{ startMs: number; text: string }[] | null>(null);
-  const [lyricsSource, setLyricsSource] = useState<
-    'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null
-  >(null);
+  const [lyricsSource, setLyricsSource] = useState<string | null>(null);
+  const [lyricsSuggestions, setLyricsSuggestions] = useState<
+    { title: string; artist: string; url: string; reason: string }[]
+  >([]);
+  const [lyricsSearchUrls, setLyricsSearchUrls] = useState<{ label: string; url: string }[]>([]);
+  const [lyricsDraft, setLyricsDraft] = useState('');
+  const [lyricsSaving, setLyricsSaving] = useState(false);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [lyricsNonce, setLyricsNonce] = useState(0);
+  const [lyricsVoteBusy, setLyricsVoteBusy] = useState(false);
+  const [lyricsVoteHint, setLyricsVoteHint] = useState<string | null>(null);
   const [queueVisible, setQueueVisible] = useState(QUEUE_PAGE);
   const [similarVisible, setSimilarVisible] = useState(10);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -518,9 +525,16 @@ export function NowPlaying({
       setLyricsText(r.lyrics || null);
       setLyricsTimed(r.timed || null);
       setLyricsSource(r.source ?? null);
+      setLyricsSuggestions(r.suggestions || []);
+      setLyricsSearchUrls(r.searchUrls || []);
+    };
+    const artist = artistNames(current);
+    const hints = {
+      title: current.title,
+      artist: artist !== 'Artiste' ? artist : undefined,
     };
     void api
-      .lyrics(current.id)
+      .lyrics(current.id, hints)
       .then(async (r) => {
         if (cancelled) return;
         apply(r);
@@ -528,7 +542,7 @@ export function NowPlaying({
         if (!r.lyrics) {
           await new Promise((res) => setTimeout(res, 500));
           if (cancelled) return;
-          const retry = await api.lyrics(current.id).catch(() => null);
+          const retry = await api.lyrics(current.id, hints).catch(() => null);
           if (retry?.lyrics) apply(retry);
         }
       })
@@ -544,7 +558,7 @@ export function NowPlaying({
     return () => {
       cancelled = true;
     };
-  }, [open, tab, current?.id]);
+  }, [open, tab, current?.id, lyricsNonce]);
 
   // Mode vidéo : son du clip ; affiche tout de suite le même ID (pas d’attente resolve).
   useEffect(() => {
@@ -1097,7 +1111,156 @@ export function NowPlaying({
                 {lyricsLoading ? (
                   <div className="px-3 py-5 text-sm text-yt-muted">Chargement des paroles…</div>
                 ) : (
-                  <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
+                  <>
+                    <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-2 px-2">
+                      <button
+                        type="button"
+                        disabled={lyricsVoteBusy || !current?.id}
+                        onClick={() => {
+                          if (!current?.id) return;
+                          const hints = {
+                            title: current.title,
+                            artist: artistNames(current) !== 'Artiste' ? artistNames(current) : undefined,
+                          };
+                          setLyricsVoteBusy(true);
+                          setLyricsVoteHint(null);
+                          void api
+                            .lyricsFeedback(current.id, 'correct', hints)
+                            .then(() => setLyricsVoteHint('Paroles confirmées pour tout le monde'))
+                            .catch(() => setLyricsVoteHint('Impossible d’enregistrer le vote'))
+                            .finally(() => setLyricsVoteBusy(false));
+                        }}
+                        className="rounded-full border border-emerald-700/60 px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-40"
+                      >
+                        Bonnes paroles
+                      </button>
+                      <button
+                        type="button"
+                        disabled={lyricsVoteBusy || !current?.id}
+                        onClick={() => {
+                          if (!current?.id) return;
+                          const hints = {
+                            title: current.title,
+                            artist: artistNames(current) !== 'Artiste' ? artistNames(current) : undefined,
+                          };
+                          setLyricsVoteBusy(true);
+                          setLyricsVoteHint('Recherche de nouvelles paroles…');
+                          void api
+                            .lyricsFeedback(current.id, 'wrong', hints)
+                            .then((r) => {
+                              setLyricsText(r.lyrics || null);
+                              setLyricsTimed(r.timed || null);
+                              setLyricsSource(r.source ?? null);
+                              setLyricsNonce((n) => n + 1);
+                              setLyricsVoteHint(
+                                r.lyrics
+                                  ? 'Nouvelles paroles chargées (tous les utilisateurs)'
+                                  : 'Aucune meilleure source pour l’instant',
+                              );
+                            })
+                            .catch(() => setLyricsVoteHint('Recherche impossible pour le moment'))
+                            .finally(() => setLyricsVoteBusy(false));
+                        }}
+                        className="rounded-full border border-amber-700/60 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900/30 disabled:opacity-40"
+                      >
+                        Mauvaises paroles
+                      </button>
+                    </div>
+                    {lyricsVoteHint && (
+                      <p className="mt-1 px-2 text-center text-[11px] text-yt-muted">{lyricsVoteHint}</p>
+                    )}
+                    {!lyricsText && (
+                      <div className="mt-3 space-y-3 px-2">
+                        {lyricsSuggestions.length > 0 && (
+                          <div className="space-y-1.5">
+                            <p className="text-center text-[11px] uppercase tracking-wide text-yt-muted">
+                              Propositions proches
+                            </p>
+                            {lyricsSuggestions.map((s) => (
+                              <a
+                                key={s.url}
+                                href={s.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded-lg border border-yt-border px-3 py-2 text-xs hover:bg-white/10"
+                              >
+                                <span className="font-medium text-white">
+                                  {s.title}
+                                  {s.artist ? ` — ${s.artist}` : ''}
+                                </span>
+                                <span className="mt-0.5 block text-yt-muted">{s.reason}</span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {(lyricsSearchUrls.length
+                            ? lyricsSearchUrls
+                            : [
+                                {
+                                  label: 'Genius',
+                                  url: `https://genius.com/search?q=${encodeURIComponent(
+                                    [artistNames(current) !== 'Artiste' ? artistNames(current) : '', current.title]
+                                      .filter(Boolean)
+                                      .join(' '),
+                                  )}`,
+                                },
+                              ]
+                          ).map((l) => (
+                            <a
+                              key={l.url}
+                              href={l.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-full border border-yt-border px-3 py-1.5 text-xs text-yt-muted hover:bg-white/10 hover:text-white"
+                            >
+                              {l.label}
+                            </a>
+                          ))}
+                        </div>
+                        <form
+                          className="space-y-2"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            if (!current?.id || lyricsSaving) return;
+                            const draft = lyricsDraft.trim();
+                            if (draft.length < 40) return;
+                            setLyricsSaving(true);
+                            const artist = artistNames(current);
+                            void api
+                              .saveLyrics(current.id, draft, {
+                                title: current.title,
+                                artist: artist !== 'Artiste' ? artist : undefined,
+                              })
+                              .then((r) => {
+                                setLyricsText(r.lyrics || draft);
+                                setLyricsTimed(r.timed || null);
+                                setLyricsSource(r.source || 'user');
+                                setLyricsDraft('');
+                                setLyricsSuggestions([]);
+                              })
+                              .finally(() => setLyricsSaving(false));
+                          }}
+                        >
+                          <textarea
+                            value={lyricsDraft}
+                            onChange={(e) => setLyricsDraft(e.target.value)}
+                            rows={5}
+                            placeholder="Coller les paroles ici si tu les as (partagées pour tout le monde)"
+                            className="w-full resize-y rounded-lg border border-yt-border bg-black/30 px-3 py-2 text-xs text-white placeholder:text-yt-muted"
+                          />
+                          <button
+                            type="submit"
+                            disabled={lyricsSaving || lyricsDraft.trim().length < 40}
+                            className="mx-auto block rounded-full border border-yt-border px-3 py-1.5 text-xs text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-40"
+                          >
+                            {lyricsSaving ? 'Enregistrement…' : 'Enregistrer ces paroles'}
+                          </button>
+                        </form>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -1124,7 +1287,7 @@ export function NowPlaying({
                     <p className="px-2 text-sm text-yt-muted">Aucune suggestion pour l’instant.</p>
                   )}
                   {(relatedSeedId === current?.id ? related : []).slice(0, similarVisible).map((t) => (
-                    <TrackRow key={`rel-${t.id}`} track={t} queue={related} hideIndex />
+                    <TrackRow key={`rel-${t.id}`} track={t} queue={related} hideIndex prefetch />
                   ))}
                   {relatedSeedId === current?.id && similarVisible < related.length && (
                     <button

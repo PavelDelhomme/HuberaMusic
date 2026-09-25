@@ -1,6 +1,418 @@
 {
-  "updatedAt": "2026-09-18",
+  "updatedAt": "2026-09-25",
   "versions": [
+    {
+      "version": "1.3.306",
+      "date": "2026-09-25",
+      "time": "18:45",
+      "at": "2026-09-25T18:45:00+02:00",
+      "title": "Froid Android : plus de 503 JSON, live ≠ warm",
+      "notes": [
+        "Exo ne reçoit plus un JSON 503/502 (Source error → skip). On attend le préfixe AAC sur disque.",
+        "getAudioFormat live n’hérite plus d’un inflight warm déjà presque mort.",
+        "Grace BUFFERING allongée sur un titre jamais entendu. Overlay -r, pas de forceUpdate.",
+        "Le warm biblio s’efface si une lecture est en cours."
+      ]
+    },
+    {
+      "version": "1.3.303",
+      "date": "2026-09-25",
+      "time": "09:14",
+      "at": "2026-09-25T09:14:00+02:00",
+      "title": "Retry froid 0,9 s si le DL a déjà commencé",
+      "notes": [
+        "Le 2e Range Android n’attend plus 4 s : 503 immédiat ou préfixe."
+      ]
+    },
+    {
+      "version": "1.3.302",
+      "date": "2026-09-25",
+      "time": "09:12",
+      "at": "2026-09-25T09:12:00+02:00",
+      "title": "Skip froid : 503 et réessai, plus le vide",
+      "notes": [
+        "Si le préfixe AAC n’est pas là en 4 s, l’API répond 503 Retry-After 1 s (pas 410). Exo réessaie, le téléchargement continue.",
+        "Innertube itag 140 et yt-dlp partent en parallèle (1.3.301)."
+      ]
+    },
+    {
+      "version": "1.3.301",
+      "date": "2026-09-25",
+      "time": "09:05",
+      "at": "2026-09-25T09:05:00+02:00",
+      "title": "Froid AAC : Innertube 140 et yt-dlp en même temps",
+      "notes": [
+        "Plus d’attendre qu’Innertube échoue 5 s avant yt-dlp : les deux partent ensemble, itag 140 (M4A).",
+        "Le téléphone attend jusqu’à 12 s le préfixe jouable — un skip trop tôt ne part plus dans le vide."
+      ]
+    },
+    {
+      "version": "1.3.300",
+      "date": "2026-09-25",
+      "time": "08:36",
+      "at": "2026-09-25T08:36:00+02:00",
+      "title": "AAC progressif, plus de DASH que le Samsung refuse",
+      "notes": [
+        "Le hedge Innertube ANDROID écrivait ftyp=dash — ExoPlayer reste en BUFFERING.",
+        "On ne garde que itag 140/139/141 (M4A isom). Sinon yt-dlp sur le même proxy."
+      ]
+    },
+    {
+      "version": "1.3.299",
+      "date": "2026-09-25",
+      "time": "08:32",
+      "at": "2026-09-25T08:32:00+02:00",
+      "title": "Préfixe conservé, biblio en pause pendant l’écoute",
+      "notes": [
+        "yt-dlp ne passe plus par-dessus un hedge 256 Ko (le fichier disparaissait, BUFFERING).",
+        "Pendant PLAYING, le balayage biblio s’arrête — les proxies servent le titre en cours."
+      ]
+    },
+    {
+      "version": "1.3.298",
+      "date": "2026-09-25",
+      "time": "08:28",
+      "at": "2026-09-25T08:28:00+02:00",
+      "title": "Ne plus jeter le préfixe 256 Ko",
+      "notes": [
+        "Le hedge écrivait 256 Ko puis une autre requête le supprimait (seuil 768 Ko) — le Samsung restait en BUFFERING.",
+        "yt-dlp ne gomme plus un préfixe déjà jouable."
+      ]
+    },
+    {
+      "version": "1.3.297",
+      "date": "2026-09-25",
+      "time": "08:25",
+      "at": "2026-09-25T08:25:00+02:00",
+      "title": "Plus de 410 après un hedge réussi + rotation vraie",
+      "notes": [
+        "Un préfixe lent n’ouvre plus le circuit 410 — c’est ça qui laissait le Samsung en BUFFERING après un skip.",
+        "Dès qu’un proxy gagne le hedge, le circuit de cet id est levé.",
+        "Le pool ne se réduit plus au premier IP gagnant : au moins 12 proxies, cooldown 25 s entre deux résolutions."
+      ]
+    },
+    {
+      "version": "1.3.296",
+      "date": "2026-09-25",
+      "time": "08:20",
+      "at": "2026-09-25T08:20:00+02:00",
+      "title": "Rotation des proxies + swarm qui finit le fichier",
+      "notes": [
+        "Ce n’est plus toujours le même proxy qui parle à YouTube — rotation dans le pool chaud.",
+        "4 Ranges en parallèle (8 saturait l’IP vers 1 Mo). Les bouts ratés sont retentés."
+      ]
+    },
+    {
+      "version": "1.3.295",
+      "date": "2026-09-25",
+      "time": "08:05",
+      "at": "2026-09-25T08:05:00+02:00",
+      "title": "8 bouts en parallèle sur une seule URL",
+      "notes": [
+        "Plus de 3 résolutions YouTube : le 1er proxy qui répond gagne, l’autre s’arrête.",
+        "Dès les en-têtes HTTP, 8 Ranges partent ensemble sur la même URL (même proxy) — le chargement est vraiment en parallèle.",
+        "Le téléphone peut démarrer à 256 Ko pendant que le reste du morceau se remplit."
+      ]
+    },
+    {
+      "version": "1.3.294",
+      "date": "2026-09-25",
+      "time": "07:30",
+      "at": "2026-09-25T07:30:00+02:00",
+      "title": "Plusieurs utilisateurs, bouts en parallèle, biblio préchauffée",
+      "notes": [
+        "Même morceau : chaque proxy a sa propre URL, puis télécharge un autre bout — pas 3 fois la même URL (403).",
+        "Innertube passe par le proxy (plus besoin d’attendre yt-dlp pour démarrer).",
+        "Jusqu’à 10 yt-dlp dont 6 pour l’écoute live : deux téléphones en même temps ne se bloquent plus.",
+        "Toute la biblio se préchauffe en débuts 256 Ko partagés (tous les comptes)."
+      ]
+    },
+    {
+      "version": "1.3.293",
+      "date": "2026-09-24",
+      "time": "23:05",
+      "at": "2026-09-24T23:05:00+02:00",
+      "title": "Plus d’attente 10 s au milieu d’un titre",
+      "notes": [
+        "L’attente du début 256 Ko ne s’applique plus qu’au tout début — plus de BUFFERING bloqué à 3 min.",
+        "Si YouTube ne répond pas en 6 s, le titre est sauté au lieu de retenter 10 s en boucle."
+      ]
+    },
+    {
+      "version": "1.3.292",
+      "date": "2026-09-24",
+      "time": "21:50",
+      "at": "2026-09-24T21:50:00+02:00",
+      "title": "Le début 512 Ko n’est plus pris pour tout le morceau",
+      "notes": [
+        "Le premier bloc (512 Ko) n’est plus annoncé comme fichier complet — le reste continue via le même proxy.",
+        "Sur Android, on attend jusqu’à 10 s le début disque avant de laisser le lecteur skip.",
+        "Course proxy : 2 jambes (pas 3) pour ne plus saturer YouTube."
+      ]
+    },
+    {
+      "version": "1.3.291",
+      "date": "2026-09-24",
+      "time": "21:40",
+      "at": "2026-09-24T21:40:00+02:00",
+      "title": "Tout lire : 20 premiers débuts toujours au chaud",
+      "notes": [
+        "Les 20 premiers titres d’une liste (A–Z, album, artiste, singles) sont préchargés sur le VPS et le téléphone dès qu’ils s’affichent.",
+        "Seuls les débuts (512 Ko) restent en mémoire par compte, mis à jour régulièrement — le reste se charge via le même proxy avant le trou.",
+        "L’aléatoire garde son batch rotatif ; Tout lire ne part plus à froid."
+      ]
+    },
+    {
+      "version": "1.3.290",
+      "date": "2026-09-24",
+      "time": "21:20",
+      "at": "2026-09-24T21:20:00+02:00",
+      "title": "L’écoute passe devant le préchargement",
+      "notes": [
+        "Les slots YouTube de l’écoute ne sont plus pris par le préchargement.",
+        "Pendant que ça joue, on ne précharge plus les recherches — seulement le titre suivant."
+      ]
+    },
+    {
+      "version": "1.3.289",
+      "date": "2026-09-24",
+      "time": "20:45",
+      "at": "2026-09-24T20:45:00+02:00",
+      "title": "Premier chunk 512 Ko tout de suite, plus de file unique",
+      "notes": [
+        "Le gagnant de la course écrit 512 Ko sur le disque — plus un probe vide bytes=0-0.",
+        "Les morceaux suivants arrivent en parallèle sur le même proxy (comme un torrent, une seule IP).",
+        "Un titre froid n’attend plus que le titre d’avant ait fini YouTube."
+      ]
+    },
+    {
+      "version": "1.3.288",
+      "date": "2026-09-24",
+      "time": "20:25",
+      "at": "2026-09-24T20:25:00+02:00",
+      "title": "Hedge 5 s, search-warm remplacé, atlas durée client",
+      "notes": [
+        "Titre jamais écouté : 3e proxy à 5 s si les deux premiers n’ont pas encore de 206.",
+        "Une nouvelle recherche annule le préchargement du 1er hit précédent (fichier < 256 Ko seulement).",
+        "La durée envoyée par le téléphone est enregistrée dans l’atlas (moins de mauvais remix)."
+      ]
+    },
+    {
+      "version": "1.3.287",
+      "date": "2026-09-24",
+      "time": "19:50",
+      "at": "2026-09-24T19:50:00+02:00",
+      "title": "Hot pool persisté, skip avorté, atlas client, hedge 2,5 s",
+      "notes": [
+        "Les meilleurs proxies googlevideo (HTTP 206) sont sauvés dans hot_pool.json.",
+        "Un skip coupe seulement ta résolution YouTube, pas le fichier déjà en cache pour les autres.",
+        "Si le même morceau existe déjà sur le VPS (titre + artiste + durée), lecture immédiate.",
+        "Titre jamais écouté : course de 2 proxies (0 s / 2,5 s), timeout 12 s, même IP pour tout le fichier."
+      ]
+    },
+    {
+      "version": "1.3.281",
+      "date": "2026-09-23",
+      "time": "14:05",
+      "at": "2026-09-23T14:05:00+02:00",
+      "title": "Galactic et titres morts : skip en quelques secondes",
+      "notes": [
+        "Skip tampon Android ~6 s (plus 7×16 s).",
+        "Circuit format YouTube saturé → 410 immédiat.",
+        "PC maison offline = normal."
+      ]
+    },
+    {
+      "version": "1.3.279",
+      "date": "2026-09-23",
+      "time": "13:20",
+      "at": "2026-09-23T13:20:00+02:00",
+      "title": "Le titre suivant s’écrit tout de suite sur le VPS",
+      "notes": [
+        "Le .m4a grossit pendant le téléchargement (plus de fichier caché).",
+        "Une seule URL YouTube à la fois (8 s).",
+        "PC maison offline = normal."
+      ]
+    },
+    {
+      "version": "1.3.278",
+      "date": "2026-09-22",
+      "time": "20:05",
+      "at": "2026-09-22T20:05:00+02:00",
+      "title": "Pool proxies stable (plus de 502 en boucle)",
+      "notes": [
+        "Les listes de proxies publics ne se relancent plus toutes les 8 s.",
+        "Source morte proxy-list.download (502) retirée.",
+        "PC maison offline = normal. Hubera ID demandé, login local conservé."
+      ]
+    },
+    {
+      "version": "1.3.277",
+      "date": "2026-09-22",
+      "time": "19:00",
+      "at": "2026-09-22T19:00:00+02:00",
+      "title": "Plus de deadline swarm + pause écran",
+      "notes": [
+        "Swarm uniquement si l’URL est déjà en mémoire — plus de getAudioFormat 16 s.",
+        "PC maison offline = normal : audio = VPS + proxies gratuits + cache disque."
+      ]
+    },
+    {
+      "version": "1.3.276",
+      "date": "2026-09-21",
+      "time": "15:50",
+      "at": "2026-09-21T15:50:00+02:00",
+      "title": "Flux qui démarre même sans relais maison",
+      "notes": [
+        "Si le relais audio renvoie un fichier vide, on change de proxy tout de suite au lieu d’attendre",
+        "La résolution d’un titre n’avale plus tout le délai — le lecteur reçoit des octets plus tôt",
+        "Paroles : Genius / sites lyrics aussi via proxy, plus Textyl / ChartLyrics, et on mémorise ce qui a marché"
+      ]
+    },
+    {
+      "version": "1.3.275",
+      "date": "2026-09-21",
+      "time": "15:35",
+      "at": "2026-09-21T15:35:00+02:00",
+      "title": "Flux qui charge vraiment + nom Music",
+      "notes": [
+        "Rebind sans vider le cache : plus de boucle « Chargement du flux… » sur Samsung / Blackview",
+        "Icône lanceur : Music (Preprod / Dev), pas un pavé Hubera Music",
+        "Paroles : catalogue Spotify/Deezer/Apple + LRCLIB élargi"
+      ]
+    },
+    {
+      "version": "1.3.274",
+      "date": "2026-09-21",
+      "title": "APK à jour + paroles via catalogue Spotify",
+      "notes": [
+        "L’app mobile et le serveur affichent la même version — plus d’APK plus vieille que le téléphone",
+        "Paroles : on cherche aussi le titre sur Spotify / Deezer / Apple pour coller le bon morceau",
+        "Si le catalogue n’a pas le texte : propositions + collage, partagé pour tout le monde"
+      ]
+    },
+    {
+      "version": "1.3.273",
+      "date": "2026-09-21",
+      "title": "Meilleures paroles, sinon propositions + collage",
+      "notes": [
+        "Le serveur choisit le meilleur texte (Genius, lyrics.ovh, Musixmatch, pages web)",
+        "Si rien ne correspond au titre exact : propositions + liens Genius / Google / Musixmatch",
+        "Tu peux coller les paroles : elles sont partagées compressées pour tous les comptes"
+      ]
+    },
+    {
+      "version": "1.3.272",
+      "date": "2026-09-21",
+      "title": "Paroles Genius partagées + flux déjà prêts",
+      "notes": [
+        "Paroles trouvées une fois (Genius / LRCLIB) : stockées compressées pour tous les comptes",
+        "InTheLight / ABCD ADHD : plus confondu avec le tube ADHD, slugs Genius In The Light + ADAH",
+        "Les .m4a déjà complets sur le serveur sont indexés et resservis sans re-télécharger"
+      ]
+    },
+    {
+      "version": "1.3.271",
+      "date": "2026-09-21",
+      "title": "Tout lire 14k fluide, suivants préchargés, vrais albums",
+      "notes": [
+        "Bibliothèque mobile : liste virtualisée (pas de gel Tout lire / 14k titres)",
+        "File limitée en mémoire (400) — la suite se charge au fil de l’écoute",
+        "Le titre suivant a ~20 s de tête, un seul flux à la fois (plus de rush proxy)",
+        "Album YouTube KO : on reconstitue les titres depuis ta bibliothèque"
+      ]
+    },
+    {
+      "version": "1.3.270",
+      "date": "2026-09-21",
+      "title": "Plus de coupure mid-titre ni de remplacement paroles",
+      "notes": [
+        "Un timeout proxy ne remplace plus le morceau par une autre vidéo (paroles / cover)",
+        "On ne change d’identifiant que si YouTube dit vraiment que la vidéo est morte",
+        "Les titres suivants restent le même flux, sans saut au milieu",
+        "Si le relais maison est coupé, on résout d’abord via Innertube (pas yt-dlp seul)"
+      ]
+    },
+    {
+      "version": "1.3.269",
+      "date": "2026-09-21",
+      "title": "Le titre en cours se résout, plus un toast puis skip",
+      "notes": [
+        "Chargement long : on retente le même titre (proxy frais), plus « Serveur audio temporairement indisponible » au bout de 2 s",
+        "Un 502 transitoire ne fait plus passer au suivant",
+        "Le serveur ne lance plus de téléchargement / remplacement pendant que tu attends le flux"
+      ]
+    },
+    {
+      "version": "1.3.268",
+      "date": "2026-09-21",
+      "title": "Reprise du titre en cours, pas un saut au suivant",
+      "notes": [
+        "Si tu fermes l’app pendant le premier chargement, à la réouverture c’est le même titre qui est rechauffé (URL + flux)",
+        "On ne passe plus au suivant juste parce que le suivant était déjà en cache",
+        "Fin à 0 s sur un titre jamais écouté = nouvel essai, pas un skip"
+      ]
+    },
+    {
+      "version": "1.3.267",
+      "date": "2026-09-20",
+      "title": "Enchaînement aléatoire sans chargement bloqué",
+      "notes": [
+        "Fin d’un titre en aléatoire : le suivant est celui déjà préchargé (plus de tirage au sort à froid)",
+        "Aléatoire : préchargement immédiat de la nouvelle suite (+1…+6)",
+        "Tête du titre suivant plus large, surtout en charge, pour éviter « Chargement du flux… »",
+        "Hors charge / économiseur : prefetch allégé pour la batterie"
+      ]
+    },
+    {
+      "version": "1.3.266",
+      "date": "2026-09-20",
+      "title": "Bibliothèque fluide (file 400, listes virtualisées)",
+      "notes": [
+        "Tout lire / Aléatoire : file limitée à 400 titres pour rester fluide",
+        "Albums, playlists, artistes, mixes : listes longues sans geler le défilement",
+        "Connexion : un seul rafraîchissement de la bibliothèque"
+      ]
+    },
+    {
+      "version": "1.3.262",
+      "date": "2026-09-20",
+      "title": "Paroles Genius : le bon titre",
+      "notes": [
+        "Recherche de paroles avec l’artiste et le titre en lecture (ex. InTheLight — ABCD ADAH), plus le titre seul",
+        "Un tube populaire au nom proche (ADHD) n’est plus pris à la place du morceau en cours",
+        "Le bouton Chercher sur Genius ouvre artiste + titre, sur le web comme sur Android"
+      ]
+    },
+    {
+      "version": "1.3.261",
+      "date": "2026-09-20",
+      "title": "MHC + Accès rapide web",
+      "notes": [
+        "PLM s’appelle désormais MHC (Music Hubera Cloud). Hubera Music reste le nom long",
+        "Identité manifeste : cloud.hubera.music — le package Android ovh.delhomme.ytmusic ne change pas (comptes conservés)",
+        "Accès rapide web : boutons Tout lire et Aléatoire comme sur Android"
+      ]
+    },
+    {
+      "version": "1.3.260",
+      "date": "2026-09-20",
+      "title": "Hubera Music + signaler un problème",
+      "notes": [
+        "Nom affiché : Hubera Music partout (icône, accueil, notifs)",
+        "Compte → Signaler un problème : envoie un journal de l’appareil",
+        "Le package Android reste le même : tes comptes ne bougent pas"
+      ]
+    },
+    {
+      "version": "1.3.259",
+      "date": "2026-09-20",
+      "title": "QR connexion : music.hubera.cloud",
+      "notes": [
+        "Le scan QR reconnaît music.hubera.cloud (plus seulement PLM)",
+        "Cookies / CORS Hubera pour connecter un navigateur depuis l’app"
+      ]
+    },
     {
       "version": "1.3.258",
       "date": "2026-09-18",

@@ -67,7 +67,7 @@ object TelemetryReporter {
                         "stack" to effectiveStack,
                         "deviceId" to container.deviceId,
                         "userAgent" to (
-                            "PLM-Android/${BuildConfig.VERSION_NAME} " +
+                            "HuberaMusic-Android/${BuildConfig.VERSION_NAME} " +
                                 "(${Build.MANUFACTURER} ${Build.MODEL}; sdk=${Build.VERSION.SDK_INT})"
                             ),
                         "url" to "android://${BuildConfig.APPLICATION_ID}",
@@ -138,6 +138,32 @@ object TelemetryReporter {
         } else {
             scope.launch { work() }
         }
+    }
+
+    /** Signalement depuis Compte : dump logs + note utilisateur → /api/telemetry. */
+    fun reportUserProblem(userNote: String?) {
+        val note = userNote?.trim().orEmpty()
+        AppLog.i("user-report", "manual account note=${note.take(200)}")
+        report(
+            level = "error",
+            kind = "android.user_report",
+            message = buildString {
+                append("Signalement manuel (Compte)")
+                if (note.isNotBlank()) {
+                    append('\n')
+                    append(note)
+                }
+            },
+            stack = AppLog.dumpForSupport(90_000),
+            meta = mapOf(
+                "manual" to true,
+                "source" to "account",
+                "userNote" to note,
+                "breadcrumbs" to AppLog.breadcrumbSnapshot(),
+            ),
+            force = true,
+            blockingMs = 12_000L,
+        )
     }
 
     fun reportCrash(t: Throwable, fatal: Boolean) {

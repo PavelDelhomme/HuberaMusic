@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">PLM</string>
-    <!-- Nom complet projet : docs/PLM.md — pas affiché en UI principale -->
-    <string name="app_name_full" translatable="false">PueLaMerde</string>
-    <string name="playback_channel">Lecture PLM</string>
+    <string name="app_name">Music</string>
+    <string name="app_short_name">MHC</string>
+    <!-- Identité publique : cloud.hubera.music — applicationId inchangé (comptes). Ancien nom UI : PLM -->
+    <string name="app_name_full" translatable="false">MHC — Music Hubera Cloud</string>
+    <string name="app_identity" translatable="false">cloud.hubera.music</string>
+    <string name="playback_channel">Lecture Music</string>
     <string name="playback_channel_name">Lecture en cours</string>
 </resources>

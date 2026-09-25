@@ -173,16 +173,16 @@ export function ensurePlayableQueueAhead(
 ): void {
   const uniq = [
     ...new Set(ids.filter((id) => /^[a-zA-Z0-9_-]{11}$/.test(id))),
-  ].slice(0, 12);
+  ].slice(0, 4);
   if (!uniq.length) return;
   enqueueLikesDiskWarm(uniq);
   enqueueStreamWarm(uniq, opts?.userId);
-  // Kick async ensure pour le +1 (budget court) — le reste en file disk.
+  // Un seul ensure bloquant (le +1). Les autres : file disk, pas de getAudioFormat parallèle.
   const next = uniq[0];
   if (next) {
     void ensurePlayableOnDisk(next, {
       userId: opts?.userId,
-      waitMs: 20_000,
+      waitMs: 8_000,
       preferProxies: true,
     });
   }

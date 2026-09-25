@@ -70,7 +70,7 @@ class AppContainer(context: Context) {
                 runCatching {
                     val req = okhttp3.Request.Builder()
                         .url(warmStreamUrl(id))
-                        .header("User-Agent", "PLM-Android")
+                        .header("User-Agent", "HuberaMusic-Android")
                         .header("X-YTM-Client", "android")
                         .get()
                         .build()

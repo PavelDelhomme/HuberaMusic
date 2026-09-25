@@ -32,7 +32,10 @@ import androidx.compose.ui.unit.dp
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HelpLimitsScreen(onBack: () -> Unit) {
+fun HelpLimitsScreen(
+    onBack: () -> Unit,
+    huberaMessage: String? = null,
+) {
     BackHandler(onBack = onBack)
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -57,11 +60,21 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item {
                 Text(
                     "Lis cette page une fois — elle explique pourquoi certains titres mettent du temps, " +
-                        "et ce que PLM peut (ou ne peut pas) garantir.",
+                        "et ce que l’app peut (ou ne peut pas) garantir.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            item { SectionTitle("Hubera Music") }
+            item {
+                Bullet(
+                    huberaMessage?.takeIf { it.isNotBlank() }
+                        ?: "Ton compte et tes playlists restent. L’app s’appelle Hubera Music. " +
+                        "Tu peux ouvrir music.hubera.cloud — c’est la même chose. " +
+                        "Le login local continue : rien n’est fusionné.",
+                )
+            }
+            item { HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)) }
             item { SectionTitle("Comment marche la lecture") }
             item {
                 Bullet(
@@ -72,7 +85,7 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             }
             item {
                 Bullet(
-                    "En Wi‑Fi, PLM précharge ~5 secondes de beaucoup de titres de ta bibliothèque. " +
+                    "En Wi‑Fi, l’app précharge ~5 secondes de beaucoup de titres de ta bibliothèque. " +
                         "Un titre déjà préchargé démarre plus vite ; un titre « froid » (peu ou jamais joué) " +
                         "peut patienter. « Favoris à redécouvrir » ne propose que de la musique " +
                         "(plus de vidéos YouTube mélangées).",
@@ -81,7 +94,7 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item {
                 Bullet(
                     "Pendant le chargement, le mini-lecteur affiche « Chargement… ». " +
-                        "Sur un titre froid, PLM laisse ~20–24 s avant de proposer le suivant " +
+                        "Sur un titre froid, l’app laisse ~20–24 s avant de proposer le suivant " +
                         "(aligné sur le démarrage cold), pour éviter un saut trop tôt.",
                 )
             }
@@ -89,7 +102,7 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item { SectionTitle("Problèmes fréquents") }
             item {
                 Bullet(
-                    "Titre de la file qui ne démarre pas : PLM reprend le flux après ~2,5 s bloqués " +
+                    "Titre de la file qui ne démarre pas : l’app reprend le flux après ~2,5 s bloqués " +
                         "(plus d’attente de 8 s). Si ça coince encore, saute au suivant.",
                 )
             }
@@ -97,7 +110,7 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
                 Bullet(
                     "Son qui coupe au milieu : plutôt une coupure réseau. Les fichiers hors-ligne " +
                         "sont validés (taille + décodage) avant d’être gardés ; un fichier abîmé " +
-                        "est purgé et PLM bascule en streaming.",
+                        "est purgé et l’app bascule en streaming.",
                 )
             }
             item {
@@ -116,14 +129,14 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             }
             item {
                 Bullet(
-                    "Durée affichée : PLM croise la durée Exo avec le catalogue. " +
+                    "Durée affichée : l’app croise la durée Exo avec le catalogue. " +
                         "Si Exo annonce une durée trop courte (flux tronqué), on garde la durée catalogue " +
                         "pour la barre de progression et éviter un skip prématuré.",
                 )
             }
             item {
                 Bullet(
-                    "Économiseur d’énergie Android : PLM allège prefetch / pochettes / DL opportunistes " +
+                    "Économiseur d’énergie Android : l’app allège prefetch / pochettes / DL opportunistes " +
                         "(un toast le confirme). La lecture en cours continue.",
                 )
             }
@@ -143,13 +156,13 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             item { SectionTitle("Limites à connaître") }
             item {
                 Bullet(
-                    "PLM n’est pas YouTube Music officiel : disponibilité des titres dépend de YouTube " +
+                    "Hubera Music n’est pas YouTube Music officiel : disponibilité des titres dépend de YouTube " +
                         "et de notre proxy. Certains titres régionaux ou restreints peuvent échouer.",
                 )
             }
             item {
                 Bullet(
-                    "Pas de pubs dans le flux PLM, mais la qualité / latence dépend du réseau et de la charge serveur.",
+                    "Pas de pubs dans le flux, mais la qualité / latence dépend du réseau et de la charge serveur.",
                 )
             }
             item {
@@ -171,6 +184,9 @@ fun HelpLimitsScreen(onBack: () -> Unit) {
             }
             item {
                 Bullet("Compte → Mise à jour : vérifier que l’app est à jour.")
+            }
+            item {
+                Bullet("Compte → Signaler un problème : envoie un journal de cet appareil.")
             }
             item {
                 Bullet("Si on te le demande : diagnostics réseau (espace admin).")

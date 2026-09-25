@@ -104,7 +104,7 @@ export function huberaLegacyStatus() {
   const aware = active.filter((c) => c.huberaAware);
   return {
     app: 'music',
-    name: 'Hubera Music / PLM',
+    name: 'Hubera Music',
     package: 'ovh.delhomme.ytmusic',
     stale_days: STALE_MS / 86400000,
     active_installs: active.length,

@@ -45,7 +45,7 @@ const net = (report.networkEvents || [])
   .join('\n');
 
 const ok = report.ok ? 'OK' : 'ATTENTION';
-const subject = `[PLM] Endurance mobile 1h — ${ok} — ${report.transitions || 0} transitions`;
+const subject = `[Hubera Music] Endurance mobile 1h — ${ok} — ${report.transitions || 0} transitions`;
 const text = `Récap test endurance production (Nothing)
 
 Résultat: ${ok}
