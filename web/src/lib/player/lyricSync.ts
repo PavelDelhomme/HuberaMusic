@@ -13,6 +13,7 @@ export const LYRIC_LEAD_SEC = 0.18;
 export const LRCLIB_BASE_LAG_SEC = 0;
 
 const LYRIC_OFFSET_CLAMP_MS = 90_000;
+const STORAGE_KEY = 'plm_lyric_sync_v1';
 const SEGMENTS_KEY = 'plm_lyric_segments_v1';
 
 type SyncMap = Record<string, number>;
