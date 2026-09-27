@@ -4,7 +4,7 @@
  * Avance karaoké par défaut (~0,10 s perçue pour lire / chanter dessus).
  * 180 ms bruts : absorbe latence UI / horloge lecteur (~50–80 ms) sans toucher la sync manuelle.
  */
-export const LYRIC_LEAD_SEC = 0.18;
+export const LYRIC_LEAD_SEC = 0.16;
 
 /**
  * Plus de lag client LRCLIB : l’API étire / décale déjà les timed (v6).
@@ -251,8 +251,13 @@ export function estimateTimedFromPlain(
   const lines = sungLines(raw);
   if (lines.length < 2) return [];
   const dur = durationSec && durationSec >= 20 ? durationSec : Math.max(lines.length * 3.2, 60);
-  const intro = Math.min(Math.max(dur * 0.035, 2.2), 10);
-  const outro = Math.min(Math.max(dur * 0.06, 4), 14);
+  const dense = lines.length >= 36;
+  const intro = dense
+    ? Math.min(Math.max(dur * 0.02, 1.4), 5)
+    : Math.min(Math.max(dur * 0.035, 2.0), 8);
+  const outro = dense
+    ? Math.min(Math.max(dur * 0.04, 2.5), 9)
+    : Math.min(Math.max(dur * 0.055, 3.5), 12);
   const window = Math.max(dur - intro - outro, lines.length * 1.2);
   const weights = lines.map((l) => Math.max(8, l.length));
   const total = weights.reduce((a, b) => a + b, 0);

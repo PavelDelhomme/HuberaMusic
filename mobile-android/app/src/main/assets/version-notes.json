@@ -2,6 +2,19 @@
   "updatedAt": "2026-09-27",
   "versions": [
     {
+      "version": "1.3.316",
+      "date": "2026-09-27",
+      "time": "22:15",
+      "at": "2026-09-27T22:15:00+02:00",
+      "title": "Paroles lisibles : options sur une ligne, moins d’espace",
+      "notes": [
+        "Barre sync repliable (−1 / +1). Le reste (gros pas, vote) se déplie.",
+        "Moins de vide entre les lignes — tu vois plus de paroles.",
+        "Cadencement auto un peu plus serré sur les titres denses.",
+        "Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
       "version": "1.3.315",
       "date": "2026-09-27",
       "time": "22:00",

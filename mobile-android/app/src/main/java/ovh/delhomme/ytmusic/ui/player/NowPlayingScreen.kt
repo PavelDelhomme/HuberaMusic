@@ -55,6 +55,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
@@ -128,6 +130,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
@@ -3192,6 +3195,7 @@ private fun InlineSyncedLyrics(
     var pasteSaving by remember(track.id) { mutableStateOf(false) }
     var voteBusy by remember(track.id) { mutableStateOf(false) }
     var voteHint by remember(track.id) { mutableStateOf<String?>(null) }
+    var toolsOpen by remember(track.id) { mutableStateOf(false) }
     val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v1") }
     val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v1") }
     var userOffsetMs by remember(track.id) {
@@ -3343,7 +3347,7 @@ private fun InlineSyncedLyrics(
     }
 
     // Avance karaoké : un peu plus pour l’estimation (souvent en retard ressenti).
-    val leadMs = if (lyricsSource == "estimated") 320L else 180L
+    val leadMs = if (lyricsSource == "estimated") 220L else 160L
     val sourceLagMs = 0L
     val effectiveOffsetMs = lyricOffsetAtMs(userOffsetMs, segments, positionMs, durationMs)
     val syncPos = positionMs + leadMs - effectiveOffsetMs - sourceLagMs
@@ -3359,7 +3363,7 @@ private fun InlineSyncedLyrics(
         runCatching {
             listState.animateScrollToItem(
                 index = active.coerceIn(0, timed.lastIndex),
-                scrollOffset = -120,
+                scrollOffset = -36,
             )
         }
     }
@@ -3371,7 +3375,7 @@ private fun InlineSyncedLyrics(
             runCatching {
                 listState.animateScrollToItem(
                     index = active.coerceIn(0, timed.lastIndex),
-                    scrollOffset = -120,
+                    scrollOffset = -36,
                 )
             }
         }
@@ -3414,161 +3418,105 @@ private fun InlineSyncedLyrics(
         ).show()
     }
 
-    Column(modifier = modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
-        // Sync compact : ±0,25 s et ±0,20 s (pas ±0,75 / ±1 — trop gros).
+    Column(modifier = modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
         if (timed.isNotEmpty()) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 2.dp),
+                    .height(28.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(
-                    onClick = { nudgeOffset(250L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) {
-                    Text("−0,25", style = MaterialTheme.typography.labelSmall)
-                }
-                TextButton(
-                    onClick = { nudgeOffset(200L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) {
-                    Text("−0,20", style = MaterialTheme.typography.labelSmall)
-                }
+                LyricNudgeChip("−1") { nudgeOffset(1_000L) }
                 Text(
-                    if (effectiveOffsetMs == 0L) "sync" else String.format("%+.2f s", effectiveOffsetMs / 1000.0),
+                    if (effectiveOffsetMs == 0L) "sync" else String.format("%+.1f", effectiveOffsetMs / 1000.0),
                     color = if (effectiveOffsetMs == 0L) PlayerMuted else SeekRed,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
                     modifier = Modifier
-                        .padding(horizontal = 2.dp)
+                        .padding(horizontal = 6.dp)
                         .clickable { persistOffset(0L) },
                 )
-                TextButton(
-                    onClick = { nudgeOffset(-200L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) {
-                    Text("+0,20", style = MaterialTheme.typography.labelSmall)
-                }
-                TextButton(
-                    onClick = { nudgeOffset(-250L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) {
-                    Text("+0,25", style = MaterialTheme.typography.labelSmall)
-                }
+                LyricNudgeChip("+1") { nudgeOffset(-1_000L) }
+                Icon(
+                    if (toolsOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (toolsOpen) "Replier les options" else "Options paroles",
+                    tint = PlayerMuted,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clickable { toolsOpen = !toolsOpen },
+                )
             }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 4.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(
-                    onClick = { nudgeOffset(15_000L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) { Text("−15 s", style = MaterialTheme.typography.labelSmall) }
-                TextButton(
-                    onClick = { nudgeOffset(5_000L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) { Text("−5 s", style = MaterialTheme.typography.labelSmall) }
-                TextButton(
-                    onClick = { nudgeOffset(1_000L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) { Text("−1 s", style = MaterialTheme.typography.labelSmall) }
-                TextButton(
-                    onClick = { nudgeOffset(-1_000L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) { Text("+1 s", style = MaterialTheme.typography.labelSmall) }
-                TextButton(
-                    onClick = { nudgeOffset(-5_000L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) { Text("+5 s", style = MaterialTheme.typography.labelSmall) }
-                TextButton(
-                    onClick = { nudgeOffset(-15_000L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) { Text("+15 s", style = MaterialTheme.typography.labelSmall) }
+            if (toolsOpen) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(26.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LyricNudgeChip("−15") { nudgeOffset(15_000L) }
+                    LyricNudgeChip("−5") { nudgeOffset(5_000L) }
+                    LyricNudgeChip("−0,2") { nudgeOffset(200L) }
+                    LyricNudgeChip("+0,2") { nudgeOffset(-200L) }
+                    LyricNudgeChip("+5") { nudgeOffset(-5_000L) }
+                    LyricNudgeChip("+15") { nudgeOffset(-15_000L) }
+                    LyricNudgeChip("OK") {
+                        if (voteBusy) return@LyricNudgeChip
+                        voteBusy = true
+                        voteHint = null
+                        scope.launch {
+                            runCatching {
+                                container.api.lyricsFeedback(
+                                    track.id,
+                                    ovh.delhomme.ytmusic.data.LyricsFeedbackBody(
+                                        vote = "correct",
+                                        title = track.title,
+                                        artist = track.artistLine().takeIf { it != "Artiste" },
+                                    ),
+                                )
+                            }.onSuccess {
+                                voteHint = "Paroles confirmées"
+                                Toast.makeText(context, voteHint, Toast.LENGTH_SHORT).show()
+                            }.onFailure { voteHint = "Vote impossible" }
+                            voteBusy = false
+                        }
+                    }
+                    LyricNudgeChip("KO") {
+                        if (voteBusy) return@LyricNudgeChip
+                        voteBusy = true
+                        voteHint = "Recherche…"
+                        scope.launch {
+                            runCatching {
+                                container.api.lyricsFeedback(
+                                    track.id,
+                                    ovh.delhomme.ytmusic.data.LyricsFeedbackBody(
+                                        vote = "wrong",
+                                        title = track.title,
+                                        artist = track.artistLine().takeIf { it != "Artiste" },
+                                    ),
+                                )
+                            }.onSuccess { r ->
+                                lyricsReloadToken += 1
+                                voteHint = if (!r.lyrics.isNullOrBlank()) "Nouvelles paroles" else "Aucune meilleure source"
+                                Toast.makeText(context, voteHint, Toast.LENGTH_SHORT).show()
+                            }.onFailure { voteHint = "Recherche impossible" }
+                            voteBusy = false
+                        }
+                    }
+                }
             }
         }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextButton(
-                onClick = {
-                    if (voteBusy) return@TextButton
-                    voteBusy = true
-                    voteHint = null
-                    scope.launch {
-                        runCatching {
-                            container.api.lyricsFeedback(
-                                track.id,
-                                ovh.delhomme.ytmusic.data.LyricsFeedbackBody(
-                                    vote = "correct",
-                                    title = track.title,
-                                    artist = track.artistLine().takeIf { it != "Artiste" },
-                                ),
-                            )
-                        }.onSuccess {
-                            voteHint = "Paroles confirmées pour tout le monde"
-                            Toast.makeText(context, voteHint, Toast.LENGTH_SHORT).show()
-                        }.onFailure {
-                            voteHint = "Vote impossible"
-                        }
-                        voteBusy = false
-                    }
-                },
-                enabled = !voteBusy,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-            ) {
-                Text("Bonnes paroles", style = MaterialTheme.typography.labelSmall, color = Color(0xFF86EFAC))
-            }
-            TextButton(
-                onClick = {
-                    if (voteBusy) return@TextButton
-                    voteBusy = true
-                    voteHint = "Recherche de nouvelles paroles…"
-                    scope.launch {
-                        runCatching {
-                            container.api.lyricsFeedback(
-                                track.id,
-                                ovh.delhomme.ytmusic.data.LyricsFeedbackBody(
-                                    vote = "wrong",
-                                    title = track.title,
-                                    artist = track.artistLine().takeIf { it != "Artiste" },
-                                ),
-                            )
-                        }.onSuccess { r ->
-                            lyricsReloadToken += 1
-                            voteHint = if (!r.lyrics.isNullOrBlank()) {
-                                "Nouvelles paroles (tous les utilisateurs)"
-                            } else {
-                                "Aucune meilleure source"
-                            }
-                            Toast.makeText(context, voteHint, Toast.LENGTH_SHORT).show()
-                        }.onFailure {
-                            voteHint = "Recherche impossible"
-                        }
-                        voteBusy = false
-                    }
-                },
-                enabled = !voteBusy,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-            ) {
-                Text("Mauvaises paroles", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFCD34D))
-            }
-        }
-        if (!voteHint.isNullOrBlank()) {
+        if (!voteHint.isNullOrBlank() && toolsOpen) {
             Text(
                 voteHint!!,
                 color = PlayerMuted,
                 style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
+                maxLines = 1,
             )
         }
         when {
@@ -3580,9 +3528,10 @@ private fun InlineSyncedLyrics(
             timed.isNotEmpty() -> {
                 LazyColumn(
                     state = listState,
-                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 12.dp),
+                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
                     modifier = Modifier.fillMaxSize(),
                     userScrollEnabled = true,
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
                 ) {
                     itemsIndexed(timed) { i, line ->
                         val isActive = i == active
@@ -3590,30 +3539,30 @@ private fun InlineSyncedLyrics(
                         Text(
                             line.text.ifBlank { " " },
                             style = if (isActive) {
-                                MaterialTheme.typography.headlineSmall
-                            } else {
                                 MaterialTheme.typography.titleMedium
+                            } else {
+                                MaterialTheme.typography.bodyMedium
                             },
-                            fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Normal,
+                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                             color = when {
                                 isActive -> Color.White
-                                past -> PlayerMuted.copy(alpha = 0.28f)
-                                else -> PlayerMuted.copy(alpha = 0.72f)
+                                past -> PlayerMuted.copy(alpha = 0.32f)
+                                else -> PlayerMuted.copy(alpha = 0.82f)
                             },
                             textAlign = TextAlign.Start,
                             softWrap = true,
+                            lineHeight = if (isActive) 22.sp else 20.sp,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(
-                                    if (isActive) SeekRed.copy(alpha = 0.22f) else Color.Transparent,
+                                    if (isActive) SeekRed.copy(alpha = 0.20f) else Color.Transparent,
                                 )
                                 .combinedClickable(
                                     onClick = { onSeek(line.startMsLong()) },
                                     onLongClick = { calibrateToLine(line.startMsLong()) },
                                 )
-                                .padding(horizontal = 8.dp)
-                                .padding(vertical = if (isActive) 12.dp else 6.dp),
+                                .padding(horizontal = 8.dp, vertical = if (isActive) 5.dp else 2.dp),
                         )
                     }
                 }
@@ -3874,6 +3823,20 @@ private fun normalizeTimedLines(
     }
 }
 
+@Composable
+private fun LyricNudgeChip(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall,
+        color = PlayerMuted,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    )
+}
+
 /**
  * Même idée que le serveur : sans LRC, on répartit les lignes sur la durée
  * pour que le suivi avance — comme sur un titre qui a des timings officiels.
@@ -3896,10 +3859,10 @@ private fun estimateTimedFromPlain(raw: String?, durationMs: Long): List<TimedLy
         }
     }
     if (lines.size < 2) return emptyList()
+    val dense = lines.size >= 36
     val durSec = if (durationMs >= 20_000L) durationMs / 1000.0 else (lines.size * 3.2).coerceAtLeast(60.0)
-    // Intro courte : évite « paroles trop tard » (rap / covers dense).
-    val intro = (durSec * 0.035).coerceIn(2.2, 10.0)
-    val outro = (durSec * 0.06).coerceIn(4.0, 14.0)
+    val intro = if (dense) (durSec * 0.02).coerceIn(1.4, 5.0) else (durSec * 0.035).coerceIn(2.0, 8.0)
+    val outro = if (dense) (durSec * 0.04).coerceIn(2.5, 9.0) else (durSec * 0.055).coerceIn(3.5, 12.0)
     val window = (durSec - intro - outro).coerceAtLeast(lines.size * 1.2)
     val weights = lines.map { it.length.coerceAtLeast(8) }
     val total = weights.sum().coerceAtLeast(1)

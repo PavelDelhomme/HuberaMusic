@@ -68,6 +68,7 @@ export function SyncedLyrics({
   const seek = usePlayer((s) => s.seek);
   const [clock, setClock] = useState(0);
   const [userOffsetMs, setUserOffsetMs] = useState(() => getLyricUserOffsetMs(currentId));
+  const [toolsOpen, setToolsOpen] = useState(false);
   const activeRef = useRef<HTMLParagraphElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const prevIdxRef = useRef(-1);
@@ -76,6 +77,7 @@ export function SyncedLyrics({
 
   useEffect(() => {
     setUserOffsetMs(getLyricUserOffsetMs(currentId));
+    setToolsOpen(false);
   }, [currentId, text, timed]);
 
   const lines = useMemo(() => {
@@ -214,7 +216,7 @@ export function SyncedLyrics({
   // Texte brut sans timings → scroll libre, pas de faux karaoké
   if (!lines.length) {
     return (
-      <div className="whitespace-pre-wrap px-2 py-6 text-base leading-8 text-[#c6c6c6] sm:px-4 sm:text-[17px] sm:leading-9">
+      <div className="whitespace-pre-wrap px-2 py-2 text-base leading-6 text-[#c6c6c6] sm:px-4 sm:text-[17px] sm:leading-6">
         {text || 'Paroles indisponibles pour ce titre.'}
       </div>
     );
@@ -223,111 +225,88 @@ export function SyncedLyrics({
   return (
     <div className="relative">
       {currentId && (
-        <div className="sticky top-0 z-10 mb-2 space-y-1 bg-yt-surface/90 px-2 py-1.5 backdrop-blur-sm">
-          <p className="text-center text-[10px] text-yt-muted">
-            Appui long sur une ligne pour recaler le rythme
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-1.5">
+        <div className="sticky top-0 z-10 bg-yt-surface/95 px-1 py-0.5 backdrop-blur-sm">
+          <div className="flex h-7 flex-nowrap items-center justify-center gap-1 overflow-x-auto">
             <button
               type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Retarder de 0,25 s"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-yt-muted hover:text-white"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 250, syncOpts()));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 1_000, syncOpts()));
                 lastActiveRef.current = -1;
               }}
             >
-              −0,25
+              −1
             </button>
             <button
               type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Retarder de 0,20 s"
+              className="min-w-[2.6rem] shrink-0 text-center text-[11px] font-semibold tabular-nums text-yt-muted"
+              title="Remettre le sync"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 200, syncOpts()));
+                setLyricUserOffsetMs(currentId, 0, { ...syncOpts(), source: 'reset' });
+                setUserOffsetMs(0);
                 lastActiveRef.current = -1;
               }}
             >
-              −0,20
-            </button>
-            <span className="min-w-[3.5rem] text-center text-[11px] font-semibold tabular-nums text-yt-muted">
               {Math.abs(activeOffsetSec) < 0.01
                 ? 'sync'
-                : `${activeOffsetSec > 0 ? '+' : ''}${activeOffsetSec.toFixed(2)} s`}
-            </span>
-            <button
-              type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Avancer de 0,20 s"
-              onClick={() => {
-                if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -200, syncOpts()));
-                lastActiveRef.current = -1;
-              }}
-            >
-              +0,20
+                : `${activeOffsetSec > 0 ? '+' : ''}${activeOffsetSec.toFixed(1)}`}
             </button>
             <button
               type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Avancer de 0,25 s"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-yt-muted hover:text-white"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -250, syncOpts()));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -1_000, syncOpts()));
                 lastActiveRef.current = -1;
               }}
             >
-              +0,25
+              +1
+            </button>
+            <button
+              type="button"
+              className="shrink-0 px-1 text-[13px] text-yt-muted hover:text-white"
+              aria-expanded={toolsOpen}
+              aria-label={toolsOpen ? 'Replier les options paroles' : 'Options paroles'}
+              onClick={() => setToolsOpen((v) => !v)}
+            >
+              {toolsOpen ? '▴' : '▾'}
             </button>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-1.5">
-            {(
-              [
-                [15_000, '−15 s'],
-                [5_000, '−5 s'],
-                [1_000, '−1 s'],
-                [-1_000, '+1 s'],
-                [-5_000, '+5 s'],
-                [-15_000, '+15 s'],
-              ] as const
-            ).map(([delta, label]) => (
-              <button
-                key={label}
-                type="button"
-                className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-                onClick={() => {
-                  if (!currentId) return;
-                  setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, delta, syncOpts()));
-                  lastActiveRef.current = -1;
-                }}
-              >
-                {label}
-              </button>
-            ))}
-            {userOffsetMs !== 0 && (
-              <button
-                type="button"
-                className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-                onClick={() => {
-                  if (!currentId) return;
-                  setLyricUserOffsetMs(currentId, 0, { ...syncOpts(), source: 'reset' });
-                  setUserOffsetMs(0);
-                  setUserOffsetMs(0);
-                  lastActiveRef.current = -1;
-                }}
-              >
-                Reset
-              </button>
-            )}
-          </div>
+          {toolsOpen && (
+            <div className="flex h-7 flex-nowrap items-center justify-center gap-1 overflow-x-auto pb-0.5">
+              {(
+                [
+                  [15_000, '−15'],
+                  [5_000, '−5'],
+                  [200, '−0,2'],
+                  [-200, '+0,2'],
+                  [-5_000, '+5'],
+                  [-15_000, '+15'],
+                ] as const
+              ).map(([delta, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-yt-muted hover:text-white"
+                  onClick={() => {
+                    if (!currentId) return;
+                    setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, delta, syncOpts()));
+                    lastActiveRef.current = -1;
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       <div
         ref={scrollerRef}
         data-lyrics-scroll
-        className="space-y-4 px-3 py-6 sm:px-6"
+        className="space-y-1 px-2 py-2 sm:px-4"
         onWheel={() => {
           userScrollUntilRef.current = Date.now() + 4000;
         }}
@@ -402,12 +381,12 @@ export function SyncedLyrics({
                   seek(Math.max(0, line.t));
                 }
               }}
-              className={`origin-left cursor-pointer rounded-lg px-2 transition-all duration-200 hover:text-white ${
+              className={`origin-left cursor-pointer rounded-md px-1.5 transition-colors duration-150 hover:text-white ${
                 active
-                  ? 'bg-[#ff0033]/22 py-2 text-3xl font-extrabold leading-tight text-white underline decoration-yt-red decoration-2 underline-offset-4 sm:text-4xl'
+                  ? 'bg-[#ff0033]/22 py-0.5 text-lg font-bold leading-snug text-white sm:text-xl'
                   : past
-                    ? 'text-base leading-7 text-white/25 sm:text-lg'
-                    : 'text-lg leading-8 text-[#9a9a9a] sm:text-xl sm:leading-9'
+                    ? 'py-px text-sm leading-5 text-white/30'
+                    : 'py-px text-base leading-6 text-[#b3b3b3] sm:text-[17px] sm:leading-6'
               }`}
               title="Clic : aller à cet instant · Appui long : caler le sync"
             >
@@ -1138,7 +1117,7 @@ export function NowPlaying({
                 ) : (
                   <>
                     <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
-                    <div className="mt-3 flex flex-wrap items-center justify-center gap-2 px-2">
+                    <div className="mt-1 flex h-7 flex-nowrap items-center justify-center gap-2 overflow-x-auto px-1">
                       <button
                         type="button"
                         disabled={lyricsVoteBusy || !current?.id}
@@ -1156,7 +1135,7 @@ export function NowPlaying({
                             .catch(() => setLyricsVoteHint('Impossible d’enregistrer le vote'))
                             .finally(() => setLyricsVoteBusy(false));
                         }}
-                        className="rounded-full border border-emerald-700/60 px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-40"
+                        className="shrink-0 rounded-full border border-emerald-700/60 px-2 py-0.5 text-[11px] text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-40"
                       >
                         Bonnes paroles
                       </button>
@@ -1187,7 +1166,7 @@ export function NowPlaying({
                             .catch(() => setLyricsVoteHint('Recherche impossible pour le moment'))
                             .finally(() => setLyricsVoteBusy(false));
                         }}
-                        className="rounded-full border border-amber-700/60 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-900/30 disabled:opacity-40"
+                        className="shrink-0 rounded-full border border-amber-700/60 px-2 py-0.5 text-[11px] text-amber-200 hover:bg-amber-900/30 disabled:opacity-40"
                       >
                         Mauvaises paroles
                       </button>
