@@ -281,6 +281,31 @@ export function SyncedLyrics({
             >
               +0,25
             </button>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-1.5">
+            {(
+              [
+                [15_000, '−15 s'],
+                [5_000, '−5 s'],
+                [1_000, '−1 s'],
+                [-1_000, '+1 s'],
+                [-5_000, '+5 s'],
+                [-15_000, '+15 s'],
+              ] as const
+            ).map(([delta, label]) => (
+              <button
+                key={label}
+                type="button"
+                className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
+                onClick={() => {
+                  if (!currentId) return;
+                  setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, delta, syncOpts()));
+                  lastActiveRef.current = -1;
+                }}
+              >
+                {label}
+              </button>
+            ))}
             {userOffsetMs !== 0 && (
               <button
                 type="button"

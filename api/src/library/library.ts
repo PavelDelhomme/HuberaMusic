@@ -1285,11 +1285,21 @@ export function listPlaylists(
 export function createPlaylist(userId: string, name: string, description = '') {
   const id = randomUUID();
   const now = Date.now();
+  const label = String(name || '').trim() || 'Nouvelle playlist';
   db.prepare(
     `INSERT INTO playlists (id, user_id, name, description, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, userId, name, description, now, now);
-  return listPlaylists(userId).find((p) => p.id === id)!;
+  ).run(id, userId, label, description, now, now);
+  return {
+    id,
+    name: label,
+    description: description || '',
+    coverUrl: undefined as string | undefined,
+    createdAt: now,
+    updatedAt: now,
+    tracks: [] as Track[],
+    trackCount: 0,
+  };
 }
 
 export function updatePlaylist(
@@ -1323,10 +1333,17 @@ export async function addToPlaylist(userId: string, playlistId: string, track: T
     .prepare('SELECT id FROM playlists WHERE id = ? AND user_id = ?')
     .get(playlistId, userId);
   if (!pl) throw new Error('Playlist introuvable');
+  if (!track?.id || !/^[a-zA-Z0-9_-]{11}$/.test(String(track.id))) {
+    throw new Error('Titre invalide');
+  }
   let hydrated = track;
   if (isWeakTitle(track?.title, track?.id) || !(track?.artists || []).length) {
-    const { hydrateTrack } = await import('../youtube/yt.js');
-    hydrated = await hydrateTrack(track);
+    try {
+      const { hydrateTrack } = await import('../youtube/yt.js');
+      hydrated = await hydrateTrack(track);
+    } catch {
+      hydrated = track;
+    }
   }
   upsertTrack(hydrated);
   const max = db
@@ -1337,7 +1354,18 @@ export async function addToPlaylist(userId: string, playlistId: string, track: T
      ON CONFLICT(playlist_id, track_id) DO NOTHING`,
   ).run(playlistId, hydrated.id, max.m + 1, Date.now());
   db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').run(Date.now(), playlistId);
-  return listPlaylists(userId).find((p) => p.id === playlistId)!;
+  const light = listPlaylists(userId, { includeTracks: false }).find((p) => p.id === playlistId);
+  if (light) return light;
+  return {
+    id: playlistId,
+    name: 'Playlist',
+    description: '',
+    coverUrl: undefined as string | undefined,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    tracks: [] as Track[],
+    trackCount: max.m + 2,
+  };
 }
 
 /** Répare les titres « Sans titre » dans la biblio (playlists / likes / songs). */

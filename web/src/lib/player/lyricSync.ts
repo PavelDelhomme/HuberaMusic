@@ -12,7 +12,7 @@ export const LYRIC_LEAD_SEC = 0.18;
  */
 export const LRCLIB_BASE_LAG_SEC = 0;
 
-const STORAGE_KEY = 'plm_lyric_sync_v1';
+const LYRIC_OFFSET_CLAMP_MS = 90_000;
 const SEGMENTS_KEY = 'plm_lyric_segments_v1';
 
 type SyncMap = Record<string, number>;
@@ -160,7 +160,7 @@ export function setLyricUserOffsetMs(
   opts?: { atMs?: number; durationMs?: number; source?: string },
 ) {
   const map = readMap();
-  const clamped = Math.max(-15_000, Math.min(15_000, Math.round(offsetMs)));
+  const clamped = Math.max(-LYRIC_OFFSET_CLAMP_MS, Math.min(LYRIC_OFFSET_CLAMP_MS, Math.round(offsetMs)));
   if (clamped === 0) delete map[trackId];
   else map[trackId] = clamped;
   writeMap(map);
@@ -182,7 +182,7 @@ export function mergeLyricOffsetsFromServer(offsets: Record<string, number> | nu
     const v = typeof raw === 'number' && Number.isFinite(raw) ? Math.round(raw) : 0;
     if (!id || v === 0) continue;
     if (map[id] == null || map[id] === 0) {
-      map[id] = Math.max(-15_000, Math.min(15_000, v));
+      map[id] = Math.max(-LYRIC_OFFSET_CLAMP_MS, Math.min(LYRIC_OFFSET_CLAMP_MS, v));
       changed = true;
     }
   }
@@ -195,7 +195,7 @@ export function applyServerOffsetIfUnset(trackId: string, offsetMs: number | nul
   const v = typeof offsetMs === 'number' && Number.isFinite(offsetMs) ? Math.round(offsetMs) : 0;
   if (v === 0) return 0;
   const map = readMap();
-  map[trackId] = Math.max(-15_000, Math.min(15_000, v));
+  map[trackId] = Math.max(-LYRIC_OFFSET_CLAMP_MS, Math.min(LYRIC_OFFSET_CLAMP_MS, v));
   writeMap(map);
   return map[trackId];
 }
@@ -217,7 +217,7 @@ export function applyServerSegments(
       bucket: s.bucket,
       startRatio: s.startRatio,
       endRatio: s.endRatio,
-      offsetMs: Math.max(-15_000, Math.min(15_000, Math.round(s.offsetMs))),
+      offsetMs: Math.max(-LYRIC_OFFSET_CLAMP_MS, Math.min(LYRIC_OFFSET_CLAMP_MS, Math.round(s.offsetMs))),
     })),
   );
 }

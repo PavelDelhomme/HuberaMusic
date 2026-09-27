@@ -1248,6 +1248,7 @@ fun AddToPlaylistSheet(
     var loading by remember { mutableStateOf(true) }
     var showCreate by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
+    var creatingBusy by remember { mutableStateOf(false) }
     var containedIds by remember(track.id) {
         mutableStateOf(preloadedContainedIds ?: emptySet())
     }
@@ -1297,6 +1298,57 @@ fun AddToPlaylistSheet(
                     modifier = Modifier.padding(horizontal = 20.dp),
                 )
                 Spacer(Modifier.height(16.dp))
+
+                TextButton(
+                    onClick = { showCreate = !showCreate },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
+                    Text(if (showCreate) "Masquer" else "Nouvelle playlist")
+                }
+                if (showCreate) {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        singleLine = true,
+                        label = { Text("Nom") },
+                        placeholder = { Text("Ma playlist") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 4.dp),
+                    )
+                    TextButton(
+                        enabled = !creatingBusy,
+                        onClick = {
+                            val name = newName.trim().ifBlank { "Nouvelle playlist" }
+                            creatingBusy = true
+                            scope.launch {
+                                runCatching {
+                                    val pl = container.api.createPlaylist(CreatePlaylistBody(name))
+                                    if (pl.id.isBlank()) error("Playlist sans id")
+                                    container.api.addToPlaylist(pl.id, track)
+                                    pl
+                                }.onSuccess { pl ->
+                                    playlists = listOf(pl) + playlists.filter { it.id != pl.id }
+                                    containedIds = containedIds + pl.id
+                                    context.toastMain("Créée « ${pl.displayName()} » + titre ajouté")
+                                    showCreate = false
+                                    newName = ""
+                                }.onFailure {
+                                    context.toastMain(it.message?.takeIf { m -> m.isNotBlank() } ?: "Impossible de créer la playlist")
+                                }
+                                creatingBusy = false
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                    ) {
+                        Text(if (creatingBusy) "Création…" else "Créer et y ajouter le titre")
+                    }
+                }
 
                 if (recent.isNotEmpty()) {
                     Text(
@@ -1485,42 +1537,6 @@ fun AddToPlaylistSheet(
                 Icon(Icons.Default.Add, contentDescription = "Nouvelle playlist")
             }
         }
-    }
-
-    if (showCreate) {
-        AlertDialog(
-            onDismissRequest = { showCreate = false },
-            title = { Text("Nouvelle playlist") },
-            text = {
-                OutlinedTextField(
-                    value = newName,
-                    onValueChange = { newName = it },
-                    singleLine = true,
-                    placeholder = { Text("Nom") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val name = newName.trim().ifBlank { "Nouvelle playlist" }
-                        scope.launch {
-                            runCatching {
-                                val pl = container.api.createPlaylist(CreatePlaylistBody(name))
-                                container.api.addToPlaylist(pl.id, track)
-                                context.toastMain("Créée et titre ajouté")
-                                onDismiss()
-                            }.onFailure {
-                                context.toastMain(it.message ?: "Erreur")
-                            }
-                        }
-                    },
-                ) { Text("Créer") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreate = false }) { Text("Annuler") }
-            },
-        )
     }
 }
 

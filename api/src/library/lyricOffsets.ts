@@ -52,7 +52,8 @@ db.exec(`
   );
 `);
 
-const CLAMP = 15_000;
+/** ±90 s : intros longues / LRC décalés (ex. Ruelle sombre bloqué à −15 s). */
+const CLAMP = 90_000;
 const BUCKETS = 4;
 const MIN_CROWD_N = 2;
 const MIN_SEG_N = 2;

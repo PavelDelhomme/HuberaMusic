@@ -3247,7 +3247,7 @@ private fun InlineSyncedLyrics(
                 fun applyLyrics(it: ovh.delhomme.ytmusic.data.LyricsResponse) {
                     val learned = it.userOffsetMs ?: 0L
                     if (learned != 0L && syncPrefs.getLong(track.id, 0L) == 0L) {
-                        userOffsetMs = learned.coerceIn(-15_000L, 15_000L)
+                        userOffsetMs = learned.coerceIn(-90_000L, 90_000L)
                         syncPrefs.edit().putLong(track.id, userOffsetMs).apply()
                     }
                     it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
@@ -3378,7 +3378,7 @@ private fun InlineSyncedLyrics(
     }
 
     fun persistOffset(next: Long, source: String = "nudge") {
-        val clamped = next.coerceIn(-15_000L, 15_000L)
+        val clamped = next.coerceIn(-90_000L, 90_000L)
         userOffsetMs = clamped
         syncPrefs.edit().putLong(track.id, clamped).apply()
         scope.launch {
@@ -3457,6 +3457,38 @@ private fun InlineSyncedLyrics(
                 ) {
                     Text("+0,25", style = MaterialTheme.typography.labelSmall)
                 }
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = { nudgeOffset(15_000L) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) { Text("−15 s", style = MaterialTheme.typography.labelSmall) }
+                TextButton(
+                    onClick = { nudgeOffset(5_000L) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) { Text("−5 s", style = MaterialTheme.typography.labelSmall) }
+                TextButton(
+                    onClick = { nudgeOffset(1_000L) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) { Text("−1 s", style = MaterialTheme.typography.labelSmall) }
+                TextButton(
+                    onClick = { nudgeOffset(-1_000L) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) { Text("+1 s", style = MaterialTheme.typography.labelSmall) }
+                TextButton(
+                    onClick = { nudgeOffset(-5_000L) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) { Text("+5 s", style = MaterialTheme.typography.labelSmall) }
+                TextButton(
+                    onClick = { nudgeOffset(-15_000L) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                ) { Text("+15 s", style = MaterialTheme.typography.labelSmall) }
             }
         }
         Row(
