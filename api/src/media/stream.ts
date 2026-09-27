@@ -2753,7 +2753,7 @@ const warmQueue: WarmJob[] = [];
 const warmQueued = new Set<string>();
 let warmWorkers = 0;
 const WARM_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.STREAM_WARM_CONCURRENCY || 4) || 4));
-const WARM_BATCH_CAP = Math.max(4, Math.min(32, Number(process.env.STREAM_WARM_BATCH_CAP || 16) || 16));
+const WARM_BATCH_CAP = Math.max(4, Math.min(80, Number(process.env.STREAM_WARM_BATCH_CAP || 40) || 40));
 
 /** File .m4a disque (basse priorité) — partagée + file J’aime prioritaire séparée. */
 const diskWarmQueue: string[] = [];
@@ -3228,6 +3228,7 @@ export async function handleStreamWarm(req: Request, res: Response) {
   }
   enqueueStreamWarm(ids, uid);
   enqueueNextDiskWarm(ids);
+  enqueueListHeadWarm(ids, { front: true });
   // Prépare aussi le .m4a intégral (suite de file) — pas seulement la tête RAM.
   try {
     const { ensurePlayableQueueAhead } = await import('./ensurePlayable.js');

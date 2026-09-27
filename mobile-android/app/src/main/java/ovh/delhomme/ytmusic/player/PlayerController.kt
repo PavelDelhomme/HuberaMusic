@@ -843,8 +843,13 @@ class PlayerController(
             }
             if (!StreamPrefetcher.hasPlayableHead(nid, 280L * 1024L)) {
                 scope.launch {
-                    withContext(Dispatchers.IO) {
+                    val first = withContext(Dispatchers.IO) {
                         StreamPrefetcher.ensureHeadBeforeSkip(base, nid, timeoutMs = 2_800L)
+                    }
+                    if (!first) {
+                        withContext(Dispatchers.IO) {
+                            StreamPrefetcher.ensureHeadBeforeSkip(base, nid, timeoutMs = 3_200L)
+                        }
                     }
                     applySkipSeek(p, nextIdx)
                 }
@@ -2302,6 +2307,22 @@ class PlayerController(
                 if (PlaybackService.Holder.isStreamRecovering(trackId)) return@launch
                 AppLog.w("PlayerController", "buffer stuck → 2e rebind forceFresh id=$trackId")
                 StreamPrefetcher.markStreamOk()
+                runCatching {
+                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                        level = "warn",
+                        kind = "android.player.stall",
+                        message = "buffer stuck → 2e rebind forceFresh id=$trackId",
+                        meta = mapOf(
+                            "trackId" to trackId,
+                            "title" to title,
+                            "artist" to artist,
+                            "positionMs" to _state.value.positionMs,
+                            "stallCount" to 2,
+                            "action" to "rebind2",
+                        ),
+                        force = false,
+                    )
+                }
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck-2",

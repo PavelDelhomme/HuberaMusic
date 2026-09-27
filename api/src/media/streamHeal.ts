@@ -2,12 +2,15 @@
  * Auto-heal stream : stall / prefetch miss / load_skip → re-warm format + disk.
  * Sur load_skip / stall répété : cherche aussi un ID de remplacement (vidéo morte).
  */
-import { enqueueStreamWarm, enqueueDiskWarm, bumpWarmPriority } from './stream.js';
+import { enqueueStreamWarm, enqueueDiskWarm, bumpWarmPriority, enqueueListHeadWarm } from './stream.js';
 import { findReplacementId } from './trackReplacement.js';
 import { getTrackPayload } from '../library/db.js';
 
 const lastHealAt = new Map<string, number>();
 const HEAL_COOLDOWN_MS = 2 * 60_000;
+/** 2e stall/prefetch du même id dans 90 s → ensure disque (plus seulement le format). */
+const stallHits = new Map<string, { n: number; at: number }>();
+const ESCALATE_WINDOW_MS = 90_000;
 /** Remplacement : plus fréquent sur load_skip (éviter skip sec). */
 const lastReplaceAt = new Map<string, number>();
 const REPLACE_COOLDOWN_MS = 3 * 60_000;
@@ -42,6 +45,23 @@ function extractMetaString(meta: unknown, key: string): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
+function noteStallHit(id: string, now: number): number {
+  const prev = stallHits.get(id);
+  if (!prev || now - prev.at > ESCALATE_WINDOW_MS) {
+    stallHits.set(id, { n: 1, at: now });
+    return 1;
+  }
+  const n = prev.n + 1;
+  stallHits.set(id, { n, at: now });
+  if (stallHits.size > 2_000) {
+    const cutoff = now - ESCALATE_WINDOW_MS * 2;
+    for (const [k, t] of stallHits) {
+      if (t.at < cutoff) stallHits.delete(k);
+    }
+  }
+  return n;
+}
+
 export function healTrackFromTelemetry(opts: {
   kind: string;
   level?: string;
@@ -58,8 +78,10 @@ export function healTrackFromTelemetry(opts: {
   const id = extractTrackId(opts.meta);
   if (!id) return;
   const now = Date.now();
+  const hits = noteStallHit(id, now);
+  const escalate = hits >= 2;
   const prev = lastHealAt.get(id) || 0;
-  if (!opts.force && now - prev < HEAL_COOLDOWN_MS) {
+  if (!opts.force && !escalate && now - prev < HEAL_COOLDOWN_MS) {
     bumpWarmPriority(id);
     return;
   }
@@ -70,17 +92,17 @@ export function healTrackFromTelemetry(opts: {
       if (t < cutoff) lastHealAt.delete(k);
     }
   }
-  console.log(`[stream-heal] re-warm ${id} kind=${kind}`);
+  console.log(`[stream-heal] re-warm ${id} kind=${kind} hits=${hits} escalate=${escalate}`);
   enqueueStreamWarm([id], opts.userId);
 
-  // Pendant une écoute / 1er stall : format only. ensure+replace noient yt-dlp
-  // (timeouts en cascade → toast « Serveur audio indisponible » + skip).
-  const formatOnly = FORMAT_ONLY_KINDS.has(kind);
+  // 1er stall : format only. 2e dans 90 s (ou load_skip) : ensure le .m4a.
+  const formatOnly = FORMAT_ONLY_KINDS.has(kind) && !escalate && !opts.force;
   if (formatOnly) {
     bumpWarmPriority(id);
     return;
   }
   enqueueDiskWarm([id]);
+  enqueueListHeadWarm([id], { front: true });
 
   // Remplacement seulement après un skip confirmé (titre vraiment mort).
   const wantReplace =
@@ -148,7 +170,7 @@ export function healTracksFromDigest(
 ): void {
   const list = (tracks || [])
     .filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(String(t.trackId || '')))
-    .slice(0, 16);
+    .slice(0, 64);
   if (!list.length) return;
   console.log(`[stream-heal] digest → ${list.length} titre(s) à réparer`);
   list.forEach((t, i) => {
@@ -160,6 +182,6 @@ export function healTracksFromDigest(
         force: true,
         meta: { trackId: t.trackId, title: t.title, artist: t.artist },
       });
-    }, i * 2500);
+    }, i * 1500);
   });
 }

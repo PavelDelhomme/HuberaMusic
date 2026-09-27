@@ -724,7 +724,7 @@ object StreamPrefetcher {
                     // Signale au serveur pour re-warm disque/format (prochaine écoute)
                     runCatching {
                         ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                            level = "info",
+                            level = "warn",
                             kind = "android.player.prefetch_miss",
                             message = "next head cold id=$nextId",
                             meta = mapOf("trackId" to nextId, "role" to "queue_next"),
