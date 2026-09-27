@@ -271,6 +271,59 @@ export function insertTelemetry(ev: {
   return id;
 }
 
+export type BatteryTelemetryPoint = {
+  created_at: number;
+  battery_level: number;
+  battery_charging: number | null;
+  device_id: string | null;
+};
+
+/** Points batterie (0–100) pour un compte / appareil sur une fenêtre. */
+export function listBatteryTelemetry(opts: {
+  userId?: string;
+  deviceId?: string;
+  sinceMs: number;
+  limit?: number;
+}): BatteryTelemetryPoint[] {
+  const limit = Math.min(opts.limit || 400, 800);
+  const rows = (
+    opts.userId
+      ? db
+          .prepare(
+            `SELECT created_at, battery_level, battery_charging, device_id
+             FROM telemetry_events
+             WHERE battery_level IS NOT NULL
+               AND created_at >= ?
+               AND user_id = ?
+             ORDER BY created_at ASC
+             LIMIT ?`,
+          )
+          .all(opts.sinceMs, opts.userId, limit)
+      : db
+          .prepare(
+            `SELECT created_at, battery_level, battery_charging, device_id
+             FROM telemetry_events
+             WHERE battery_level IS NOT NULL
+               AND created_at >= ?
+             ORDER BY created_at ASC
+             LIMIT ?`,
+          )
+          .all(opts.sinceMs, limit)
+  ) as BatteryTelemetryPoint[];
+  const device = (opts.deviceId || '').trim();
+  const filtered = device ? rows.filter((r) => (r.device_id || '') === device) : rows;
+  return filtered.map((r) => ({
+    ...r,
+    battery_level: normalizeBatteryPct(r.battery_level),
+  }));
+}
+
+function normalizeBatteryPct(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  if (v >= 0 && v <= 1.01) return Math.round(v * 100);
+  return Math.round(v);
+}
+
 export function listTelemetry(opts: { level?: string; limit?: number; offset?: number } = {}) {
   const limit = Math.min(opts.limit || 100, 500);
   const offset = opts.offset || 0;

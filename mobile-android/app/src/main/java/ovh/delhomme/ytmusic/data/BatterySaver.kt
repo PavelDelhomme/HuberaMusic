@@ -45,6 +45,7 @@ object BatterySaver {
         if (started) return
         started = true
         val app = context.applicationContext
+        BatteryHistory.start(app)
         refresh(app, reason = "boot")
         val filter = IntentFilter().apply {
             addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
@@ -82,6 +83,7 @@ object BatterySaver {
                 status == BatteryManager.BATTERY_STATUS_FULL ||
                 sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
         }
+        BatteryHistory.record(app, sticky = sticky)
 
         // Actif = économiseur système OU batterie faible (hors charge)
         val next = powerSave || (!charging && batteryPct <= 20)

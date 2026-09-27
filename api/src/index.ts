@@ -227,7 +227,7 @@ import {
   resolveLyricSync,
   saveLyricOffset,
 } from './library/lyricOffsets.js';
-import { sendBatteryOptimizationMail } from './platform/batteryReport.js';
+import { sendBatteryOptimizationMail, enrichBatteryReport, type BatteryReportPayload } from './platform/batteryReport.js';
 import {
   createEmailToken,
   insertTelemetry,
@@ -1114,7 +1114,13 @@ app.post(
   authRequired,
   async (req, res) => {
     try {
-      const result = await sendBatteryOptimizationMail(req.body || {});
+      const raw = (req.body || {}) as Record<string, unknown>;
+      const device = raw.device && typeof raw.device === 'object' ? (raw.device as Record<string, unknown>) : {};
+      const enriched = enrichBatteryReport(raw as BatteryReportPayload, {
+        userId: req.userId,
+        deviceId: String(req.headers['x-device-id'] || device.serial || ''),
+      });
+      const result = await sendBatteryOptimizationMail(enriched);
       res.json({ ok: true, ...result });
     } catch (err) {
       res.status(400).json({ error: String((err as Error).message || err) });
