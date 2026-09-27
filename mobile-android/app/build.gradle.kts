@@ -108,7 +108,7 @@ fun resolveProdApiBase(): String {
         return fromProp
     }
     return publicApiBase.ifBlank {
-        error("PUBLIC_API_URL / DEPLOY_URL HTTPS manquant pour assembleProd*")
+        "https://music.hubera.cloud"
     }
 }
 

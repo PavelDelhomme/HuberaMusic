@@ -34,14 +34,14 @@ services:
       NODE_ENV: production
       PORT: "8787"
       APP_ENV: ${APP_ENV:-production}
-      APP_URL: ${APP_URL:-https://plm.delhomme.ovh}
+      APP_URL: ${APP_URL:-https://music.hubera.cloud}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-14d}
       AUTH_COOKIE_MS: ${AUTH_COOKIE_MS:-34560000000}
       COOKIE_SECURE: "1"
       # Session partagée entre alias (plm / ytmusic / pue-la-merde)
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-.delhomme.ovh}
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://plm.delhomme.ovh,https://ytmusic.delhomme.ovh,https://pue-la-merde.delhomme.ovh}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://music.hubera.cloud,https://plm.delhomme.ovh,https://ytmusic.delhomme.ovh,https://pue-la-merde.delhomme.ovh}
       # Instance privée : un (ou quelques) emails seulement
       AUTH_PRIVATE: ${AUTH_PRIVATE:-1}
       AUTH_ALLOW_REGISTER: ${AUTH_ALLOW_REGISTER:-0}

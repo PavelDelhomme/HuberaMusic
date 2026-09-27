@@ -2,11 +2,16 @@ import nodemailer from 'nodemailer';
 import { markMailOutboxDelivered, saveMailOutbox } from './platform.js';
 
 export function appUrl() {
-  return (
+  const raw = (
+    process.env.PUBLIC_APP_URL ||
     process.env.APP_URL ||
     process.env.WEBAUTHN_ORIGIN ||
-    (process.env.NODE_ENV === 'production' ? 'https://ytmusic.delhomme.ovh' : 'http://localhost:5173')
+    (process.env.NODE_ENV === 'production' ? 'https://music.hubera.cloud' : 'http://localhost:5173')
   ).replace(/\/$/, '');
+  if (/plm\.delhomme\.ovh|ytmusic\.delhomme\.ovh|pue-la-merde\.delhomme\.ovh/i.test(raw)) {
+    return 'https://music.hubera.cloud';
+  }
+  return raw;
 }
 
 export function getAppEnv() {

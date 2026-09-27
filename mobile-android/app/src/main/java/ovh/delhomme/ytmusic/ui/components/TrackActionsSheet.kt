@@ -461,7 +461,7 @@ fun TrackActionsSheet(
                 QuickAction(Icons.Default.Share, "Partager") {
                     val shareBase = ovh.delhomme.ytmusic.BuildConfig.PUBLIC_API_URL
                         .trimEnd('/')
-                        .ifBlank { "https://plm.delhomme.ovh" }
+                        .ifBlank { "https://music.hubera.cloud" }
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(

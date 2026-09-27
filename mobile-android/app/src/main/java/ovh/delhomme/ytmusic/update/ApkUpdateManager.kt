@@ -929,7 +929,7 @@ class ApkUpdateManager(
             false
         }
         if (!ok) installInFlight.set(false)
-        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur — réessaie ou plm.delhomme.ovh/install"
+        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur — réessaie ou music.hubera.cloud/install"
     }
 
     /**
@@ -1343,7 +1343,7 @@ class ApkUpdateManager(
                 publish(
                     _ui.value.copy(
                         phase = Phase.Error,
-                        message = "Installation annulée — réessaie ou ouvre plm.delhomme.ovh/install",
+                        message = "Installation annulée — réessaie ou ouvre music.hubera.cloud/install",
                         available = true,
                     ),
                 )
@@ -1375,7 +1375,7 @@ class ApkUpdateManager(
                 publish(
                     _ui.value.copy(
                         phase = Phase.Error,
-                        message = "Installation $human${statusMsg?.let { " ($it)" } ?: ""} — réessaie ou plm.delhomme.ovh/install",
+                        message = "Installation $human${statusMsg?.let { " ($it)" } ?: ""} — réessaie ou music.hubera.cloud/install",
                         available = true,
                     ),
                 )

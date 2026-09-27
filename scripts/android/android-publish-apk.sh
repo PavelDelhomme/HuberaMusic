@@ -54,7 +54,7 @@ if [[ -z "${API_BASE_URL:-}" ]]; then
   elif [[ -n "${APP_URL:-}" && "$APP_URL" != *"127.0.0.1"* && "$APP_URL" != *"localhost"* && "$APP_URL" != *"172."* && "$APP_URL" != *"192.168."* ]]; then
     API_BASE_URL="$APP_URL"
   elif [[ "${APP_ENV:-}" == "production" || "${APP_ENV:-}" == "prod" ]]; then
-    API_BASE_URL="https://ytmusic.delhomme.ovh"
+    API_BASE_URL="https://music.hubera.cloud"
   else
     LAN="$(detect_lan_ip || true)"
     PORT_NUM="${PORT:-8787}"

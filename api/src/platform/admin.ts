@@ -58,23 +58,46 @@ function isPrivateHostUrl(url: string) {
   }
 }
 
+const CANONICAL_MUSIC_URL = 'https://music.hubera.cloud';
+
+function isLegacyMusicHostUrl(url: string): boolean {
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return (
+      h === 'plm.delhomme.ovh' ||
+      h === 'www.plm.delhomme.ovh' ||
+      h === 'ytmusic.delhomme.ovh' ||
+      h === 'pue-la-merde.delhomme.ovh'
+    );
+  } catch {
+    return /plm\.delhomme\.ovh|ytmusic\.delhomme\.ovh|pue-la-merde\.delhomme\.ovh/i.test(url);
+  }
+}
+
+/** Liens publics (share, install, QR) — music.hubera.cloud ; alias PLM conservés. */
+export function canonicalMusicUrl(url?: string | null): string {
+  const raw = String(url || '').trim().replace(/\/$/, '');
+  if (!raw || isPrivateHostUrl(raw) || isLegacyMusicHostUrl(raw)) return CANONICAL_MUSIC_URL;
+  return raw;
+}
+
 /** Base publique pour liens APK / QR (jamais IP Docker / LAN privée en prod). */
 export function publicDownloadBase(port: number): string {
   const candidates = [
-    process.env.WEBAUTHN_ORIGIN,
-    process.env.DEPLOY_URL,
     process.env.PUBLIC_APP_URL,
     process.env.PROD_APP_URL,
+    process.env.DEPLOY_URL,
+    process.env.WEBAUTHN_ORIGIN,
     process.env.APP_URL,
   ]
     .map((x) => String(x || '').trim().replace(/\/$/, ''))
     .filter(Boolean);
   for (const c of candidates) {
-    if (!isPrivateHostUrl(c)) return c;
+    if (!isPrivateHostUrl(c) && !isLegacyMusicHostUrl(c)) return c;
   }
   const env = (process.env.APP_ENV || 'local').toLowerCase();
   if (env === 'production' || env === 'prod' || env === 'preprod') {
-    return 'https://ytmusic.delhomme.ovh';
+    return CANONICAL_MUSIC_URL;
   }
   const lan = lanAddresses()[0];
   return lan ? `http://${lan.address}:${port}` : `http://127.0.0.1:${port}`;
@@ -107,8 +130,8 @@ export function resolveAndroidApiBaseUrl(
   if (
     (env === 'production' || env === 'prod' || env === 'preprod')
   ) {
-    if (appUrl && !isPrivateHostUrl(appUrl)) return appUrl;
-    return 'https://ytmusic.delhomme.ovh';
+    if (appUrl && !isPrivateHostUrl(appUrl) && !isLegacyMusicHostUrl(appUrl)) return appUrl;
+    return CANONICAL_MUSIC_URL;
   }
   if (appUrl && !isLoopbackUrl(appUrl) && !isPrivateHostUrl(appUrl)) return appUrl;
   if (appUrl && !isLoopbackUrl(appUrl)) return appUrl;
@@ -160,7 +183,7 @@ export function apkPublicInfo(port: number) {
     presets: {
       lan: resolveAndroidApiBaseUrl('lan', port),
       app_url: resolveAndroidApiBaseUrl('app_url', port),
-      production: 'https://ytmusic.delhomme.ovh',
+      production: CANONICAL_MUSIC_URL,
       preprod: 'https://ytmusic-preprod.delhomme.ovh',
     },
     job: apkJob,

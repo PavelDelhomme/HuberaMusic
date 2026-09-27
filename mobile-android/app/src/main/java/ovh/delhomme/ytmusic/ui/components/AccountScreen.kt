@@ -502,7 +502,7 @@ fun AccountScreen(
                                             android.content.Intent(
                                                 android.content.Intent.ACTION_VIEW,
                                                 android.net.Uri.parse(
-                                                    "https://plm.delhomme.ovh/api/deploy/apk",
+                                                    "https://music.hubera.cloud/api/deploy/apk",
                                                 ),
                                             ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
                                         )

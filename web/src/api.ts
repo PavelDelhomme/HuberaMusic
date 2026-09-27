@@ -78,7 +78,7 @@ export function apiOrigin(): string {
   try {
     if (Capacitor.isNativePlatform()) {
       const stored = localStorage.getItem('ytm_api_origin')?.replace(/\/$/, '');
-      return stored || 'https://plm.delhomme.ovh';
+      return stored || 'https://music.hubera.cloud';
     }
   } catch {
     /* web */

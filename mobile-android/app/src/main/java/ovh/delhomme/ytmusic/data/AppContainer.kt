@@ -191,6 +191,7 @@ class AppContainer(context: Context) {
         val ha = host(a) ?: return false
         val hb = host(b) ?: return false
         val aliases = setOf(
+            "music.hubera.cloud",
             "plm.delhomme.ovh",
             "ytmusic.delhomme.ovh",
             "pue-la-merde.delhomme.ovh",

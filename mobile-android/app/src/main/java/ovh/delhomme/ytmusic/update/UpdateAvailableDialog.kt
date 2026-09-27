@@ -168,7 +168,7 @@ fun UpdateAvailableDialog(
                             context.startActivity(
                                 Intent(
                                     Intent.ACTION_VIEW,
-                                    Uri.parse("https://plm.delhomme.ovh/install"),
+                                    Uri.parse("https://music.hubera.cloud/install"),
                                 ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                             )
                         }

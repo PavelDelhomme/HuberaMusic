@@ -468,6 +468,12 @@ export async function buildPlaybackDigest(opts?: {
     totalEvents: total,
     trackCount: ranked.length,
     byKind,
+    tracks: ranked.slice(0, 24).map((t) => ({
+      trackId: t.trackId,
+      title: t.title,
+      artist: t.artist,
+      loadSkips: t.loadSkips,
+    })),
   };
 }
 
@@ -501,6 +507,12 @@ export async function sendPlaybackDigestNow(opts?: {
   console.info(
     `[playbackDigest] mail → ${to} events=${digest.totalEvents} tracks=${digest.trackCount}`,
   );
+  const tracks = digest.tracks || [];
+  if (tracks.length) {
+    void import('../media/streamHeal.js')
+      .then(({ healTracksFromDigest }) => healTracksFromDigest(tracks))
+      .catch((err) => console.warn('[playbackDigest] heal', err));
+  }
   return { ok: true, subject: digest.subject, totalEvents: digest.totalEvents };
 }
 

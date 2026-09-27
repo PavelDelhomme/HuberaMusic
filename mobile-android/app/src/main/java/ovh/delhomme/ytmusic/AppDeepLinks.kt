@@ -3,7 +3,7 @@ package ovh.delhomme.ytmusic
 import android.net.Uri
 
 /**
- * Liens https://plm.delhomme.ovh/… (alias ytmusic / pue-la-merde) → navigation in-app.
+ * Liens https://music.hubera.cloud/… (alias plm / ytmusic / pue-la-merde) → navigation in-app.
  * Sans app installée, le navigateur ouvre la page web normalement.
  */
 sealed class AppDeepLink {
@@ -18,6 +18,8 @@ sealed class AppDeepLink {
 
 object AppDeepLinks {
     private val APP_HOSTS = setOf(
+        "music.hubera.cloud",
+        "www.music.hubera.cloud",
         "plm.delhomme.ovh",
         "www.plm.delhomme.ovh",
         "ytmusic.delhomme.ovh",
@@ -29,6 +31,7 @@ object AppDeepLinks {
     fun isOurHost(host: String?): Boolean {
         val h = host?.lowercase()?.trim().orEmpty()
         if (h in APP_HOSTS) return true
+        if (h == "hubera.cloud" || h.endsWith(".hubera.cloud")) return true
         if (!h.endsWith(".delhomme.ovh")) return false
         return h.contains("plm") || h.contains("ytmusic") || h.contains("pue-la-merde")
     }

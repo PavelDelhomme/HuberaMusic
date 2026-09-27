@@ -481,8 +481,8 @@ app.get('/api/health', (_req, res) => {
         'OAuth TV + ytm_accounts sur volume ytmusic_data. Proxies gratuits (YOUTUBE_HTTP_PROXY_FREE) contre 50x — pas de PC maison. Ne pas Remove volumes ni changer JWT_SECRET.',
     },
     maintenance: publicMaintenanceStatus(),
-    canonicalHost: 'plm.delhomme.ovh',
-    aliasHosts: ['ytmusic.delhomme.ovh', 'pue-la-merde.delhomme.ovh'],
+    canonicalHost: 'music.hubera.cloud',
+    aliasHosts: ['plm.delhomme.ovh', 'ytmusic.delhomme.ovh', 'pue-la-merde.delhomme.ovh'],
   });
 });
 
@@ -1074,8 +1074,14 @@ app.post(
             healTrackFromTelemetry({
               kind,
               level,
-              meta: { trackId: e.trackId },
+              message,
               userId,
+              meta: {
+                trackId: e.trackId,
+                title: e.title,
+                artist: e.artist,
+                diagnosis: e.diagnosis,
+              },
             }),
           )
           .catch(() => {});

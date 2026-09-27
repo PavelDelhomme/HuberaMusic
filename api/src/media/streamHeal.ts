@@ -48,6 +48,7 @@ export function healTrackFromTelemetry(opts: {
   meta?: unknown;
   userId?: string;
   message?: string;
+  force?: boolean;
 }): void {
   const kind = String(opts.kind || '');
   // Uniquement les kinds listés — plus de `android.player*` (cold_next à 2,5 s
@@ -58,7 +59,7 @@ export function healTrackFromTelemetry(opts: {
   if (!id) return;
   const now = Date.now();
   const prev = lastHealAt.get(id) || 0;
-  if (now - prev < HEAL_COOLDOWN_MS) {
+  if (!opts.force && now - prev < HEAL_COOLDOWN_MS) {
     bumpWarmPriority(id);
     return;
   }
@@ -139,4 +140,26 @@ export function healTrackFromTelemetry(opts: {
       })();
     })
     .catch(() => {});
+}
+
+/** Bilan digest → re-warm / ensure / remplacement des titres qui ont échoué. */
+export function healTracksFromDigest(
+  tracks: Array<{ trackId: string; title?: string; artist?: string; loadSkips?: number }>,
+): void {
+  const list = (tracks || [])
+    .filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(String(t.trackId || '')))
+    .slice(0, 16);
+  if (!list.length) return;
+  console.log(`[stream-heal] digest → ${list.length} titre(s) à réparer`);
+  list.forEach((t, i) => {
+    setTimeout(() => {
+      healTrackFromTelemetry({
+        kind: 'android.player.load_skip',
+        level: 'warn',
+        message: 'digest-daily',
+        force: true,
+        meta: { trackId: t.trackId, title: t.title, artist: t.artist },
+      });
+    }, i * 2500);
+  });
 }

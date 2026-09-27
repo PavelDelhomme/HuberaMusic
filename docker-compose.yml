@@ -52,7 +52,7 @@ services:
       NODE_ENV: production
       PORT: "8787"
       APP_ENV: ${APP_ENV:-production}
-      APP_URL: ${APP_URL:-https://plm.delhomme.ovh}
+      APP_URL: ${APP_URL:-https://music.hubera.cloud}
       # Postgres (cutover) — laisser vide pour rester sur SQLite volume
       DATABASE_URL: ${DATABASE_URL:-}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
