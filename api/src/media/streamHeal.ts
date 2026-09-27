@@ -8,6 +8,11 @@ import { getTrackPayload } from '../library/db.js';
 
 const lastHealAt = new Map<string, number>();
 const HEAL_COOLDOWN_MS = 2 * 60_000;
+/** Même en escalate : ne pas relancer ensure toutes les 2 s (yt-dlp se noie → timeout). */
+const ESCALATE_COOLDOWN_MS = 25_000;
+/** Ensure déjà en cours pour cet id — bump priorité, pas un 2e download. */
+const inFlightEnsure = new Set<string>();
+const lastEnsureAt = new Map<string, number>();
 /** 2e stall/prefetch du même id dans 90 s → ensure disque (plus seulement le format). */
 const stallHits = new Map<string, { n: number; at: number }>();
 const ESCALATE_WINDOW_MS = 90_000;
@@ -80,27 +85,44 @@ export function healTrackFromTelemetry(opts: {
   const now = Date.now();
   const hits = noteStallHit(id, now);
   const escalate = hits >= 2;
+  if (inFlightEnsure.has(id)) {
+    bumpWarmPriority(id);
+    enqueueDiskWarm([id]);
+    return;
+  }
   const prev = lastHealAt.get(id) || 0;
-  if (!opts.force && !escalate && now - prev < HEAL_COOLDOWN_MS) {
+  // 1er stall : format only. 2e dans 90 s (ou load_skip) : ensure le .m4a.
+  const formatOnly = FORMAT_ONLY_KINDS.has(kind) && !escalate && !opts.force;
+  if (formatOnly) {
+    if (now - prev < HEAL_COOLDOWN_MS) {
+      bumpWarmPriority(id);
+      return;
+    }
+    lastHealAt.set(id, now);
+    console.log(`[stream-heal] re-warm ${id} kind=${kind} hits=${hits} escalate=false`);
+    enqueueStreamWarm([id], opts.userId);
     bumpWarmPriority(id);
     return;
   }
+  const prevEnsure = lastEnsureAt.get(id) || 0;
+  if (!opts.force && now - prevEnsure < ESCALATE_COOLDOWN_MS) {
+    bumpWarmPriority(id);
+    enqueueDiskWarm([id]);
+    return;
+  }
   lastHealAt.set(id, now);
+  lastEnsureAt.set(id, now);
   if (lastHealAt.size > 2_000) {
     const cutoff = now - HEAL_COOLDOWN_MS * 2;
     for (const [k, t] of lastHealAt) {
       if (t < cutoff) lastHealAt.delete(k);
     }
+    for (const [k, t] of lastEnsureAt) {
+      if (t < cutoff) lastEnsureAt.delete(k);
+    }
   }
   console.log(`[stream-heal] re-warm ${id} kind=${kind} hits=${hits} escalate=${escalate}`);
   enqueueStreamWarm([id], opts.userId);
-
-  // 1er stall : format only. 2e dans 90 s (ou load_skip) : ensure le .m4a.
-  const formatOnly = FORMAT_ONLY_KINDS.has(kind) && !escalate && !opts.force;
-  if (formatOnly) {
-    bumpWarmPriority(id);
-    return;
-  }
   enqueueDiskWarm([id]);
   enqueueListHeadWarm([id], { front: true });
 
@@ -112,11 +134,12 @@ export function healTrackFromTelemetry(opts: {
 
   // Pré-télécharge le .m4a intégral (OAuth remux / proxies) avant la prochaine écoute.
   // Remplacement APRÈS ensure — sinon playable() × 6 saturaient getAudioFormat (stall Blue).
+  inFlightEnsure.add(id);
   void import('./ensurePlayable.js')
     .then(({ ensurePlayableOnDisk }) =>
       ensurePlayableOnDisk(id, {
         userId: opts.userId,
-        waitMs: 45_000,
+        waitMs: 70_000,
         preferProxies: true,
         allowReplace: wantReplace,
         title: extractMetaString(opts.meta, 'title'),
@@ -124,6 +147,7 @@ export function healTrackFromTelemetry(opts: {
       }),
     )
     .then((r) => {
+      inFlightEnsure.delete(id);
       if (r?.ok) {
         console.log(`[stream-heal] ensure OK ${id} → ${r.playId} via=${r.via} bytes=${r.bytes}`);
         return;
@@ -161,7 +185,9 @@ export function healTrackFromTelemetry(opts: {
         }
       })();
     })
-    .catch(() => {});
+    .catch(() => {
+      inFlightEnsure.delete(id);
+    });
 }
 
 /** Bilan digest → re-warm / ensure / remplacement des titres qui ont échoué. */

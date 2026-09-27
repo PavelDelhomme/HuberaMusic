@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-27",
   "versions": [
     {
+      "version": "1.3.314",
+      "date": "2026-09-27",
+      "time": "21:25",
+      "at": "2026-09-27T21:25:00+02:00",
+      "title": "Chargement du flux : plus de storm yt-dlp sur le même titre",
+      "notes": [
+        "2e stall lance encore l’ensure disque, mais un seul à la fois par titre.",
+        "Plus de 8 ensure en parallèle qui timeout tous.",
+        "Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
       "version": "1.3.313",
       "date": "2026-09-27",
       "time": "21:00",
