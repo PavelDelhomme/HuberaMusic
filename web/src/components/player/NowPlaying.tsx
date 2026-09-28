@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type TouchEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type TouchEvent } from 'react';
 import { ListMusic, Mic2, MoreVertical, Pause, Play, Radio, Repeat, Repeat1, Save, Shuffle, SkipBack, SkipForward, Sparkles } from 'lucide-react';
 import { api, artistNames, getToken, thumb, type Track } from '../../api';
 import { usePlayer } from '../../store/player';
@@ -207,11 +207,11 @@ export function SyncedLyrics({
       tabIndex: 0,
       title: 'Clic : aller à cet instant · Clic droit : caler le sync',
       onClick: () => seek(Math.max(0, line.t)),
-      onContextMenu: (e: MouseEvent<HTMLParagraphElement>) => {
+      onContextMenu: (e: ReactMouseEvent<HTMLParagraphElement>) => {
         e.preventDefault();
         calibrateTo(line.t);
       },
-      onKeyDown: (e: KeyboardEvent<HTMLParagraphElement>) => {
+      onKeyDown: (e: ReactKeyboardEvent<HTMLParagraphElement>) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           seek(Math.max(0, line.t));
