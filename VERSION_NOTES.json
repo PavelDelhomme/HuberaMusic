@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-27",
   "versions": [
     {
+      "version": "1.3.318",
+      "date": "2026-09-28",
+      "time": "03:40",
+      "at": "2026-09-28T03:40:00+02:00",
+      "title": "Bilan biblio : les totaux somment enfin",
+      "notes": [
+        "État actuel = lisibles + remplacés + en attente + sans solution + pas vérifiés.",
+        "Les copies déjà trouvées ne passent plus pour des « lisibles » d’origine.",
+        "Overlay -r inutile (API). Pas de forceUpdate."
+      ]
+    },
+    {
       "version": "1.3.317",
       "date": "2026-09-28",
       "time": "03:20",

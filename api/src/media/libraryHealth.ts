@@ -23,7 +23,12 @@ import { fileURLToPath } from 'node:url';
 import { db, getTrackPayload } from '../library/db.js';
 import { mailBrand, sendMail } from '../platform/mail.js';
 import { getAudioFormat } from '../youtube/yt.js';
-import { findReplacementId, getReplacementId, looksUnavailable } from './trackReplacement.js';
+import {
+  ensureTrackReplacementSchema,
+  findReplacementId,
+  getReplacementId,
+  looksUnavailable,
+} from './trackReplacement.js';
 import { msSinceLastStream } from './stream.js';
 
 const CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data', 'cache');
@@ -109,6 +114,21 @@ function ensureSchema() {
     db.exec('ALTER TABLE track_health_cycle ADD COLUMN last_report_at INTEGER NOT NULL DEFAULT 0');
   }
   schemaReady = true;
+  reconcileReplacedHealth();
+}
+
+/** Une copie de remplacement connue n’est plus un « ok » d’origine. */
+function reconcileReplacedHealth() {
+  try {
+    ensureTrackReplacementSchema();
+    db.prepare(
+      `UPDATE track_health SET state = 'replaced'
+        WHERE state = 'ok'
+          AND track_id IN (SELECT dead_id FROM track_id_replacements)`,
+    ).run();
+  } catch {
+    /* table remplacements pas encore créée */
+  }
 }
 
 function markHealth(trackId: string, state: State) {
@@ -142,7 +162,7 @@ const ALL_TRACKS = `SELECT track_id, MIN(user_id) AS user_id, MAX(created_at) AS
 
 /** Un titre est à vérifier s'il est inconnu, ou si sa vérification a expiré. */
 const DUE_CLAUSE = `h.track_id IS NULL
-       OR (h.state = 'ok' AND h.checked_at < :okCut)
+       OR (h.state IN ('ok', 'replaced') AND h.checked_at < :okCut)
        OR (h.state = 'dead' AND h.checked_at < :deadCut)`;
 
 function dueCuts() {
@@ -207,11 +227,12 @@ function cachedOnDisk(id: string): boolean {
   }
 }
 
-type Check = { state: State; network: boolean };
+type Check = { state: State; network: boolean; skip?: boolean };
 
 /** Sonde seule : constate la mort d'une vidéo sans chercher son remplaçant. */
 async function probeOne(id: string, userId?: string): Promise<Check> {
-  if (cachedOnDisk(id) || getReplacementId(id)) return { state: 'ok', network: false };
+  if (getReplacementId(id)) return { state: 'replaced', network: false };
+  if (cachedOnDisk(id)) return { state: 'ok', network: false };
   try {
     const fmt = await Promise.race([
       getAudioFormat(id, { userId }),
@@ -221,8 +242,8 @@ async function probeOne(id: string, userId?: string): Promise<Check> {
   } catch (err) {
     const message = String((err as Error)?.message || err);
     if (!looksUnavailable(message)) {
-      // Réseau, quota, délai dépassé : on ne conclut rien, le titre repassera.
-      return { state: 'ok', network: true };
+      // Réseau, quota, délai dépassé : on ne conclut rien — ne PAS marquer ok.
+      return { state: 'ok', network: true, skip: true };
     }
     return { state: 'pending', network: true };
   }
@@ -252,6 +273,62 @@ function trackLabel(id: string): string {
   return artist ? `${t.title} — ${artist} (${id})` : `${t.title} (${id})`;
 }
 
+export type LibraryInventory = {
+  total: number;
+  comptes: number;
+  ok: number;
+  replaced: number;
+  pending: number;
+  dead: number;
+  unchecked: number;
+};
+
+/** Buckets exclusifs : ok + replaced + pending + dead + unchecked = total. */
+export function libraryInventory(): LibraryInventory {
+  ensureSchema();
+  ensureTrackReplacementSchema();
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM (${ALL_TRACKS})`).get() as { n: number }).n;
+  const comptes = (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM (
+           SELECT user_id FROM library_tracks
+           UNION
+           SELECT user_id FROM liked_tracks
+         )`,
+      )
+      .get() as { n: number }
+  ).n;
+  const rows = db
+    .prepare(
+      `SELECT bucket, COUNT(*) AS n FROM (
+         SELECT
+           CASE
+             WHEN r.dead_id IS NOT NULL OR h.state = 'replaced' THEN 'replaced'
+             WHEN h.state = 'dead' THEN 'dead'
+             WHEN h.state = 'pending' THEN 'pending'
+             WHEN h.state = 'ok' THEN 'ok'
+             WHEN h.track_id IS NULL THEN 'unchecked'
+             ELSE COALESCE(h.state, 'unchecked')
+           END AS bucket
+           FROM (${ALL_TRACKS}) t
+           LEFT JOIN track_health h ON h.track_id = t.track_id
+           LEFT JOIN track_id_replacements r ON r.dead_id = t.track_id
+       ) GROUP BY bucket`,
+    )
+    .all() as { bucket: string; n: number }[];
+  const by = Object.fromEntries(rows.map((r) => [r.bucket, r.n])) as Record<string, number>;
+  return {
+    total,
+    comptes,
+    ok: by.ok || 0,
+    replaced: by.replaced || 0,
+    pending: by.pending || 0,
+    dead: by.dead || 0,
+    unchecked: by.unchecked || 0,
+  };
+}
+
 export type CycleReport = { subject: string; text: string; html: string; done: number };
 
 /** Séparé de l'envoi pour pouvoir en contrôler le rendu sans écrire de mail. */
@@ -266,27 +343,32 @@ export function buildCycleReport(): CycleReport | null {
   if (!done) return null;
 
   const by = Object.fromEntries(rows.map((r) => [r.state, r.n])) as Record<string, number>;
-  const total = (db.prepare(`SELECT COUNT(*) AS n FROM (${ALL_TRACKS})`).get() as { n: number }).n;
-  const comptes = (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
+  const inv = libraryInventory();
   const morts = db
     .prepare("SELECT track_id FROM track_health WHERE state = 'dead' ORDER BY checked_at DESC LIMIT 60")
     .all() as { track_id: string }[];
-  // Durée réelle du travail : entre le premier et le dernier titre vérifié. Le
-  // repère de cycle, lui, date de la fin du bilan précédent, d'éventuels jours
-  // d'attente compris.
   const span = db
     .prepare('SELECT MIN(checked_at) AS a, MAX(checked_at) AS b FROM track_health WHERE checked_at >= ?')
     .get(cycle.started_at) as { a: number; b: number };
   const heures = ((span.b - span.a) / 3_600_000).toFixed(1);
 
   const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? 's' : ''}`;
+  const somme =
+    inv.ok + inv.replaced + inv.pending + inv.dead + inv.unchecked;
   const lignes = [
     `Cycle nº${cycle.cycle_no} terminé en ${heures} h.`,
-    `${total} titres au catalogue, ${pluriel(comptes, 'compte')}.`,
-    `${pluriel(done, 'titre')} vérifié${done > 1 ? 's' : ''} pendant ce cycle :`,
+    `${inv.total} titres au catalogue, ${pluriel(inv.comptes, 'compte')}.`,
+    `État actuel (somme ${somme} = ${inv.total} titres) :`,
+    `  · ${pluriel(inv.ok, 'lisible')} (vidéo d’origine)`,
+    `  · ${pluriel(inv.replaced, 'remplacé')} (vidéo disparue, autre copie trouvée)`,
+    `  · ${inv.pending} en attente de copie`,
+    `  · ${inv.dead} sans solution pour l'instant`,
+    `  · ${inv.unchecked} pas encore vérifié${inv.unchecked > 1 ? 's' : ''}`,
+    `${pluriel(done, 'titre')} sondé${done > 1 ? 's' : ''} pendant ce cycle :`,
     `  · ${pluriel(by.ok || 0, 'lisible')}`,
-    `  · ${pluriel(by.replaced || 0, 'remplacé')} (vidéo disparue, autre copie trouvée)`,
-    `  · ${by.dead || 0} sans solution pour l'instant`,
+    `  · ${pluriel(by.replaced || 0, 'remplacé')}`,
+    `  · ${by.pending || 0} en attente de copie`,
+    `  · ${by.dead || 0} sans solution`,
   ];
   if (morts.length) {
     lignes.push('', 'Titres restés sans remplaçant (retentés dans quelques jours) :');
@@ -295,11 +377,21 @@ export function buildCycleReport(): CycleReport | null {
   const text = lignes.join('\n');
   const html = `<div style="font-family:system-ui,-apple-system,sans-serif;line-height:1.55;max-width:720px;color:#111">
     <h1 style="font-size:1.25rem;margin:0 0 4px">Balayage de la bibliothèque — cycle nº${cycle.cycle_no}</h1>
-    <p style="color:#666;margin:0 0 18px">Terminé en ${heures} h · ${total} titres · ${pluriel(comptes, 'compte')}</p>
+    <p style="color:#666;margin:0 0 18px">Terminé en ${heures} h · ${inv.total} titres · ${pluriel(inv.comptes, 'compte')}</p>
+    <p style="margin:0 0 8px"><strong>État actuel</strong> — somme ${somme} = ${inv.total}</p>
+    <ul style="margin:0;padding-left:20px">
+      <li><strong>${inv.ok}</strong> lisible${inv.ok > 1 ? 's' : ''} — vidéo d’origine</li>
+      <li><strong>${inv.replaced}</strong> remplacé${inv.replaced > 1 ? 's' : ''} — vidéo disparue, autre copie trouvée</li>
+      <li><strong>${inv.pending}</strong> en attente de copie</li>
+      <li><strong>${inv.dead}</strong> sans solution pour l'instant</li>
+      <li><strong>${inv.unchecked}</strong> pas encore vérifié${inv.unchecked > 1 ? 's' : ''}</li>
+    </ul>
+    <p style="margin:18px 0 8px"><strong>Travail de ce cycle</strong> — ${pluriel(done, 'titre')} sondé${done > 1 ? 's' : ''}</p>
     <ul style="margin:0;padding-left:20px">
       <li><strong>${by.ok || 0}</strong> lisible${(by.ok || 0) > 1 ? 's' : ''}</li>
-      <li><strong>${by.replaced || 0}</strong> remplacé${(by.replaced || 0) > 1 ? 's' : ''} — vidéo disparue, autre copie trouvée</li>
-      <li><strong>${by.dead || 0}</strong> sans solution pour l'instant</li>
+      <li><strong>${by.replaced || 0}</strong> remplacé${(by.replaced || 0) > 1 ? 's' : ''}</li>
+      <li><strong>${by.pending || 0}</strong> en attente de copie</li>
+      <li><strong>${by.dead || 0}</strong> sans solution</li>
     </ul>
     ${
       morts.length
@@ -411,10 +503,12 @@ async function tick() {
       emptySinceMs = 0;
       cycleIdleClosed = false;
       lastHealthUserId = next.userId || lastHealthUserId;
-      const { state, network } = await probeOne(next.id, next.userId);
-      markHealth(next.id, state);
-      stats.checked++;
-      stats[state]++;
+      const { state, network, skip } = await probeOne(next.id, next.userId);
+      if (!skip) {
+        markHealth(next.id, state);
+        stats.checked++;
+        stats[state]++;
+      }
       if (network) return;
     }
   } catch (err) {
@@ -459,6 +553,7 @@ export function libraryHealthStatus() {
     lastReportAt: cycle.last_report_at ? new Date(cycle.last_report_at).toISOString() : null,
     cycleIdleClosed,
     trackTotal: total,
+    inventory: libraryInventory(),
     sessionChecked: stats.checked,
     reportsSent: stats.reportsSent,
     reportsSkipped: stats.reportsSkipped,
