@@ -3800,12 +3800,12 @@ private fun FocusLyricLine(
     Text(
         body,
         color = if (current) Color.White else PlayerMuted.copy(alpha = 0.48f),
-        fontSize = if (current) 28.sp else 18.sp,
-        fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
-        lineHeight = if (current) 34.sp else 24.sp,
+        fontSize = if (current) 20.sp else 15.sp,
+        fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+        lineHeight = if (current) 24.sp else 20.sp,
         textAlign = TextAlign.Center,
         softWrap = true,
-        maxLines = if (current) 4 else 2,
+        maxLines = if (current) 2 else 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .fillMaxWidth()

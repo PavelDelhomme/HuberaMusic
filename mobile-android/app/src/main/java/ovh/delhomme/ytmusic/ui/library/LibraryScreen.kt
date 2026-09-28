@@ -770,11 +770,16 @@ private fun buildLibraryContent(
                     String.format("%.1f h", h)
                 }
             }
+            val songCount = when {
+                offlineOnly -> tracks.size
+                (data.totalSongs ?: 0) > tracks.size -> data.totalSongs!!
+                else -> tracks.size
+            }
             LibraryContent(
                 headline = buildString {
                     append(if (offlineOnly) "Titres hors ligne" else "Titres")
                     append(" · ")
-                    append(tracks.size)
+                    append(songCount)
                     if (hoursLabel != null) {
                         append(" · ")
                         append(hoursLabel)

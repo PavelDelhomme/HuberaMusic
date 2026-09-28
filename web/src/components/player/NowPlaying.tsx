@@ -199,8 +199,8 @@ export function SyncedLyrics({
   const lineProps = (line: LyricLine | null, current: boolean) => {
     if (!line) {
       return { className: current
-        ? 'min-h-[4.5rem] px-3 py-3 text-center text-3xl font-bold leading-tight text-white sm:text-4xl'
-        : 'min-h-[2.5rem] px-3 py-2 text-center text-lg leading-snug text-white/40 sm:text-xl' };
+        ? 'min-h-[2.75rem] px-3 py-2 text-center text-xl font-semibold leading-snug text-white sm:text-2xl'
+        : 'min-h-[2rem] px-3 py-1.5 text-center text-sm leading-snug text-white/40 sm:text-base' };
     }
     return {
       role: 'button' as const,
@@ -218,8 +218,8 @@ export function SyncedLyrics({
         }
       },
       className: current
-        ? 'cursor-pointer rounded-xl bg-[#ff0033]/22 px-3 py-3 text-center text-3xl font-bold leading-tight text-white sm:text-4xl'
-        : 'cursor-pointer rounded-lg px-3 py-2 text-center text-lg leading-snug text-white/45 hover:text-white/80 sm:text-xl',
+        ? 'cursor-pointer rounded-xl bg-[#ff0033]/22 px-3 py-2 text-center text-xl font-semibold leading-snug text-white sm:text-2xl'
+        : 'cursor-pointer rounded-lg px-3 py-1.5 text-center text-sm leading-snug text-white/45 hover:text-white/80 sm:text-base',
     };
   };
 
