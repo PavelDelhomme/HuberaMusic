@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode, type TouchEvent } from 'react';
 import { ListMusic, Mic2, MoreVertical, Pause, Play, Radio, Repeat, Repeat1, Save, Shuffle, SkipBack, SkipForward, Sparkles } from 'lucide-react';
 import { api, artistNames, getToken, thumb, type Track } from '../../api';
 import { usePlayer } from '../../store/player';
@@ -69,10 +69,6 @@ export function SyncedLyrics({
   const [clock, setClock] = useState(0);
   const [userOffsetMs, setUserOffsetMs] = useState(() => getLyricUserOffsetMs(currentId));
   const [toolsOpen, setToolsOpen] = useState(false);
-  const activeRef = useRef<HTMLParagraphElement | null>(null);
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const prevIdxRef = useRef(-1);
-  const userScrollUntilRef = useRef(0);
   const lastActiveRef = useRef(-1);
 
   useEffect(() => {
@@ -179,39 +175,53 @@ export function SyncedLyrics({
     const durationMs = duration > 0 ? Math.round(duration * 1000) : undefined;
     return { atMs, durationMs };
   };
-  useEffect(() => {
-    const lineEl = activeRef.current;
-    if (!lineEl || activeIdx < 0) return;
-    if (Date.now() < userScrollUntilRef.current) {
-      prevIdxRef.current = activeIdx;
-      return;
-    }
-    let scroller: HTMLElement | null = scrollerRef.current;
-    if (scroller) {
-      let n: HTMLElement | null = lineEl.parentElement;
-      while (n) {
-        const oy = getComputedStyle(n).overflowY;
-        if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 8) {
-          scroller = n;
-          break;
-        }
-        n = n.parentElement;
-      }
-    }
-    if (!scroller) return;
-    const prev = prevIdxRef.current;
-    prevIdxRef.current = activeIdx;
-    const lineTop =
-      lineEl.getBoundingClientRect().top -
-      scroller.getBoundingClientRect().top +
-      scroller.scrollTop;
-    const top = lineTop - scroller.clientHeight / 2 + lineEl.clientHeight / 2;
-    const jump = prev < 0 || Math.abs(activeIdx - prev) > 1;
-    scroller.scrollTo({
-      top: Math.max(0, top),
-      behavior: jump ? 'smooth' : 'auto',
+
+  const prevLine = activeIdx > 0 ? lines[activeIdx - 1] : null;
+  const currentLine = activeIdx >= 0 ? lines[activeIdx] : null;
+  const nextLine = activeIdx < 0
+    ? (lines[0] ?? null)
+    : (activeIdx < lines.length - 1 ? lines[activeIdx + 1] : null);
+
+  const calibrateTo = (lineT: number) => {
+    if (!currentId) return;
+    const el = usePlayer.getState().audioEl;
+    const now = el && Number.isFinite(el.currentTime) ? el.currentTime : clock;
+    const nextMs = Math.round((now + leadSec - sourceLagSec - lineT) * 1000);
+    setLyricUserOffsetMs(currentId, nextMs, {
+      atMs: Math.round(now * 1000),
+      durationMs: duration > 0 ? Math.round(duration * 1000) : undefined,
+      source: 'calibrate',
     });
-  }, [activeIdx]);
+    setUserOffsetMs(getLyricUserOffsetMs(currentId));
+    lastActiveRef.current = -1;
+  };
+
+  const lineProps = (line: LyricLine | null, current: boolean) => {
+    if (!line) {
+      return { className: current
+        ? 'min-h-[4.5rem] px-3 py-3 text-center text-3xl font-bold leading-tight text-white sm:text-4xl'
+        : 'min-h-[2.5rem] px-3 py-2 text-center text-lg leading-snug text-white/40 sm:text-xl' };
+    }
+    return {
+      role: 'button' as const,
+      tabIndex: 0,
+      title: 'Clic : aller à cet instant · Clic droit : caler le sync',
+      onClick: () => seek(Math.max(0, line.t)),
+      onContextMenu: (e: MouseEvent<HTMLParagraphElement>) => {
+        e.preventDefault();
+        calibrateTo(line.t);
+      },
+      onKeyDown: (e: KeyboardEvent<HTMLParagraphElement>) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          seek(Math.max(0, line.t));
+        }
+      },
+      className: current
+        ? 'cursor-pointer rounded-xl bg-[#ff0033]/22 px-3 py-3 text-center text-3xl font-bold leading-tight text-white sm:text-4xl'
+        : 'cursor-pointer rounded-lg px-3 py-2 text-center text-lg leading-snug text-white/45 hover:text-white/80 sm:text-xl',
+    };
+  };
 
   // Texte brut sans timings → scroll libre, pas de faux karaoké
   if (!lines.length) {
@@ -303,97 +313,10 @@ export function SyncedLyrics({
           )}
         </div>
       )}
-      <div
-        ref={scrollerRef}
-        data-lyrics-scroll
-        className="space-y-1 px-2 py-2 sm:px-4"
-        onWheel={() => {
-          userScrollUntilRef.current = Date.now() + 4000;
-        }}
-        onTouchMove={() => {
-          userScrollUntilRef.current = Date.now() + 4000;
-        }}
-      >
-        {lines.map((line, i) => {
-          const active = i === activeIdx;
-          const past = activeIdx >= 0 && i < activeIdx;
-          return (
-            <p
-              key={`${i}-${line.t}`}
-              ref={active ? activeRef : undefined}
-              role="button"
-              tabIndex={0}
-              onClick={() => seek(Math.max(0, line.t))}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                if (!currentId) return;
-                const el = usePlayer.getState().audioEl;
-                const now = el && Number.isFinite(el.currentTime) ? el.currentTime : clock;
-                const nextMs = Math.round(
-                  (now + leadSec - sourceLagSec - line.t) * 1000,
-                );
-                setLyricUserOffsetMs(currentId, nextMs, {
-                  atMs: Math.round(now * 1000),
-                  durationMs: duration > 0 ? Math.round(duration * 1000) : undefined,
-                  source: 'calibrate',
-                });
-                setUserOffsetMs(getLyricUserOffsetMs(currentId));
-                lastActiveRef.current = -1;
-              }}
-              onTouchStart={(e) => {
-                const target = e.currentTarget;
-                const timer = window.setTimeout(() => {
-                  if (!currentId) return;
-                  const el = usePlayer.getState().audioEl;
-                  const now = el && Number.isFinite(el.currentTime) ? el.currentTime : clock;
-                  const nextMs = Math.round(
-                    (now + leadSec - sourceLagSec - line.t) * 1000,
-                  );
-                  setLyricUserOffsetMs(currentId, nextMs, {
-                    atMs: Math.round(now * 1000),
-                    durationMs: duration > 0 ? Math.round(duration * 1000) : undefined,
-                    source: 'calibrate',
-                  });
-                  setUserOffsetMs(getLyricUserOffsetMs(currentId));
-                  lastActiveRef.current = -1;
-                  target.dataset.calibrated = '1';
-                }, 480);
-                target.dataset.longPressTimer = String(timer);
-              }}
-              onTouchEnd={(e) => {
-                const t = e.currentTarget.dataset.longPressTimer;
-                if (t) window.clearTimeout(Number(t));
-                if (e.currentTarget.dataset.calibrated === '1') {
-                  e.preventDefault();
-                  delete e.currentTarget.dataset.calibrated;
-                }
-                delete e.currentTarget.dataset.longPressTimer;
-              }}
-              onTouchCancel={(e) => {
-                const t = e.currentTarget.dataset.longPressTimer;
-                if (t) window.clearTimeout(Number(t));
-                delete e.currentTarget.dataset.longPressTimer;
-                delete e.currentTarget.dataset.calibrated;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  seek(Math.max(0, line.t));
-                }
-              }}
-              className={`origin-left cursor-pointer rounded-md px-1.5 transition-colors duration-150 hover:text-white ${
-                active
-                  ? 'bg-[#ff0033]/22 py-0.5 text-lg font-bold leading-snug text-white sm:text-xl'
-                  : past
-                    ? 'py-px text-sm leading-5 text-white/30'
-                    : 'py-px text-base leading-6 text-[#b3b3b3] sm:text-[17px] sm:leading-6'
-              }`}
-              title="Clic : aller à cet instant · Appui long : caler le sync"
-            >
-              {line.text || '\u00a0'}
-            </p>
-          );
-        })}
+      <div className="flex min-h-[16rem] flex-col items-center justify-center gap-3 px-3 py-6 sm:px-6">
+        <p {...lineProps(prevLine, false)}>{prevLine?.text || '\u00a0'}</p>
+        <p {...lineProps(currentLine, true)}>{currentLine?.text || '\u00a0'}</p>
+        <p {...lineProps(nextLine, false)}>{nextLine?.text || '\u00a0'}</p>
       </div>
     </div>
   );

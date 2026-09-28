@@ -2,6 +2,18 @@
   "updatedAt": "2026-09-27",
   "versions": [
     {
+      "version": "1.3.317",
+      "date": "2026-09-28",
+      "time": "03:20",
+      "at": "2026-09-28T03:20:00+02:00",
+      "title": "Paroles karaoké : 3 lignes, texte plus gros",
+      "notes": [
+        "À l’écran : ligne d’avant, ligne actuelle au milieu, ligne d’après.",
+        "La ligne chantée est beaucoup plus grosse — plus un mur de petit texte.",
+        "Options sync toujours sur une ligne repliable. Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
       "version": "1.3.316",
       "date": "2026-09-27",
       "time": "22:15",

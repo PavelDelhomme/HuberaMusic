@@ -3354,32 +3354,6 @@ private fun InlineSyncedLyrics(
     // Ne PAS forcer l’index 0 avant la 1ʳᵉ ligne (sinon « désync » totale en intro)
     val active = if (timed.isEmpty()) -1
     else timed.indexOfLast { it.startMsLong() <= syncPos }
-    // Nouvelle chanson, nouveau défilement : sans cela le panneau garde la position de
-    // la fin des paroles précédentes jusqu'à ce que la lecture atteigne la première
-    // ligne synchronisée.
-    val listState = remember(track.id) { LazyListState() }
-    LaunchedEffect(active, track.id) {
-        if (active < 0) return@LaunchedEffect
-        runCatching {
-            listState.animateScrollToItem(
-                index = active.coerceIn(0, timed.lastIndex),
-                scrollOffset = -36,
-            )
-        }
-    }
-    LaunchedEffect(positionMs / 2_000L, track.id) {
-        if (active < 0 || timed.isEmpty()) return@LaunchedEffect
-        val visible = listState.layoutInfo.visibleItemsInfo
-        val onScreen = visible.any { it.index == active }
-        if (!onScreen) {
-            runCatching {
-                listState.animateScrollToItem(
-                    index = active.coerceIn(0, timed.lastIndex),
-                    scrollOffset = -36,
-                )
-            }
-        }
-    }
 
     fun persistOffset(next: Long, source: String = "nudge") {
         val clamped = next.coerceIn(-90_000L, 90_000L)
@@ -3526,45 +3500,36 @@ private fun InlineSyncedLyrics(
                 modifier = Modifier.padding(top = 24.dp),
             )
             timed.isNotEmpty() -> {
-                LazyColumn(
-                    state = listState,
-                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 4.dp),
+                val prevLine = if (active > 0) timed[active - 1] else null
+                val currentLine = if (active >= 0) timed[active] else null
+                val nextLine = when {
+                    active < 0 -> timed.firstOrNull()
+                    active < timed.lastIndex -> timed[active + 1]
+                    else -> null
+                }
+                Column(
                     modifier = Modifier.fillMaxSize(),
-                    userScrollEnabled = true,
-                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    itemsIndexed(timed) { i, line ->
-                        val isActive = i == active
-                        val past = active >= 0 && i < active
-                        Text(
-                            line.text.ifBlank { " " },
-                            style = if (isActive) {
-                                MaterialTheme.typography.titleMedium
-                            } else {
-                                MaterialTheme.typography.bodyMedium
-                            },
-                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                            color = when {
-                                isActive -> Color.White
-                                past -> PlayerMuted.copy(alpha = 0.32f)
-                                else -> PlayerMuted.copy(alpha = 0.82f)
-                            },
-                            textAlign = TextAlign.Start,
-                            softWrap = true,
-                            lineHeight = if (isActive) 22.sp else 20.sp,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (isActive) SeekRed.copy(alpha = 0.20f) else Color.Transparent,
-                                )
-                                .combinedClickable(
-                                    onClick = { onSeek(line.startMsLong()) },
-                                    onLongClick = { calibrateToLine(line.startMsLong()) },
-                                )
-                                .padding(horizontal = 8.dp, vertical = if (isActive) 5.dp else 2.dp),
-                        )
-                    }
+                    FocusLyricLine(
+                        text = prevLine?.text,
+                        current = false,
+                        onClick = prevLine?.let { { onSeek(it.startMsLong()) } },
+                        onLongClick = prevLine?.let { { calibrateToLine(it.startMsLong()) } },
+                    )
+                    FocusLyricLine(
+                        text = currentLine?.text,
+                        current = true,
+                        onClick = currentLine?.let { { onSeek(it.startMsLong()) } },
+                        onLongClick = currentLine?.let { { calibrateToLine(it.startMsLong()) } },
+                    )
+                    FocusLyricLine(
+                        text = nextLine?.text,
+                        current = false,
+                        onClick = nextLine?.let { { onSeek(it.startMsLong()) } },
+                        onLongClick = nextLine?.let { { calibrateToLine(it.startMsLong()) } },
+                    )
                 }
             }
             !text.isNullOrBlank() -> {
@@ -3821,6 +3786,41 @@ private fun normalizeTimedLines(
     } else {
         lines
     }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FocusLyricLine(
+    text: String?,
+    current: Boolean,
+    onClick: (() -> Unit)?,
+    onLongClick: (() -> Unit)?,
+) {
+    val body = text?.ifBlank { " " } ?: " "
+    Text(
+        body,
+        color = if (current) Color.White else PlayerMuted.copy(alpha = 0.48f),
+        fontSize = if (current) 28.sp else 18.sp,
+        fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+        lineHeight = if (current) 34.sp else 24.sp,
+        textAlign = TextAlign.Center,
+        softWrap = true,
+        maxLines = if (current) 4 else 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = if (current) 14.dp else 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (current && !text.isNullOrBlank()) SeekRed.copy(alpha = 0.22f) else Color.Transparent)
+            .then(
+                if (onClick != null && onLongClick != null) {
+                    Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                } else {
+                    Modifier
+                },
+            )
+            .padding(horizontal = 10.dp, vertical = if (current) 10.dp else 4.dp),
+    )
 }
 
 @Composable
