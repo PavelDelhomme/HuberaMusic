@@ -1,6 +1,18 @@
 {
-  "updatedAt": "2026-09-27",
+  "updatedAt": "2026-09-29",
   "versions": [
+    {
+      "version": "1.3.319",
+      "date": "2026-09-29",
+      "time": "04:00",
+      "at": "2026-09-29T04:00:00+02:00",
+      "title": "Suivant change vraiment de titre (Maps, notif, Nothing)",
+      "notes": [
+        "Skip immédiat : plus d’attente 6 s d’une tête AAC qui bloquait le bouton suivant.",
+        "Un seul titre en file : « À suivre » s’ajoute et on passe au suivant même si la piste n’est pas finie.",
+        "Pas de forceUpdate — installe via MAJ in-app."
+      ]
+    },
     {
       "version": "1.3.318",
       "date": "2026-09-28",

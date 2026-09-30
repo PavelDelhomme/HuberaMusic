@@ -265,9 +265,13 @@ class ApkUpdateManager(
         }
         val message = when (safe) {
             Phase.UpToDate -> "À jour — ${BuildConfig.VERSION_NAME}"
-            Phase.Available ->
-                prefs.getString(KEY_UI_MESSAGE, "")?.takeIf { it.isNotBlank() }
-                    ?: "Nouvelle version prête — appuie pour installer"
+            Phase.Available -> {
+                val remoteLabel = prefs.getString(KEY_LAST_REMOTE_NAME, null)
+                    ?: remoteCode.takeIf { it > 0 }?.let { "build $it" }
+                val stored = prefs.getString(KEY_UI_MESSAGE, "")?.takeIf { it.isNotBlank() }
+                if (stored != null && !stored.startsWith("À jour")) stored
+                else "Nouvelle version ${remoteLabel ?: ""} — ${BuildConfig.VERSION_NAME} déjà installée. Mise à jour proposée, pas forcée.".trim()
+            }
             else -> prefs.getString(KEY_UI_MESSAGE, "") ?: ""
         }
         return UiState(

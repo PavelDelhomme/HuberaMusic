@@ -1888,6 +1888,63 @@ class PlaybackService : MediaSessionService() {
         )
     }
 
+    /**
+     * Next depuis Maps / notif / média-clés, même si le lecteur UI n’est plus branché.
+     * Doit vraiment changer de titre (pas seulement précharger « À suivre »).
+     */
+    fun skipToNextFromExternal() {
+        val h = android.os.Handler(mainLooper)
+        val run = Runnable {
+            val exo = player ?: return@Runnable
+            if (!exo.hasNextMediaItem()) {
+                Holder.extendUserQueue()
+            }
+            if (!exo.hasNextMediaItem()) {
+                val q = Holder.queue
+                if (q.size > exo.mediaItemCount) {
+                    val container = runCatching { YtMusicApp.instance.container }.getOrNull()
+                    val base: (String) -> String = { id ->
+                        container?.remoteStreamUrl(id)
+                            ?: "${Holder.resolvedApiBase()}/api/stream/$id"
+                    }
+                    q.drop(exo.mediaItemCount).forEach { t ->
+                        runCatching { exo.addMediaItem(mediaItemFor(t, base, Holder.queueTitle)) }
+                    }
+                }
+            }
+            if (exo.hasNextMediaItem()) {
+                runCatching { advanceToQueueIndex(exo, exo.currentMediaItemIndex + 1) }
+                return@Runnable
+            }
+            fillAutoplayFromService(advanceAfterFill = true)
+        }
+        if (android.os.Looper.myLooper() == mainLooper) run.run() else h.post(run)
+    }
+
+    /**
+     * Prev depuis Maps / notif / média-clés : toujours le titre d’avant,
+     * jamais un restart à 3 s (ça donnait l’impression que « précédent » ne marchait pas).
+     */
+    fun skipToPreviousFromExternal() {
+        val h = android.os.Handler(mainLooper)
+        val run = Runnable {
+            val exo = player ?: return@Runnable
+            val cur = exo.currentMediaItemIndex.coerceAtLeast(0)
+            val prev = when {
+                cur > 0 -> cur - 1
+                exo.mediaItemCount > 1 -> exo.mediaItemCount - 1
+                Holder.queue.size > 1 && Holder.index > 0 -> Holder.index - 1
+                Holder.queue.size > 1 -> Holder.queue.lastIndex
+                else -> {
+                    runCatching { exo.seekTo(0L) }
+                    return@Runnable
+                }
+            }
+            runCatching { advanceToQueueIndex(exo, prev) }
+        }
+        if (android.os.Looper.myLooper() == mainLooper) run.run() else h.post(run)
+    }
+
     private fun advanceToQueueIndex(exo: Player, nextIdx: Int, warmFrom: Int = nextIdx) {
         programmaticAdvance = true
         recoverGen.incrementAndGet()
@@ -2203,7 +2260,7 @@ class PlaybackService : MediaSessionService() {
                         "PlaybackService",
                         "autoplay fill +${toAdd.size} (service) seed=$seed count=$startCount→${p.mediaItemCount}",
                     )
-                    if (advanceAfterFill && p.playbackState == Player.STATE_ENDED) {
+                    if (advanceAfterFill) {
                         val next = p.currentMediaItemIndex + 1
                         if (next < p.mediaItemCount) {
                             runCatching { advanceToQueueIndex(p, next) }
@@ -2763,6 +2820,8 @@ class PlaybackService : MediaSessionService() {
         @Volatile var onSkipAtEnd: (() -> Unit)? = null
         /** Next hardware / notif → PlayerController.skipNext (tête AAC avant seek). */
         @Volatile var onSkipNext: (() -> Unit)? = null
+        /** Prev hardware / Maps / notif → PlayerController.skipPrev (vrai titre d’avant). */
+        @Volatile var onSkipPrev: (() -> Unit)? = null
         /** Shuffle « suite only » / cycle repeat — délégué au PlayerController UI. */
         @Volatile var onToggleShuffle: (() -> Unit)? = null
         @Volatile var onCycleRepeat: (() -> Unit)? = null
@@ -2967,7 +3026,8 @@ private class YtmForwardingPlayer(
             gated.invoke()
             return
         }
-        seekToNextImmediate()
+        PlaybackService.Holder.service?.skipToNextFromExternal()
+            ?: seekToNextImmediate()
     }
 
     private fun seekToNextImmediate() {
@@ -3054,16 +3114,23 @@ private class YtmForwardingPlayer(
     override fun seekToPrevious() = seekToPreviousMediaItem()
 
     override fun seekToPreviousMediaItem() {
-        when {
-            exo.currentPosition > 3_000L -> exo.seekTo(0L)
-            exo.hasPreviousMediaItem() -> {
-                val prev = (exo.currentMediaItemIndex - 1).coerceAtLeast(0)
-                warmAroundIndex(prev)
-                exo.seekToPreviousMediaItem()
-            }
-            exo.mediaItemCount > 1 -> exo.seekTo(exo.mediaItemCount - 1, 0L)
-            else -> exo.seekTo(0L)
+        val gated = PlaybackService.Holder.onSkipPrev
+        if (gated != null) {
+            gated.invoke()
+            return
         }
+        PlaybackService.Holder.service?.skipToPreviousFromExternal()
+            ?: run {
+                when {
+                    exo.hasPreviousMediaItem() -> {
+                        val prev = (exo.currentMediaItemIndex - 1).coerceAtLeast(0)
+                        warmAroundIndex(prev)
+                        exo.seekToPreviousMediaItem()
+                    }
+                    exo.mediaItemCount > 1 -> exo.seekTo(exo.mediaItemCount - 1, 0L)
+                    else -> exo.seekTo(0L)
+                }
+            }
     }
 }
 

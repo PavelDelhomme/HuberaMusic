@@ -150,6 +150,7 @@ class PlayerController(
     fun connect() {
         PlaybackService.Holder.onSkipAtEnd = { fillThenSkipFromEnd(fromUserSkip = true) }
         PlaybackService.Holder.onSkipNext = { skipNext() }
+        PlaybackService.Holder.onSkipPrev = { skipPrev() }
         PlaybackService.Holder.onToggleShuffle = { toggleShuffle() }
         PlaybackService.Holder.onCycleRepeat = { cycleRepeat() }
         val alreadyRunning =
@@ -221,6 +222,7 @@ class PlayerController(
             PlaybackService.Holder.onSkipAtEnd = null
         }
         PlaybackService.Holder.onSkipNext = null
+        PlaybackService.Holder.onSkipPrev = null
         PlaybackService.Holder.onToggleShuffle = null
         PlaybackService.Holder.onCycleRepeat = null
         controller?.removeListener(listener)
@@ -841,20 +843,6 @@ class PlayerController(
                 )
                 CoverPrefetcher.warmCovers(skipQueue, nextIdx, ahead = 4, behind = 0)
             }
-            if (!StreamPrefetcher.hasPlayableHead(nid, 280L * 1024L)) {
-                scope.launch {
-                    val first = withContext(Dispatchers.IO) {
-                        StreamPrefetcher.ensureHeadBeforeSkip(base, nid, timeoutMs = 2_800L)
-                    }
-                    if (!first) {
-                        withContext(Dispatchers.IO) {
-                            StreamPrefetcher.ensureHeadBeforeSkip(base, nid, timeoutMs = 3_200L)
-                        }
-                    }
-                    applySkipSeek(p, nextIdx)
-                }
-                return
-            }
         }
         applySkipSeek(p, nextIdx)
     }
@@ -969,118 +957,31 @@ class PlayerController(
     }
 
     /**
-     * Précédent YTM :
-     * - si position > 3 s → retour début du titre
-     * - sinon → titre précédent dans la file
+     * Précédent = titre d’avant (Maps, notif, lecteur). Reculer dans la piste = appui long.
+     * Jamais [Player.seekToPreviousMediaItem] : Media3 restart à 3 s, et le MediaController
+     * rebouclerait vers [PlaybackService.Holder.onSkipPrev].
      */
     fun skipPrev() {
         connect()
-        val p = player() ?: PlaybackService.Holder.player
-        if (p == null) {
-            if (!startPlaybackFromUiState()) return
-            val q = pending?.first ?: _state.value.queue
-            if (q.size > 1) {
-                val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
-                val posMs = pendingSeekMs.coerceAtLeast(_state.value.positionMs)
-                if (posMs <= 3000L) {
-                    val prev = if (cur > 0) cur - 1 else q.lastIndex
-                    pending = q to prev
-                    pendingSeekMs = 0L
-                    PlaybackService.Holder.index = prev
-                }
-            }
+        val svc = PlaybackService.Holder.service
+        if (svc != null) {
+            svc.skipToPreviousFromExternal()
+            PlaybackService.Holder.player?.let { syncFrom(it) }
             return
         }
-        val saved = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
-        val idleOrEmpty =
-            p.mediaItemCount == 0 ||
-                p.playbackState == Player.STATE_IDLE
-        val curIdx = if (idleOrEmpty) {
-            PlaybackService.Holder.index.coerceIn(0, saved.lastIndex.coerceAtLeast(0))
-        } else {
-            p.currentMediaItemIndex.coerceAtLeast(0)
+        if (!startPlaybackFromUiState()) return
+        val q = pending?.first ?: _state.value.queue
+        if (q.size > 1) {
+            val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
+            val prev = if (cur > 0) cur - 1 else q.lastIndex
+            pending = q to prev
+            pendingSeekMs = 0L
+            PlaybackService.Holder.index = prev
         }
-        val posMs = if (idleOrEmpty) {
-            _state.value.positionMs.coerceAtLeast(0L)
-        } else {
-            p.currentPosition.coerceAtLeast(0L)
-        }
-        if (!idleOrEmpty && posMs > 3000L) {
-            p.seekTo(0L)
-            syncFrom(p)
-            return
-        }
-        if (idleOrEmpty && saved.size > 1) {
-            val prev = if (curIdx > 0) curIdx - 1 else saved.lastIndex
-            userWantsPlaying = true
-            pendingAutoplay = true
-            playNow(p, saved, prev, autoplay = true)
-            return
-        }
-        val wasOne = repeatMode == RepeatMode.One
-        if (wasOne) p.repeatMode = Player.REPEAT_MODE_OFF
-        when {
-            p.hasPreviousMediaItem() -> {
-                p.seekToPreviousMediaItem()
-                p.play()
-            }
-            p.mediaItemCount > 1 -> {
-                val prev = if (curIdx > 0) curIdx - 1 else p.mediaItemCount - 1
-                p.seekTo(prev, 0L)
-                p.play()
-            }
-            saved.size > 1 -> {
-                val prev = if (curIdx > 0) curIdx - 1 else saved.lastIndex
-                userWantsPlaying = true
-                playNow(p, saved, prev, autoplay = true)
-            }
-            else -> p.seekTo(0L)
-        }
-        if (wasOne) {
-            p.repeatMode = Player.REPEAT_MODE_ONE
-            repeatMode = RepeatMode.One
-        }
-        syncFrom(p)
     }
 
-    fun skipPrevOrRestart(forcePrevious: Boolean) {
-        connect()
-        val p = player() ?: PlaybackService.Holder.player
-        if (p == null) {
-            if (forcePrevious) {
-                if (!startPlaybackFromUiState()) return
-                val q = pending?.first ?: _state.value.queue
-                if (q.size > 1) {
-                    val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
-                    val prev = if (cur > 0) cur - 1 else q.lastIndex
-                    pending = q to prev
-                    pendingSeekMs = 0L
-                    PlaybackService.Holder.index = prev
-                }
-            } else {
-                skipPrev()
-            }
-            return
-        }
-        if (forcePrevious) {
-            val wasOne = repeatMode == RepeatMode.One
-            if (wasOne) p.repeatMode = Player.REPEAT_MODE_OFF
-            if (p.hasPreviousMediaItem()) {
-                p.seekToPreviousMediaItem()
-                p.play()
-            } else if (p.mediaItemCount > 1) {
-                val prev = if (p.currentMediaItemIndex > 0) p.currentMediaItemIndex - 1 else p.mediaItemCount - 1
-                p.seekTo(prev, 0L)
-                p.play()
-            }
-            if (wasOne) {
-                p.repeatMode = Player.REPEAT_MODE_ONE
-                repeatMode = RepeatMode.One
-            }
-            syncFrom(p)
-        } else {
-            skipPrev()
-        }
+    fun skipPrevOrRestart(@Suppress("UNUSED_PARAMETER") forcePrevious: Boolean) {
+        skipPrev()
     }
 
     /** Meilleure durée connue (catalogue > Exo sain > UI), ou 0. */
