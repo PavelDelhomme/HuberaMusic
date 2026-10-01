@@ -1169,6 +1169,15 @@ export async function searchSuggestions(query: string): Promise<string[]> {
 }
 
 export async function getTrack(videoId: string, opts?: { light?: boolean }) {
+  try {
+    const { getTrackPayload } = await import('../library/db.js');
+    const cached = getTrackPayload(videoId);
+    if (cached && (cached as Track).source === 'upload') {
+      return { track: cached };
+    }
+  } catch {
+    /* cache optionnel */
+  }
   const light = opts?.light === true;
   const cacheKey = light ? `L:${videoId}` : videoId;
   const cached = trackMetaCache.get(cacheKey);
@@ -1202,6 +1211,7 @@ export async function hydrateTracks(
     .map((t, i) =>
       t?.id &&
       /^[a-zA-Z0-9_-]{11}$/.test(t.id) &&
+      (t as Track).source !== 'upload' &&
       (isWeakTitle(t.title, t.id) ||
         !(t.artists || []).length ||
         !(t.durationSeconds && t.durationSeconds > 0))

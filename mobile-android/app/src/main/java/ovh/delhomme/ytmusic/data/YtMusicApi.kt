@@ -4,11 +4,13 @@ import com.squareup.moshi.JsonClass
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
+import okhttp3.RequestBody
 
 @JsonClass(generateAdapter = false)
 data class PlaylistDto(
@@ -131,6 +133,18 @@ data class ApkInfoResponse(
 
 @JsonClass(generateAdapter = false)
 data class LibrarySongResponse(val saved: Boolean, val library: LibraryResponse? = null)
+
+@JsonClass(generateAdapter = false)
+data class ImportFileResponse(
+    val kind: String? = null,
+    val id: String? = null,
+    val title: String? = null,
+    val metaSource: String? = null,
+    val youtubeId: String? = null,
+    val track: TrackDto? = null,
+    val library: LibraryResponse? = null,
+    val error: String? = null,
+)
 
 @JsonClass(generateAdapter = false)
 data class CreatePlaylistBody(val name: String, val description: String? = null)
@@ -733,6 +747,15 @@ interface YtMusicApi {
 
     @POST("api/library/songs")
     suspend fun toggleLibrarySong(@Body track: TrackDto): LibrarySongResponse
+
+    @POST("api/import/file")
+    suspend fun importFile(
+        @Query("title") title: String? = null,
+        @Query("artist") artist: String? = null,
+        @Query("filename") filename: String? = null,
+        @Header("Content-Type") contentType: String,
+        @Body body: RequestBody,
+    ): ImportFileResponse
 
     @DELETE("api/library/songs/{id}")
     suspend fun removeLibrarySong(@Path("id") id: String): LibrarySongResponse

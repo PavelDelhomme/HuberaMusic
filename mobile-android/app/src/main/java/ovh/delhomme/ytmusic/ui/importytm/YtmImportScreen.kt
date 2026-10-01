@@ -2,7 +2,10 @@ package ovh.delhomme.ytmusic.ui.importytm
 
 import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -50,6 +54,8 @@ import ovh.delhomme.ytmusic.data.YtmCookieBody
 import ovh.delhomme.ytmusic.data.apiMessage
 import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.debug.TelemetryReporter
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.text.DateFormat
 import java.util.Date
 
@@ -72,6 +78,8 @@ fun YtmImportScreen(
     var oauthCode by remember { mutableStateOf<String?>(null) }
     var oauthUrl by remember { mutableStateOf<String?>(null) }
     var autoOauthLaunched by remember { mutableStateOf(false) }
+    var mp3Title by remember { mutableStateOf("") }
+    var mp3Artist by remember { mutableStateOf("") }
 
     fun refresh() {
         scope.launch {
@@ -254,6 +262,44 @@ fun YtmImportScreen(
         }
     }
 
+    fun mp3DisplayName(uri: Uri): String {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            val idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (idx >= 0 && c.moveToFirst()) return c.getString(idx) ?: "audio.mp3"
+        }
+        return "audio.mp3"
+    }
+
+    val pickMp3 = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = true
+        error = null
+        message = "Import du MP3 sur ton compte…"
+        scope.launch {
+            runCatching {
+                container.ensureFreshToken()
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("Impossible de lire le fichier")
+                val name = mp3DisplayName(uri)
+                val mime = context.contentResolver.getType(uri) ?: "audio/mpeg"
+                val body = bytes.toRequestBody(mime.toMediaType())
+                container.api.importFile(
+                    title = mp3Title.trim().ifBlank { null },
+                    artist = mp3Artist.trim().ifBlank { null },
+                    filename = name,
+                    contentType = mime,
+                    body = body,
+                )
+            }.onSuccess {
+                message = "MP3 enregistré : ${it.title ?: "titre"}"
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                error = it.apiMessage()
+            }
+            busy = false
+        }
+    }
+
     if (showLogin) {
         YtmGoogleLoginWebView(
             onCaptured = {
@@ -293,6 +339,36 @@ fun YtmImportScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            Text("Fichier MP3 sur ton compte", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Le MP3 est stocké sur le serveur pour ton compte. Titre et artiste viennent de YouTube si on trouve le morceau, sinon des tags ID3 / du nom de fichier / de ce que tu saisis.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = mp3Title,
+                onValueChange = { mp3Title = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Titre (optionnel)") },
+            )
+            OutlinedTextField(
+                value = mp3Artist,
+                onValueChange = { mp3Artist = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Artiste (optionnel)") },
+            )
+            Button(
+                enabled = !busy,
+                onClick = { pickMp3.launch("audio/*") },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.UploadFile, contentDescription = null)
+                Spacer(Modifier.padding(4.dp))
+                Text(if (busy) "Import…" else "Choisir un MP3")
+            }
 
             val acc = account
             val canSync = acc?.canSyncLibrary == true

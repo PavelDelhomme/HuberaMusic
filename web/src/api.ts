@@ -9,6 +9,7 @@ export type Track = {
   durationSeconds?: number;
   thumbnails: { url: string; width?: number; height?: number }[];
   type: 'song' | 'video' | 'album' | 'playlist' | 'artist' | 'mix' | 'unknown';
+  source?: 'upload' | 'youtube';
 };
 
 export type Shelf = {
@@ -1010,6 +1011,49 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  importFile: async (file: File, meta?: { title?: string; artist?: string }) => {
+    const qs = new URLSearchParams();
+    if (meta?.title) qs.set('title', meta.title);
+    if (meta?.artist) qs.set('artist', meta.artist);
+    if (file.name) qs.set('filename', file.name);
+    const headers: Record<string, string> = {
+      'X-Device-Id': deviceId(),
+      'Content-Type': file.type || 'audio/mpeg',
+    };
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const url = apiUrl(`/api/import/file?${qs.toString()}`);
+    const go = () =>
+      fetch(url, {
+        method: 'POST',
+        headers,
+        body: file,
+        credentials: 'include',
+      });
+    let res = await go();
+    if (res.status === 401) {
+      const refreshed = await tryRefresh();
+      if (refreshed) {
+        const t2 = getToken();
+        if (t2) headers.Authorization = `Bearer ${t2}`;
+        res = await go();
+      }
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || res.statusText || 'Import MP3 impossible');
+    }
+    return res.json() as Promise<{
+      title: string;
+      kind: string;
+      id: string;
+      metaSource?: string;
+      youtubeId?: string;
+      track: Track;
+      added: Record<string, unknown>;
+      library: LibraryData;
+    }>;
+  },
   ytmStatus: () =>
     req<{ account: any; oauth: any }>('/api/ytm/status'),
   ytmConnectCookie: (cookie: string) =>

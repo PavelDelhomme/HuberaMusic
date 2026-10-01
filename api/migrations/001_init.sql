@@ -369,3 +369,18 @@ CREATE INDEX IF NOT EXISTS idx_search_hits_fold ON search_canonical_hits(query_f
 CREATE INDEX IF NOT EXISTS idx_search_hits_video ON search_canonical_hits(video_id);
 CREATE INDEX IF NOT EXISTS idx_user_mix_cache_gen ON user_mix_cache(generated_at);
 CREATE INDEX IF NOT EXISTS idx_library_album_tracks_user_track ON library_album_tracks(user_id, track_id);
+
+CREATE TABLE IF NOT EXISTS user_uploads (
+  user_id TEXT NOT NULL,
+  id TEXT NOT NULL,
+  file_name TEXT NOT NULL,
+  mime TEXT NOT NULL DEFAULT 'audio/mpeg',
+  original_name TEXT,
+  source_query TEXT,
+  youtube_id TEXT,
+  size_bytes BIGINT NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (user_id, id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_user_uploads_user ON user_uploads(user_id, created_at);

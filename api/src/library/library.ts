@@ -1337,7 +1337,8 @@ export async function addToPlaylist(userId: string, playlistId: string, track: T
     throw new Error('Titre invalide');
   }
   let hydrated = track;
-  if (isWeakTitle(track?.title, track?.id) || !(track?.artists || []).length) {
+  const isUpload = (track as Track & { source?: string }).source === 'upload';
+  if (!isUpload && (isWeakTitle(track?.title, track?.id) || !(track?.artists || []).length)) {
     try {
       const { hydrateTrack } = await import('../youtube/yt.js');
       hydrated = await hydrateTrack(track);

@@ -48,6 +48,7 @@ import {
 import { findReplacementId, getReplacementId, looksUnavailable } from './trackReplacement.js';
 import { findAtlasEquivalent, findAtlasMatchFromClient, rememberAtlasPlayable } from './trackAtlas.js';
 import { noteStreamNote, noteStreamSource, watchStreamRequest } from './streamLog.js';
+import { getOwnedUpload, resolveUploadAbs } from './userUploads.js';
 import {
   beginUserResolution,
   endUserResolution,
@@ -612,6 +613,46 @@ async function pipeDiskFile(
   res.setHeader('Content-Type', 'audio/mp4');
   res.setHeader('X-PLM-Stream-Cache', cacheTag);
   noteStreamSource(res, cacheTag);
+  createReadStream(file).pipe(res);
+  return true;
+}
+
+async function pipeUserUploadFile(
+  req: Request,
+  res: Response,
+  file: string,
+  trackId: string,
+  mime: string,
+): Promise<boolean> {
+  if (res.headersSent) return false;
+  if (!existsSync(file)) return false;
+  const size = statSync(file).size;
+  if (size < 256) return false;
+  rememberAdvertisedTotal(trackId, size);
+  const { createReadStream } = await import('node:fs');
+  const range = req.headers.range ? String(req.headers.range) : '';
+  const type = mime || 'audio/mpeg';
+  if (range) {
+    const bounds = safeDiskRangeBounds(size, range);
+    if (bounds.ok) {
+      const len = bounds.end - bounds.start + 1;
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${bounds.start}-${bounds.end}/${size}`);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Length', len);
+      res.setHeader('Content-Type', type);
+      res.setHeader('X-PLM-Stream-Cache', 'user-upload');
+      noteStreamSource(res, 'user-upload');
+      createReadStream(file, { start: bounds.start, end: bounds.end }).pipe(res);
+      return true;
+    }
+  }
+  res.status(200);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Content-Length', size);
+  res.setHeader('Content-Type', type);
+  res.setHeader('X-PLM-Stream-Cache', 'user-upload');
+  noteStreamSource(res, 'user-upload');
   createReadStream(file).pipe(res);
   return true;
 }
@@ -1267,6 +1308,19 @@ export async function handleStream(req: Request, res: Response) {
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     res.status(400).json({ error: 'ID invalide' });
     return;
+  }
+  const wantUploadVideo = String(req.query.type || req.query.media || '') === 'video';
+  const uploadUserId = (req as any).userId as string | undefined;
+  if (!wantUploadVideo && uploadUserId) {
+    const owned = getOwnedUpload(uploadUserId, videoId);
+    if (owned) {
+      const abs = resolveUploadAbs(owned);
+      if (existsSync(abs)) {
+        watchStreamRequest(req, res, videoId);
+        const ok = await pipeUserUploadFile(req, res, abs, videoId, owned.mime || 'audio/mpeg');
+        if (ok) return;
+      }
+    }
   }
   watchStreamRequest(req, res, videoId);
 
@@ -2673,6 +2727,23 @@ export async function handleStreamUrl(req: Request, res: Response) {
     return;
   }
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
+  const uploadUid = (req as any).userId as string | undefined;
+  if (!wantVideo && uploadUid) {
+    const owned = getOwnedUpload(uploadUid, videoId);
+    if (owned) {
+      const abs = resolveUploadAbs(owned);
+      if (existsSync(abs)) {
+        res.json({
+          url: `/api/stream/${videoId}`,
+          expiresAt: Date.now() + 24 * 3600_000,
+          mimeType: owned.mime || 'audio/mpeg',
+          kind: 'audio',
+          via: 'upload',
+        });
+        return;
+      }
+    }
+  }
   const retryN = streamRetryN(req);
 
   // VPS → PC maison : chauffe le resolve chez soi, mais renvoie TOUJOURS le proxy API.

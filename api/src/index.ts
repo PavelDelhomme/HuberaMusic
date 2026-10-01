@@ -106,7 +106,8 @@ import {
 import { streamHeadStats } from './media/streamHeadCache.js';
 import { youtubeProxyStats } from './youtube/youtubeProxy.js';
 import { resolveVisualVideo } from './media/visualResolve.js';
-import { importByKind, importByQueryOrUrl } from './media/import.js';
+import { importByKind, importByQueryOrUrl, importLocalAudioFile } from './media/import.js';
+import { getOwnedUpload } from './media/userUploads.js';
 import { handleOfflineStatus, startOfflineCollection } from './library/offline.js';
 import { getShuffleHeads, invalidateShuffleHeads } from './library/shuffleHeads.js';
 import { getListHeads, rememberVisibleListHeads, warmUserListHeads } from './library/listHeads.js';
@@ -120,6 +121,7 @@ import {
   publishApkBuffer,
   startApkBuild,
   startBuild,
+  MUSIC_PKG_HUBERA,
 } from './platform/admin.js';
 import { huberaLegacyStatus, huberaNotice, pingFromRequest } from './platform/huberaLegacy.js';
 import {
@@ -367,6 +369,8 @@ app.use(
 
 /** Upload APK binaire — avant express.json pour ne pas consommer le flux. */
 app.use('/api/admin/apk/upload', express.raw({ type: () => true, limit: '120mb' }));
+/** MP3 importé sur le compte utilisateur (binaire audio, pas JSON). */
+app.use('/api/import/file', express.raw({ type: () => true, limit: '40mb' }));
 app.use(express.json({ limit: '6mb' }));
 app.use(cookieParser());
 app.use(authOptional);
@@ -1681,7 +1685,7 @@ app.post('/api/install/apk-ticket', (req, res) => {
     res.status(429).json({ error: 'Trop de demandes — réessaie dans quelques minutes' });
     return;
   }
-  const path = getApkPath();
+  const path = getApkPath(MUSIC_PKG_HUBERA);
   if (!path) {
     res.status(404).json({
       error: 'APK non publiée',
@@ -1793,17 +1797,20 @@ function isHomeStreamRelay(req: Request): boolean {
 /** Téléchargement APK : ticket one-shot (?t=) · JWT compte · APK_DOWNLOAD_TOKEN. */
 app.get('/api/deploy/apk', authOptional, (req, res) => {
   const ticketTok = typeof req.query?.t === 'string' ? req.query.t.trim() : '';
+  let ticketReason: string | null = null;
   if (ticketTok) {
     const consumed = consumeApkTicket(ticketTok);
     if (!consumed.ok) {
       res.status(410).json({ error: consumed.error });
       return;
     }
+    ticketReason = consumed.reason;
   } else if (!apkDownloadOrAccount(req)) {
     res.status(401).json({ error: 'Lien APK protégé — demande un QR à l’admin' });
     return;
   }
-  const pkg = String(req.query.package || req.query.clientPackage || '');
+  let pkg = String(req.query.package || req.query.clientPackage || '');
+  if (ticketReason === 'public' && !pkg) pkg = MUSIC_PKG_HUBERA;
   const path = getApkPath(pkg);
   if (!path) {
     res.status(404).json({
@@ -2118,7 +2125,22 @@ app.post(
 
 app.get('/api/track/:id', accountRequired, async (req, res) => {
   try {
-    const { track } = await getTrack(p(req.params.id));
+    const tid = p(req.params.id);
+    const owned = req.userId ? getOwnedUpload(req.userId, tid) : null;
+    if (owned) {
+      const { getTrackPayload } = await import('./library/db.js');
+      const cached = getTrackPayload(tid);
+      if (cached) {
+        res.json({
+          track: cached,
+          streamUrl: `/api/stream/${tid}`,
+          cached: true,
+          source: 'upload',
+        });
+        return;
+      }
+    }
+    const { track } = await getTrack(tid);
     // Ne pas écrire l'historique ici : c'est fait dès le play (même partiel)
     res.json({
       track,
@@ -2136,6 +2158,10 @@ app.get('/api/track/:id/replacement', accountRequired, async (req, res) => {
     const id = p(req.params.id);
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) {
       res.status(400).json({ ok: false, error: 'id invalide' });
+      return;
+    }
+    if (req.userId && getOwnedUpload(req.userId, id)) {
+      res.json({ ok: false, deadId: id, upload: true, error: 'fichier local' });
       return;
     }
     const { getReplacementId, findReplacementId } = await import('./media/trackReplacement.js');
@@ -3090,6 +3116,50 @@ app.put('/api/library/playlists/:id/reorder', accountRequired, (req, res) => {
     res.status(500).json({ error: String(err) });
   }
 });
+
+app.post(
+  '/api/import/file',
+  accountRequired,
+  rateLimit({ windowMs: 15 * 60_000, max: 20 }),
+  async (req, res) => {
+    try {
+      const raw = req.body;
+      const buf = Buffer.isBuffer(raw)
+        ? raw
+        : raw instanceof Uint8Array
+          ? Buffer.from(raw)
+          : Buffer.alloc(0);
+      const filename = String(
+        req.query.filename || req.headers['x-filename'] || req.headers['x-file-name'] || '',
+      ).trim();
+      const title = String(req.query.title || req.headers['x-track-title'] || '').trim();
+      const artist = String(req.query.artist || req.headers['x-track-artist'] || '').trim();
+      const mime = String(req.headers['content-type'] || 'audio/mpeg')
+        .split(';')[0]
+        .trim();
+      if (mime.toLowerCase().includes('multipart/')) {
+        res.status(400).json({
+          error: 'Envoie le fichier en binaire (Content-Type: audio/mpeg), pas en multipart',
+        });
+        return;
+      }
+      const result = await importLocalAudioFile(req.userId!, {
+        buffer: buf,
+        filename: filename || undefined,
+        mime,
+        title: title || undefined,
+        artist: artist || undefined,
+      });
+      res.json({ ...result, library: getFullLibrary(req.userId!) });
+    } catch (err) {
+      const msg = String((err as Error).message || err);
+      const code = /trop (petit|lourd)|Seuls les|Limite atteinte|Compte requis/i.test(msg)
+        ? 400
+        : 500;
+      res.status(code).json({ error: msg });
+    }
+  },
+);
 
 app.post('/api/import', accountRequired, async (req, res) => {
   try {

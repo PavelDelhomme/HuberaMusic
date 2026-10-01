@@ -3,7 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { api } from '../../api';
 import { useAuth } from '../../store/auth';
 import { useLibrary } from '../../store/library';
-import { Download, Link2, Loader2, RefreshCw, Unplug, Music2 } from 'lucide-react';
+import { Download, Link2, Loader2, RefreshCw, Unplug, Music2, Upload } from 'lucide-react';
 
 function formatSyncMsg(stats: {
   songs: number;
@@ -58,6 +58,9 @@ export function ImportPage() {
   const [ytmBusy, setYtmBusy] = useState(false);
   const [ytmMsg, setYtmMsg] = useState('');
   const [ytmErr, setYtmErr] = useState('');
+  const [fileTitle, setFileTitle] = useState('');
+  const [fileArtist, setFileArtist] = useState('');
+  const [fileBusy, setFileBusy] = useState(false);
 
   const refreshStatus = () => {
     if (isGuest) return;
@@ -361,9 +364,75 @@ export function ImportPage() {
 
       {isGuest && (
         <p className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
-          Connecte-toi (compte app) pour lier YouTube Music et synchroniser ta bibliothèque.
+          Connecte-toi (compte app) pour importer des MP3 et lier YouTube Music.
         </p>
       )}
+
+      <div className="mb-6 rounded-2xl border border-yt-border bg-yt-elevated p-4">
+        <label className="mb-2 flex items-center gap-2 text-sm text-yt-muted">
+          <Upload className="h-4 w-4" /> Fichier MP3 sur ton compte
+        </label>
+        <p className="mb-3 text-xs text-yt-muted">
+          Le fichier est enregistré sur le serveur, lié à ton compte. Titre / artiste / pochette
+          sont repris depuis YouTube quand on trouve le morceau, sinon depuis les tags ID3, le nom
+          du fichier, ou le titre que tu saisis.
+        </p>
+        <div className="mb-3 grid gap-2 sm:grid-cols-2">
+          <input
+            value={fileTitle}
+            onChange={(e) => setFileTitle(e.target.value)}
+            placeholder="Titre (optionnel)"
+            className="rounded-xl border border-yt-border bg-yt-bg px-3 py-2 text-sm outline-none focus:border-white/30"
+          />
+          <input
+            value={fileArtist}
+            onChange={(e) => setFileArtist(e.target.value)}
+            placeholder="Artiste (optionnel)"
+            className="rounded-xl border border-yt-border bg-yt-bg px-3 py-2 text-sm outline-none focus:border-white/30"
+          />
+        </div>
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium disabled:opacity-50">
+          {fileBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          {fileBusy ? 'Import du MP3…' : 'Choisir un MP3'}
+          <input
+            type="file"
+            accept="audio/mpeg,audio/mp3,audio/mp4,audio/aac,.mp3,.m4a,.aac"
+            className="hidden"
+            disabled={fileBusy || isGuest}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (!file) return;
+              setFileBusy(true);
+              setError('');
+              setMessage('');
+              void api
+                .importFile(file, {
+                  title: fileTitle.trim() || undefined,
+                  artist: fileArtist.trim() || undefined,
+                })
+                .then((result) => {
+                  applyLibrary(result.library);
+                  const src =
+                    result.metaSource === 'youtube'
+                      ? 'métadonnées YouTube'
+                      : result.metaSource === 'id3'
+                        ? 'tags ID3'
+                        : result.metaSource === 'filename'
+                          ? 'nom du fichier'
+                          : 'titre saisi';
+                  setMessage(
+                    `MP3 enregistré : ${result.title} (${src}${
+                      result.youtubeId ? ` · YT ${result.youtubeId}` : ''
+                    })`,
+                  );
+                })
+                .catch((err) => setError(String((err as Error).message || err)))
+                .finally(() => setFileBusy(false));
+            }}
+          />
+        </label>
+      </div>
 
       <div className="rounded-2xl border border-yt-border bg-yt-elevated p-4">
         <label className="mb-2 flex items-center gap-2 text-sm text-yt-muted">

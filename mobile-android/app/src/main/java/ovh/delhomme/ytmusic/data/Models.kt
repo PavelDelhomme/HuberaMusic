@@ -90,6 +90,7 @@ data class TrackDto(
     val durationSeconds: Int? = null,
     val thumbnails: List<Thumb>? = emptyList(),
     val type: String? = "song",
+    val source: String? = null,
 ) {
     fun artistLine(): String {
         val names = artists?.mapNotNull { it.name.trim().takeIf { n -> n.isNotEmpty() } }

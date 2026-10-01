@@ -94,7 +94,8 @@ export function issueApkTicket(
   store.tickets = prune([ticket, ...store.tickets], now);
   save(store);
   const base = publicDownloadBase(port);
-  const url = `${base}/api/deploy/apk?t=${encodeURIComponent(token)}`;
+  const pkgQ = reason === 'public' ? '&package=cloud.hubera.music' : '';
+  const url = `${base}/api/deploy/apk?t=${encodeURIComponent(token)}${pkgQ}`;
   return {
     token,
     url,
@@ -139,7 +140,7 @@ export function latestLiveApkTicket(port = Number(process.env.PORT || 8787)) {
   const base = publicDownloadBase(port);
   return {
     token: live.token,
-    url: `${base}/api/deploy/apk?t=${encodeURIComponent(live.token)}`,
+    url: `${base}/api/deploy/apk?t=${encodeURIComponent(live.token)}${live.reason === 'public' ? '&package=cloud.hubera.music' : ''}`,
     reason: live.reason,
     expiresAt: live.expiresAt,
     remainingUses: (live.maxUses || 1) - live.uses,

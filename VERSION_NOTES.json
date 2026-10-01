@@ -2,6 +2,30 @@
   "updatedAt": "2026-10-01",
   "versions": [
     {
+      "version": "1.3.335",
+      "date": "2026-10-01",
+      "time": "22:00",
+      "at": "2026-10-01T22:00:00+02:00",
+      "title": "Connexion Hubera ID (compte existant)",
+      "notes": [
+        "Le mot de passe Hubera ID ouvre aussi Music si le compte email existe déjà — aucune donnée n’est copiée ni recréée.",
+        "id.hubera.cloud est interrogé en premier. Pas de nouveau compte automatique.",
+        "Pas de forceUpdate."
+      ]
+    },
+      "version": "1.3.334",
+      "date": "2026-10-01",
+      "time": "21:40",
+      "at": "2026-10-01T21:40:00+02:00",
+      "title": "Import MP3 sur le compte",
+      "notes": [
+        "Tu peux envoyer un MP3 : il est stocké sur le serveur, uniquement pour ton compte, playlist Importés + bibliothèque.",
+        "Titre, artiste et pochette : recherche YouTube automatique, sinon tags ID3, nom du fichier, ou le titre que tu saisis.",
+        "Lecture : le fichier importé est streamé (pas yt-dlp). Le clip YouTube reste dispo si le morceau a été reconnu.",
+        "Web /import et Android Compte Google → Choisir un MP3. Max 40 Mo, 200 titres par compte. Pas de forceUpdate."
+      ]
+    },
+    {
       "version": "1.3.333",
       "date": "2026-10-01",
       "time": "20:35",

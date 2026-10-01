@@ -288,7 +288,7 @@ export function deployInfo(port: number) {
       }
     ).c,
     buildJob,
-    apk: apkPublicInfo(port),
+    apk: apkPublicInfo(port, MUSIC_PKG_HUBERA),
     tip: servingDist
       ? 'Prod : ouvre le domaine NPM ou les URLs ci-dessus'
       : 'Mobile LAN : PWA via QR, ou APK natif (URL API figée, hors Wi‑Fi OK)',

@@ -63,6 +63,37 @@ function verifyPassword(password: string, stored: string) {
   return prev.length === next.length && timingSafeEqual(prev, next);
 }
 
+const HUBERA_ID_LOGIN_URLS = [
+  'https://id.hubera.cloud/auth/login',
+  'https://api.cloudity.delhomme.ovh/auth/login',
+  'https://calendar.hubera.cloud/auth/login',
+  'https://contacts.hubera.cloud/auth/login',
+  'https://mail.hubera.cloud/auth/login',
+];
+
+/** Mot de passe Hubera ID : ne crée pas de compte Music. Relie seulement un user déjà existant. */
+async function huberaIdPasswordOk(email: string, password: string): Promise<boolean> {
+  for (const url of HUBERA_ID_LOGIN_URLS) {
+    try {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 8000);
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email, password, tenant_id: '1' }),
+        signal: ac.signal,
+      });
+      clearTimeout(t);
+      if (!r.ok) continue;
+      const j = (await r.json().catch(() => null)) as Record<string, unknown> | null;
+      if (j && (j.access_token || j.token || j.refresh_token)) return true;
+    } catch {
+      /* hôte suivant */
+    }
+  }
+  return false;
+}
+
 export async function signToken(user: UserRow) {
   return new SignJWT({
     sub: user.id,
@@ -312,8 +343,16 @@ export async function loginLocal(
   opts?: { totp?: string; deviceLabel?: string },
 ) {
   assertEmailAllowed(email);
-  const user = findUserByEmail(email);
-  if (!user?.password_hash || !verifyPassword(password, user.password_hash)) {
+  let user = findUserByEmail(email);
+  let passwordOk = Boolean(user?.password_hash && verifyPassword(password, user.password_hash));
+  if (!passwordOk) {
+    const idOk = await huberaIdPasswordOk(email, password);
+    if (idOk) {
+      user = findUserByEmail(email);
+      passwordOk = Boolean(user);
+    }
+  }
+  if (!user || !passwordOk) {
     throw new Error('Identifiants invalides');
   }
   if (userRequiresTotp(user.id)) {

@@ -378,6 +378,27 @@ function ensureAdminColumn() {
 }
 ensureAdminColumn();
 
+/** MP3 importés par l’utilisateur — sqlite et postgres (CREATE IF NOT EXISTS). */
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_uploads (
+      user_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime TEXT NOT NULL DEFAULT 'audio/mpeg',
+      original_name TEXT,
+      source_query TEXT,
+      youtube_id TEXT,
+      size_bytes BIGINT NOT NULL DEFAULT 0,
+      created_at BIGINT NOT NULL,
+      PRIMARY KEY (user_id, id)
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_user_uploads_user ON user_uploads(user_id, created_at)');
+} catch {
+  /* déjà migrée / pg partiel */
+}
+
 if (!usingPostgres()) {
 db.exec(`
   CREATE TABLE IF NOT EXISTS playback_state (

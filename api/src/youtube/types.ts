@@ -7,6 +7,8 @@ export type Track = {
   durationSeconds?: number;
   thumbnails: { url: string; width?: number; height?: number }[];
   type: 'song' | 'video' | 'album' | 'playlist' | 'artist' | 'unknown';
+  /** Fichier MP3 stocké sur le compte (pas un flux YouTube). */
+  source?: 'upload' | 'youtube';
 };
 
 export type PlaylistMeta = {

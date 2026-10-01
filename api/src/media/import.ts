@@ -2,11 +2,27 @@ import { getAlbum, getArtist, getPlaylist, getTrack, search } from '../youtube/y
 import {
   addToPlaylist,
   createPlaylist,
+  ensureLibraryTrack,
   listPlaylists,
   saveArtist,
   toggleLikePlaylist,
 } from '../library/library.js';
 import type { Track } from '../youtube/types.js';
+import {
+  buildMetadataQuery,
+  formatDurationClock,
+  isSupportedAudio,
+  parseFilenameTags,
+  parseId3Tags,
+} from './id3Meta.js';
+import {
+  countUserUploads,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOADS_PER_USER,
+  MIN_UPLOAD_BYTES,
+  newLocalTrackId,
+  saveUserUploadFile,
+} from './userUploads.js';
 
 export type ImportResult = {
   kind: 'track' | 'album' | 'artist' | 'playlist';
@@ -205,5 +221,142 @@ export async function importByKind(
     title: playlist.title,
     added: { playlist: true, tracks: copied },
     tracks: copied > 0 ? tracks : undefined,
+  };
+}
+
+function pickYoutubeMatch(songs: Track[], videos: Track[], query: string): Track | null {
+  const q = query.toLowerCase();
+  const pool = [...(songs || []), ...(videos || [])].filter((t) => t?.id);
+  if (!pool.length) return null;
+  const scored = pool.map((t) => {
+    const hay = `${t.title} ${(t.artists || []).map((a) => a.name).join(' ')}`.toLowerCase();
+    let s = 0;
+    for (const w of q.split(/[^a-z0-9àâäéèêëïîôùûüç]+/i).filter((x) => x.length >= 2)) {
+      if (hay.includes(w.toLowerCase())) s += 2;
+    }
+    if ((songs || []).some((x) => x.id === t.id)) s += 3;
+    return { t, s };
+  });
+  scored.sort((a, b) => b.s - a.s);
+  return scored[0]?.t || pool[0];
+}
+
+/**
+ * Importe un MP3 (ou audio supporté) sur le compte : fichier persisté,
+ * métadonnées YouTube si un titre matche, sinon ID3 / nom de fichier / titre saisi.
+ */
+export async function importLocalAudioFile(
+  userId: string,
+  opts: {
+    buffer: Buffer;
+    filename?: string;
+    mime?: string;
+    title?: string;
+    artist?: string;
+  },
+): Promise<ImportResult & { track: Track; metaSource: string; youtubeId?: string }> {
+  const buf = opts.buffer;
+  if (!buf || buf.length < MIN_UPLOAD_BYTES) {
+    throw new Error('Fichier trop petit (MP3 vide ou tronqué)');
+  }
+  if (buf.length > MAX_UPLOAD_BYTES) {
+    throw new Error('Fichier trop lourd (max 40 Mo)');
+  }
+  if (!isSupportedAudio(buf, opts.mime, opts.filename)) {
+    throw new Error('Seuls les fichiers audio (MP3, M4A, AAC, WAV, OGG) sont acceptés');
+  }
+  if (countUserUploads(userId) >= MAX_UPLOADS_PER_USER) {
+    throw new Error(`Limite atteinte (${MAX_UPLOADS_PER_USER} titres importés par compte)`);
+  }
+
+  const id3 = parseId3Tags(buf);
+  const fromName = parseFilenameTags(opts.filename || '');
+  const userTitle = String(opts.title || '').trim();
+  const userArtist = String(opts.artist || '').trim();
+  const titleGuess = userTitle || id3.title || fromName.title || '';
+  const artistGuess = userArtist || id3.artist || fromName.artist || '';
+  const query = buildMetadataQuery({
+    title: titleGuess,
+    artist: artistGuess,
+    filename: opts.filename,
+  });
+
+  let ytTrack: Track | null = null;
+  let metaSource = userTitle ? 'user' : id3.title ? 'id3' : fromName.title ? 'filename' : 'user';
+  if (query) {
+    try {
+      const found = await Promise.race([
+        search(query, 'all', { userId }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 12_000)),
+      ]);
+      if (found) {
+        ytTrack = pickYoutubeMatch(found.songs || [], found.videos || [], query);
+        if (ytTrack) metaSource = 'youtube';
+      }
+    } catch (err) {
+      console.warn('[import-file] recherche YouTube:', (err as Error).message);
+    }
+  }
+
+  const durationSeconds =
+    (typeof ytTrack?.durationSeconds === 'number' && ytTrack.durationSeconds > 0
+      ? ytTrack.durationSeconds
+      : undefined) ||
+    (id3.durationMs ? Math.round(id3.durationMs / 1000) : undefined);
+
+  const trackId = ytTrack?.id && /^[a-zA-Z0-9_-]{11}$/.test(ytTrack.id) ? ytTrack.id : newLocalTrackId();
+
+  const artists =
+    userArtist
+      ? [{ name: userArtist }]
+      : ytTrack?.artists?.length
+        ? ytTrack.artists
+        : artistGuess
+          ? [{ name: artistGuess }]
+          : [];
+
+  const title =
+    userTitle ||
+    (ytTrack && !String(ytTrack.title || '').match(/^(sans titre|untitled)$/i) ? ytTrack.title : '') ||
+    titleGuess ||
+    'Sans titre';
+
+  const track: Track = {
+    id: trackId,
+    title,
+    artists,
+    album: ytTrack?.album || (id3.album ? { name: id3.album } : { name: 'Importés' }),
+    duration: ytTrack?.duration || (durationSeconds ? formatDurationClock(durationSeconds) : undefined),
+    durationSeconds,
+    thumbnails: ytTrack?.thumbnails?.length ? ytTrack.thumbnails : [],
+    type: 'song',
+    source: 'upload',
+  };
+
+  saveUserUploadFile({
+    userId,
+    trackId,
+    buffer: buf,
+    mime: opts.mime || 'audio/mpeg',
+    originalName: opts.filename,
+    sourceQuery: query,
+    youtubeId: ytTrack?.id || null,
+  });
+
+  ensureLibraryTrack(userId, track, { manual: true });
+  let playlists = listPlaylists(userId);
+  let target = playlists.find((p) => p.name === 'Importés');
+  if (!target) target = createPlaylist(userId, 'Importés');
+  await addToPlaylist(userId, target.id, track);
+
+  return {
+    kind: 'track',
+    id: track.id,
+    title: track.title,
+    added: { tracks: 1, playlist: true },
+    tracks: [track],
+    track,
+    metaSource,
+    youtubeId: ytTrack?.id,
   };
 }
