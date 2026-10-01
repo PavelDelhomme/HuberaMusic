@@ -131,7 +131,7 @@ manifest = {
   "versionCode": int(os.environ.get("VERSION_CODE") or 0),
   "sizeBytes": int(os.environ.get("SIZE") or 0),
   "builtAt": os.environ.get("BUILT_AT"),
-  "package": "ovh.delhomme.ytmusic",
+  "package": "cloud.hubera.music",
 }
 (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 print(json.dumps(manifest, indent=2))

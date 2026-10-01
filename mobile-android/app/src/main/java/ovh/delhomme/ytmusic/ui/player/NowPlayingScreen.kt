@@ -832,8 +832,8 @@ fun NowPlayingScreen(
                                     ),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
-                                // Paroles = même emplacement / hauteur que cover|vidéo ; titre + artiste restent dessous.
-                                if (showLyrics) {
+                                // Paroles = overlay sur le clip (mode Vidéo) ; sinon même emplacement que la cover.
+                                if (showLyrics && !(SessionMediaMode.video && !videoFullscreen)) {
                                     InlineSyncedLyrics(
                                         container = container,
                                         track = track,
@@ -847,6 +847,12 @@ fun NowPlayingScreen(
                                             .background(Color.Black.copy(alpha = 0.42f)),
                                     )
                                 } else if (SessionMediaMode.video && !videoFullscreen) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .height(coverH)
+                                            .clip(RoundedCornerShape(12.dp)),
+                                    ) {
                                     when {
                                         video.streamUrl != null -> SyncedVideoSurface(
                                             streamUrl = video.streamUrl!!,
@@ -884,13 +890,19 @@ fun NowPlayingScreen(
                                                         )
                                                     }.getOrNull()
                                                     val alt = retried?.visualId?.takeIf {
-                                                        it.isNotBlank() && it != used && it != tid
+                                                        it.isNotBlank() && it != used
                                                     }
-                                                    if (alt != null && SessionMediaMode.video && ui.track?.id == tid) {
+                                                    if (alt != null && alt != tid && SessionMediaMode.video && ui.track?.id == tid) {
                                                         VisualIdCache.put(context, tid, alt)
                                                         video.visualId = alt
                                                         video.error = null
                                                         video.streamUrl = container.videoStreamUrl(alt)
+                                                    } else if (used != null && used != tid && SessionMediaMode.video && ui.track?.id == tid) {
+                                                        // Clip « officiel » introuvable → on rejoue la vidéo du titre (Laisse Nous Raver).
+                                                        VisualIdCache.put(context, tid, tid)
+                                                        video.visualId = tid
+                                                        video.error = null
+                                                        video.streamUrl = container.videoStreamUrl(tid)
                                                     } else {
                                                         video.streamUrl = null
                                                         video.visualId = null
@@ -980,6 +992,19 @@ fun NowPlayingScreen(
                                                     }
                                                 }
                                             }
+                                        }
+                                    }
+                                        if (showLyrics) {
+                                            InlineSyncedLyrics(
+                                                container = container,
+                                                track = track,
+                                                positionMs = ui.positionMs,
+                                                durationMs = ui.durationMs,
+                                                onSeek = { player.seek(it) },
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(Color.Black.copy(alpha = 0.38f)),
+                                            )
                                         }
                                     }
                                 } else {

@@ -633,6 +633,7 @@ interface YtMusicApi {
         @Query("clientVersionCode") clientVersionCode: Int,
         @Query("install") install: String,
         @Query("huberaAware") huberaAware: Int = 1,
+        @Query("clientPackage") clientPackage: String,
     ): ApkInfoResponse
 
     @GET("api/home")

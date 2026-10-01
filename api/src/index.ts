@@ -314,7 +314,10 @@ function isAllowedOrigin(origin: string | undefined): boolean {
       (process.env.APP_URL || '').replace(/\/$/, ''),
       'https://plm.delhomme.ovh',
       'https://ytmusic.delhomme.ovh',
+      'https://ytm.delhomme.ovh',
       'https://pue-la-merde.delhomme.ovh',
+      'https://peule-la-merde.delhomme.ovh',
+      'https://plm.hubera.cloud',
       'https://music.hubera.cloud',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
@@ -326,8 +329,8 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   if (origin.startsWith('android:apk-key-hash:')) return true;
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
   // Alias canoniques toujours OK en prod (cookies Domain=.delhomme.ovh)
-  if (/^https:\/\/(plm|ytmusic|pue-la-merde)\.delhomme\.ovh$/i.test(origin)) return true;
-  if (/^https:\/\/music\.hubera\.cloud$/i.test(origin)) return true;
+  if (/^https:\/\/(plm|ytmusic|ytm|pue-la-merde|peule-la-merde)\.delhomme\.ovh$/i.test(origin)) return true;
+  if (/^https:\/\/(music|plm)\.hubera\.cloud$/i.test(origin)) return true;
   if (env === 'local' || env === 'development') {
     return /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/i.test(
       origin,
@@ -384,7 +387,8 @@ app.get('/api/version', (req, res) => {
     .replace(/^[pbd]\+/, '')
     .trim();
   const clientCode = Number(req.query.clientVersionCode || 0) || 0;
-  const apk = apkPublicInfo(PORT);
+  const clientPkg = String(req.query.clientPackage || req.query.package || '');
+  const apk = apkPublicInfo(PORT, clientPkg);
   const apkName = String(apk.versionName || '')
     .replace(/^[pbd]\+/, '')
     .trim();
@@ -406,7 +410,7 @@ app.get('/api/version', (req, res) => {
     minVersion: '1.3.0',
     forceUpdate: false,
     apkAvailable: apkNewerThanPhone && cmp(apkName || semver, clientVer || '0') > 0,
-    apkUrl: apkNewerThanPhone ? '/api/deploy/apk' : null,
+    apkUrl: apkNewerThanPhone ? apk.downloadPath : null,
     apkVersion: apkNewerThanPhone ? apk.versionName : null,
     apkVersionCode: apkNewerThanPhone ? apkCode : null,
     webUrl: 'https://music.hubera.cloud',
@@ -1167,13 +1171,19 @@ app.get('/.well-known/assetlinks.json', (_req, res) => {
       ? fps
       : ['3C:F6:C5:32:1D:A1:51:7E:79:94:0C:9E:25:51:4A:63:9B:2C:44:9E:3E:FF:7D:F7:47:68:76:CB:F6:F4:C1:1F'];
   const packages = new Set(
-    (process.env.ANDROID_PACKAGE_NAMES || process.env.ANDROID_PACKAGE_NAME || 'ovh.delhomme.ytmusic')
+    (process.env.ANDROID_PACKAGE_NAMES || process.env.ANDROID_PACKAGE_NAME || 'cloud.hubera.music,ovh.delhomme.ytmusic')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
   );
   // Flavor debug / Samsung DEV
-  if (packages.has('ovh.delhomme.ytmusic')) packages.add('ovh.delhomme.ytmusic.dev');
+  if (packages.has('ovh.delhomme.ytmusic')) {
+    packages.add('ovh.delhomme.ytmusic.dev');
+    packages.add('cloud.hubera.music');
+    packages.add('cloud.hubera.music.dev');
+  }
+  packages.add('cloud.hubera.music');
+  packages.add('cloud.hubera.music.dev');
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.status(200).json(
@@ -1645,7 +1655,7 @@ app.get('/api/install/apk-info', (req, res) => {
     versionCode: info.versionCode,
     sizeBytes: info.sizeBytes,
     builtAt: info.builtAt,
-    package: 'ovh.delhomme.ytmusic',
+    package: 'cloud.hubera.music',
     installPath: '/install',
     installUrl: `${origin}/install`,
     hubera: huberaNotice(),
@@ -1792,7 +1802,8 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
     res.status(401).json({ error: 'Lien APK protégé — demande un QR à l’admin' });
     return;
   }
-  const path = getApkPath();
+  const pkg = String(req.query.package || req.query.clientPackage || '');
+  const path = getApkPath(pkg);
   if (!path) {
     res.status(404).json({
       error: 'APK non publiée',
@@ -1808,24 +1819,28 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
 });
 
 app.get('/api/deploy/apk/info', authOptional, (req, res) => {
-  if (!apkDownloadOrAccount(req)) {
-    res.status(401).json({ error: 'Lien APK protégé — clé manquante ou invalide' });
-    return;
-  }
   pingFromRequest(req.query as Record<string, unknown>, String(req.headers['user-agent'] || ''));
-  const info = deployInfo(PORT).apk;
+  const pkg = String(req.query.clientPackage || req.query.package || '');
+  const info = apkPublicInfo(PORT, pkg);
   res.json({
     ready: info.ready,
     versionName: info.versionName,
     versionCode: info.versionCode,
-    apiBaseUrl: info.apiBaseUrl,
+    apiBaseUrl: 'https://music.hubera.cloud',
     builtAt: info.builtAt,
     sizeBytes: info.sizeBytes,
     downloadPath: info.downloadPath,
     downloadUrl: info.downloadUrl,
-    // Toujours le paquet PLM prod — Dev/Preprod ne doivent pas croire que c’est « leur » APK.
     package: info.package ?? 'ovh.delhomme.ytmusic',
     hubera: huberaNotice(),
+    aliases: [
+      'https://music.hubera.cloud',
+      'https://plm.delhomme.ovh',
+      'https://ytmusic.delhomme.ovh',
+      'https://ytm.delhomme.ovh',
+      'https://pue-la-merde.delhomme.ovh',
+      'https://peule-la-merde.delhomme.ovh',
+    ],
   });
 });
 

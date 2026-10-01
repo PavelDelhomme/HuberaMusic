@@ -1,6 +1,29 @@
 {
-  "updatedAt": "2026-09-29",
+  "updatedAt": "2026-10-01",
   "versions": [
+    {
+      "version": "1.3.332",
+      "date": "2026-10-01",
+      "time": "20:05",
+      "at": "2026-10-01T20:05:00+02:00",
+      "title": "Clips YouTube = titres, Laisse Nous Raver",
+      "notes": [
+        "Une vidéo YouTube (Rekkt & NIVK — Laisse Nous Raver) se joue aussi comme titre, s’épingle, se télécharge en 360p compressé.",
+        "Mode Vidéo : paroles en overlay synchronisées, prefetch tête clip, plus de « Pas de clip » quand l’ID est le même.",
+        "Overlay -r Nothing + Blackview. Samsung via OTA. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.330",
+      "date": "2026-10-01",
+      "time": "19:20",
+      "at": "2026-10-01T19:20:00+02:00",
+      "title": "Recherche YouTube web + digest 12h30",
+      "notes": [
+        "La recherche ne s’arrête plus aux homonymes YTM : fallback YouTube web + variantes apostrophes.",
+        "Overlay -r Samsung + Blackview. Pas de forceUpdate."
+      ]
+    },
     {
       "version": "1.3.319",
       "date": "2026-09-29",

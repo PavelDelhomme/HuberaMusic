@@ -26,6 +26,9 @@ object AppDeepLinks {
         "ytmusic-preprod.delhomme.ovh",
         "www.ytmusic.delhomme.ovh",
         "pue-la-merde.delhomme.ovh",
+        "peule-la-merde.delhomme.ovh",
+        "ytm.delhomme.ovh",
+        "plm.hubera.cloud",
     )
 
     fun isOurHost(host: String?): Boolean {
@@ -33,7 +36,8 @@ object AppDeepLinks {
         if (h in APP_HOSTS) return true
         if (h == "hubera.cloud" || h.endsWith(".hubera.cloud")) return true
         if (!h.endsWith(".delhomme.ovh")) return false
-        return h.contains("plm") || h.contains("ytmusic") || h.contains("pue-la-merde")
+        return h.contains("plm") || h.contains("ytmusic") || h.contains("ytm") ||
+            h.contains("pue-la-merde") || h.contains("peule-la-merde")
     }
 
     fun parse(uri: Uri?): AppDeepLink? {

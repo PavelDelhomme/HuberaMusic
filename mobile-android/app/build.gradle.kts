@@ -98,6 +98,20 @@ fun resolveDevApiBase(): String {
     }
 }
 
+fun canonicalizeProdApiUrl(url: String): String {
+    val host = url.substringAfter("://").substringBefore("/")
+    return if (host in setOf(
+            "plm.delhomme.ovh",
+            "www.plm.delhomme.ovh",
+            "ytmusic.delhomme.ovh",
+            "ytm.delhomme.ovh",
+            "pue-la-merde.delhomme.ovh",
+            "peule-la-merde.delhomme.ovh",
+            "plm.hubera.cloud",
+        )
+    ) "https://music.hubera.cloud" else url
+}
+
 /** API HTTPS publique pour le flavor `prod` — indépendant du flavor `dev`. */
 fun resolveProdApiBase(): String {
     val fromProp = (project.findProperty("API_BASE_URL") as String?)?.trim()?.trimEnd('/').orEmpty()
@@ -105,11 +119,9 @@ fun resolveProdApiBase(): String {
         !fromProp.contains("127.0.0.1") &&
         !fromProp.contains("localhost")
     ) {
-        return fromProp
+        return canonicalizeProdApiUrl(fromProp)
     }
-    return publicApiBase.ifBlank {
-        "https://music.hubera.cloud"
-    }
+    return canonicalizeProdApiUrl(publicApiBase.ifBlank { "https://music.hubera.cloud" })
 }
 
 /** API HTTPS preprod (beta) — défaut ytmusic-preprod / override -PAPI_BASE_URL. */
@@ -131,7 +143,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "ovh.delhomme.ytmusic"
+        applicationId = if (project.hasProperty("legacyAppId")) "ovh.delhomme.ytmusic" else "cloud.hubera.music"
         minSdk = 26
         targetSdk = 35
         versionCode = appVersionCode
@@ -149,9 +161,9 @@ android {
     }
 
     // Trois APK côte à côte sur le même téléphone :
-    //   prod    → ovh.delhomme.ytmusic         (PLM)        · p+ · API HTTPS prod
-    //   preprod → ovh.delhomme.ytmusic.preprod (PLM Preprod)· b+ · API HTTPS preprod (beta)
-    //   dev     → ovh.delhomme.ytmusic.dev     (PLM Dev)    · d+ · API LAN / serveur :dev
+    //   prod    → cloud.hubera.music         (Hubera Music) · p+ · API HTTPS prod
+    //   preprod → cloud.hubera.music.preprod                · b+ · API HTTPS preprod (beta)
+    //   dev     → cloud.hubera.music.dev                    · d+ · API LAN / serveur :dev
     flavorDimensions += "channel"
     productFlavors {
         create("prod") {

@@ -46,7 +46,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:hardwareAccelerated="true">
 
-        <!-- Identité Hubera. applicationId reste ovh.delhomme.ytmusic (overlay, zéro perte). -->
+        <!-- Identité Hubera. applicationId = cloud.hubera.music. -->
         <meta-data
             android:name="cloud.hubera.identity"
             android:value="cloud.hubera.music" />

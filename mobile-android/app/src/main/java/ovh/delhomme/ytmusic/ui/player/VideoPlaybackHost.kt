@@ -27,6 +27,7 @@ import ovh.delhomme.ytmusic.data.BatterySaver
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.VideoPlaybackPrefs
 import ovh.delhomme.ytmusic.data.VisualIdCache
+import ovh.delhomme.ytmusic.data.VisualIds
 import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.player.PlayerController
 import ovh.delhomme.ytmusic.player.PlayerUiState
@@ -94,7 +95,7 @@ fun rememberVideoPlaybackUi(
                     waitMs = 0,
                     refresh = null,
                 )
-                val vid = vis.visualId?.takeIf { it.isNotBlank() && it != track.id }
+                val vid = VisualIds.pick(track.id, vis.visualId, vis.source)
                 if (vid != null) VisualIdCache.put(context, track.id, vid)
             }
             return@LaunchedEffect
@@ -119,7 +120,7 @@ fun rememberVideoPlaybackUi(
                     waitMs = 0,
                     refresh = null,
                 )
-                val vid = vis.visualId?.takeIf { it.isNotBlank() && it != t.id }
+                val vid = VisualIds.pick(t.id, vis.visualId, vis.source)
                 if (vid != null) VisualIdCache.put(context, t.id, vid)
             }
         }
@@ -143,7 +144,7 @@ fun rememberVideoPlaybackUi(
         }
         video.error = null
         val localUri = container.offlineStore.videoPlayUri(track.id)?.toString()
-        val cached = VisualIdCache.get(context, track.id)?.takeIf { it.isNotBlank() && it != track.id }
+        val cached = VisualIdCache.get(context, track.id)?.takeIf { it.isNotBlank() }
         if (localUri != null) {
             video.visualId = cached ?: track.id
             video.streamUrl = localUri
@@ -159,7 +160,7 @@ fun rememberVideoPlaybackUi(
                     waitMs = 800,
                     refresh = null,
                 )
-                val vid = vis.visualId?.takeIf { it.isNotBlank() && it != track.id }
+                val vid = VisualIds.pick(track.id, vis.visualId, vis.source)
                 if (vid != null) {
                     VisualIdCache.put(context, track.id, vid)
                     video.visualId = vid
@@ -183,7 +184,7 @@ fun rememberVideoPlaybackUi(
                     refresh = null,
                 )
                 if (!SessionMediaMode.video || ui.track?.id != track.id) return@runCatching
-                val vid = vis.visualId?.takeIf { it.isNotBlank() && it != track.id }
+                val vid = VisualIds.pick(track.id, vis.visualId, vis.source)
                 if (vid != null && vid != cached) {
                     VisualIdCache.put(context, track.id, vid)
                     video.visualId = vid
@@ -193,9 +194,11 @@ fun rememberVideoPlaybackUi(
             }
             return@LaunchedEffect
         }
-        video.streamUrl = null
-        video.visualId = null
+        // Clip YouTube = souvent le même ID que le titre (Laisse Nous Raver, reels).
+        video.visualId = track.id
+        video.streamUrl = container.videoStreamUrl(track.id)
         video.resolving = true
+        video.error = null
         runCatching {
             container.ensureFreshToken()
             val quick = container.api.trackVisual(
@@ -207,7 +210,7 @@ fun rememberVideoPlaybackUi(
                 refresh = null,
             )
             if (!SessionMediaMode.video || ui.track?.id != track.id) return@runCatching
-            var vid = quick.visualId?.takeIf { it.isNotBlank() && it != track.id }
+            var vid = VisualIds.pick(track.id, quick.visualId, quick.source)
             if (vid != null) {
                 VisualIdCache.put(context, track.id, vid)
                 video.visualId = vid
@@ -225,15 +228,17 @@ fun rememberVideoPlaybackUi(
                 refresh = null,
             )
             if (!SessionMediaMode.video || ui.track?.id != track.id) return@runCatching
-            val better = slow.visualId?.takeIf { it.isNotBlank() && it != track.id }
-            if (better != null) {
+            val better = VisualIds.pick(track.id, slow.visualId, slow.source)
+            if (better != null && better != vid && vid != track.id) {
                 VisualIdCache.put(context, track.id, better)
-                if (better != vid) {
-                    video.visualId = better
-                    video.streamUrl = container.offlineStore.videoPlayUri(track.id)?.toString()
-                        ?: container.videoStreamUrl(better)
-                    runCatching { container.api.streamResolveUrl(better, "video") }
-                }
+                video.visualId = better
+                video.streamUrl = container.offlineStore.videoPlayUri(track.id)?.toString()
+                    ?: container.videoStreamUrl(better)
+                runCatching { container.api.streamResolveUrl(better, "video") }
+                video.resolving = false
+                video.error = null
+            } else if (better != null) {
+                VisualIdCache.put(context, track.id, vid ?: better)
                 video.resolving = false
                 video.error = null
             } else if (vid == null) {
@@ -252,15 +257,12 @@ fun rememberVideoPlaybackUi(
     }
 
     LaunchedEffect(ui.track?.id, ui.queueIndex, SessionMediaMode.video, ui.queue.size) {
-        if (!SessionMediaMode.video) {
-            VisualClipPrefetcher.cancel()
-            return@LaunchedEffect
-        }
         if (ui.queue.isEmpty()) return@LaunchedEffect
         VisualClipPrefetcher.maintain(
             context = context,
             queue = ui.queue,
             index = ui.queueIndex.coerceIn(0, ui.queue.lastIndex),
+            videoMode = SessionMediaMode.video,
         )
     }
 

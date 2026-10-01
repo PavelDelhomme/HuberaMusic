@@ -101,6 +101,8 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var lastPersistAt: Long = 0L
     /** Avance programmée (EOS / skip) — ne pas déclencher early_end recovery sur le SEEK. */
     @Volatile private var programmaticAdvance: Boolean = false
+    /** Anti double-tap Maps + MediaSession (un clic = un titre). */
+    @Volatile private var lastSkipNextAtMs: Long = 0L
     private val stallHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var stallRunnable: Runnable? = null
     @Volatile private var bufferingSinceElapsed: Long = 0L
@@ -280,7 +282,8 @@ class PlaybackService : MediaSessionService() {
                 StreamPrefetcher.wasHeadReadyRecently(nextId, withinMs = 120_000L)
             // Titre jamais écouté (reprise app) : ne pas raccourcir parce que +1 est chaud.
             val coldGraceMs = when {
-                neverHeard -> 32_000L
+                // yt-dlp anti-DASH ~28 s ; un rebind à 32 s tuait l’URL en vol (Triste / Nothing).
+                neverHeard -> 55_000L
                 headWarmed -> 12_000L
                 nextHot -> 10_000L
                 else -> 14_000L
@@ -353,9 +356,22 @@ class PlaybackService : MediaSessionService() {
                 runCatching { skipDeadTrackOrAdvance(exo, curId, nextIdx) }
                 return@Runnable
             }
+            // Titre froid : ne pas rebind/télémetrie au 1er tick après la grâce
+            // (incrémenter + rebind relançait /url et stream-heal).
+            if (neverHeard && stallSessionCount <= 1 && waited < 70_000L) {
+                stallSessionCount = (stallSessionCount - 1).coerceAtLeast(0)
+                stallRebindCount = (stallRebindCount - 1).coerceAtLeast(0)
+                AppLog.i(
+                    "PlaybackService",
+                    "stall-buffer cold hold ${waited}ms id=$curId (pas de rebind)",
+                )
+                StreamPrefetcher.quietPrefetch(15_000L)
+                armStallWatch(exo)
+                return@Runnable
+            }
             // Escalade = URL fraîche + proxy, JAMAIS seek(0) (utilisateur entendait reprise au début).
             val escalate =
-                (neverHeard && stallSessionCount >= 1) ||
+                (neverHeard && (stallSessionCount >= 2 || waited >= 70_000L)) ||
                     stallRebindCount >= 2 ||
                     stallSessionCount >= 2 ||
                     (waited >= 10_000L && posFrozenFor >= 6_000L)
@@ -363,34 +379,35 @@ class PlaybackService : MediaSessionService() {
                 // wipeCache après plusieurs escalate (cache / atom MP4 corrompu, code 3003).
                 // Reprise jamais écoutée : wipe dès le 1er escalate (URL googlevideo périmée).
                 val wipe =
-                    neverHeard ||
-                        stallSessionCount >= 5 ||
+                    stallSessionCount >= 4 ||
                         stallRebindCount >= 6 ||
-                        (pos <= 1_000L && stallSessionCount >= 4)
+                        (pos <= 1_000L && !neverHeard && stallSessionCount >= 4)
                 AppLog.w(
                     "PlaybackService",
                     "stall-buffer escalate-recover ${waited}ms frozen=${posFrozenFor}ms " +
                         "rebinds=$stallRebindCount episodes=$stallSessionCount wipe=$wipe " +
                         "id=$curId pos=$pos",
                 )
-                runCatching {
-                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                        level = "warn",
-                        kind = "android.player.stall",
-                        message = "stall escalate-recover id=$curId pos=$pos " +
-                            "rebinds=$stallRebindCount episodes=$stallSessionCount " +
-                            "waited=${waited}ms",
-                        meta = mapOf(
-                            "trackId" to curId,
-                            "positionMs" to pos,
-                            "rebinds" to stallRebindCount,
-                            "episodes" to stallSessionCount,
-                            "waitedMs" to waited,
-                            "local" to local,
-                            "wipeCache" to wipe,
-                        ),
-                        force = streakToastDue(),
-                    )
+                if (!neverHeard || wipe) {
+                    runCatching {
+                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                            level = "warn",
+                            kind = "android.player.stall",
+                            message = "stall escalate-recover id=$curId pos=$pos " +
+                                "rebinds=$stallRebindCount episodes=$stallSessionCount " +
+                                "waited=${waited}ms",
+                            meta = mapOf(
+                                "trackId" to curId,
+                                "positionMs" to pos,
+                                "rebinds" to stallRebindCount,
+                                "episodes" to stallSessionCount,
+                                "waitedMs" to waited,
+                                "local" to local,
+                                "wipeCache" to wipe,
+                            ),
+                            force = streakToastDue(),
+                        )
+                    }
                 }
                 cancelStallWatch(resetTrack = false)
                 bufferingTrackId = curId
@@ -1889,34 +1906,50 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Next depuis Maps / notif / média-clés, même si le lecteur UI n’est plus branché.
-     * Doit vraiment changer de titre (pas seulement précharger « À suivre »).
+     * Next depuis Maps / notif / média-clés / bouton app.
+     * Jamais [Player.seekToNext] : un flux YouTube DASH « dynamique » relance alors
+     * le titre courant à 0. On avance par **index de file**, comme le précédent.
      */
     fun skipToNextFromExternal() {
         val h = android.os.Handler(mainLooper)
         val run = Runnable {
             val exo = player ?: return@Runnable
-            if (!exo.hasNextMediaItem()) {
-                Holder.extendUserQueue()
-            }
-            if (!exo.hasNextMediaItem()) {
-                val q = Holder.queue
-                if (q.size > exo.mediaItemCount) {
-                    val container = runCatching { YtMusicApp.instance.container }.getOrNull()
-                    val base: (String) -> String = { id ->
-                        container?.remoteStreamUrl(id)
-                            ?: "${Holder.resolvedApiBase()}/api/stream/$id"
-                    }
-                    q.drop(exo.mediaItemCount).forEach { t ->
-                        runCatching { exo.addMediaItem(mediaItemFor(t, base, Holder.queueTitle)) }
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastSkipNextAtMs < 220L) return@Runnable
+            lastSkipNextAtMs = now
+            val wasOne = exo.repeatMode == Player.REPEAT_MODE_ONE
+            if (wasOne) exo.repeatMode = Player.REPEAT_MODE_OFF
+            try {
+                val cur = exo.currentMediaItemIndex.coerceAtLeast(0)
+                val next = cur + 1
+                if (next >= exo.mediaItemCount) {
+                    Holder.extendUserQueue()
+                }
+                if (next >= exo.mediaItemCount) {
+                    val q = Holder.queue
+                    if (q.size > exo.mediaItemCount) {
+                        val container = runCatching { YtMusicApp.instance.container }.getOrNull()
+                        val base: (String) -> String = { id ->
+                            container?.remoteStreamUrl(id)
+                                ?: "${Holder.resolvedApiBase()}/api/stream/$id"
+                        }
+                        q.drop(exo.mediaItemCount).forEach { t ->
+                            runCatching { exo.addMediaItem(mediaItemFor(t, base, Holder.queueTitle)) }
+                        }
                     }
                 }
+                if (next < exo.mediaItemCount && next != cur) {
+                    runCatching { advanceToQueueIndex(exo, next) }
+                    return@Runnable
+                }
+                if (exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 1) {
+                    runCatching { advanceToQueueIndex(exo, 0) }
+                    return@Runnable
+                }
+                fillAutoplayFromService(advanceAfterFill = true)
+            } finally {
+                if (wasOne) exo.repeatMode = Player.REPEAT_MODE_ONE
             }
-            if (exo.hasNextMediaItem()) {
-                runCatching { advanceToQueueIndex(exo, exo.currentMediaItemIndex + 1) }
-                return@Runnable
-            }
-            fillAutoplayFromService(advanceAfterFill = true)
         }
         if (android.os.Looper.myLooper() == mainLooper) run.run() else h.post(run)
     }
@@ -3021,11 +3054,6 @@ private class YtmForwardingPlayer(
     override fun seekToNext() = seekToNextMediaItem()
 
     override fun seekToNextMediaItem() {
-        val gated = PlaybackService.Holder.onSkipNext
-        if (gated != null) {
-            gated.invoke()
-            return
-        }
         PlaybackService.Holder.service?.skipToNextFromExternal()
             ?: seekToNextImmediate()
     }
@@ -3036,6 +3064,7 @@ private class YtmForwardingPlayer(
         val cur = exo.currentMediaItemIndex
         val offline = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
         val store = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container.offlineStore }.getOrNull()
+        val candidate = cur + 1
         val nextIdx = when {
             offline && store != null -> {
                 val q = PlaybackService.Holder.queue
@@ -3047,9 +3076,8 @@ private class YtmForwardingPlayer(
                     }
                     ?: cur
             }
-            exo.hasNextMediaItem() -> cur + 1
-            exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 0 -> 0
-            exo.mediaItemCount > 1 -> (cur + 1) % exo.mediaItemCount
+            candidate < exo.mediaItemCount -> candidate
+            exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 1 -> 0
             else -> cur
         }
         // Chauffe le titre cible + le suivant avant / pendant le seek (notif + UI)
@@ -3061,20 +3089,14 @@ private class YtmForwardingPlayer(
                 exo.prepare()
                 exo.play()
             }
-            exo.hasNextMediaItem() && !(offline && store != null) -> {
-                exo.seekToNextMediaItem()
-                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
-                exo.playWhenReady = true
-                exo.play()
-            }
-            exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 0 -> {
-                exo.seekTo(/* mediaItemIndex */ 0, /* positionMs */ 0L)
-                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
-                exo.playWhenReady = true
-                exo.play()
-            }
-            exo.mediaItemCount > 1 && !(offline && store != null) -> {
+            nextIdx != cur && !(offline && store != null) -> {
                 exo.seekTo(nextIdx, 0L)
+                if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
+                exo.playWhenReady = true
+                exo.play()
+            }
+            exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 1 && nextIdx == 0 -> {
+                exo.seekTo(/* mediaItemIndex */ 0, /* positionMs */ 0L)
                 if (exo.playbackState == Player.STATE_IDLE) exo.prepare()
                 exo.playWhenReady = true
                 exo.play()

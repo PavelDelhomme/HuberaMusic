@@ -84,7 +84,11 @@ export function healTrackFromTelemetry(opts: {
   if (!id) return;
   const now = Date.now();
   const hits = noteStallHit(id, now);
-  const escalate = hits >= 2;
+  // stall froid : jamais d’ensure .m4a (ça noie yt-dlp pendant le /url live).
+  const escalate =
+    kind === 'android.player.stall' || kind === 'android.player.prefetch_miss'
+      ? hits >= 8
+      : hits >= 2;
   if (inFlightEnsure.has(id)) {
     bumpWarmPriority(id);
     enqueueDiskWarm([id]);

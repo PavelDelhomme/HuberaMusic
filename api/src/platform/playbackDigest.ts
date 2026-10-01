@@ -15,6 +15,8 @@
  *  PLAYBACK_DIGEST_TO=…          → destinataires (défaut TELEMETRY_ALERT_TO / ADMIN_EMAILS / SEED)
  *  PLAYBACK_DIGEST_HOUR=12
  *  PLAYBACK_DIGEST_MINUTE=30
+ *  PLAYBACK_DIGEST_EVENING_HOUR=21
+ *  PLAYBACK_DIGEST_EVENING_MINUTE=30
  *  PLAYBACK_DIGEST_TZ=Europe/Paris
  *  PLAYBACK_DIGEST_WINDOW_MS=86400000
  *  PLAYBACK_DIGEST_SKIP_EMPTY=0  → 1 = n’envoie rien s’il n’y a aucun problème
@@ -34,6 +36,7 @@ const KIND_SET = new Set([
   'android.player.early_end',
   'android.player.load_skip',
   'android.player.load_recover',
+  'android.playback.trace',
 ]);
 
 type TelemetryRow = {
@@ -64,7 +67,7 @@ type TrackAgg = {
 };
 
 let timer: ReturnType<typeof setTimeout> | null = null;
-let lastSentDayKey = '';
+let lastSentSlotKey = '';
 
 function enabled(): boolean {
   const v = String(process.env.PLAYBACK_DIGEST_DISABLE || '').trim().toLowerCase();
@@ -86,6 +89,23 @@ function hourMinute(): { hour: number; minute: number } {
   const hour = Math.min(23, Math.max(0, Number(process.env.PLAYBACK_DIGEST_HOUR ?? 12) || 12));
   const minute = Math.min(59, Math.max(0, Number(process.env.PLAYBACK_DIGEST_MINUTE ?? 30) || 30));
   return { hour, minute };
+}
+
+function eveningHourMinute(): { hour: number; minute: number } {
+  const hour = Math.min(23, Math.max(0, Number(process.env.PLAYBACK_DIGEST_EVENING_HOUR ?? 21) || 21));
+  const minute = Math.min(59, Math.max(0, Number(process.env.PLAYBACK_DIGEST_EVENING_MINUTE ?? 30) || 30));
+  return { hour, minute };
+}
+
+function digestSlots(): Array<{ hour: number; minute: number }> {
+  const a = hourMinute();
+  const b = eveningHourMinute();
+  if (a.hour === b.hour && a.minute === b.minute) return [a];
+  return [a, b];
+}
+
+function slotKey(dayKey: string, hour: number, minute: number): string {
+  return `${dayKey}-${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
 /** Clé jour Europe/Paris (YYYY-MM-DD) pour anti-double envoi. */
@@ -111,11 +131,10 @@ function parisNowParts(d = new Date()): { hour: number; minute: number; dayKey: 
   return { hour, minute, dayKey: parisDayKey(d) };
 }
 
-/** ms jusqu’au prochain créneau HH:MM Europe/Paris. */
+/** ms jusqu’au prochain créneau 12h30 ou 21h30 Europe/Paris. */
 export function msUntilNextDigest(from = Date.now()): number {
-  const { hour: targetH, minute: targetM } = hourMinute();
+  const slots = digestSlots();
   const tz = process.env.PLAYBACK_DIGEST_TZ || 'Europe/Paris';
-  // Approche : avancer minute par minute jusqu’à trouver le créneau (max 25 h)
   let t = from + 15_000; // marge anti-double au boot
   const deadline = from + 26 * 3600_000;
   while (t < deadline) {
@@ -127,10 +146,10 @@ export function msUntilNextDigest(from = Date.now()): number {
     }).formatToParts(new Date(t));
     const h = Number(parts.find((p) => p.type === 'hour')?.value || 0);
     const m = Number(parts.find((p) => p.type === 'minute')?.value || 0);
-    if (h === targetH && m === targetM) return Math.max(5_000, t - from);
+    if (slots.some((s) => s.hour === h && s.minute === m)) return Math.max(5_000, t - from);
     t += 30_000;
   }
-  return 24 * 3600_000;
+  return 12 * 3600_000;
 }
 
 function parseMeta(raw: string | null): unknown {
@@ -159,7 +178,7 @@ export function queryPlaybackProblems(windowMs?: number): TelemetryRow[] {
        FROM telemetry_events
        WHERE created_at > ?
          AND (
-           kind IN ('android.player.stall','android.player.cold_next','android.player.prefetch_miss','android.player.early_end','android.player.load_skip')
+           kind IN ('android.player.stall','android.player.cold_next','android.player.prefetch_miss','android.player.early_end','android.player.load_skip','android.playback.trace')
            OR (kind LIKE 'android.player%' AND level IN ('warn','error','fatal'))
          )
        ORDER BY created_at DESC
@@ -230,7 +249,7 @@ function bump(
   else if (kind === 'android.player.cold_next') agg.cold += 1;
   else if (kind === 'android.player.prefetch_miss') agg.prefetchMiss += 1;
   else if (kind === 'android.player.early_end') agg.earlyEnd += 1;
-  else if (kind === 'android.player.load_skip') agg.loadSkips += 1;
+  else if (kind === 'android.player.load_skip' || kind === 'android.playback.trace') agg.loadSkips += 1;
   else if (kind === 'listen.early_skip') agg.earlyListenSkips += 1;
   else agg.playerErrors += 1;
   if (message && agg.sampleMessages.length < 3 && !agg.sampleMessages.includes(message)) {
@@ -250,6 +269,8 @@ function kindLabel(kind: string): string {
       return 'Fin prématurée du titre';
     case 'android.player.load_skip':
       return 'Auto-skip : chargement KO (passé au suivant)';
+    case 'android.playback.trace':
+      return 'Trace téléphone : skip_dead / titre coincé';
     case 'android.player.load_recover':
       return 'Rebind / recover (évite le skip)';
     case 'listen.early_skip':
@@ -438,7 +459,7 @@ export async function buildPlaybackDigest(opts?: {
 <body style="margin:0;padding:0;background:#f4f4f5">
   <div style="max-width:720px;margin:20px auto;background:#fff;border:1px solid #e4e4e7;border-radius:12px;overflow:hidden;font-family:Segoe UI,Roboto,Helvetica Neue,Arial,sans-serif;color:#18181b;line-height:1.5">
     <div style="background:#18181b;color:#fafafa;padding:20px 24px">
-      <div style="font-size:12px;opacity:0.75;text-transform:uppercase;letter-spacing:0.04em">${escapeHtml(brand)} · Digest automatique 12h30</div>
+      <div style="font-size:12px;opacity:0.75;text-transform:uppercase;letter-spacing:0.04em">${escapeHtml(brand)} · Digest auto 12h30 et 21h30</div>
       <h1 style="margin:6px 0 0;font-size:20px">Chargement / lecture — dernières 24 h</h1>
       <p style="margin:8px 0 0;font-size:13px;opacity:0.85">${escapeHtml(when)}</p>
     </div>
@@ -456,7 +477,7 @@ export async function buildPlaybackDigest(opts?: {
              <table style="width:100%;border-collapse:collapse">${rowsHtml}</table>`
           : `<p style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;color:#166534;margin:0">Aucun titre lent signalé sur la fenêtre — RAS.</p>`
       }
-      <p style="margin:22px 0 0;font-size:12px;color:#71717a">Source : table <code>telemetry_events</code> · heal auto via <code>streamHeal</code> déjà appliqué à la réception. Ce mail est un bilan quotidien, pas une alerte temps réel.</p>
+      <p style="margin:22px 0 0;font-size:12px;color:#71717a">Source : table <code>telemetry_events</code> + traces téléphone. Heal : à la réception, puis ensure .m4a disque au digest 12h30 <em>et</em> 21h30 (titres skip_dead / coincés). Ce mail est le bilan, le cache disque rend le titre jouable ensuite.</p>
     </div>
   </div>
 </body></html>`;
@@ -522,30 +543,22 @@ function scheduleNext(): void {
     return;
   }
   const wait = msUntilNextDigest();
-  const { hour, minute } = hourMinute();
+  const slots = digestSlots()
+    .map((s) => `${String(s.hour).padStart(2, '0')}:${String(s.minute).padStart(2, '0')}`)
+    .join(' et ');
   console.info(
-    `[playbackDigest] prochain envoi ~${hour.toString().padStart(2, '0')}:${minute
-      .toString()
-      .padStart(2, '0')} Paris dans ${Math.round(wait / 60_000)} min`,
+    `[playbackDigest] prochain envoi ~${slots} Paris dans ${Math.round(wait / 60_000)} min`,
   );
   timer = setTimeout(() => {
     void (async () => {
       try {
-        const day = parisDayKey();
-        if (day === lastSentDayKey) {
-          console.info('[playbackDigest] déjà envoyé aujourd’hui — skip');
+        const now = parisNowParts();
+        const key = slotKey(now.dayKey, now.hour, now.minute);
+        if (key === lastSentSlotKey) {
+          console.info('[playbackDigest] déjà envoyé pour ce créneau — skip');
         } else {
-          // Si on arrive pile dans la minute cible
-          const now = parisNowParts();
-          const target = hourMinute();
-          if (now.hour === target.hour && Math.abs(now.minute - target.minute) <= 2) {
-            const r = await sendPlaybackDigestNow();
-            if (r.ok && !r.skipped) lastSentDayKey = day;
-          } else {
-            // Recalage (DST / drift)
-            const r = await sendPlaybackDigestNow();
-            if (r.ok && !r.skipped) lastSentDayKey = day;
-          }
+          const r = await sendPlaybackDigestNow();
+          if (r.ok && !r.skipped) lastSentSlotKey = key;
         }
       } catch (err) {
         console.error('[playbackDigest] send failed', err);
@@ -563,7 +576,7 @@ function scheduleNext(): void {
   }
 }
 
-/** Démarre le scheduler 12h30 (appelé au boot API). */
+/** Démarre le scheduler 12h30 + 21h30 (appelé au boot API). */
 export function startPlaybackDigestScheduler(): void {
   if (!enabled()) {
     console.info('[playbackDigest] disabled');

@@ -529,7 +529,7 @@ function isAndroidClient(req: Request): boolean {
  * Le hedge écrit EXACTEMENT 512 KiB : ce n’est pas un titre complet.
  * En-dessous / égal → préfixe, le swarm doit continuer.
  */
-const MIN_COMPLETE_DISK_BYTES = 768 * 1024;
+const MIN_COMPLETE_DISK_BYTES = 96 * 1024;
 
 function isGrowingDiskServable(path: string): boolean {
   try {
@@ -2164,7 +2164,7 @@ export async function handleStream(req: Request, res: Response) {
   try {
     ensureTime('format');
     let format = wantVideo
-      ? await withDeadline('getVideoFormat', getVideoFormat(videoId), 18_000)
+      ? await withDeadline('getVideoFormat', getVideoFormat(videoId), 28_000)
       : await (async () => {
           downloadTrack(videoId, {
             progressiveOnly: true,
@@ -2190,7 +2190,7 @@ export async function handleStream(req: Request, res: Response) {
           }
           if (winner.k === 'fmt' && winner.f?.url) return winner.f;
           if (winner.k === 'err') throw winner.e;
-          return await withDeadline('getAudioFormatRace', fmtP, 12_000);
+          return await withDeadline('getAudioFormatRace', fmtP, 35_000);
         })();
     if (format.url) {
       noteFormatOk(videoId);
@@ -2213,7 +2213,7 @@ export async function handleStream(req: Request, res: Response) {
         invalidateVideoFormat(videoId);
         invalidateStreamHead(videoId);
         format = wantVideo
-          ? await withDeadline('getVideoFormat2', getVideoFormat(videoId), 12_000)
+          ? await withDeadline('getVideoFormat2', getVideoFormat(videoId), 18_000)
           : await withDeadline(
               'getAudioFormat2',
               preferProxies
@@ -2470,7 +2470,7 @@ export async function handleStream(req: Request, res: Response) {
         const fmt = await antiDashRace(
           'ytdlpUrlAntiDash',
           getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId }),
-          28_000,
+          40_000,
         );
         if (fmt?.url && !res.headersSent) {
           const upstream = await antiDashRace(

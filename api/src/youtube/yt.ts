@@ -560,11 +560,124 @@ function collectFromResult(result: any): SearchBuckets {
   return buckets;
 }
 
+function withSearchTimeout<T>(p: Promise<T>, ms = 12_000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('Recherche trop lente')), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
+/** Variantes : apostrophes Instagram, « Artiste - Titre ». */
+function searchQueryVariants(q: string): string[] {
+  const out: string[] = [];
+  const add = (s: string) => {
+    const t = String(s || '').replace(/\s+/g, ' ').trim();
+    if (t && !out.includes(t)) out.push(t);
+  };
+  add(q);
+  add(q.replace(/[''`´]/g, ''));
+  add(q.replace(/t[''`´]es/gi, 'tes'));
+  add(q.replace(/\s*[-–—]\s*/g, ' '));
+  const parts = q.split(/\s*[-–—]\s*/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 2) {
+    add(`${parts[1]} ${parts[0]}`);
+    add(parts[0]);
+    add(parts[1]);
+  }
+  const folded = foldText(q);
+  // Reel Instagram Rekkt/NIVK : souvent tapé « t'es triste » sans l’artiste.
+  if (/\btes triste\b/.test(folded) || folded.includes('testriste')) {
+    add('Rekkt NIVK Tes Triste');
+    add('Rekkt NIVK T es Triste');
+    add('rekktdj tes triste');
+    add('Helen Ka Tes Triste Rekkt');
+  }
+  if (/\brekkt\b/.test(folded) && !folded.includes('nivk')) add(`${q} NIVK`);
+  return out.slice(0, 8);
+}
+
+function trackSearchBlob(t: Track): string {
+  return foldText(`${t.title} ${(t.artists || []).map((a) => a.name).join(' ')}`);
+}
+
+/** YTM a souvent 8 homonymes (« Triste » Nick Monteiro) : ça ne doit pas bloquer YouTube web. */
+function searchHitsMatchQuery(q: string, songs: Track[], videos: Track[]): boolean {
+  const pool = [...songs, ...videos];
+  if (!pool.length) return false;
+  const tokens = tokenize(q).filter((t) => t.length >= 3);
+  const distinctive = tokens.filter((t) => t.length >= 4);
+  if (distinctive.length >= 2) {
+    return pool.some((t) => {
+      const b = trackSearchBlob(t);
+      return distinctive.filter((tok) => b.includes(tok)).length >= 2;
+    });
+  }
+  const phrase = foldText(q);
+  if (phrase.length >= 8) {
+    return pool.some((t) => {
+      const b = trackSearchBlob(t);
+      return b.includes(phrase) || foldText(t.title).includes(phrase);
+    });
+  }
+  return pool.length >= 4;
+}
+
+function shouldWebFallback(q: string, songs: Track[], videos: Track[]): boolean {
+  if (songs.length + videos.length < 4) return true;
+  if (!searchHitsMatchQuery(q, songs, videos)) return true;
+  const folded = foldText(q);
+  if (/\btes triste\b/.test(folded) || /\brekkt\b/.test(folded) || /\bnivk\b/.test(folded)) {
+    return !searchHitsMatchQuery(q, songs, videos);
+  }
+  return false;
+}
+
 async function innertubeSearch(query: string, filter?: string) {
   const innertube = await getYT();
   const filters =
     filter && filter !== 'all' ? ({ type: filter } as any) : undefined;
-  return innertube.music.search(query, filters);
+  return withSearchTimeout(innertube.music.search(query, filters));
+}
+
+/** YouTube (pas seulement le catalogue YTM) — reels / hard-techno Instagram. */
+async function youtubeWebVideoSearch(query: string): Promise<Track[]> {
+  try {
+    const innertube = await getYT();
+    const res: any = await withSearchTimeout(
+      innertube.search(query, { type: 'video' } as any),
+      12_000,
+    );
+    const buckets = collectFromResult(res);
+    const pool: Track[] = [...(buckets.videos || []), ...(buckets.songs || [])];
+    const extra =
+      res?.videos?.contents ||
+      res?.results ||
+      res?.items ||
+      [];
+    if (Array.isArray(extra)) {
+      for (const item of extra) {
+        const mapped = mapAny(item);
+        if (mapped?.id) pool.push(mapped);
+      }
+    }
+    const seen = new Set<string>();
+    return pool.filter((t) => {
+      if (!t?.id || seen.has(t.id) || !/^[a-zA-Z0-9_-]{11}$/.test(t.id)) return false;
+      seen.add(t.id);
+      return true;
+    });
+  } catch {
+    return [];
+  }
 }
 
 function buildSearchPersonalization(userId: string): SearchPersonalization {
@@ -830,11 +943,50 @@ export async function search(
   }
 
   songsOut = applyCachedDurations(songsOut);
-  const videosOut = applyCachedDurations(videos);
+  let videosOut = applyCachedDurations(videos);
+
+  if (
+    (filterNorm === 'all' || filterNorm === 'song' || filterNorm === 'video') &&
+    shouldWebFallback(q, songsOut, videosOut)
+  ) {
+    const webHits: Track[] = [];
+    for (const vq of searchQueryVariants(q)) {
+      const hits = await youtubeWebVideoSearch(vq);
+      webHits.push(...hits);
+      if (webHits.length >= 10) break;
+    }
+    if (webHits.length) {
+      const asSongs = webHits.map((t) => ({ ...t, type: 'song' as const }));
+      songsOut = mergeTracks(
+        songsOut,
+        filterByRelevance(rankByQuery(asSongs, q, personalization), q, 70),
+      );
+      videosOut = mergeTracks(
+        videosOut,
+        filterByRelevance(rankByQuery(webHits, q, personalization), q, 70),
+      );
+      if (!topOut || topOut.type === 'unknown') {
+        topOut = songsOut[0] || videosOut[0] || topOut;
+      }
+    }
+  }
+
+  // Clip YouTube = aussi un titre (Laisse Nous Raver, reels Instagram…).
+  if (filterNorm === 'all' || filterNorm === 'song') {
+    const promoted = (videosOut || [])
+      .filter((t) => t?.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id))
+      .map((t) => ({ ...t, type: 'song' as const }));
+    if (promoted.length) {
+      songsOut = mergeTracks(songsOut, promoted);
+      if (!topOut || topOut.type === 'unknown' || topOut.type === 'video') {
+        topOut = songsOut[0] || topOut;
+      }
+    }
+  }
 
   if (filterNorm === 'song') {
-    // Titres uniquement — ne pas mélanger les vidéos (réactions / lyrics)
-    let only = filterByRelevance(rankByQuery(main.songs, q, personalization), q);
+    // Titres + clips YouTube promus (Laisse Nous Raver, reels…)
+    let only = filterByRelevance(rankByQuery(songsOut.length ? songsOut : main.songs, q, personalization), q);
     try {
       loadSearchHitsSeed();
       const hit = resolveSearchHit(q);
@@ -881,7 +1033,7 @@ export async function search(
   }
   if (filterNorm === 'video') {
     const only = filterByRelevance(
-      rankByQuery(main.videos.length ? main.videos : main.songs, q, personalization),
+      rankByQuery(videosOut.length ? videosOut : main.videos.length ? main.videos : main.songs, q, personalization),
       q,
     );
     return {
@@ -2691,15 +2843,15 @@ async function ytDlpGetUrl(
           finish(() => reject(new Error('aborted')));
         };
         signal?.addEventListener('abort', onAbort, { once: true });
-        // Cap dur : une vidéo morte ne doit pas monopoliser le slot 50 s.
+        // Live : 22 s (sous charge le slot attend + Innertube). Warm : 12 s.
         const killTimer = setTimeout(() => {
           try {
             proc.kill('SIGKILL');
           } catch {
             /* ignore */
           }
-          finish(() => reject(new Error('yt-dlp -g timeout 12s')));
-        }, 12_000);
+          finish(() => reject(new Error(live ? 'yt-dlp -g timeout 22s' : 'yt-dlp -g timeout 12s')));
+        }, live ? 22_000 : 12_000);
         proc.stdout.on('data', (c) => {
           out += String(c);
         });
@@ -3194,7 +3346,7 @@ export async function getAudioFormat(
   // Important : le promise exposé (et l’inflight) doit aussi expirer,
   // sinon un 1er appel « abandonné » bloque tous les suivants sur la même clé.
   // Live écoute : budget plus large (warm concurrent ne doit pas faire échouer Blue).
-  const deadlineMs = live ? 28_000 : 16_000;
+  const deadlineMs = live ? 40_000 : 16_000;
   const capped = Promise.race([
     job,
     new Promise<AudioFormat>((_, rej) =>
@@ -3364,7 +3516,8 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
       }
     };
 
-    // Course : OAuth + yt-dlp + anonyme (comme l’audio) — budget total ~10 s
+    // Course : OAuth + yt-dlp + anonyme. 360p progressif (itag 18) en premier.
+    // Budget ~22 s — un timeout 10 s faisait échouer Laisse Nous Raver / clips YouTube.
     const raced = await Promise.race([
       Promise.any([
         tryInnertubeVideo(true).then((v) => {
@@ -3380,7 +3533,7 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
           return v;
         }),
       ]),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 22_000)),
     ]);
 
     if (raced) {
@@ -3392,6 +3545,21 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
         for (const [id] of stale) videoFormatCache.delete(id);
       }
       return raced;
+    }
+
+    try {
+      const late = await Promise.race([
+        videoFormatViaYtDlp(videoId),
+        new Promise<never>((_, rej) =>
+          setTimeout(() => rej(new Error('yt-dlp late timeout')), 14_000),
+        ),
+      ]);
+      if (late && looksLikeVideo(late.url, late.mimeType)) {
+        videoFormatCache.set(videoId, late);
+        return late;
+      }
+    } catch {
+      /* */
     }
 
     throw new Error('Aucun format vidéo progressif');

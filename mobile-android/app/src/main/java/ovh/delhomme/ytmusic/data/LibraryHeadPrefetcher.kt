@@ -33,16 +33,12 @@ class LibraryHeadPrefetcher(
         started = true
         scope.launch(Dispatchers.IO) {
             delay(START_DELAY_MS)
-            // Têtes Aléatoire d’abord (ids en prefs) — avant le burst formats qui peut être long
-            runCatching { warmServerShuffleHeads(force = true, warmClient = true) }
-            runCatching { warmServerListHeads(force = true) }
-            runCatching { warmFormatsBurst() }
-            runCatching { warmServerRecentHeads() }
             while (true) {
+                if (playerBusy()) {
+                    delay(8_000L)
+                    continue
+                }
                 runCatching { tick(reason = "periodic") }
-                runCatching { warmServerShuffleHeads(force = false) }
-                runCatching { warmServerListHeads(force = false) }
-                runCatching { warmServerRecentHeads() }
                 delay(INTERVAL_MS)
             }
         }
@@ -52,9 +48,14 @@ class LibraryHeadPrefetcher(
      * Tire le batch serveur (~100 têtes rotatives) et warm léger côté Android.
      * Refresh quand le créneau expire (~30 min, plusieurs dizaines×/jour).
      */
+    private fun playerBusy(): Boolean =
+        StreamPrefetcher.isQuiet() ||
+            StreamPrefetcher.isStreamDown() ||
+            PlaybackService.Holder.isPlaybackActiveSafe()
+
     private suspend fun warmServerShuffleHeads(force: Boolean, warmClient: Boolean = true) {
         if (!NetworkMonitor.isOnline()) return
-        if (StreamPrefetcher.isStreamDown()) return
+        if (playerBusy()) return
         val now = System.currentTimeMillis()
         val expires = prefs.getLong(KEY_SHUFFLE_EXPIRES, 0L)
         if (!force && expires > now + 60_000L) return
@@ -85,7 +86,7 @@ class LibraryHeadPrefetcher(
     /** Warm ciblé « Enregistré récemment » (scope=recent) — ne remplace pas la tête Aléatoire globale. */
     private suspend fun warmServerRecentHeads() {
         if (!NetworkMonitor.isOnline()) return
-        if (StreamPrefetcher.isStreamDown()) return
+        if (playerBusy()) return
         val now = System.currentTimeMillis()
         if (now - prefs.getLong(KEY_RECENT_FETCH, 0L) < 8 * 60_000L) return
         runCatching { container.ensureFreshToken() }
@@ -105,7 +106,7 @@ class LibraryHeadPrefetcher(
     /** A–Z / récents / aimés : 20 débuts sur le VPS + têtes téléphone. */
     private suspend fun warmServerListHeads(force: Boolean) {
         if (!NetworkMonitor.isOnline()) return
-        if (StreamPrefetcher.isStreamDown()) return
+        if (playerBusy()) return
         val now = System.currentTimeMillis()
         if (!force && now - prefs.getLong(KEY_LIST_FETCH, 0L) < 4 * 60_000L) return
         runCatching { container.ensureFreshToken() }
@@ -167,7 +168,7 @@ class LibraryHeadPrefetcher(
     /** POST /api/stream/warm pour les 1ers titres biblio (petits comptes inclus). */
     private suspend fun warmFormatsBurst() {
         if (!NetworkMonitor.isOnline()) return
-        if (PlaybackService.Holder.isPlaybackActiveSafe()) return
+        if (playerBusy()) return
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
         // Petit burst : assez pour fluidité, pas assez pour saturer radio/batterie
@@ -208,8 +209,7 @@ class LibraryHeadPrefetcher(
 
     private suspend fun tick(reason: String) = tickMutex.withLock {
         if (!NetworkMonitor.isOnline()) return
-        if (StreamPrefetcher.isStreamDown()) return
-        if (StreamPrefetcher.isQuiet()) return
+        if (playerBusy()) return
         if (!BatterySaver.allowBackgroundDownloads()) return
         if (!NetworkMonitor.isUnmeteredPreferred(context) && reason == "periodic") {
             // Données mobiles : seulement boost viewport, petit lot
@@ -231,6 +231,7 @@ class LibraryHeadPrefetcher(
         if (base.isBlank()) return
 
         drainBoost(limit = 8)
+        if (playerBusy()) return
 
         // Aimés manquants en tête (après boost) — prioritaire pour Aléatoire / hors-ligne
         val likedWarm = likedIds().filter { !container.offlineStore.has(it) }.take(6)
@@ -248,6 +249,7 @@ class LibraryHeadPrefetcher(
             prefs.edit().putInt(KEY_CURSOR, 0).putLong(KEY_LAST, System.currentTimeMillis()).apply()
             return
         }
+        if (playerBusy()) return
         StreamPrefetcher.prefetchLibraryHeads(base, batch, limit = BATCH)
         val next = (start + batch.size) % ids.size.coerceAtLeast(1)
         prefs.edit()
@@ -317,7 +319,7 @@ class LibraryHeadPrefetcher(
 
     companion object {
         /** Têtes Aléatoire tôt ; burst formats plus tard / plus léger (batterie). */
-        private const val START_DELAY_MS = 900L
+        private const val START_DELAY_MS = 8_000L
         private const val INTERVAL_MS = 90_000L
         private const val BATCH = 8
         private const val KEY_CURSOR = "cursor"

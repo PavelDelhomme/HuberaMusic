@@ -280,11 +280,14 @@ class OfflineDownloadManager(
                                     }
                                     runCatching {
                                         val visualId = resolveVisualId?.invoke(track)
-                                            ?: VisualIdCache.get(
-                                                ovh.delhomme.ytmusic.YtMusicApp.instance,
+                                            ?: VisualIds.pick(
                                                 track.id,
-                                            )?.takeIf { it.length == 11 && it != track.id }
-                                        if (visualId.isNullOrBlank() || visualId == track.id) {
+                                                VisualIdCache.get(
+                                                    ovh.delhomme.ytmusic.YtMusicApp.instance,
+                                                    track.id,
+                                                ),
+                                            )
+                                        if (visualId.isNullOrBlank()) {
                                             videoProgress.set(1f)
                                             publishProgress()
                                             AppLog.i("offline", "video DL skip (pas de clip) ${track.id}")

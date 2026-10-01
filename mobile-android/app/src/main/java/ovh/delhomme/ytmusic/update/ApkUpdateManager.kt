@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Vérifie / télécharge / installe l’APK publiée sur le serveur (`/api/deploy/apk`)
  * — toujours la **dernière** version seule (pas de chaîne d’intermédiaires).
  *
- * L’APK OTA est **PLM prod** (`ovh.delhomme.ytmusic`). Depuis PLM Dev / Preprod,
+ * L’APK OTA est **Hubera Music prod** (`cloud.hubera.music`). Depuis Music Dev / Preprod,
  * la MAJ met à jour l’autre icône (pas le package courant) — messages + relaunch
  * ciblent donc le paquet de l’APK, pas `context.packageName`.
  *
@@ -59,14 +59,52 @@ class ApkUpdateManager(
     }
 
     private suspend fun fetchApkInfo(): ApkInfoResponse {
-        val info = container.api.apkInfo(
-            clientVersion = BuildConfig.VERSION_NAME,
-            clientVersionCode = BuildConfig.VERSION_CODE,
-            install = installId(),
-            huberaAware = 1,
-        )
-        lastHubera = info.hubera?.message?.takeIf { it.isNotBlank() }
-        return info
+        val pkg = context.packageName
+        var lastErr: Exception? = null
+        for (base in container.prodApiFallbacks()) {
+            try {
+                if (base == container.resolvedApiBase()) {
+                    val info = container.api.apkInfo(
+                        clientVersion = BuildConfig.VERSION_NAME,
+                        clientVersionCode = BuildConfig.VERSION_CODE,
+                        install = installId(),
+                        huberaAware = 1,
+                        clientPackage = pkg,
+                    )
+                    lastHubera = info.hubera?.message?.takeIf { it.isNotBlank() }
+                    return info
+                }
+                val url = "$base/api/deploy/apk/info" +
+                    "?clientVersion=${java.net.URLEncoder.encode(BuildConfig.VERSION_NAME, "UTF-8")}" +
+                    "&clientVersionCode=${BuildConfig.VERSION_CODE}" +
+                    "&install=${installId()}" +
+                    "&huberaAware=1" +
+                    "&clientPackage=${java.net.URLEncoder.encode(pkg, "UTF-8")}"
+                val req = Request.Builder().url(url).get().build()
+                container.httpAuth.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code} $base")
+                    val raw = resp.body?.string().orEmpty()
+                    val o = org.json.JSONObject(raw)
+                    val info = ApkInfoResponse(
+                        ready = o.optBoolean("ready"),
+                        versionName = o.optString("versionName").takeIf { it.isNotBlank() },
+                        versionCode = o.optInt("versionCode").takeIf { it > 0 },
+                        apiBaseUrl = o.optString("apiBaseUrl").takeIf { it.isNotBlank() },
+                        builtAt = o.optString("builtAt").takeIf { it.isNotBlank() },
+                        sizeBytes = o.optLong("sizeBytes").takeIf { it > 0 },
+                        downloadPath = o.optString("downloadPath").takeIf { it.isNotBlank() },
+                        downloadUrl = o.optString("downloadUrl").takeIf { it.isNotBlank() },
+                        packageName = o.optString("package").takeIf { it.isNotBlank() },
+                    )
+                    lastHubera = o.optJSONObject("hubera")?.optString("message")?.takeIf { it.isNotBlank() }
+                    return info
+                }
+            } catch (e: Exception) {
+                lastErr = e
+                AppLog.w("apk-update", "apk/info $base: ${e.message}")
+            }
+        }
+        throw lastErr ?: java.io.IOException("apk/info indisponible")
     }
 
     fun lastHuberaMessage(): String? = lastHubera
@@ -1089,12 +1127,6 @@ class ApkUpdateManager(
             )
         }
 
-        val base = container.resolvedApiBase().trimEnd('/')
-        val path = meta.downloadPath?.takeIf { it.startsWith("/") } ?: "/api/deploy/apk"
-        // Toujours passer par l’API résolue (même host que le JWT) — évite 401 si
-        // downloadUrl pointe vers un alias (plm vs ytmusic) mal authentifié.
-        val url = "$base$path"
-
         val dir = File(context.cacheDir, "apk-updates").apply { mkdirs() }
         dir.listFiles()?.forEach { f ->
             if (f.name.startsWith("plm-update-") && f.name != "plm-update-$remote.apk") {
@@ -1104,40 +1136,67 @@ class ApkUpdateManager(
         val out = apkFileFor(remote)
         if (out.exists()) out.delete()
 
-        val req = Request.Builder().url(url).get().build()
-        container.httpAuth.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                return@withContext "Téléchargement HTTP ${resp.code}"
-            }
-            val body = resp.body ?: return@withContext "Réponse vide"
-            val total = body.contentLength().takeIf { it > 0 }
-                ?: meta.sizeBytes?.toLong()?.takeIf { it > 0 }
-                ?: -1L
-            out.outputStream().use { os ->
-                body.byteStream().use { input ->
-                    val buf = ByteArray(64 * 1024)
-                    var read = 0L
-                    var lastPct = -1
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        os.write(buf, 0, n)
-                        read += n
-                        if (total > 0) {
-                            val p = (read.toFloat() / total.toFloat()).coerceIn(0f, 0.99f)
-                            val pct = (p * 100).toInt()
-                            if (pct != lastPct) {
-                                lastPct = pct
-                                onProgress?.invoke(p)
+        val path = meta.downloadPath?.takeIf { it.startsWith("/") } ?: "/api/deploy/apk"
+        val pkgQ = meta.packageName?.takeIf { it.isNotBlank() } ?: context.packageName
+        val withPkg = if (path.contains("package=")) path else {
+            path + (if (path.contains("?")) "&" else "?") + "package=" +
+                java.net.URLEncoder.encode(pkgQ, "UTF-8")
+        }
+        var lastHttp: String? = null
+        var downloaded = false
+        hostLoop@ for (tryBase in container.prodApiFallbacks()) {
+            val url = "$tryBase$withPkg"
+            val req = Request.Builder().url(url).get().build()
+            val ok = try {
+                container.httpAuth.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        lastHttp = "HTTP ${resp.code} $tryBase"
+                        false
+                    } else {
+                        val body = resp.body ?: return@use false
+                        val total = body.contentLength().takeIf { it > 0 }
+                            ?: meta.sizeBytes?.toLong()?.takeIf { it > 0 }
+                            ?: -1L
+                        out.outputStream().use { os ->
+                            body.byteStream().use { input ->
+                                val buf = ByteArray(64 * 1024)
+                                var read = 0L
+                                var lastPct = -1
+                                while (true) {
+                                    val n = input.read(buf)
+                                    if (n < 0) break
+                                    os.write(buf, 0, n)
+                                    read += n
+                                    if (total > 0) {
+                                        val p = (read.toFloat() / total.toFloat()).coerceIn(0f, 0.99f)
+                                        val pct = (p * 100).toInt()
+                                        if (pct != lastPct) {
+                                            lastPct = pct
+                                            onProgress?.invoke(p)
+                                        }
+                                    } else if (read % (512 * 1024L) < buf.size) {
+                                        onProgress?.invoke((read / (8f * 1024f * 1024f)).coerceIn(0f, 0.9f))
+                                    }
+                                }
                             }
-                        } else if (read % (512 * 1024L) < buf.size) {
-                            onProgress?.invoke((read / (8f * 1024f * 1024f)).coerceIn(0f, 0.9f))
                         }
+                        true
                     }
                 }
+            } catch (e: Exception) {
+                lastHttp = e.message
+                false
             }
-            onProgress?.invoke(1f)
+            if (ok) {
+                downloaded = true
+                break@hostLoop
+            }
+            AppLog.w("apk-update", "download fail $tryBase: $lastHttp")
         }
+        if (!downloaded) {
+            return@withContext lastHttp ?: "Téléchargement impossible"
+        }
+        onProgress?.invoke(1f)
         if (out.length() < 1_000_000L) {
             out.delete()
             return@withContext "APK trop petite (${out.length()} o)"
@@ -1414,7 +1473,7 @@ class ApkUpdateManager(
         private const val KEY_UI_MESSAGE = "ui_message"
         private const val KEY_CONFIRM_OPENED_AT = "confirm_opened_at_ms"
         private const val KEY_TARGET_PACKAGE = "ota_target_package"
-        private const val PROD_PACKAGE = "ovh.delhomme.ytmusic"
+        private const val PROD_PACKAGE = "cloud.hubera.music"
         /** Fenêtre anti double-popup (broadcasts OEM / recreation Activity). */
         private const val CONFIRM_DEBOUNCE_MS = 45_000L
         private val WINDOW_HALF_MS = TimeUnit.MINUTES.toMillis(45)

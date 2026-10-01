@@ -300,19 +300,9 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                     }
                 }
                 _state.value = _state.value.copy(loading = false, sections = sections, error = null)
-                // Chauffe légère des premiers titres trouvés (tap play plus chaud)
-                val warmIds = sections
-                    .flatMap { it.items }
-                    .filter { it.isPlayable() && it.id.length == 11 }
-                    .map { it.id }
-                    .distinct()
-                    .take(8)
-                if (warmIds.isNotEmpty()) {
-                    val base = container.resolvedApiBase()
-                    if (base.isNotBlank()) {
-                        ovh.delhomme.ytmusic.player.StreamPrefetcher.warmFormatsLight(base, warmIds, limit = 8)
-                    }
-                }
+                // Ne pas préchauffer 8 titres : ça noie yt-dlp pendant que tu lances un résultat.
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 if (_state.value.query.trim() != currentQ) return@launch
                 // Hors-ligne / API KO : on expose quand même les DL locaux
@@ -323,14 +313,19 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                         error = null,
                     )
                 } else {
+                    val raw = e.message.orEmpty()
                     val msg = when {
                         !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() ->
                             "Hors ligne — reconnecte le réseau ou cherche dans tes téléchargements"
-                        e.message?.contains("timeout", ignoreCase = true) == true ->
+                        raw.contains("timeout", ignoreCase = true) ||
+                            raw.contains("trop lente", ignoreCase = true) ->
                             "Recherche trop lente — réessaie"
-                        e.message?.contains("401") == true || e.message?.contains("403") == true ->
+                        raw.contains("401") || raw.contains("403") ->
                             "Session expirée — reconnecte-toi dans Compte"
-                        else -> e.message?.takeIf { it.isNotBlank() } ?: "Recherche indisponible"
+                        raw.contains("cancelled", ignoreCase = true) ||
+                            raw.contains("Job was", ignoreCase = true) ->
+                            "Recherche interrompue — réessaie"
+                        else -> "Recherche indisponible — réessaie"
                     }
                     _state.value = _state.value.copy(loading = false, error = msg)
                 }
@@ -683,14 +678,6 @@ fun SearchScreen(
                                             val base = container.resolvedApiBase()
                                             if (base.isNotBlank()) {
                                                 StreamPrefetcher.warmTrackFormatOnly(base, track.id)
-                                                val upcoming = playable
-                                                    .drop(idx + 1)
-                                                    .map { it.id }
-                                                    .filter { it.length == 11 }
-                                                    .take(3)
-                                                if (upcoming.isNotEmpty()) {
-                                                    StreamPrefetcher.warmHeads3s(base, upcoming, limit = 3)
-                                                }
                                             }
                                             onPlay(playable.ifEmpty { listOf(track) }, idx)
                                         } else {

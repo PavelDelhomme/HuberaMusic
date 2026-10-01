@@ -770,81 +770,22 @@ class PlayerController(
     }
 
     fun skipNext() {
-        healAfterBackground()
-        val p = player() ?: PlaybackService.Holder.player
-        val saved = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
-        val exoEmpty =
-            p == null ||
-                p.mediaItemCount == 0 ||
-                p.playbackState == Player.STATE_IDLE
-        // E22 : après force-stop, jamais « Suggestions… » — re-préparer depuis Holder.queue
-        if (exoEmpty && saved.isNotEmpty()) {
-            userWantsPlaying = true
-            pendingAutoplay = true
-            val cur = PlaybackService.Holder.index
-                .coerceIn(0, saved.lastIndex)
-                .let { i -> if (_state.value.queueIndex in saved.indices) _state.value.queueIndex else i }
-            val next = if (saved.size > 1) (cur + 1) % saved.size else cur
-            pending = saved to next
+        connect()
+        val svc = PlaybackService.Holder.service
+        if (svc != null) {
+            svc.skipToNextFromExternal()
+            PlaybackService.Holder.player?.let { syncFrom(it) }
+            return
+        }
+        if (!startPlaybackFromUiState()) return
+        val q = pending?.first ?: _state.value.queue
+        if (q.size > 1) {
+            val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
+            val next = (cur + 1).coerceAtMost(q.lastIndex).let { if (it == cur) 0 else it }
+            pending = q to next
             pendingSeekMs = 0L
-            PlaybackService.Holder.queue = saved
             PlaybackService.Holder.index = next
-            ensureServiceAndConnect()
-            val exo = player() ?: PlaybackService.Holder.player
-            if (exo != null) {
-                pending = null
-                playNow(exo, saved, next, autoplay = true)
-                syncFrom(exo)
-            }
-            return
         }
-        if (p == null) {
-            if (!startPlaybackFromUiState()) return
-            val q = pending?.first ?: _state.value.queue
-            if (q.size > 1) {
-                val cur = (pending?.second ?: _state.value.queueIndex).coerceIn(0, q.lastIndex)
-                val next = (cur + 1) % q.size
-                pending = q to next
-                pendingSeekMs = 0L
-                PlaybackService.Holder.index = next
-            }
-            return
-        }
-        val nextIdx = when {
-            p.hasNextMediaItem() -> p.currentMediaItemIndex + 1
-            repeatMode == RepeatMode.All && p.mediaItemCount > 0 -> 0
-            p.mediaItemCount > 1 -> (p.currentMediaItemIndex + 1) % p.mediaItemCount
-            else -> p.currentMediaItemIndex
-        }
-        val nid = PlaybackService.Holder.queue.getOrNull(nextIdx)?.id
-        val skipQueue = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
-        if (nextIdx in skipQueue.indices) {
-            publishOptimistic(skipQueue, nextIdx)
-        }
-        if (!nid.isNullOrBlank()) {
-            val base = streamUrl("_").substringBefore("/api/stream/")
-            StreamPrefetcher.cancelIdle(preserveNext = true)
-            StreamPrefetcher.quietPrefetch(80L)
-            StreamPrefetcher.warmTrackFormatOnly(base, nid)
-            StreamPrefetcher.prefetchStartHead(base, nid, StreamPrefetcher.HEAD_NEXT_PLAYING, priorityNext = true)
-            skipQueue.getOrNull(nextIdx + 1)?.id?.takeIf { it.length == 11 }?.let { n2 ->
-                StreamPrefetcher.warmTrackFormatOnly(base, n2)
-                StreamPrefetcher.prefetchStartHead(base, n2, StreamPrefetcher.HEAD_3S)
-            }
-            scope.launch {
-                delay(450L)
-                if (player()?.currentMediaItem?.mediaId != nid) return@launch
-                StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                    base,
-                    skipQueue.map { it.id },
-                    nextIdx,
-                    count = 3,
-                    ignoreQuiet = true,
-                )
-                CoverPrefetcher.warmCovers(skipQueue, nextIdx, ahead = 4, behind = 0)
-            }
-        }
-        applySkipSeek(p, nextIdx)
     }
 
     private fun applySkipSeek(p: Player, nextIdx: Int) {
@@ -1932,19 +1873,23 @@ class PlayerController(
             StreamPrefetcher.markHeadReady(currentId)
         }
         // Si tête déjà là : quiet court. Sinon kick warm IO immédiat (sans bloquer le UI).
-        StreamPrefetcher.quietPrefetch(if (headReady) 60L else 200L)
+        // Cold : 25 s de silence LibHeads / prefetch, sinon 16+8 têtes noient yt-dlp
+        // (Triste restait BUFFERING pendant shuffle-heads + format burst).
+        StreamPrefetcher.quietPrefetch(if (headReady && !coldResume) 80L else 25_000L)
         if (!currentId.isNullOrBlank() && (!headReady || coldResume)) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
-            scope.launch(Dispatchers.IO) {
-                StreamPrefetcher.prepareRestoredCurrent(
-                    base,
-                    currentId,
-                    window.drop(idx + 1).map { it.id },
-                    force = coldResume,
-                )
-                if (autoplay) {
-                    window.drop(idx + 1).take(2).forEachIndexed { i, t ->
-                        StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
+            if (!coldResume) {
+                scope.launch(Dispatchers.IO) {
+                    StreamPrefetcher.prepareRestoredCurrent(
+                        base,
+                        currentId,
+                        window.drop(idx + 1).map { it.id },
+                        force = false,
+                    )
+                    if (autoplay) {
+                        window.drop(idx + 1).take(2).forEachIndexed { i, t ->
+                            StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
+                        }
                     }
                 }
             }
@@ -1956,7 +1901,7 @@ class PlayerController(
                 }
             }
         }
-        if (autoplay) {
+        if (autoplay && !coldResume) {
             val startId = currentId
             scope.launch {
                 delay(80)
@@ -2106,6 +2051,8 @@ class PlayerController(
     private var lastCoverPrefetchId: String? = null
     private var bufferWatchJob: Job? = null
     private var bufferHintTrackId: String? = null
+    /** Un cycle de recovery UI déjà fait pour cet id — ne pas relancer wipe/rebind en boucle. */
+    private var bufferWatchExhaustedId: String? = null
 
     /**
      * Feedback utilisateur pendant un long BUFFERING (file / titre froid).
@@ -2119,6 +2066,7 @@ class PlayerController(
             bufferHintTrackId = null
             return
         }
+        if (trackId == bufferWatchExhaustedId) return
         if (trackId == bufferHintTrackId && bufferWatchJob?.isActive == true) return
         bufferWatchJob?.cancel()
         bufferHintTrackId = trackId
@@ -2133,8 +2081,6 @@ class PlayerController(
                     else -> "Chargement du flux…"
                 }
                 context.toastMain(msg, Toast.LENGTH_SHORT)
-                // Pas de telemetry heal ici : cold_next à 2,5 s lançait ensure+replace
-                // et saturait yt-dlp pendant que le titre courant essayait de résoudre.
             }
             delay(5_000L)
             if (_state.value.buffering && _state.value.track?.id == trackId) {
@@ -2143,17 +2089,18 @@ class PlayerController(
                     Toast.LENGTH_SHORT,
                 )
             }
-            // Titre froid / cold start : laisser armStallWatch travailler (~20–42 s)
-            // avant un skip auto — évite de sauter trop tôt sur Samsung.
             val pos = player()?.currentPosition ?: _state.value.positionMs
             val coldStart = pos < 8_000L
-            // Mid-piste après 503/rebind : NE PAS skip — PlaybackService retente le même titre.
             val recovering = PlaybackService.Holder.isStreamRecovering(trackId)
+            // Cold : yt-dlp peut prendre ~35 s. Rebind/wipe trop tôt relance la requête
+            // et le titre (ex. Triste / Nothing) reste à 55 ms sans son.
             delay(
                 when {
                     recovering -> 45_000L
-                    coldStart -> 16_000L
-                    else -> 8_000L
+                    // Laisser le 1er /url (yt-dlp ~28–40 s) aboutir. Un rebind UI à 33 s
+                    // relançait Triste en boucle BUFFERING pos=0.
+                    coldStart -> 52_000L
+                    else -> 10_000L
                 },
             )
             if (_state.value.buffering &&
@@ -2167,28 +2114,39 @@ class PlayerController(
                     )
                     return@launch
                 }
+                if (coldStart) {
+                    AppLog.i(
+                        "PlayerController",
+                        "buffer stuck cold: on attend le 1er /url id=$trackId (pas de rebind)",
+                    )
+                    StreamPrefetcher.quietPrefetch(20_000L)
+                    bufferWatchExhaustedId = trackId
+                    return@launch
+                }
                 AppLog.i("PlayerController", "buffer stuck → rebind keepCache id=$trackId cold=$coldStart")
                 StreamPrefetcher.markStreamOk()
+                StreamPrefetcher.quietPrefetch(12_000L)
                 val title = _state.value.track?.title
                 val artist = _state.value.track?.artistLine()
-                runCatching {
-                    ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                        level = "warn",
-                        kind = "android.player.load_recover",
-                        message = "buffer stuck → rebind keepCache id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
-                        meta = mapOf(
-                            "trackId" to trackId,
-                            "title" to title,
-                            "artist" to artist,
-                            "positionMs" to _state.value.positionMs,
-                            "coldStart" to coldStart,
-                            "action" to "rebind",
-                            "reason" to "buffer_stuck",
-                        ),
-                        force = false,
-                    )
+                if (!coldStart) {
+                    runCatching {
+                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                            level = "warn",
+                            kind = "android.player.load_recover",
+                            message = "buffer stuck → rebind keepCache id=$trackId cold=$coldStart pos=${_state.value.positionMs}",
+                            meta = mapOf(
+                                "trackId" to trackId,
+                                "title" to title,
+                                "artist" to artist,
+                                "positionMs" to _state.value.positionMs,
+                                "coldStart" to coldStart,
+                                "action" to "rebind",
+                                "reason" to "buffer_stuck",
+                            ),
+                            force = false,
+                        )
+                    }
                 }
-                // 1) Rebind sans wipe : garder les octets déjà reçus, URL neuve seulement.
                 runCatching {
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck",
@@ -2203,16 +2161,16 @@ class PlayerController(
                         StreamPrefetcher.warmTrackFormatOnly(base, trackId)
                     }
                 }
-                delay(18_000L)
+                delay(if (coldStart) 40_000L else 18_000L)
                 if (!_state.value.buffering || _state.value.track?.id != trackId) return@launch
                 if (PlaybackService.Holder.isStreamRecovering(trackId)) return@launch
-                AppLog.w("PlayerController", "buffer stuck → 2e rebind forceFresh id=$trackId")
+                AppLog.w("PlayerController", "buffer stuck → 2e rebind keepCache id=$trackId")
                 StreamPrefetcher.markStreamOk()
                 runCatching {
                     ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
                         level = "warn",
                         kind = "android.player.stall",
-                        message = "buffer stuck → 2e rebind forceFresh id=$trackId",
+                        message = "buffer stuck → 2e rebind keepCache id=$trackId",
                         meta = mapOf(
                             "trackId" to trackId,
                             "title" to title,
@@ -2228,30 +2186,13 @@ class PlayerController(
                     PlaybackService.Holder.service?.rebindCurrentStream(
                         reason = "ui-buffer-stuck-2",
                         forcePlay = true,
-                        retryN = 2,
-                        wipeCache = true,
+                        retryN = if (coldStart) 0 else 2,
+                        wipeCache = !coldStart,
                     )
                 }
-                delay(28_000L)
-                // Dernier recours : encore le MÊME titre (forceFresh), jamais skip auto
-                if (_state.value.buffering &&
-                    _state.value.track?.id == trackId &&
-                    ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
-                ) {
-                    AppLog.w(
-                        "PlayerController",
-                        "buffer stuck → rebind keep (pas de skip) id=$trackId",
-                    )
-                    StreamPrefetcher.markStreamOk()
-                    runCatching {
-                        PlaybackService.Holder.service?.rebindCurrentStream(
-                            reason = "ui-buffer-stuck-last",
-                            forcePlay = true,
-                            retryN = 3,
-                            wipeCache = true,
-                        )
-                    }
-                }
+                // Stop ici : PlaybackService gère skip/escalate. Relancer ce cycle
+                // (wipe toutes les ~20 s) empêchait yt-dlp d’aboutir.
+                bufferWatchExhaustedId = trackId
             }
         }
     }
@@ -2302,6 +2243,9 @@ class PlayerController(
         val buffering =
             player.playWhenReady &&
                 player.playbackState == Player.STATE_BUFFERING
+        if (player.isPlaying && posNow > 2_000L) {
+            bufferWatchExhaustedId = null
+        }
         noteBuffering(buffering, track?.id)
         // Seek demandé avant durée connue → appliquer dès qu’on a une vraie durée
         val pendingRatio = pendingSeekRatio
