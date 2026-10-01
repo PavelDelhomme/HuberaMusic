@@ -439,6 +439,7 @@ app.get('/api/version-notes', (_req, res) => {
 });
 
 app.get('/api/health', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   const ytCookies = youtubeCookiesStatus();
   const ref = process.env.BUILD_REF || 'local';
   let semver = '';
@@ -3287,7 +3288,22 @@ if (existsSync(clientDist)) {
   app.get('/app', (_req, res) => {
     res.sendFile(join(clientDist, 'index.html'));
   });
-  app.use(express.static(clientDist));
+  app.use(
+    express.static(clientDist, {
+      setHeaders(res, filePath) {
+        const base = filePath.replace(/\\/g, '/').split('/').pop() || '';
+        if (
+          base === 'index.html' ||
+          base === 'sw.js' ||
+          base === 'registerSW.js' ||
+          base === 'manifest.webmanifest' ||
+          base === 'refresh.html'
+        ) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        }
+      },
+    }),
+  );
   // Ne jamais servir le SPA pour /api ou well-known (sinon 200 HTML sur routes API manquantes)
   app.get(/.*/, (req, res) => {
     const p = req.path || '';

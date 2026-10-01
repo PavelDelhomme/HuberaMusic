@@ -83,9 +83,23 @@ export default defineConfig(({ mode }) => {
         ],
       },
       workbox: {
-        navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        // Ne jamais précacher index.html : sinon F5 ressert l’ancien shell à l’infini.
+        globIgnores: ['**/index.html', '**/refresh.html'],
+        navigateFallback: '',
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: ({ url }) =>
+              url.pathname === '/api/health' ||
+              url.pathname.startsWith('/api/health/') ||
+              url.pathname === '/api/version' ||
+              url.pathname.startsWith('/api/version'),
+            handler: 'NetworkOnly',
+          },
           {
             // Streams audio : jamais CacheFirst (sinon un prefetch Range empoisonne la piste)
             urlPattern: ({ url }) => url.pathname.startsWith('/api/stream/'),

@@ -2,6 +2,18 @@
   "updatedAt": "2026-10-01",
   "versions": [
     {
+      "version": "1.3.333",
+      "date": "2026-10-01",
+      "time": "20:35",
+      "at": "2026-10-01T20:35:00+02:00",
+      "title": "Fin de la boucle « recharge pour aligner »",
+      "notes": [
+        "Le bandeau web ne ressert plus un ancien index.html via le service worker : vidage SW + caches, puis vrai rechargement.",
+        "Un seul auto-reload par version. /api/health et les navigations ne sont plus cachés 24 h.",
+        "Pas de forceUpdate."
+      ]
+    },
+    {
       "version": "1.3.332",
       "date": "2026-10-01",
       "time": "20:05",
@@ -22,6 +34,40 @@
       "notes": [
         "La recherche ne s’arrête plus aux homonymes YTM : fallback YouTube web + variantes apostrophes.",
         "Overlay -r Samsung + Blackview. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.322",
+      "date": "2026-09-30",
+      "time": "03:40",
+      "at": "2026-09-30T03:40:00+02:00",
+      "title": "Précédent Maps : seek direct, plus de boucle 3 s",
+      "notes": [
+        "Le bouton précédent ne passe plus par seekToPreviousMediaItem (restart 3 s / boucle MediaController).",
+        "Maps et la notif reculent d’un titre via l’index de file. Overlay -r Samsung + Blackview. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.321",
+      "date": "2026-09-30",
+      "time": "03:35",
+      "at": "2026-09-30T03:35:00+02:00",
+      "title": "Précédent change vraiment de titre (Maps, notif)",
+      "notes": [
+        "Plus de restart à 3 s : le bouton précédent saute au titre d’avant, comme suivant.",
+        "Reculer dans la piste : appui long. Overlay -r Samsung + Blackview. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.320",
+      "date": "2026-09-29",
+      "time": "19:50",
+      "at": "2026-09-29T19:50:00+02:00",
+      "title": "Dialogue MAJ : plus de « À jour » quand une version est dispo",
+      "notes": [
+        "Le popup ne mélange plus « Mise à jour disponible » et « À jour — p+1.3.317 ».",
+        "Texte clair : version installée vs version serveur. Pas de forceUpdate.",
+        "Overlay -r Samsung + Blackview. Nothing plus tard."
       ]
     },
     {

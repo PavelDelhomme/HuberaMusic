@@ -2,9 +2,15 @@ import { useEffect, useState } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { RefreshCw, X } from 'lucide-react';
 import { api } from '../../api';
-import { APP_CHANNEL, APP_VERSION, appVersionLabel } from '../../lib/util/appVersion';
+import { APP_VERSION } from '../../lib/util/appVersion';
+import { hardReloadWebApp, webReloadAlreadyTried } from '../../lib/util/hardReload';
 
-/** Bandeau : nouvelle version PWA (SW) ou API `/api/health` plus récente que le bundle. */
+function semverOf(label: string): string {
+  const s = label.trim();
+  return s.includes('+') ? s.slice(s.indexOf('+') + 1) : s;
+}
+
+/** Bandeau : SW en attente, ou bundle web plus vieux que /api/health — hard-reload, pas un simple F5. */
 export function UpdateBanner() {
   const [apiNewer, setApiNewer] = useState<string | null>(null);
   const {
@@ -13,14 +19,13 @@ export function UpdateBanner() {
   } = useRegisterSW({
     onRegistered(registration: ServiceWorkerRegistration | undefined) {
       if (!registration) return;
+      void registration.update().catch(() => undefined);
       setInterval(() => {
-        void registration.update().catch(() => {
-          /* SW mort / réseau — ignorer */
-        });
+        void registration.update().catch(() => undefined);
       }, 15 * 60 * 1000);
     },
     onRegisterError() {
-      // Évite unhandledrejection « ServiceWorker script at …/sw.js » en mail
+      /* SW mort / réseau */
     },
   });
 
@@ -31,15 +36,20 @@ export function UpdateBanner() {
         const h = await api.health();
         const remote = (h as { appVersion?: string }).appVersion?.trim();
         if (!remote || cancelled) return;
-        const local = appVersionLabel(APP_CHANNEL, APP_VERSION);
-        // Compare semver après `d+` / `p+`
-        const remoteSem = remote.includes('+') ? remote.split('+')[1] : remote;
+        const remoteSem = semverOf(remote);
         const localSem = APP_VERSION;
-        if (remoteSem && localSem && remoteSem !== localSem && remote !== local) {
+        if (remoteSem && localSem && remoteSem !== localSem) {
+          if (webReloadAlreadyTried(remoteSem)) {
+            // Déjà hard-reloadé vers cette version : le shell web EST la vérité.
+            setApiNewer(null);
+            return;
+          }
           setApiNewer(remote);
+        } else {
+          setApiNewer(null);
         }
       } catch {
-        /* hors ligne / health KO */
+        /* hors ligne */
       }
     };
     void check();
@@ -50,7 +60,36 @@ export function UpdateBanner() {
     };
   }, []);
 
+  const apply = () => {
+    const target = apiNewer ? semverOf(apiNewer) : APP_VERSION;
+    void (async () => {
+      try {
+        await updateServiceWorker(true);
+      } catch {
+        /* pas de SW waiting */
+      }
+      await hardReloadWebApp(target);
+    })();
+  };
+
+  useEffect(() => {
+    if (!apiNewer && !needRefresh) return;
+    const target = apiNewer ? semverOf(apiNewer) : APP_VERSION;
+    if (webReloadAlreadyTried(target)) return;
+    // Un seul auto-reload par version — évite la boucle « recharge encore ».
+    const flag = `hubera-auto-reload:${target}`;
+    try {
+      if (sessionStorage.getItem(flag) === '1') return;
+      sessionStorage.setItem(flag, '1');
+    } catch {
+      /* private mode */
+    }
+    apply();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- une fois par version distante
+  }, [apiNewer, needRefresh]);
+
   if (!needRefresh && !apiNewer) return null;
+  if (apiNewer && webReloadAlreadyTried(semverOf(apiNewer))) return null;
 
   return (
     <div
@@ -60,19 +99,13 @@ export function UpdateBanner() {
       <RefreshCw className="h-4 w-4 shrink-0 text-yt-accent" aria-hidden />
       <p className="min-w-0 flex-1">
         {needRefresh
-          ? 'Nouvelle version MHC disponible — recharge pour appliquer la mise à jour.'
-          : `Serveur en ${apiNewer} — recharge la page pour aligner l’app.`}
+          ? 'Nouvelle version disponible — application du cache…'
+          : `Serveur en ${apiNewer} — vidage du cache puis rechargement.`}
       </p>
       <button
         type="button"
         className="shrink-0 rounded-lg bg-yt-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
-        onClick={() => {
-          if (needRefresh) {
-            void updateServiceWorker(true);
-          } else {
-            window.location.reload();
-          }
-        }}
+        onClick={apply}
       >
         Recharger
       </button>
