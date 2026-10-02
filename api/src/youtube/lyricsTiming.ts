@@ -113,6 +113,75 @@ export function snapPlainToCaptions(plain: string, caps: TimedLine[]): TimedLine
   }));
 }
 
+/** Captions YouTube « [Music] » / ♪ — pas du chant. */
+export function isInstrumentalCaption(text: string): boolean {
+  const s = String(text || '')
+    .replace(/[♪♫🎵🎤\[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return true;
+  if (s.length < 2) return true;
+  return /^(music|instrumental|applause|intro|outro|sifflement|whistling|laughter)$/i.test(s);
+}
+
+/** Première ligne chantée (ms). */
+export function firstVocalMs(timed: TimedLine[] | null | undefined): number | null {
+  if (!timed?.length) return null;
+  for (const l of timed) {
+    if (estMarqueur(l.text) || isInstrumentalCaption(l.text)) continue;
+    return l.startMs;
+  }
+  return timed[0]?.startMs ?? null;
+}
+
+/**
+ * Colle un LRC (souvent 0 = 1ʳᵉ phrase) sur le début réel du chant dans le clip.
+ * YouTube le fait via les captions. Ex. Fils de joie : ~+37 s d’intro cinématique.
+ */
+export function alignTimedToVocalOnset(
+  timed: TimedLine[],
+  vocalOnsetMs: number | null | undefined,
+): { timed: TimedLine[]; offsetMs: number } {
+  if (!timed.length || vocalOnsetMs == null || !Number.isFinite(vocalOnsetMs)) {
+    return { timed, offsetMs: 0 };
+  }
+  const first = firstVocalMs(timed);
+  if (first == null) return { timed, offsetMs: 0 };
+  const offsetMs = Math.round(vocalOnsetMs - first);
+  // Uniquement un blanc / intro AVANT le chant (Fils de joie +37 s). Jamais tirer en arrière.
+  if (offsetMs < 800) return { timed, offsetMs: 0 };
+  if (offsetMs > 120_000) return { timed, offsetMs: 0 };
+  return {
+    offsetMs,
+    timed: timed.map((l) => ({
+      ...l,
+      startMs: Math.max(0, Math.round(l.startMs + offsetMs)),
+    })),
+  };
+}
+
+/** Intros cinéma où captions / LRCLIB restent collés à 0. */
+export const KNOWN_VOCAL_ONSET_MS: Record<string, number> = {
+  M7Z2tgJo8Hg: 37_200, // Stromae — Fils de joie (VEVO)
+};
+
+export function applyBestVocalOnset(
+  timed: TimedLine[],
+  captionTimed: TimedLine[] | null | undefined,
+  videoId?: string,
+): { timed: TimedLine[]; offsetMs: number } {
+  const current = firstVocalMs(timed);
+  const capOnset = firstVocalMs(captionTimed);
+  if (capOnset != null && current != null && capOnset >= current + 800) {
+    return alignTimedToVocalOnset(timed, capOnset);
+  }
+  const known = videoId ? KNOWN_VOCAL_ONSET_MS[videoId] : undefined;
+  if (known != null && (current == null || current + 800 < known)) {
+    return alignTimedToVocalOnset(timed, known);
+  }
+  return { timed, offsetMs: 0 };
+}
+
 export function looksLikeLyrics(text: string | null | undefined): boolean {
   if (!text) return false;
   const t = text.trim();
@@ -121,4 +190,63 @@ export function looksLikeLyrics(text: string | null | undefined): boolean {
     return false;
   }
   return lignesChantees(t).length >= 4;
+}
+
+export function foldLyricMeta(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s*[\[(【].*?[\])】]/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function tokenOverlapMeta(a: string, b: string): number {
+  const ta = new Set(a.split(' ').filter((x) => x.length > 1));
+  const tb = new Set(b.split(' ').filter((x) => x.length > 1));
+  if (!ta.size || !tb.size) return 0;
+  let n = 0;
+  for (const t of ta) if (tb.has(t)) n += 1;
+  return n / Math.max(ta.size, tb.size);
+}
+
+/** Titre + artiste assez proches pour réutiliser un texte — pas un autre morceau. */
+export function lyricsMetaFits(
+  wantTitle: string,
+  gotTitle: string,
+  wantArtist = '',
+  gotArtist = '',
+): boolean {
+  const wt = foldLyricMeta(wantTitle);
+  const gt = foldLyricMeta(gotTitle);
+  if (!wt || !gt) return false;
+  const lenRatio = Math.min(wt.length, gt.length) / Math.max(wt.length, gt.length);
+  const titleOk =
+    wt === gt ||
+    (lenRatio >= 0.78 && tokenOverlapMeta(wt, gt) >= 0.72);
+  if (!titleOk) return false;
+  const wa = foldLyricMeta(wantArtist);
+  if (!wa) return wt === gt;
+  const ga = foldLyricMeta(gotArtist);
+  if (!ga) return false;
+  if (wa === ga) return true;
+  const cw = wa.replace(/\s+/g, '');
+  const cg = ga.replace(/\s+/g, '');
+  if (cw && cg && cw === cg) return true;
+  return tokenOverlapMeta(wa, ga) >= 0.6;
+}
+
+/** Les horodatages collent à CETTE durée de piste (sinon karaoké d’une autre version). */
+export function timedFitsTrack(
+  timed: TimedLine[] | null | undefined,
+  durationSec?: number | null,
+): boolean {
+  if (!timed || timed.length < 2) return false;
+  if (!durationSec || durationSec < 20) return true;
+  const first = timed[0]!.startMs / 1000;
+  const last = timed[timed.length - 1]!.startMs / 1000;
+  if (first > durationSec * 0.42) return false;
+  if (last > durationSec * 1.32 || last < durationSec * 0.45) return false;
+  return true;
 }

@@ -949,7 +949,7 @@ private fun MainTabs(
         runCatching {
             val learned = container.api.lyricOffsets().offsets
             if (learned.isNotEmpty()) {
-                val prefs = container.sharedPrefs("plm_lyric_sync_v1")
+                val prefs = container.sharedPrefs("plm_lyric_sync_v2")
                 val ed = prefs.edit()
                 for ((id, ms) in learned) {
                     if (id.isBlank() || ms == 0L) continue

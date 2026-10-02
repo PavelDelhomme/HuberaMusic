@@ -487,6 +487,154 @@ export function cachePath(videoId: string) {
   return join(CACHE_DIR, `${videoId}.m4a`);
 }
 
+/** Clip YouTube muxé (itag 18/22) — mode Vidéo. */
+export function videoCachePath(videoId: string) {
+  ensureCache();
+  return join(CACHE_DIR, `${videoId}.mp4`);
+}
+
+/** MP4 avec piste vidéo (watch/itag 18) — pas un m4a audio seul. */
+function isMuxedVideoFile(path: string): boolean {
+  try {
+    if (!existsSync(path) || statSync(path).size < 64) return false;
+    const fd = openSync(path, 'r');
+    try {
+      const buf = Buffer.alloc(256 * 1024);
+      const n = readSync(fd, buf, 0, buf.length, 0);
+      const slice = buf.subarray(0, n);
+      if (isDashBrandBuffer(slice)) return false;
+      const ftyp = slice.indexOf(Buffer.from('ftyp'));
+      if (ftyp >= 0) {
+        const brand = slice.subarray(ftyp + 4, ftyp + 8).toString('ascii').toLowerCase();
+        if (brand.startsWith('m4a')) return false;
+        if (brand === 'dash') return false;
+        // Clip YouTube progressif (isom/mp41) = mode titre doit extraire l’audio.
+        if (
+          brand.startsWith('isom') ||
+          brand.startsWith('iso2') ||
+          brand.startsWith('mp41') ||
+          brand.startsWith('mp42') ||
+          brand.startsWith('avc1')
+        ) {
+          return true;
+        }
+      }
+      if (slice.includes(Buffer.from('vide'))) return true;
+      if (slice.includes(Buffer.from('avc1')) || slice.includes(Buffer.from('mp4v'))) return true;
+      if (slice.includes(Buffer.from('hev1')) || slice.includes(Buffer.from('hvc1'))) return true;
+      return false;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+const extractAudioInflight = new Map<string, Promise<string | null>>();
+
+async function extractAudioFromMuxed(src: string, dest: string): Promise<void> {
+  const tmp = `${dest}.extract.tmp`;
+  const run = (args: string[]) =>
+    new Promise<void>((resolve, reject) => {
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      proc.stderr?.on('data', (c) => {
+        err += String(c);
+        if (err.length > 3_000) err = err.slice(-3_000);
+      });
+      proc.on('error', reject);
+      proc.on('close', (code) => {
+        if (code === 0 && existsSync(tmp) && statSync(tmp).size > 0) resolve();
+        else reject(new Error(`ffmpeg extract ${code}: ${err.slice(-200)}`));
+      });
+    });
+  try {
+    if (existsSync(tmp)) unlinkSync(tmp);
+  } catch {
+    /* */
+  }
+  try {
+    await run(['-y', '-i', src, '-vn', '-c:a', 'copy', '-movflags', '+faststart', tmp]);
+  } catch {
+    await run([
+      '-y',
+      '-i',
+      src,
+      '-vn',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '128k',
+      '-movflags',
+      '+faststart',
+      tmp,
+    ]);
+  }
+  if (!existsSync(tmp) || statSync(tmp).size < MIN_COMPLETE_DISK_BYTES) {
+    throw new Error('extract audio trop petit');
+  }
+  try {
+    if (existsSync(dest)) unlinkSync(dest);
+  } catch {
+    /* */
+  }
+  renameSync(tmp, dest);
+}
+
+/**
+ * Mode titre : si le serveur n’a que le clip YouTube (vidéo+audio), extraire
+ * la piste audio → .m4a. Le .mp4 muxé reste pour l’onglet Vidéo.
+ */
+async function ensureTitleAudio(videoId: string): Promise<string | null> {
+  const pending = extractAudioInflight.get(videoId);
+  if (pending) return pending;
+  const job = (async (): Promise<string | null> => {
+    const audio = cachePath(videoId);
+    const video = videoCachePath(videoId);
+    if (
+      existsSync(audio) &&
+      isCompleteEnoughDisk(audio) &&
+      !isDashBrandFile(audio) &&
+      !isMuxedVideoFile(audio)
+    ) {
+      return audio;
+    }
+    let muxed: string | null = null;
+    if (existsSync(audio) && isMuxedVideoFile(audio) && isCompleteEnoughDisk(audio)) muxed = audio;
+    else if (existsSync(video) && isCompleteEnoughDisk(video) && !isDashBrandFile(video)) muxed = video;
+    if (!muxed) {
+      if (existsSync(audio) && isGrowingDiskServable(audio)) return audio;
+      return null;
+    }
+    if (muxed === audio) {
+      try {
+        if (existsSync(video)) unlinkSync(video);
+        renameSync(audio, video);
+        muxed = video;
+      } catch {
+        /* extraire sur place si le rename échoue */
+      }
+    }
+    try {
+      await extractAudioFromMuxed(muxed, audio);
+      console.warn('[stream] audio extrait du clip YouTube (mode titre)', videoId);
+      return audio;
+    } catch (err) {
+      console.warn(
+        '[stream] extract audio KO',
+        videoId,
+        String((err as Error).message || err).slice(0, 140),
+      );
+      return existsSync(muxed) ? muxed : null;
+    }
+  })().finally(() => {
+    extractAudioInflight.delete(videoId);
+  });
+  extractAudioInflight.set(videoId, job);
+  return job;
+}
+
 /** ftyp brand « dash » = segments adaptatifs — Exo / offline mobile les refuse. */
 function isDashBrandFile(path: string): boolean {
   try {
@@ -547,7 +695,13 @@ async function waitUntilDiskServable(videoId: string, ms: number): Promise<strin
   const p = cachePath(videoId);
   while (Date.now() - t0 < ms) {
     try {
-      if (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) return p;
+      if (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) {
+        if (isCompleteEnoughDisk(p) && isMuxedVideoFile(p)) {
+          const audio = await ensureTitleAudio(videoId);
+          if (audio) return audio;
+        }
+        return p;
+      }
     } catch {
       /* retry */
     }
@@ -586,8 +740,17 @@ async function pipeDiskFile(
   file: string,
   videoId: string,
   cacheTag: string,
+  mime = 'audio/mp4',
 ): Promise<boolean> {
   if (res.headersSent) return false;
+  if (
+    mime === 'audio/mp4' &&
+    isCompleteEnoughDisk(file) &&
+    isMuxedVideoFile(file)
+  ) {
+    const extracted = await ensureTitleAudio(videoId);
+    if (extracted) file = extracted;
+  }
   const size = statSync(file).size;
   rememberAdvertisedTotal(videoId, size);
   const { createReadStream } = await import('node:fs');
@@ -600,7 +763,7 @@ async function pipeDiskFile(
       res.setHeader('Content-Range', `bytes ${bounds.start}-${bounds.end}/${size}`);
       res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Content-Length', len);
-      res.setHeader('Content-Type', 'audio/mp4');
+      res.setHeader('Content-Type', mime);
       res.setHeader('X-PLM-Stream-Cache', cacheTag);
       noteStreamSource(res, cacheTag);
       createReadStream(file, { start: bounds.start, end: bounds.end }).pipe(res);
@@ -610,7 +773,7 @@ async function pipeDiskFile(
   res.status(200);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Length', size);
-  res.setHeader('Content-Type', 'audio/mp4');
+  res.setHeader('Content-Type', mime);
   res.setHeader('X-PLM-Stream-Cache', cacheTag);
   noteStreamSource(res, cacheTag);
   createReadStream(file).pipe(res);
@@ -1358,6 +1521,21 @@ export async function handleStream(req: Request, res: Response) {
       return m ? Number(m[1]) : 0;
     })();
     const startOfTrack = !rangeHdrEarly || rangeStartEarly < 2048;
+    if (wantVideoEarly) {
+      const vp = videoCachePath(videoId);
+      const mp = cachePath(videoId);
+      let src: string | null = null;
+      try {
+        if (existsSync(vp) && statSync(vp).size > 64 * 1024) src = vp;
+        else if (isMuxedVideoFile(mp)) src = mp;
+      } catch {
+        src = null;
+      }
+      if (src) {
+        const ok = await pipeDiskFile(req, res, src, videoId, 'disk-video', 'video/mp4');
+        if (ok) return;
+      }
+    }
     // Début de titre seulement — un wait 10 s en mid-piste bloque Exo (BUFFERING).
     if (
       !wantVideoEarly &&
@@ -1415,7 +1593,11 @@ export async function handleStream(req: Request, res: Response) {
       }
     }
     if (!wantVideoEarly) {
-      const cachedEarly = cachePath(videoId);
+      let cachedEarly = cachePath(videoId);
+      if (isCompleteEnoughDisk(cachedEarly) && isMuxedVideoFile(cachedEarly)) {
+        const extracted = await ensureTitleAudio(videoId);
+        if (extracted) cachedEarly = extracted;
+      }
       if (
         (isCompleteEnoughDisk(cachedEarly) || isGrowingDiskServable(cachedEarly)) &&
         !isDashBrandFile(cachedEarly)
@@ -2796,7 +2978,12 @@ export async function handleStreamUrl(req: Request, res: Response) {
     }
     const format = wantVideo
       ? await getVideoFormat(videoId)
-      : await getAudioFormat(videoId, { userId: uid, forceFresh: retryN > 0, retryN });
+      : await getAudioFormat(videoId, { userId: uid, forceFresh: retryN > 0, retryN }).catch(
+          async (err) => {
+            console.warn('[stream-url] audio KO, fallback vidéo YouTube', String(err).slice(0, 120));
+            return getVideoFormat(videoId);
+          },
+        );
     res.json({
       url: format.url,
       expiresAt: format.expiresAt,
@@ -2855,7 +3042,7 @@ function likesDiskWarmCap(): number {
 }
 
 async function runDiskWarmWorker() {
-  const maxBusy = isPlaybackHot(90_000) ? 1 : DISK_WARM_CONCURRENCY;
+  const maxBusy = isPlaybackHot(90_000) ? 2 : DISK_WARM_CONCURRENCY;
   if (diskWarmBusyCount >= maxBusy) return;
   diskWarmBusyCount += 1;
   try {
@@ -3183,12 +3370,12 @@ export function suspendBackgroundDiskWarm(_keepCurrentId?: string) {
 }
 
 async function runWarmWorker() {
-  const maxWorkers = isPlaybackHot(90_000) ? 1 : WARM_CONCURRENCY;
+  const maxWorkers = isPlaybackHot(90_000) ? 2 : WARM_CONCURRENCY;
   if (warmWorkers >= maxWorkers) return;
   warmWorkers += 1;
   try {
     while (warmQueue.length) {
-      if (isPlaybackHot(90_000) && warmWorkers > 1) break;
+      if (isPlaybackHot(90_000) && warmWorkers > 2) break;
       const job = warmQueue.shift();
       if (!job) break;
       warmQueued.delete(job.id);
@@ -3402,8 +3589,8 @@ function aborted(signal?: AbortSignal): boolean {
 }
 
 /**
- * Course : 2 proxies max pour le 1er octet (le plus rapide gagne, l’autre abort).
- * Ensuite UN SEUL URL : 8 Ranges en parallèle. Pas 3 résolutions.
+ * Course : 2–3 proxies Gen2 **en parallèle** pour le 1er octet (le plus rapide gagne).
+ * Ensuite UN SEUL URL : 8 Ranges en parallèle. Pas 3 résolutions en série.
  */
 async function resolveFormatHedged(
   videoId: string,
@@ -3412,11 +3599,13 @@ async function resolveFormatHedged(
   live = false,
 ): Promise<ReturnType<typeof peekCachedAudioFormat>> {
   if (aborted(userSignal)) throw new Error('aborted');
-  const hot = pickHotProxies(2);
+  const hot = pickHotProxies(3);
   const ctrlA = new AbortController();
   const ctrlB = new AbortController();
+  const ctrlC = new AbortController();
+  const allCtrls = [ctrlA, ctrlB, ctrlC];
   const abortAll = () => {
-    for (const c of [ctrlA, ctrlB]) {
+    for (const c of allCtrls) {
       try {
         c.abort();
       } catch {
@@ -3563,15 +3752,21 @@ async function resolveFormatHedged(
     });
 
   const primary = hot[0]
-    ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg, [ctrlB]))
+    ? viaProxy(hot[0], ctrlA.signal).then((leg) => take(leg, [ctrlB, ctrlC]))
     : Promise.reject(new Error('no hot A'));
 
-  const delayedB = delayed(hot[1], ctrlB, [ctrlA], 2_500, 'B');
+  const parallelB = hot[1]
+    ? viaProxy(hot[1], ctrlB.signal).then((leg) => take(leg, [ctrlA, ctrlC]))
+    : Promise.reject(new Error('no hot B'));
+
+  const parallelC = hot[2]
+    ? viaProxy(hot[2], ctrlC.signal).then((leg) => take(leg, [ctrlA, ctrlB]))
+    : delayed(hot[1], ctrlC, [ctrlA, ctrlB], 400, 'C-fill');
 
   try {
     const hedgeMs = live ? 12_000 : 8_000;
     const fmt = (await Promise.race([
-      Promise.any([primary, delayedB]).catch(() => null),
+      Promise.any([primary, parallelB, parallelC]).catch(() => null),
       new Promise<null>((r) => setTimeout(() => r(null), hedgeMs)),
     ])) as ReturnType<typeof peekCachedAudioFormat>;
     if (fmt?.url && fmt.viaProxy) return fmt;
@@ -3612,7 +3807,13 @@ export async function downloadTrack(
     throw new Error(blocked.msg);
   }
   if (existsSync(out)) {
-    if (isCompleteEnoughDisk(out) && !downloadInflight.has(videoId)) return out;
+    if (isCompleteEnoughDisk(out) && !downloadInflight.has(videoId)) {
+      if (isMuxedVideoFile(out)) {
+        const a = await ensureTitleAudio(videoId);
+        if (a) return a;
+      }
+      return out;
+    }
     if (!downloadInflight.has(videoId) && !isCompleteEnoughDisk(out) && !isGrowingDiskServable(out)) {
       try {
         unlinkSync(out);
@@ -3625,7 +3826,13 @@ export async function downloadTrack(
   if (pending) return pending;
 
   const job = (async (): Promise<string> => {
-    if (isCompleteEnoughDisk(out)) return out;
+    if (isCompleteEnoughDisk(out)) {
+      if (isMuxedVideoFile(out)) {
+        const a = await ensureTitleAudio(videoId);
+        if (a) return a;
+      }
+      return out;
+    }
 
     // progressiveOnly : yt-dlp+proxies d’abord.
     // Remux OAuth (fetch GV) depuis le VPS = quasi toujours 403 → ne plus le mettre
@@ -3756,10 +3963,7 @@ export async function downloadTrack(
         for (const cookieArgs of cookieSets) {
           for (const format of YTDLP_AUDIO_FORMAT_CANDIDATES) {
             try {
-              const extractAudio =
-                format.startsWith('18/') || format.startsWith('18')
-                  ? (['-x', '--audio-format', 'm4a'] as const)
-                  : ([] as const);
+              const extractAudio = ['-x', '--audio-format', 'm4a'] as const;
               await withYtDlpSlot(
                 () =>
                   new Promise<void>((resolve, reject) => {
@@ -3806,6 +4010,10 @@ export async function downloadTrack(
               if (isCompleteEnoughDisk(out) || isGrowingDiskServable(out)) {
                 downloadFailUntil.delete(videoId);
                 markYoutubeProxySuccess(proxy);
+                if (isCompleteEnoughDisk(out) && isMuxedVideoFile(out)) {
+                  const a = await ensureTitleAudio(videoId);
+                  if (a) return a;
+                }
                 return out;
               }
               if (existsSync(out) && !isGrowingDiskServable(out)) {
@@ -3941,7 +4149,7 @@ async function remuxToProgressiveM4a(src: string, dest: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const proc = spawn(
       'ffmpeg',
-      ['-y', '-i', src, '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', dest],
+      ['-y', '-i', src, '-vn', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', dest],
       { stdio: ['ignore', 'ignore', 'pipe'] },
     );
     let err = '';

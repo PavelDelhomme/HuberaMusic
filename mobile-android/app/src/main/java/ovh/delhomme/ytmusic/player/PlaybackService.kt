@@ -536,6 +536,16 @@ class PlaybackService : MediaSessionService() {
                 player.playbackState == Player.STATE_BUFFERING ||
                 player.playbackState == Player.STATE_READY
             )
+        val pos = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
+        val buf = bufferedPositionSafe(player)
+        Holder.currentStreamLoading =
+            player.playbackState == Player.STATE_BUFFERING ||
+                (
+                    player.playWhenReady &&
+                        player.playbackState == Player.STATE_READY &&
+                        pos < 12_000L &&
+                        (buf - pos) < 5_000L
+                    )
     }
 
     private val playerListener = object : Player.Listener {
@@ -634,6 +644,9 @@ class PlaybackService : MediaSessionService() {
                         "playing=${player.isPlaying}",
                 )
             }
+            if (events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED) && player.shuffleModeEnabled) {
+                player.shuffleModeEnabled = false
+            }
             persistPlaybackSnapshot(durable = false)
             // Précharge « À suivre » même sans Activity / Now Playing (BG, lecteur fermé)
             if (
@@ -642,6 +655,23 @@ class PlaybackService : MediaSessionService() {
                     player.playbackState == Player.STATE_READY)
             ) {
                 ensureServiceAutoplayAhead(player)
+                if (
+                    player.playbackState == Player.STATE_READY &&
+                    !Holder.currentStreamLoading
+                ) {
+                    val api = resolvedApiBase()
+                    val q = Holder.queue
+                    val idx = player.currentMediaItemIndex
+                    if (api.isNotBlank() && q.isNotEmpty() && idx in q.indices) {
+                        Thread {
+                            StreamPrefetcher.prefetchByProximity(api, q.map { it.id }, idx)
+                        }.apply {
+                            name = "ytm-proximity-prefetch"
+                            isDaemon = true
+                            start()
+                        }
+                    }
+                }
             }
             if (
                 events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED) ||
@@ -761,18 +791,10 @@ class PlaybackService : MediaSessionService() {
                     if (q.isNotEmpty()) {
                         val ids = q.map { it.id }
                         val idx = player.currentMediaItemIndex
-                        StreamPrefetcher.prefetchNextDuringPlayback(
+                        StreamPrefetcher.prefetchByProximity(
                             resolvedApiBase(),
                             ids,
                             idx,
-                            ignoreQuiet = true,
-                        )
-                        StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                            resolvedApiBase(),
-                            ids,
-                            idx,
-                            count = 3,
-                            ignoreQuiet = true,
                         )
                     }
                 }
@@ -828,12 +850,10 @@ class PlaybackService : MediaSessionService() {
             if (nextId != null && nextId.length == 11) {
                 PlayerCache.pinTrack(nextId)
             }
-            StreamPrefetcher.prefetchUpcomingHeadsTiered(
+            StreamPrefetcher.prefetchByProximity(
                 resolvedApiBase(),
                 qIds,
                 curIdx,
-                count = 3,
-                ignoreQuiet = true,
             )
             val curDur = Holder.queue.getOrNull(curIdx)?.durationMsOrNull() ?: 0L
             if (curDur in 1L..90_000L || curDur <= 0L) {
@@ -2581,18 +2601,10 @@ class PlaybackService : MediaSessionService() {
         if (nextId != null && nextId.length == 11) {
             PlayerCache.pinTrack(nextId)
         }
-        StreamPrefetcher.prefetchNextDuringPlayback(
+        StreamPrefetcher.prefetchByProximity(
             resolvedApiBase(),
             ids,
             fromIndex,
-            ignoreQuiet = true,
-        )
-        StreamPrefetcher.prefetchUpcomingHeadsTiered(
-            resolvedApiBase(),
-            ids,
-            fromIndex,
-            count = 3,
-            ignoreQuiet = true,
         )
         CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 2, behind = 0)
     }
@@ -2873,6 +2885,8 @@ class PlaybackService : MediaSessionService() {
         @Volatile var onServiceStopped: (() -> Unit)? = null
         /** Mis à jour sur le thread principal — lecture depuis IO sans toucher ExoPlayer. */
         @Volatile var playbackActive: Boolean = false
+        /** Flux du titre courant encore en train de se remplir — les suivants attendent. */
+        @Volatile var currentStreamLoading: Boolean = false
         /** Titre en recovery 5xx / réseau — l’UI ne doit pas auto-skip (buffer stuck). */
         @Volatile var streamRecoveringId: String = ""
         @Volatile var streamFailStreak: Int = 0
@@ -2886,6 +2900,8 @@ class PlaybackService : MediaSessionService() {
         }
 
         fun isPlaybackActiveSafe(): Boolean = playbackActive
+
+        fun isCurrentStreamLoading(): Boolean = currentStreamLoading
 
         fun isStreamRecovering(trackId: String? = null): Boolean {
             val id = streamRecoveringId
@@ -3123,13 +3139,7 @@ private class YtmForwardingPlayer(
         val api = PlaybackService.Holder.resolvedApiBase()
         // Seek notif/UI : +1 fort + fenêtre courte (le rolling tick élargit ensuite)
         StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 3, behind = 0)
-        StreamPrefetcher.prefetchUpcomingHeadsTiered(
-            api,
-            queue.map { it.id },
-            index,
-            count = 3,
-            ignoreQuiet = true,
-        )
+        StreamPrefetcher.prefetchByProximity(api, queue.map { it.id }, index)
         CoverPrefetcher.warmCovers(queue, index, ahead = 3, behind = 0)
     }
 

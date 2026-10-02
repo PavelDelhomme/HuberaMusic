@@ -80,7 +80,7 @@ suspend fun playLibraryShuffled(
         )
     // Ne pas cancelAll avant Exo si on a déjà une tête utile
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(if (lead0Hot) 80L else 160L)
+    StreamPrefetcher.quietPrefetch(if (lead0Hot) 400L else 8_000L)
     runCatching { container.downloadManager.cancelOpportunistic() }
     if (lead0Hot) {
         StreamPrefetcher.markHeadReady(lead0)
@@ -92,23 +92,11 @@ suspend fun playLibraryShuffled(
     ShuffleHeadStore.rememberPlayed(ctx, shuffled.take(1).map { it.id })
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
-            // #1 prioritaire pendant que #0 joue (auto-heal file)
-            StreamPrefetcher.prefetchNextDuringPlayback(
-                base,
-                shuffled.map { it.id },
-                0,
-                ignoreQuiet = true,
-            )
+            // Le courant joue : ne pas voler la bande. Ensuite +1, +2… par proximité.
+            kotlinx.coroutines.delay(if (lead0Hot) 800L else 2_800L)
+            StreamPrefetcher.prefetchByProximity(base, shuffled.map { it.id }, 0)
             if (!lead0Hot) {
                 runCatching { StreamPrefetcher.warmTrackFormatOnly(base, lead0) }
-                runCatching {
-                    StreamPrefetcher.prefetchStartHead(
-                        base,
-                        lead0,
-                        StreamPrefetcher.HEAD_3S,
-                        priorityNext = true,
-                    )
-                }
             }
             withTimeoutOrNull(LEAD_WARM_TIMEOUT_MS) {
                 runCatching { StreamPrefetcher.prepareShuffleLead(base, leadIds) }
@@ -116,7 +104,6 @@ suspend fun playLibraryShuffled(
             runCatching {
                 val nextHead = shuffled.drop(3).take(3).map { it.id }
                 StreamPrefetcher.warmFormatsLight(base, nextHead, limit = 3)
-                StreamPrefetcher.warmHeads3s(base, shuffled.drop(1).take(3).map { it.id }, limit = 3)
                 val fp = ShuffleHeadStore.fingerprint(playable.take(500))
                 val cacheKey = ShuffleHeadStore.keyFor(sourceKey, fp)
                 ShuffleHeadStore.saveHead(ctx, cacheKey, shuffled.drop(1).take(12).map { it.id })
@@ -205,24 +192,19 @@ suspend fun playQueueWithLead(
         )
     if (hot) StreamPrefetcher.markHeadReady(lead0)
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(if (hot) 160L else 380L)
+    StreamPrefetcher.quietPrefetch(if (hot) 400L else 8_000L)
     onPlay(window, localIdx)
     ovh.delhomme.ytmusic.player.PlaybackService.Holder.rememberFullQueue(playable, from + window.size)
     container.libraryHeadPrefetcher.warmDisplayedList(lead)
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
             runCatching { container.downloadManager.cancelOpportunistic() }
-            StreamPrefetcher.prefetchNextDuringPlayback(
-                base,
-                window.map { it.id },
-                localIdx,
-                ignoreQuiet = true,
-            )
+            kotlinx.coroutines.delay(if (hot) 800L else 2_800L)
+            StreamPrefetcher.prefetchByProximity(base, window.map { it.id }, localIdx)
             withTimeoutOrNull(LEAD_WARM_TIMEOUT_MS) {
                 runCatching { StreamPrefetcher.prepareShuffleLead(base, lead.take(3)) }
             }
             StreamPrefetcher.warmFormatsLight(base, lead.drop(3).take(8), limit = 8)
-            StreamPrefetcher.warmHeads3s(base, lead, limit = 16)
         }
     }
 }
@@ -236,16 +218,32 @@ suspend fun playQuickAccessShuffled(
     pins: List<TrackDto>,
     onPlay: (List<TrackDto>, Int) -> Unit,
 ): Boolean {
-    if (pins.isEmpty()) return false
-    val uniq = withContext(Dispatchers.IO) {
-        resolvePinsPool(container.api, pins, container.mixCache)
+    val uniq = if (pins.isEmpty()) {
+        emptyList()
+    } else {
+        withContext(Dispatchers.IO) {
+            resolvePinsPool(container.api, pins, container.mixCache)
+        }
     }
-    if (uniq.isEmpty()) return false
+    val pool = if (uniq.isNotEmpty()) {
+        uniq
+    } else {
+        var lib = container.libraryRepo.library.value
+        if (lib == null || (lib.songs.isEmpty() && lib.liked.isEmpty())) {
+            runCatching { container.libraryRepo.refresh(force = false) }
+            lib = container.libraryRepo.library.value
+                ?: runCatching { container.api.library() }.getOrNull()
+        }
+        (lib?.songs.orEmpty() + lib?.liked.orEmpty() + lib?.history.orEmpty())
+            .filter { it.isPlayable() && it.id.length == 11 }
+            .distinctBy { it.id }
+    }
+    if (pool.isEmpty()) return false
     playLibraryShuffled(
         container,
-        uniq,
+        pool,
         onPlay,
-        sourceKey = "home:pins",
+        sourceKey = if (uniq.isNotEmpty()) "home:pins" else "home:library",
     )
     return true
 }

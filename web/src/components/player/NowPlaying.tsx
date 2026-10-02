@@ -54,10 +54,12 @@ export function SyncedLyrics({
   text,
   timed,
   source,
+  variant = 'panel',
 }: {
   text: string | null;
   timed?: { startMs: number; text: string }[] | null;
   source?: string | null;
+  variant?: 'panel' | 'overlay';
 }) {
   const audioEl = usePlayer((s) => s.audioEl);
   const isPlaying = usePlayer((s) => s.isPlaying);
@@ -225,9 +227,26 @@ export function SyncedLyrics({
 
   // Texte brut sans timings → scroll libre, pas de faux karaoké
   if (!lines.length) {
+    if (variant === 'overlay') return null;
     return (
       <div className="whitespace-pre-wrap px-2 py-2 text-base leading-6 text-[#c6c6c6] sm:px-4 sm:text-[17px] sm:leading-6">
         {text || 'Paroles indisponibles pour ce titre.'}
+      </div>
+    );
+  }
+
+  if (variant === 'overlay') {
+    return (
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/80 via-black/35 to-transparent px-3 pb-4 pt-10">
+        {prevLine ? (
+          <p className="truncate text-center text-xs text-white/45">{prevLine.text}</p>
+        ) : null}
+        <p className="mt-1 text-center text-base font-semibold leading-snug text-white drop-shadow sm:text-lg">
+          {currentLine?.text || ' '}
+        </p>
+        {nextLine ? (
+          <p className="mt-1 truncate text-center text-xs text-white/50">{nextLine.text}</p>
+        ) : null}
       </div>
     );
   }
@@ -444,7 +463,7 @@ export function NowPlaying({
   }, [current?.id]);
 
   useEffect(() => {
-    if (!open || tab !== 'lyrics' || !current?.id) return;
+    if (!open || !current?.id) return;
     let cancelled = false;
     setLyricsLoading(true);
     // Ne pas vider tout de suite → évite flash « indisponible »
@@ -485,7 +504,7 @@ export function NowPlaying({
     return () => {
       cancelled = true;
     };
-  }, [open, tab, current?.id, lyricsNonce]);
+  }, [open, current?.id, lyricsNonce]);
 
   // Mode vidéo : son du clip ; affiche tout de suite le même ID (pas d’attente resolve).
   useEffect(() => {
@@ -727,6 +746,14 @@ export function NowPlaying({
             ) : (
               <CoverImage item={current} size={800} rounded="md" alt={current.title} />
             )}
+            {lyricsText ? (
+              <SyncedLyrics
+                text={lyricsText}
+                timed={lyricsTimed}
+                source={lyricsSource}
+                variant="overlay"
+              />
+            ) : null}
           </div>
         </div>
 

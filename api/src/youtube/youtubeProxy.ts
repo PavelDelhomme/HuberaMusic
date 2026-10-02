@@ -925,6 +925,48 @@ export function youtubeProxyStripe(userId: string | undefined, n = 3) {
   });
 }
 
+/**
+ * 2–3 tentatives Gen2 **en parallèle** : le premier URL googlevideo gagne, les autres
+ * sont abandonnées. Au démarrage d’un titre, plus de série 8 s × 3.
+ */
+export async function raceGen2Proxies<T>(
+  n: number,
+  fn: (proxy: string) => Promise<T>,
+  opts?: { userId?: string; timeoutMs?: number },
+): Promise<T> {
+  const want = Math.max(2, Math.min(3, n || 3));
+  const stripe = (await youtubeProxyStripe(opts?.userId, want + 1)).filter(
+    (p): p is string => Boolean(p),
+  );
+  const extra = pickHotProxies(want, new Set(stripe));
+  const proxies = [...new Set([...stripe, ...extra])].slice(0, want);
+  if (!proxies.length) throw new Error('no gen2 proxies');
+  const timeoutMs = Math.max(3_000, Math.min(12_000, opts?.timeoutMs ?? 8_000));
+  console.info(`[youtubeProxy] gen2 race n=${proxies.length} timeout=${timeoutMs}ms`);
+  return await Promise.any(
+    proxies.map(
+      (proxy) =>
+        new Promise<T>((resolve, reject) => {
+          const t = setTimeout(() => {
+            markYoutubeProxyFailure(proxy);
+            reject(new Error(`gen2 timeout ${timeoutMs}ms`));
+          }, timeoutMs);
+          fn(proxy)
+            .then((v) => {
+              clearTimeout(t);
+              markYoutubeProxySuccess(proxy);
+              resolve(v);
+            })
+            .catch((e) => {
+              clearTimeout(t);
+              if (isProxyWorthRetry(e)) markYoutubeProxyFailure(proxy);
+              reject(e instanceof Error ? e : new Error(String(e)));
+            });
+        }),
+    ),
+  );
+}
+
 function headersToWeb(raw: http.IncomingHttpHeaders): Headers {
   const h = new Headers();
   for (const [k, v] of Object.entries(raw)) {

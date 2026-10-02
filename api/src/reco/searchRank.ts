@@ -295,6 +295,19 @@ export function scoreSearchItem(track: Track, query: string): number {
     else score += 70;
   }
 
+  // « t'es triste » Instagram / hard-techno : jamais le jazz Grace Ellis.
+  const qFold = foldText(query);
+  if (/\btes triste\b/.test(qFold) || qFold.includes('testriste')) {
+    const blob = `${title} ${artistNames.join(' ')} ${album}`;
+    if (/\b(grace ellis|sant andreu|alba armengou|nick monteiro|jazz revival)\b/.test(blob)) {
+      score -= 5000;
+    }
+    if (/\b(rekkt|nivk|helen ka|rekktdj|nto|n to|koni)\b/.test(blob)) {
+      score += 1800;
+    }
+    if (/\btes triste\b/.test(title) || title === 'tes triste') score += 900;
+  }
+
   // Couverture globale des tokens
   score += tokenCoverage(allTokens, qTokens) * 160;
 

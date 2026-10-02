@@ -3221,8 +3221,8 @@ private fun InlineSyncedLyrics(
     var voteBusy by remember(track.id) { mutableStateOf(false) }
     var voteHint by remember(track.id) { mutableStateOf<String?>(null) }
     var toolsOpen by remember(track.id) { mutableStateOf(false) }
-    val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v1") }
-    val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v1") }
+    val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v2") }
+    val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v2") }
     var userOffsetMs by remember(track.id) {
         mutableLongStateOf(syncPrefs.getLong(track.id, 0L))
     }
@@ -3237,7 +3237,7 @@ private fun InlineSyncedLyrics(
         lyricsSource = null
         userOffsetMs = syncPrefs.getLong(track.id, 0L)
         segments = loadLyricSegments(segPrefs, track.id)
-        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v5")
+        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v6")
         val cachedText = lyricsCache.getString("t_${track.id}", null)
         val cachedTimed = lyricsCache.getString("l_${track.id}", null)
         if (!cachedText.isNullOrBlank() && lyricsReloadToken == 0) {
@@ -3360,7 +3360,7 @@ private fun InlineSyncedLyrics(
         timed = re
         lyricsSource = "estimated"
         runCatching {
-            container.sharedPrefs("plm_lyrics_cache_v5").edit()
+            container.sharedPrefs("plm_lyrics_cache_v6").edit()
                 .putString(
                     "l_${track.id}",
                     re.joinToString("\n") { l -> "${l.startMsLong()}|${l.text}" },

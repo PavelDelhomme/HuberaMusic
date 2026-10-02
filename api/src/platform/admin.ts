@@ -190,19 +190,21 @@ export function apkSlotForPackage(pkg?: string | null): {
   file: string;
 } {
   const norm = normalizeMusicPackage(pkg);
-  if (norm === MUSIC_PKG_HUBERA) {
+  // Par défaut le canal Hubera (cloud.hubera.music). Le legacy n’est servi
+  // que si le téléphone envoie explicitement ovh.delhomme.ytmusic.
+  if (norm === MUSIC_PKG_LEGACY) {
     return {
-      path: APK_HUBERA_PATH,
-      manifestPath: APK_HUBERA_MANIFEST,
-      pkg: MUSIC_PKG_HUBERA,
-      file: 'hubera-music.apk',
+      path: APK_PATH,
+      manifestPath: APK_MANIFEST,
+      pkg: MUSIC_PKG_LEGACY,
+      file: 'ytmusic.apk',
     };
   }
   return {
-    path: APK_PATH,
-    manifestPath: APK_MANIFEST,
-    pkg: MUSIC_PKG_LEGACY,
-    file: 'ytmusic.apk',
+    path: APK_HUBERA_PATH,
+    manifestPath: APK_HUBERA_MANIFEST,
+    pkg: MUSIC_PKG_HUBERA,
+    file: 'hubera-music.apk',
   };
 }
 

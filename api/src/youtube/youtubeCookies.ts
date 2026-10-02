@@ -248,11 +248,11 @@ export function ytDlpCookieArgSets(opts?: { forDownload?: boolean }): string[][]
 
 /** Sélecteurs audio yt-dlp — **m4a (140) d’abord** pour Exo/Media3 (webm/opus plus fragile). */
 export const YTDLP_AUDIO_FORMAT_CANDIDATES = [
-  '140/139/bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]',
+  // 140 d’abord ; si YouTube ne sert plus l’audio seul, itag 18/22 (watch/vidéo muxé).
+  '140/139/bestaudio[ext=m4a]/18/22/best[height<=480][acodec!=none]/bestaudio[acodec*=mp4a]',
   '251/250/249/bestaudio[ext=webm]/bestaudio',
   '140/251/250/249/139/bestaudio[acodec!=none]/bestaudio',
-  // Progressive mp4 (souvent le seul itag sous clients PO-token / SABR)
-  '18/bestaudio/best',
+  '18/22/best[height<=360][acodec!=none][vcodec!=none]/bestaudio/best',
 ] as const;
 
 export function youtubeCookiesFingerprint(): string {

@@ -1806,8 +1806,13 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
     }
     ticketReason = consumed.reason;
   } else if (!apkDownloadOrAccount(req)) {
-    res.status(401).json({ error: 'Lien APK protégé — demande un QR à l’admin' });
-    return;
+    const rawPkg = String(req.query.package || req.query.clientPackage || '');
+    const wantsLegacy = rawPkg === 'ovh.delhomme.ytmusic';
+    if (wantsLegacy) {
+      res.status(401).json({ error: 'Lien APK protégé — demande un QR à l’admin' });
+      return;
+    }
+    // Canal Hubera : même fichier que /install — l’OTA in-app ne doit plus 401.
   }
   let pkg = String(req.query.package || req.query.clientPackage || '');
   if (ticketReason === 'public' && !pkg) pkg = MUSIC_PKG_HUBERA;
@@ -1828,8 +1833,23 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
 
 app.get('/api/deploy/apk/info', authOptional, (req, res) => {
   pingFromRequest(req.query as Record<string, unknown>, String(req.headers['user-agent'] || ''));
-  const pkg = String(req.query.clientPackage || req.query.package || '');
+  const pkg = String(req.query.clientPackage || req.query.package || '') || MUSIC_PKG_HUBERA;
   const info = apkPublicInfo(PORT, pkg);
+  const liveExisting = latestLiveApkTicket(PORT);
+  const live =
+    liveExisting && liveExisting.remainingUses >= 3
+      ? liveExisting
+      : issueApkTicket('public', 'apk-info', PORT, {
+          exclusive: false,
+          maxUses: 16,
+          ttlMs: 2 * 60 * 60_000,
+        });
+  const slotPkg =
+    pkg.includes('ovh.delhomme.ytmusic') && !pkg.includes('cloud.hubera')
+      ? 'ovh.delhomme.ytmusic'
+      : 'cloud.hubera.music';
+  const downloadPath = `/api/deploy/apk?t=${encodeURIComponent(live.token)}&package=${encodeURIComponent(slotPkg)}`;
+  const downloadUrl = `https://music.hubera.cloud${downloadPath}`;
   res.json({
     ready: info.ready,
     versionName: info.versionName,
@@ -1837,9 +1857,10 @@ app.get('/api/deploy/apk/info', authOptional, (req, res) => {
     apiBaseUrl: 'https://music.hubera.cloud',
     builtAt: info.builtAt,
     sizeBytes: info.sizeBytes,
-    downloadPath: info.downloadPath,
-    downloadUrl: info.downloadUrl,
-    package: info.package ?? 'ovh.delhomme.ytmusic',
+    downloadPath,
+    downloadUrl,
+    package: info.package ?? slotPkg,
+    forceUpdate: false,
     hubera: huberaNotice(),
     aliases: [
       'https://music.hubera.cloud',
@@ -2576,15 +2597,25 @@ app.get('/api/track/:id/lyrics', accountRequired, async (req, res) => {
     const trackId = p(req.params.id);
     const qTitle = typeof req.query.title === 'string' ? req.query.title : '';
     const qArtist = typeof req.query.artist === 'string' ? req.query.artist : '';
-    const lyrics = await getLyrics(trackId, { title: qTitle, artist: qArtist });
+    const lyrics = await getLyrics(trackId, {
+      title: qTitle,
+      artist: qArtist,
+      forceRefetch: req.query.refresh === '1' || req.query.force === '1',
+    });
     const profile = resolveLyricSync(req.userId!, trackId);
+    const onsetMs = Math.abs(Number(lyrics.syncOffsetMs) || 0);
+    // Intro déjà collée côté serveur : ne pas rejouer le +37 s appris à la main.
+    const learned =
+      onsetMs >= 5_000
+        ? 0
+        : profile.userOffsetMs !== 0
+          ? profile.userOffsetMs
+          : profile.crowdOffsetMs;
     res.json({
       ...lyrics,
-      userOffsetMs: profile.userOffsetMs !== 0
-        ? profile.userOffsetMs
-        : profile.crowdOffsetMs,
-      crowdOffsetMs: profile.crowdOffsetMs,
-      personalOffsetMs: profile.userOffsetMs,
+      userOffsetMs: learned,
+      crowdOffsetMs: onsetMs >= 5_000 ? 0 : profile.crowdOffsetMs,
+      personalOffsetMs: onsetMs >= 5_000 ? 0 : profile.userOffsetMs,
       segments: profile.segments,
       segmentsFromUser: profile.segmentsFromUser,
     });

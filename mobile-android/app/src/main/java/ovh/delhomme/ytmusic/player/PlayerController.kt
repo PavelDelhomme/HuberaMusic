@@ -1324,8 +1324,10 @@ class PlayerController(
                 val shuffled = rest.shuffled()
                 val newQ = head + shuffled
                 PlaybackService.Holder.queue = newQ
-                while (c.mediaItemCount > idx + 1) c.removeMediaItem(idx + 1)
-                shuffled.forEach { c.addMediaItem(mediaItem(it)) }
+                if (c.mediaItemCount > idx + 1) {
+                    c.removeMediaItems(idx + 1, c.mediaItemCount)
+                }
+                if (shuffled.isNotEmpty()) c.addMediaItems(shuffled.map { mediaItem(it) })
             } else {
                 shuffleNatural = mutableListOf()
             }
@@ -1357,8 +1359,10 @@ class PlayerController(
             shuffleNatural = null
             val newQ = head + restored
             PlaybackService.Holder.queue = newQ
-            while (c.mediaItemCount > idx + 1) c.removeMediaItem(idx + 1)
-            restored.forEach { c.addMediaItem(mediaItem(it)) }
+            if (c.mediaItemCount > idx + 1) {
+                c.removeMediaItems(idx + 1, c.mediaItemCount)
+            }
+            if (restored.isNotEmpty()) c.addMediaItems(restored.map { mediaItem(it) })
             c.shuffleModeEnabled = false
             syncFrom(c)
             _state.value = _state.value.copy(shuffle = false)
@@ -1370,29 +1374,23 @@ class PlayerController(
             }
             _state.value = _state.value.copy(shuffle = false)
         }
-        // File réordonnée : chauffer +1…+4 tout de suite (sinon BUFFERING à la fin du titre).
+        // File réordonnée : le titre en cours ne bouge pas. Prefetch des suivants
+        // seulement quand le flux courant a la bande (proximité +1, +2…).
         val p = player()
         if (p != null) {
             val q = PlaybackService.Holder.queue
             val idx = p.currentMediaItemIndex.coerceAtLeast(0)
             if (q.isNotEmpty()) {
-                warmAround(q, idx)
+                StreamPrefetcher.cancelIdle(preserveNext = true)
+                if (PlaybackService.Holder.isCurrentStreamLoading()) {
+                    StreamPrefetcher.quietPrefetch(10_000L)
+                }
                 val base = PlaybackService.Holder.resolvedApiBase()
                 if (base.isNotBlank()) {
                     scope.launch(Dispatchers.IO) {
-                        StreamPrefetcher.prefetchNextDuringPlayback(
-                            base,
-                            q.map { it.id },
-                            idx,
-                            ignoreQuiet = true,
-                        )
-                        StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                            base,
-                            q.map { it.id },
-                            idx,
-                            count = 3,
-                            ignoreQuiet = true,
-                        )
+                        val wait = if (PlaybackService.Holder.isCurrentStreamLoading()) 3_500L else 400L
+                        delay(wait)
+                        StreamPrefetcher.prefetchByProximity(base, q.map { it.id }, idx)
                     }
                 }
             }
@@ -1544,7 +1542,7 @@ class PlayerController(
                     hint?.artistLine()?.takeIf { it != "Artiste" },
                 )
                 val timed = r.timed.orEmpty()
-                val prefs = context.getSharedPreferences("plm_lyrics_cache_v5", Context.MODE_PRIVATE)
+                val prefs = context.getSharedPreferences("plm_lyrics_cache_v6", Context.MODE_PRIVATE)
                 prefs.edit()
                     .putString("t_$trackId", r.lyrics ?: "")
                     .putString("s_$trackId", r.source)
@@ -1962,14 +1960,7 @@ class PlayerController(
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val base = streamUrl("_").substringBefore("/api/stream/")
-        StreamPrefetcher.prefetchAroundIndex(base, queue.map { it.id }, centerIndex, radius)
-        StreamPrefetcher.prefetchUpcomingHeadsTiered(
-            base,
-            queue.map { it.id },
-            centerIndex,
-            count = 3,
-            ignoreQuiet = true,
-        )
+        StreamPrefetcher.prefetchByProximity(base, queue.map { it.id }, centerIndex)
     }
 
     private fun warmAround(tracks: List<TrackDto>, startIndex: Int) {
@@ -1988,7 +1979,9 @@ class PlayerController(
     }
 
     private fun applyRepeatShuffle(player: Player) {
-        player.shuffleModeEnabled = shuffleEnabled
+        // L’ordre aléatoire est géré dans la file (tête courante intacte).
+        // Le shuffle Exo rebind toute la timeline et coupe le flux en cours.
+        player.shuffleModeEnabled = false
         player.repeatMode = when (repeatMode) {
             RepeatMode.Off -> Player.REPEAT_MODE_OFF
             RepeatMode.All -> Player.REPEAT_MODE_ALL

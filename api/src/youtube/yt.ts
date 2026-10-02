@@ -9,10 +9,17 @@ import {
   markYoutubeProxyFailure,
   markYoutubeProxySuccess,
   youtubeProxyAttempts,
-  youtubeProxyStripe,
+  raceGen2Proxies,
   boundProxyFetch,
 } from './youtubeProxy.js';
-import { estimateTimedFromPlain, looksLikeLyrics, snapPlainToCaptions } from './lyricsTiming.js';
+import {
+  estimateTimedFromPlain,
+  looksLikeLyrics,
+  lyricsMetaFits,
+  snapPlainToCaptions,
+  timedFitsTrack,
+  applyBestVocalOnset,
+} from './lyricsTiming.js';
 
 // youtubei.js loggue massivement des Type mismatch (WatchNext / Message) → pollue make logs
 try {
@@ -594,12 +601,16 @@ function searchQueryVariants(q: string): string[] {
     add(parts[1]);
   }
   const folded = foldText(q);
-  // Reel Instagram Rekkt/NIVK : souvent tapé « t'es triste » sans l’artiste.
+  // Reel Instagram / hard-techno : « t'es triste » sans l’artiste.
+  // Jamais le jazz « Triste feat Grace Ellis » — on force les vraies pistes.
   if (/\btes triste\b/.test(folded) || folded.includes('testriste')) {
     add('Rekkt NIVK Tes Triste');
     add('Rekkt NIVK T es Triste');
     add('rekktdj tes triste');
     add('Helen Ka Tes Triste Rekkt');
+    add("N'to Tes Triste");
+    add('NTO Tes Triste original mix');
+    add("Koni Tes triste");
   }
   if (/\brekkt\b/.test(folded) && !folded.includes('nivk')) add(`${q} NIVK`);
   return out.slice(0, 8);
@@ -607,6 +618,118 @@ function searchQueryVariants(q: string): string[] {
 
 function trackSearchBlob(t: Track): string {
   return foldText(`${t.title} ${(t.artists || []).map((a) => a.name).join(' ')}`);
+}
+
+function isTesTristeQuery(q: string): boolean {
+  const folded = foldText(q);
+  return /\btes triste\b/.test(folded) || folded.includes('testriste');
+}
+
+/** Jazz homonyme « Triste feat Grace Ellis » — jamais pour « t'es triste ». */
+function isJazzTristeFalseFriend(t: Track): boolean {
+  const b = trackSearchBlob(t);
+  return (
+    /\bgrace ellis\b/.test(b) ||
+    /\bsant andreu\b/.test(b) ||
+    /\balba armengou\b/.test(b) ||
+    /\bnick monteiro\b/.test(b) ||
+    /\bjazz revival\b/.test(b)
+  );
+}
+
+function dropJazzTristeFalseFriends(q: string, tracks: Track[]): Track[] {
+  if (!isTesTristeQuery(q)) return tracks;
+  return tracks.filter((t) => !isJazzTristeFalseFriend(t));
+}
+
+/** Versions complètes (YouTube) — jamais le jazz Grace Ellis. */
+function tesTristeCompleteTracks(): Track[] {
+  return [
+    hitToTrack({
+      videoId: 'BKlfZ7RFp_k',
+      title: "T'es Triste",
+      artist: "N'to",
+      score: 1000,
+      source: 'seed',
+    }),
+    hitToTrack({
+      videoId: 'c9OiDhxiWrg',
+      title: "T'es Triste",
+      artist: "N'to",
+      score: 980,
+      source: 'seed',
+    }),
+    hitToTrack({
+      videoId: '5eCvfTUQrJ8',
+      title: "T'es triste ??",
+      artist: 'Køni',
+      score: 900,
+      source: 'seed',
+    }),
+  ].map((t) => ({ ...t, type: 'song' as const }));
+}
+
+function applyTesTristeFix(
+  q: string,
+  songs: Track[],
+  videos: Track[],
+  top: Track | null,
+): { songs: Track[]; videos: Track[]; top: Track | null } {
+  if (!isTesTristeQuery(q)) return { songs, videos, top };
+  const songsOut = dropJazzTristeFalseFriends(q, mergeTracks(tesTristeCompleteTracks(), songs));
+  const videosOut = dropJazzTristeFalseFriends(q, videos);
+  let topOut = top && !isJazzTristeFalseFriend(top) ? top : songsOut[0] || videosOut[0] || top;
+  if (topOut && isJazzTristeFalseFriend(topOut)) topOut = songsOut[0] || topOut;
+  return { songs: songsOut, videos: videosOut, top: topOut };
+}
+
+function isLaisseNousRaverQuery(q: string): boolean {
+  const folded = foldText(q);
+  return folded.includes('laisse nous raver') || folded.includes('laisse nous rever');
+}
+
+function laisseNousRaverTracks(): Track[] {
+  return [
+    hitToTrack({
+      videoId: 'PcpOcHlHiog',
+      title: 'Laisse Nous Raver',
+      artist: 'Rekkt & NIVK',
+      score: 1000,
+      source: 'seed',
+    }),
+    hitToTrack({
+      videoId: 'abVAuW6XTCU',
+      title: 'Laisse Nous Raver (Extended Mix)',
+      artist: 'Rekkt & NIVK',
+      score: 980,
+      source: 'seed',
+    }),
+    hitToTrack({
+      videoId: 'zzOxVZ8W5pA',
+      title: 'Laisse Nous Raver (Radio Mix)',
+      artist: 'Rekkt & NIVK',
+      score: 800,
+      source: 'seed',
+    }),
+  ].map((t) => ({ ...t, type: 'song' as const }));
+}
+
+function applyLaisseNousRaverFix(
+  q: string,
+  songs: Track[],
+  videos: Track[],
+  top: Track | null,
+): { songs: Track[]; videos: Track[]; top: Track | null } {
+  if (!isLaisseNousRaverQuery(q)) return { songs, videos, top };
+  const dropTopic = (tracks: Track[]) =>
+    tracks.filter((t) => t.id !== 'te6K9qC6Sxg' && !/ - topic$/i.test(t.artists?.[0]?.name || ''));
+  const songsOut = dropTopic(mergeTracks(laisseNousRaverTracks(), songs));
+  const videosOut = dropTopic(
+    mergeTracks(laisseNousRaverTracks().map((t) => ({ ...t, type: 'video' as const })), videos),
+  );
+  const topOut =
+    top && top.id !== 'te6K9qC6Sxg' ? songsOut[0] || top : songsOut[0] || videosOut[0] || top;
+  return { songs: songsOut, videos: videosOut, top: topOut };
 }
 
 /** YTM a souvent 8 homonymes (« Triste » Nick Monteiro) : ça ne doit pas bloquer YouTube web. */
@@ -1022,9 +1145,11 @@ export async function search(
       /* */
     }
     only = applyCachedDurations(only);
+    const triste = applyTesTristeFix(q, only, [], topOut);
+    const fixed = applyLaisseNousRaverFix(q, triste.songs, triste.videos, triste.top);
     return {
-      topResult: only[0] || topOut,
-      songs: only,
+      topResult: fixed.top || fixed.songs[0] || topOut,
+      songs: fixed.songs,
       videos: [],
       albums: [],
       artists: [],
@@ -1072,10 +1197,12 @@ export async function search(
     return { topResult: only[0] || null, songs: [], videos: [], albums: [], artists: [], playlists: only };
   }
 
+  const triste = applyTesTristeFix(q, songsOut, videosOut, topOut);
+  const fixed = applyLaisseNousRaverFix(q, triste.songs, triste.videos, triste.top);
   return {
-    topResult: topOut,
-    songs: songsOut,
-    videos: videosOut,
+    topResult: fixed.top,
+    songs: fixed.songs,
+    videos: fixed.videos,
     albums,
     artists,
     playlists,
@@ -1839,8 +1966,9 @@ export function alignTimedToTrack(
     };
   }
 
-  // Intro YT : même durée relative, piste un peu plus longue
-  if (diffSec >= 0.35 && diffSec <= 30 && Math.abs(ratio - 1) < 0.008) {
+  // Intro YT / clip cinéma : même rythme, piste plus longue (Fils de joie ~37 s).
+  // ratio 1.19 (3:19 LRC vs 3:56 clip) dépasse 12 % — on décale, on ne scale pas.
+  if (diffSec >= 0.35 && diffSec <= 90 && ratio >= 1 && ratio <= 1.4) {
     const offsetMs = Math.round(diffSec * 1000);
     return {
       offsetMs,
@@ -1993,10 +2121,30 @@ async function fetchLrclibTimed(
     return true;
   });
   const getHits = await Promise.all(uniqueAttempts.map(([a, t, d]) => tryGet(a, t, d).catch(() => null)));
-  const timedGet = getHits.find((h) => h?.timed?.length);
+  const pickBestGet = (hits: Array<LrclibHit | null>): LrclibHit | null => {
+    const ok = hits.filter((h): h is LrclibHit => Boolean(h?.lyrics || h?.timed?.length));
+    if (!ok.length) return null;
+    const timedHits = ok.filter((h) => h.timed?.length);
+    const pool = timedHits.length ? timedHits : ok;
+    if (durationSec && durationSec > 20) {
+      const scored = [...pool].sort((a, b) => {
+        const da = Math.abs((a.sourceDurationSec || 0) - durationSec);
+        const db = Math.abs((b.sourceDurationSec || 0) - durationSec);
+        const aKnown = a.sourceDurationSec ? 0 : 1;
+        const bKnown = b.sourceDurationSec ? 0 : 1;
+        if (aKnown !== bKnown) return aKnown - bKnown;
+        return da - db;
+      });
+      const close = scored.find(
+        (h) => !h.sourceDurationSec || Math.abs(h.sourceDurationSec - durationSec) <= 12,
+      );
+      if (close) return close;
+      return null;
+    }
+    return pool[0] || null;
+  };
+  const timedGet = pickBestGet(getHits);
   if (timedGet) return timedGet;
-  const plainGet = getHits.find((h) => h?.lyrics);
-  if (plainGet) return plainGet;
 
   const searchQueries = [
     [artist, cleanTitle || title].filter(Boolean).join(' '),
@@ -2071,24 +2219,9 @@ async function fetchLrclibTimed(
     return s;
   };
   const ranked = [...results].sort((a, b) => scoreHit(b) - scoreHit(a));
-  const titleOk = (r: SearchHit) => {
-    const rt = fold(r.trackName || '');
-    if (!wantTitle || !rt) return !wantTitle;
-    if (rt === wantTitle) return true;
-    const ov = tokenOverlap(wantTitle, rt);
-    const lenRatio =
-      Math.min(rt.length, wantTitle.length) / Math.max(rt.length, wantTitle.length);
-    if ((rt.includes(wantTitle) || wantTitle.includes(rt)) && lenRatio >= 0.72) return true;
-    return ov >= 0.5;
-  };
-  const artistOk = (r: SearchHit) => {
-    if (!wantArtist) return true;
-    const ra = fold(r.artistName || '');
-    if (!ra) return false;
-    if (ra === wantArtist || ra.includes(wantArtist) || wantArtist.includes(ra)) return true;
-    return tokenOverlap(wantArtist, ra) >= 0.3;
-  };
-  const rankedSafe = ranked.filter((r) => titleOk(r) && artistOk(r));
+  const rankedSafe = ranked.filter((r) =>
+    lyricsMetaFits(wantTitle, r.trackName || '', wantArtist, r.artistName || ''),
+  );
   const best =
     rankedSafe.find((r) => (r.syncedLyrics?.trim() || r.plainLyrics?.trim()) && scoreHit(r) >= 25) ||
     rankedSafe.find((r) => r.syncedLyrics?.trim() && scoreHit(r) >= 20) ||
@@ -2167,7 +2300,7 @@ async function parseCaptionTrack(
   const url = new URL(base);
   url.searchParams.set('fmt', 'json3');
   const res = await fetch(url.toString(), {
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(12000),
     headers: { 'User-Agent': 'PLM/1.0 (self-hosted)' },
   });
   if (!res.ok) return null;
@@ -2243,27 +2376,104 @@ export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<L
     }
     const { getSharedLyrics } = await import('../library/sharedCatalog.js');
     const shared = forceRefetch ? null : getSharedLyrics(videoId);
+    let borrowedText: LyricsResult | null = null;
     if (shared?.lyrics) {
-      const result: LyricsResult = {
+      borrowedText = {
         lyrics: shared.lyrics,
         timed: shared.timed,
         source: (shared.source as LyricsResult['source']) || 'genius',
       };
-      putLyricsCache(videoId, result, hintTitle, hintArtist);
-      return result;
-    }
-    if (!forceRefetch && !shared?.lyrics && (hintTitle || hintArtist)) {
+    } else if (!forceRefetch && (hintTitle || hintArtist)) {
       const { findSharedLyricsByMeta } = await import('../library/sharedCatalog.js');
       const byMeta = findSharedLyricsByMeta(hintTitle, hintArtist);
       if (byMeta?.lyrics) {
-        const result: LyricsResult = {
+        // Texte du même titre/artiste seulement — jamais les timings d’un autre clip.
+        borrowedText = {
           lyrics: byMeta.lyrics,
-          timed: byMeta.timed,
+          timed: null,
           source: (byMeta.source as LyricsResult['source']) || 'genius',
         };
-        putLyricsCache(videoId, result, hintTitle, hintArtist);
-        return result;
       }
+    }
+    if (borrowedText?.lyrics) {
+      const metaEarly = await getTrack(videoId, { light: true }).catch(() => null);
+      const titleEarly = hintTitle || metaEarly?.track?.title || '';
+      const artistEarly =
+        hintArtist ||
+        metaEarly?.track?.artists?.map((a) => a.name).filter(Boolean).join(' ') ||
+        metaEarly?.track?.artists?.[0]?.name ||
+        '';
+      const durationEarly =
+        typeof metaEarly?.track?.durationSeconds === 'number'
+          ? metaEarly.track.durationSeconds
+          : undefined;
+      let timed = borrowedText.timed;
+      let source = borrowedText.source;
+      let syncOffsetMs = 0;
+      if (!timedFitsTrack(timed, durationEarly) && looksLikeLyrics(borrowedText.lyrics)) {
+        const [ext, capHit] = await Promise.all([
+          titleEarly
+            ? fetchLrclibTimed(artistEarly, titleEarly, durationEarly).catch(() => null)
+            : Promise.resolve(null),
+          fetchYoutubeCaptionsTimed(videoId).catch(() => null),
+        ]);
+        if (ext?.timed?.length && timedFitsTrack(ext.timed, durationEarly)) {
+          const aligned = alignTimedToTrack(ext.timed, durationEarly, ext.sourceDurationSec);
+          timed = aligned.timed;
+          syncOffsetMs = aligned.offsetMs;
+          source = 'lrclib';
+          if (capHit?.timed?.length) {
+            const shifted = applyBestVocalOnset(timed, capHit.timed, videoId);
+            timed = shifted.timed;
+            syncOffsetMs += shifted.offsetMs;
+          } else {
+            const shifted = applyBestVocalOnset(timed, null, videoId);
+            timed = shifted.timed;
+            syncOffsetMs += shifted.offsetMs;
+          }
+        } else if (capHit?.timed?.length) {
+          const snapped = snapPlainToCaptions(borrowedText.lyrics, capHit.timed);
+          if (snapped?.length) {
+            timed = snapped;
+            source = 'aligned';
+          } else {
+            timed = capHit.timed;
+            source = 'captions';
+          }
+        } else {
+          const estimated = estimateTimedFromPlain(borrowedText.lyrics, durationEarly);
+          if (estimated.length >= 4) {
+            timed = estimated;
+            if (source !== 'genius' && source !== 'lyrics.ovh' && source !== 'youtube') {
+              source = 'estimated';
+            }
+          }
+        }
+      } else if (timed?.length) {
+        if (durationEarly) {
+          const last = timed[timed.length - 1]!.startMs / 1000;
+          const aligned = alignTimedToTrack(timed, durationEarly, last > 20 ? last : durationEarly);
+          timed = aligned.timed;
+          syncOffsetMs = aligned.offsetMs;
+        }
+        const capHit = await fetchYoutubeCaptionsTimed(videoId).catch(() => null);
+        const shifted = applyBestVocalOnset(timed, capHit?.timed, videoId);
+        timed = shifted.timed;
+        syncOffsetMs += shifted.offsetMs;
+      }
+      const result: LyricsResult = {
+        lyrics: borrowedText.lyrics,
+        timed: timed?.length ? timed : null,
+        source: timed?.length ? source : borrowedText.source,
+        syncOffsetMs: timed?.length ? syncOffsetMs : 0,
+      };
+      putLyricsCache(videoId, result, titleEarly, artistEarly);
+      if (looksLikeLyrics(result.lyrics) && result.timed?.length) {
+        import('../library/sharedCatalog.js')
+          .then((m) => m.putSharedLyrics(videoId, result, titleEarly, artistEarly))
+          .catch(() => {});
+      }
+      return result;
     }
   } catch {
     /* store pas encore prêt */
@@ -2330,7 +2540,8 @@ export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<L
   const wantPlain = Boolean(title);
   if (!official || !timed?.length || !looksLikeLyrics(text) || wantPlain) {
     const needLrc = !timed?.length || !looksLikeLyrics(text);
-    const needCaps = source !== 'youtube' && source !== 'lrclib';
+    // Captions = onset réel du chant dans CE clip (intro cinéma, blanc, sifflement).
+    const needCaps = true;
     const needPlain = !looksLikeLyrics(text) || wantPlain;
     const [ext, capHit, ovh] = await Promise.all([
       needLrc ? fetchLrclibTimed(artist, title, durationSec).catch(() => null) : null,
@@ -2347,6 +2558,11 @@ export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<L
       if (!looksLikeLyrics(text) && ext.lyrics) text = ext.lyrics;
     }
     caps = capHit;
+    if (timed?.length) {
+      const shifted = applyBestVocalOnset(timed, caps?.timed, videoId);
+      timed = shifted.timed;
+      syncOffsetMs += shifted.offsetMs;
+    }
     if (!looksLikeLyrics(text) && ovh) {
       text = ovh;
       source = source || 'lyrics.ovh';
@@ -2387,6 +2603,15 @@ export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<L
     const estimated = estimateTimedFromPlain(text!, durationSec);
     if (estimated.length >= 4) {
       timed = estimated;
+      if (caps?.timed?.length) {
+        const shifted = applyBestVocalOnset(timed, caps.timed, videoId);
+        timed = shifted.timed;
+        syncOffsetMs += shifted.offsetMs;
+      } else {
+        const shifted = applyBestVocalOnset(timed, null, videoId);
+        timed = shifted.timed;
+        syncOffsetMs += shifted.offsetMs;
+      }
       if (source !== 'genius' && source !== 'lyrics.ovh' && source !== 'youtube') {
         source = 'estimated';
       }
@@ -2902,8 +3127,9 @@ async function audioFormatViaYtDlpFast(
   const userId = opts?.userId;
   const asFormat = (url: string, proxy: string | null): AudioFormat => ({
     url,
-    mimeType: 'audio/mp4',
-    bitrate: 128_000,
+    mimeType:
+      /[?&]itag=(18|22)\b/.test(url) || /mime=video/.test(url) ? 'video/mp4' : 'audio/mp4',
+    bitrate: /[?&]itag=(18|22)\b/.test(url) ? 96_000 : 128_000,
     contentLength: undefined,
     expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
     viaProxy: proxy,
@@ -2935,41 +3161,22 @@ async function audioFormatViaYtDlpFast(
   }
 
   if (live) {
-    const stripe = (await youtubeProxyStripe(userId, 4)).filter((p): p is string => Boolean(p));
-    // 2 proxies en parallèle (rotation réelle), paires successives — timeout 6 s.
-    for (let i = 0; i < stripe.length; i += 2) {
-      const batch = stripe.slice(i, i + 2);
-      try {
-        return await Promise.any(
-          batch.map(
-            (proxy) =>
-              new Promise<AudioFormat>((resolve, reject) => {
-                const t = setTimeout(() => {
-                  markYoutubeProxyFailure(proxy);
-                  reject(new Error('proxy timeout 6s'));
-                }, 6_000);
-                tryProxy(proxy)
-                  .then((v) => {
-                    clearTimeout(t);
-                    resolve(v);
-                  })
-                  .catch((e) => {
-                    clearTimeout(t);
-                    reject(e);
-                  });
-              }),
-          ),
-        );
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (
-          /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
-            msg,
-          )
-        ) {
-          throw e instanceof Error ? e : new Error(msg);
-        }
+    // 2–3 Gen2 en parallèle dès le 1er octet — plus de série 6 s × N.
+    try {
+      return await raceGen2Proxies(3, (proxy) => tryProxy(proxy), {
+        userId,
+        timeoutMs: 8_000,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (
+        /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
+          msg,
+        )
+      ) {
+        throw e instanceof Error ? e : new Error(msg);
       }
+      lastErr = e instanceof Error ? e : new Error(msg);
     }
   }
 
@@ -3024,8 +3231,8 @@ async function audioFormatViaYtDlp(
   let sawBot = false;
   const extractorSets = ytDlpExtractorArgSets();
   const formats = live
-    ? YTDLP_AUDIO_FORMAT_CANDIDATES.slice(0, 1)
-    : YTDLP_AUDIO_FORMAT_CANDIDATES;
+    ? [YTDLP_AUDIO_FORMAT_CANDIDATES[0]!, YTDLP_AUDIO_FORMAT_CANDIDATES[3]!]
+    : [...YTDLP_AUDIO_FORMAT_CANDIDATES];
 
   const pack = (url: string, proxy: string | null): AudioFormat => {
     const abr = (() => {
@@ -3044,9 +3251,11 @@ async function audioFormatViaYtDlp(
     return {
       url,
       mimeType:
-        url.includes('mime=audio%2Fmp4') || /[?&]itag=(140|141|139)\b/.test(url)
-          ? 'audio/mp4'
-          : 'audio/webm',
+        /[?&]itag=(18|22)\b/.test(url) || /mime=video/.test(url)
+          ? 'video/mp4'
+          : url.includes('mime=audio%2Fmp4') || /[?&]itag=(140|141|139)\b/.test(url)
+            ? 'audio/mp4'
+            : 'audio/webm',
       bitrate: abr,
       expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
       viaProxy: proxy,
@@ -3056,28 +3265,27 @@ async function audioFormatViaYtDlp(
   const raced = new Set<string>();
   if (live) {
     const stripe = proxies.filter((p): p is string => Boolean(p)).slice(0, 3);
-    for (const proxy of stripe) {
-      raced.add(proxy);
+    for (const p of stripe) raced.add(p);
+    if (stripe.length >= 2) {
       try {
-        const url = await Promise.race([
-          ytDlpGetUrl(
-            videoId,
-            formats[0]!,
-            cookieSets[0] || [],
-            proxy,
-            extractorSets[0] || [],
-            live,
-            userId,
-          ),
-          new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error('proxy timeout 8s')), 8_000),
-          ),
-        ]);
-        markYoutubeProxySuccess(proxy);
-        return pack(url, proxy);
+        return await raceGen2Proxies(
+          stripe.length,
+          async (proxy) => {
+            const url = await ytDlpGetUrl(
+              videoId,
+              formats[0]!,
+              cookieSets[0] || [],
+              proxy,
+              extractorSets[0] || [],
+              live,
+              userId,
+            );
+            return pack(url, proxy);
+          },
+          { userId, timeoutMs: 8_000 },
+        );
       } catch (err) {
         lastErr = err instanceof Error ? err : new Error(String(err));
-        if (proxy && isProxyWorthRetry(err)) markYoutubeProxyFailure(proxy);
         if (
           /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
             lastErr.message,
@@ -3297,6 +3505,8 @@ export async function getAudioFormat(
         return await Promise.any([
           tryInnertubeFast(),
           audioFormatViaYtDlpFast(videoId, { live: true, userId: opts?.userId, signal: opts?.signal }),
+          // Même itag que YouTube watch (18/22) — l’audio seul 140 est souvent bloqué.
+          videoFormatViaYtDlp(videoId),
         ]);
       } catch {
         return null;
@@ -3310,14 +3520,17 @@ export async function getAudioFormat(
       resolveFast(),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), fastBudgetMs)),
     ]);
+    if (entry && /[?&]itag=(18|22)\b/.test(entry.url || '')) {
+      console.warn('[getAudioFormat] clip YouTube progressif (itag 18/22)', videoId);
+    }
 
     if (!entry) {
-      // Chemin lent : yt-dlp complet (proxies) puis Innertube élargi
+      // Chemin lent : yt-dlp complet (proxies, dont itag 18) puis Innertube élargi
       try {
         entry = await Promise.race([
           audioFormatViaYtDlp(videoId, proxyRetry || { live, userId: opts?.userId }),
           new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error('yt-dlp format timeout')), 12_000),
+            setTimeout(() => rej(new Error('yt-dlp format timeout')), 14_000),
           ),
         ]);
       } catch {
@@ -3334,6 +3547,23 @@ export async function getAudioFormat(
         entry = await getAudioFormatViaYtDlpOnly(videoId, { userId: opts?.userId });
       } catch {
         /* dernier recours */
+      }
+    }
+
+    if (!entry) {
+      try {
+        const v = await Promise.race([
+          getVideoFormat(videoId),
+          new Promise<never>((_, rej) =>
+            setTimeout(() => rej(new Error('video-fallback timeout')), 12_000),
+          ),
+        ]);
+        if (v?.url) {
+          console.warn('[getAudioFormat] fallback clip YouTube (progressif)', videoId);
+          entry = { ...v, mimeType: v.mimeType || 'video/mp4' };
+        }
+      } catch {
+        /* */
       }
     }
 
@@ -3487,33 +3717,42 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
         : await getYT();
       if (!yt) return null;
       const clients = signed
-        ? (['TV', 'ANDROID', 'MWEB', 'WEB'] as const)
-        : (['ANDROID', 'TV', 'WEB_EMBEDDED', 'ANDROID_VR'] as const);
+        ? (['WEB', 'TV', 'ANDROID', 'MWEB'] as const)
+        : (['WEB', 'WEB_EMBEDDED', 'ANDROID', 'TV'] as const);
       const ms = signed ? 5_500 : 4_000;
       const tryClient = async (client: (typeof clients)[number]): Promise<AudioFormat> => {
-        const format = await Promise.race([
-          yt.getStreamingData(videoId, {
-            type: 'video+audio',
-            quality: '360p',
-            client,
-          } as any),
-          new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error(`innertube video ${client} timeout`)), ms),
-          ),
-        ]);
-        const url = format.url || (await format.decipher(yt.session.player));
-        if (!url) throw new Error('empty video url');
-        const entry: AudioFormat = {
-          url,
-          mimeType: format.mime_type || 'video/mp4',
-          bitrate: format.bitrate,
-          contentLength: format.content_length,
-          expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60 * 1000,
-        };
-        if (!looksLikeVideo(entry.url, entry.mimeType)) {
-          throw new Error(`not a progressive video format (${entry.mimeType})`);
+        let last: Error | null = null;
+        // 360p itag 18 d’abord (muxé, c’est ce que YouTube watch sert) — 720p souvent DASH.
+        for (const quality of ['360p', '720p'] as const) {
+          try {
+            const format = await Promise.race([
+              yt.getStreamingData(videoId, {
+                type: 'video+audio',
+                quality,
+                client,
+              } as any),
+              new Promise<never>((_, rej) =>
+                setTimeout(() => rej(new Error(`innertube video ${client} ${quality} timeout`)), ms),
+              ),
+            ]);
+            const url = format.url || (await format.decipher(yt.session.player));
+            if (!url) throw new Error('empty video url');
+            const entry: AudioFormat = {
+              url,
+              mimeType: format.mime_type || 'video/mp4',
+              bitrate: format.bitrate,
+              contentLength: format.content_length,
+              expiresAt: parseExpireMs(url) ?? Date.now() + 3 * 60 * 60_000,
+            };
+            if (!looksLikeVideo(entry.url, entry.mimeType)) {
+              throw new Error(`not a progressive video format (${entry.mimeType})`);
+            }
+            return entry;
+          } catch (err) {
+            last = err instanceof Error ? err : new Error(String(err));
+          }
         }
-        return entry;
+        throw last || new Error(`innertube video ${client} empty`);
       };
       try {
         return await Promise.any(clients.map((c) => tryClient(c)));

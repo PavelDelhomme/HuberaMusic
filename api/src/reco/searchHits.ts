@@ -104,9 +104,26 @@ export function loadSearchHitsSeed() {
       }
     });
     insert(raw);
+    try {
+      db.prepare(
+        `DELETE FROM search_canonical_hits
+         WHERE video_id IN ('6LaKZ9YKSs0', 'zJxwRMK_ISY', 'te6K9qC6Sxg')
+            OR lower(title || ' ' || artist) LIKE '%grace ellis%'
+            OR lower(title || ' ' || artist) LIKE '%sant andreu%'
+            OR lower(title || ' ' || artist) LIKE '%alba armengou%'`,
+      ).run();
+    } catch {
+      /* ignore */
+    }
   } catch (err) {
     console.warn('[searchHits] seed load failed', err);
   }
+}
+
+/** Recharge le seed (après overlay JSON sans recreate process). */
+export function reloadSearchHitsSeed() {
+  seedLoaded = false;
+  loadSearchHitsSeed();
 }
 
 /**
@@ -182,6 +199,13 @@ export function resolveSearchHit(query: string): ResolvedHit | null {
   }
 
   if (!row) return null;
+  const blob = foldText(`${row.title} ${row.artist}`);
+  if (
+    (/\btes triste\b/.test(fold) || fold.includes('testriste')) &&
+    /grace ellis|sant andreu|alba armengou|nick monteiro|jazz revival/.test(blob)
+  ) {
+    return null;
+  }
   // Clics : exiger un minimum sauf seed
   if (row.source === 'click' && row.score < 100) return null;
 

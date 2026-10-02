@@ -1,6 +1,65 @@
 {
-  "updatedAt": "2026-10-01",
+  "updatedAt": "2026-10-02",
   "versions": [
+    {
+      "version": "1.3.340",
+      "date": "2026-10-02",
+      "time": "08:30",
+      "at": "2026-10-02T08:30:00+02:00",
+      "title": "Le titre en cours d’abord, puis les suivants",
+      "notes": [
+        "Tant qu’un titre charge ou joue, le bouton Aléatoire ne relance plus le flux : il mélange seulement la suite.",
+        "Préchargement dans l’ordre : ce que tu écoutes, puis le titre d’après, puis les plus proches. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.339",
+      "date": "2026-10-02",
+      "time": "08:20",
+      "at": "2026-10-02T08:20:00+02:00",
+      "title": "Mode titre : audio extrait du clip YouTube",
+      "notes": [
+        "Si YouTube ne donne que la vidéo, Hubera extrait le son pour le mode titre (la piste, pas le clip).",
+        "L’onglet Vidéo garde le clip. Mise à jour APK proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.338",
+      "date": "2026-10-02",
+      "time": "05:45",
+      "at": "2026-10-02T05:45:00+02:00",
+      "title": "Paroles : blanc d’intro, Fils de joie, Laisse Nous Raver",
+      "notes": [
+        "Les paroles collent au premier chant réel du clip (captions YouTube), pas au début du LRC. Fils de joie (Stromae) : intro cinéma ~+37 s, plus besoin de décaler à la main.",
+        "Laisse Nous Raver Rekkt & NIVK forcé en tête de recherche (clip + Extended Mix).",
+        "Anciens réglages de synchro paroles réinitialisés (nouveau cache). Mise à jour APK proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.337",
+      "date": "2026-10-02",
+      "time": "05:20",
+      "at": "2026-10-02T05:20:00+02:00",
+      "title": "Flux Gen2 parallèle, T’es Triste, aléatoire",
+      "notes": [
+        "Au démarrage d’un titre : 2–3 proxies Gen2 en parallèle (le plus rapide gagne), plus de file 8 s × 3.",
+        "« T’es Triste » : plus le jazz Grace Ellis. Versions complètes N’to / Køni, recherche Rekkt/NIVK/Helen Ka.",
+        "Laisse Nous Raver Extended Mix (Rekkt & NIVK) épinglé. Suite de file chauffée pendant la lecture.",
+        "Aléatoire Accueil : si l’accès rapide est vide, ça lance la biblio. Mise à jour APK proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.336",
+      "date": "2026-10-01",
+      "time": "22:50",
+      "at": "2026-10-01T22:50:00+02:00",
+      "title": "Paroles recollées à chaque titre",
+      "notes": [
+        "Les paroles d’un autre morceau (titre proche) ne sont plus réutilisées. Timings recollés à la durée de CE clip.",
+        "Karaoké sur la vidéo (ligne active). LRCLIB refuse une version trop longue/courte.",
+        "Pas de forceUpdate."
+      ]
+    },
     {
       "version": "1.3.335",
       "date": "2026-10-01",
@@ -13,6 +72,7 @@
         "Pas de forceUpdate."
       ]
     },
+    {
       "version": "1.3.334",
       "date": "2026-10-01",
       "time": "21:40",

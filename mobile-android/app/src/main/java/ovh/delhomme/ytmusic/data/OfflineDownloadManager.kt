@@ -344,7 +344,7 @@ class OfflineDownloadManager(
                                     track.artistLine().takeIf { it != "Artiste" },
                                 )
                                 val prefs = app.getSharedPreferences(
-                                    "plm_lyrics_cache_v5",
+                                    "plm_lyrics_cache_v6",
                                     android.content.Context.MODE_PRIVATE,
                                 )
                                 val timed = r.timed.orEmpty()

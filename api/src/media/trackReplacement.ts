@@ -15,6 +15,7 @@ import { db, getTrackPayload } from '../library/db.js';
 import { getAudioFormat, getTrack, search } from '../youtube/yt.js';
 import type { Track } from '../youtube/types.js';
 import { artistLine, scoreCandidate } from './trackMatch.js';
+import { foldText } from '../reco/searchRank.js';
 import { findAtlasEquivalent, rememberAtlasPlayable } from './trackAtlas.js';
 
 const CACHE_DIR = join(
@@ -272,7 +273,12 @@ export async function findReplacementId(
       return null;
     }
 
+    const jazzFalse = (t: Track) => {
+      const b = foldText(`${t.title} ${artistLine(t)}`);
+      return /grace ellis|sant andreu|alba armengou|nick monteiro|jazz revival/.test(b);
+    };
     const ranked = candidates
+      .filter((t) => !jazzFalse(t))
       .map((t) => ({ t, s: scoreCandidate(t, title, artist, durationSec) }))
       .filter((x) => x.s >= MIN_SCORE)
       .sort((a, b) => b.s - a.s);

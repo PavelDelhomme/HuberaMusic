@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { db } from './db.js';
+import { lyricsMetaFits } from '../youtube/lyricsTiming.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const CACHE_DIR = join(ROOT, 'data', 'cache');
@@ -101,19 +102,20 @@ export function findSharedLyricsByMeta(title: string, artist: string): SharedLyr
          ORDER BY updated_at DESC LIMIT 800`,
       )
       .all() as { video_id: string; title?: string; artist?: string }[];
-    const wantT = t.toLowerCase();
-    const wantA = a.toLowerCase().replace(/\s+/g, '');
+    const wantT = t;
+    const wantA = a;
+    let best: SharedLyrics | null = null;
     for (const row of rows) {
-      const gotT = String(row.title || '').toLowerCase();
-      const gotA = String(row.artist || '').toLowerCase().replace(/\s+/g, '');
-      if (!gotT) continue;
-      const titleOk = gotT === wantT || (gotT.includes(wantT) && wantT.length >= 8);
-      const artistOk = !wantA || !gotA || gotA === wantA || gotA.includes(wantA) || wantA.includes(gotA);
-      if (titleOk && artistOk) {
-        const hit = getSharedLyrics(row.video_id);
-        if (hit?.lyrics) return hit;
+      if (!lyricsMetaFits(wantT, String(row.title || ''), wantA, String(row.artist || ''))) {
+        continue;
+      }
+      const hit = getSharedLyrics(row.video_id);
+      if (hit?.lyrics) {
+        best = hit;
+        break;
       }
     }
+    return best;
   } catch {
     /* ignore */
   }
