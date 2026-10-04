@@ -12,11 +12,42 @@ import {
   downloadTrack,
   enqueueDiskWarm,
   enqueueLikesDiskWarm,
+  enqueueListHeadWarm,
+  enqueueNextDiskWarm,
   enqueueStreamWarm,
   isCompleteEnoughDiskFile,
   isDashBrandFilePath,
+  isPlaybackHot,
 } from './stream.js';
 import { findReplacementId, getReplacementId } from './trackReplacement.js';
+
+/** Fenêtre à pré-vérifier (format + proxy + tête disque) avant que l’utilisateur arrive. */
+export const PREFLIGHT_AHEAD = 20;
+/** .m4a intégral : seulement les tout prochains — 20 téléchargements complets noient yt-dlp. */
+const FULL_DISK_HOT = 4;
+const FULL_DISK_IDLE = 8;
+const VERIFIED_TTL_MS = 30 * 60_000;
+
+const verified = new Map<string, { playId: string; at: number }>();
+let preflightBusy = false;
+const preflightWait: Array<{ ids: string[]; userId?: string }> = [];
+
+export function isQueueTitleVerified(id: string): boolean {
+  const hit = verified.get(id);
+  return Boolean(hit && Date.now() - hit.at < VERIFIED_TTL_MS);
+}
+
+function markVerified(id: string, playId = id) {
+  const at = Date.now();
+  verified.set(id, { playId, at });
+  if (playId !== id) verified.set(playId, { playId, at });
+  if (verified.size > 8_000) {
+    const cutoff = at - VERIFIED_TTL_MS;
+    for (const [k, v] of verified) {
+      if (v.at < cutoff) verified.delete(k);
+    }
+  }
+}
 
 export type EnsurePlayableResult = {
   ok: boolean;
@@ -166,24 +197,162 @@ export async function ensurePlayableOnDisk(
   );
 }
 
-/** Prépare N titres suivants (file Android) sans bloquer — priorité likes disk. */
+/**
+ * Prépare ~20 titres d’avance sans noyer le titre en cours :
+ * 1) formats RAM + tête .m4a (proxy dédié par titre si le 1er meurt)
+ * 2) fichier complet seulement pour les 4–8 suivants
+ * 3) si format KO → autre proxy, puis remplaçant cohérent déjà mappé
+ */
 export function ensurePlayableQueueAhead(
   ids: string[],
   opts?: { userId?: string },
 ): void {
   const uniq = [
     ...new Set(ids.filter((id) => /^[a-zA-Z0-9_-]{11}$/.test(id))),
-  ].slice(0, 4);
+  ].slice(0, 50);
   if (!uniq.length) return;
-  enqueueLikesDiskWarm(uniq);
-  enqueueStreamWarm(uniq, opts?.userId);
-  // Un seul ensure bloquant (le +1). Les autres : file disk, pas de getAudioFormat parallèle.
-  const next = uniq[0];
-  if (next) {
-    void ensurePlayableOnDisk(next, {
+  const ahead = uniq.slice(0, PREFLIGHT_AHEAD);
+  const hot = isPlaybackHot(90_000);
+  const fullN = hot ? FULL_DISK_HOT : FULL_DISK_IDLE;
+  enqueueStreamWarm(ahead, opts?.userId);
+  enqueueListHeadWarm(ahead, { front: true });
+  enqueueNextDiskWarm(ahead.slice(0, fullN));
+  enqueueLikesDiskWarm(ahead.slice(0, 4));
+  const [first, ...rest] = ahead;
+  if (first) {
+    void ensurePlayableOnDisk(first, {
       userId: opts?.userId,
-      waitMs: 8_000,
+      waitMs: hot ? 5_000 : 8_000,
+      preferProxies: true,
+    }).then((r) => {
+      if (r?.ok) markVerified(first, r.playId);
+    });
+  }
+  for (const id of rest.slice(0, Math.max(0, fullN - 1))) {
+    void ensurePlayableOnDisk(id, {
+      userId: opts?.userId,
+      waitMs: 0,
       preferProxies: true,
     });
+  }
+  enqueuePreflightTwenty(ahead, opts?.userId);
+}
+
+function enqueuePreflightTwenty(ids: string[], userId?: string) {
+  preflightWait.push({ ids, userId });
+  if (preflightWait.length > 6) preflightWait.splice(0, preflightWait.length - 6);
+  if (!preflightBusy) void runPreflightQueue();
+}
+
+async function runPreflightQueue() {
+  if (preflightBusy) return;
+  preflightBusy = true;
+  try {
+    while (preflightWait.length) {
+      const job = preflightWait.shift();
+      if (!job) break;
+      await runPreflightTwenty(job.ids, job.userId);
+    }
+  } finally {
+    preflightBusy = false;
+    if (preflightWait.length) void runPreflightQueue();
+  }
+}
+
+async function runPreflightTwenty(ids: string[], userId?: string) {
+  const hot = isPlaybackHot(90_000);
+  const conc = hot ? 2 : 3;
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < ids.length) {
+      const idx = cursor++;
+      const id = ids[idx];
+      if (!id) continue;
+      try {
+        await preflightOne(id, userId, { deep: idx < 8 || !hot });
+      } catch {
+        /* best-effort — le titre reste en file disque */
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: conc }, () => worker()));
+}
+
+async function preflightOne(
+  videoId: string,
+  userId: string | undefined,
+  opts: { deep: boolean },
+): Promise<void> {
+  if (isQueueTitleVerified(videoId) && integrityOk(cachePath(videoId))) return;
+  if (integrityOk(cachePath(videoId))) {
+    markVerified(videoId);
+    return;
+  }
+  const known = getReplacementId(videoId);
+  if (known && known !== videoId && integrityOk(cachePath(known))) {
+    markVerified(videoId, known);
+    enqueueListHeadWarm([known], { front: true });
+    return;
+  }
+
+  const { getAudioFormat } = await import('../youtube/yt.js');
+  const tryFormat = async (fresh: boolean) => {
+    try {
+      const fmt = await Promise.race([
+        getAudioFormat(videoId, {
+          userId,
+          forceFresh: fresh,
+        }),
+        new Promise<null>((r) => setTimeout(() => r(null), fresh ? 10_000 : 7_000)),
+      ]);
+      return Boolean(fmt && (fmt as { url?: string }).url);
+    } catch {
+      return false;
+    }
+  };
+
+  if (await tryFormat(false)) {
+    markVerified(videoId);
+    enqueueListHeadWarm([videoId], { front: true });
+    return;
+  }
+  // Même titre, autre proxy (forceFresh mélange le pool).
+  if (await tryFormat(true)) {
+    markVerified(videoId);
+    enqueueListHeadWarm([videoId], { front: true });
+    enqueueDiskWarm([videoId]);
+    return;
+  }
+
+  if (!opts.deep) {
+    enqueueListHeadWarm([videoId], { front: true });
+    return;
+  }
+
+  try {
+    const replacement = await Promise.race([
+      findReplacementId(videoId, { userId }),
+      new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
+    ]);
+    if (replacement && replacement !== videoId) {
+      enqueueStreamWarm([replacement], userId);
+      enqueueListHeadWarm([replacement], { front: true });
+      enqueueDiskWarm([replacement]);
+      if (integrityOk(cachePath(replacement))) {
+        markVerified(videoId, replacement);
+        return;
+      }
+      try {
+        const fmt = await Promise.race([
+          getAudioFormat(replacement, { userId, forceFresh: true }),
+          new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
+        ]);
+        if (fmt && (fmt as { url?: string }).url) markVerified(videoId, replacement);
+      } catch {
+        /* mapping déjà persisté — le prochain play servira le remplaçant */
+      }
+    }
+  } catch {
+    enqueueListHeadWarm([videoId]);
   }
 }

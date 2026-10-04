@@ -4,7 +4,7 @@
  */
 import { enqueueStreamWarm, enqueueDiskWarm, bumpWarmPriority, enqueueListHeadWarm } from './stream.js';
 import { findReplacementId } from './trackReplacement.js';
-import { getTrackPayload } from '../library/db.js';
+import { db, getTrackPayload } from '../library/db.js';
 
 const lastHealAt = new Map<string, number>();
 const HEAL_COOLDOWN_MS = 2 * 60_000;
@@ -200,7 +200,7 @@ export function healTracksFromDigest(
 ): void {
   const list = (tracks || [])
     .filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(String(t.trackId || '')))
-    .slice(0, 64);
+    .slice(0, 80);
   if (!list.length) return;
   console.log(`[stream-heal] digest → ${list.length} titre(s) à réparer`);
   list.forEach((t, i) => {
@@ -214,4 +214,24 @@ export function healTracksFromDigest(
       });
     }, i * 1500);
   });
+}
+
+/** Tous comptes : pending/dead du balayage biblio + télémétrie récente. */
+export function healLibraryGapsFromDigest(): void {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT track_id AS trackId FROM track_health
+         WHERE state IN ('pending','dead')
+         ORDER BY checked_at DESC
+         LIMIT 40`,
+      )
+      .all() as Array<{ trackId: string }>;
+    if (rows.length) {
+      console.log(`[stream-heal] biblio gaps → ${rows.length}`);
+      healTracksFromDigest(rows);
+    }
+  } catch (err) {
+    console.warn('[stream-heal] biblio gaps', String((err as Error).message || err).slice(0, 120));
+  }
 }

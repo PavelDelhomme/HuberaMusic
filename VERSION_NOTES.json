@@ -1,6 +1,17 @@
 {
-  "updatedAt": "2026-10-02",
+  "updatedAt": "2026-10-04",
   "versions": [
+    {
+      "version": "1.3.341",
+      "date": "2026-10-04",
+      "time": "18:50",
+      "at": "2026-10-04T18:50:00+02:00",
+      "title": "Plus de trou : skip immédiat et 40 titres d’avance",
+      "notes": [
+        "Si un titre refuse de charger, on passe au suivant tout de suite et on continue à préparer la suite (pas d’attente bloquante).",
+        "Le serveur précharge le début puis le fichier entier des ~40 titres suivants, via plusieurs proxies. Accès rapide, bibliothèque et aléatoire. Mise à jour proposée, pas forcée."
+      ]
+    },
     {
       "version": "1.3.340",
       "date": "2026-10-02",

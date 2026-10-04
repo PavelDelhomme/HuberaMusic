@@ -1008,21 +1008,9 @@ class PlaybackService : MediaSessionService() {
                 error,
             )
             if (httpStatus != null && httpStatus >= 500) {
-                // Ne coupe le prefetch / offline qu’après plusieurs 5xx — un seul 502
-                // (getAudioFormat deadline) ne doit pas bloquer 2 min toute la file.
-                // Après appel : sockets/DNS en train de revenir — ne pas geler le flux.
-                if (streak >= 5 && !Holder.isWithinCallResumeGrace()) {
-                    // Pause prefetch seulement (20 s) — le titre courant continue de résoudre.
-                    StreamPrefetcher.markStreamDown(20_000L)
-                    StreamPrefetcher.cancelIdle()
-                    runCatching {
-                        ovh.delhomme.ytmusic.YtMusicApp.instance.container.downloadManager.cancelOpportunistic()
-                    }
-                } else {
-                    // Laisse le titre courant retenter : coupe seulement le bruit (LibHeads / prefetch suite).
-                    StreamPrefetcher.cancelIdle()
-                    StreamPrefetcher.quietPrefetch(4_000L)
-                }
+                // Un 5xx sur CE titre ne doit PAS geler le prefetch des 25–50 suivants.
+                StreamPrefetcher.markStreamOk()
+                StreamPrefetcher.cancelIdle(preserveNext = true)
             }
             runCatching {
                 ovh.delhomme.ytmusic.debug.TelemetryReporter.reportPlayerError(
@@ -1191,12 +1179,11 @@ class PlaybackService : MediaSessionService() {
                 val giveUpStreak = when {
                     // Titre mort (410 / unavailable) : skip dès le 1er échec confirmé.
                     unavailable -> 1
-                    // 502 getAudioFormat deadline = transitoire (yt-dlp saturé) :
-                    // retenter le MÊME titre, pas skip à 2×.
-                    coldStart && httpStatus != null && httpStatus >= 500 -> 8
-                    httpStatus != null && httpStatus >= 500 -> 8
+                    // 5xx à froid : 1 retry puis suivant — silence 8× = file coincée.
+                    coldStart && httpStatus != null && httpStatus >= 500 -> 2
+                    httpStatus != null && httpStatus >= 500 -> 3
                     transientNetwork -> Int.MAX_VALUE
-                    else -> 8
+                    else -> 3
                 }
                 if (streak >= giveUpStreak) {
                     AppLog.w(
@@ -1260,8 +1247,8 @@ class PlaybackService : MediaSessionService() {
                     if (truncatedMid || resumePos > 45_000L) {
                         StreamPrefetcher.requestServerDiskCache(Holder.resolvedApiBase(), id)
                     }
-                    StreamPrefetcher.cancelIdle()
-                    StreamPrefetcher.quietPrefetch(3_000L)
+                    StreamPrefetcher.cancelIdle(preserveNext = true)
+                    StreamPrefetcher.quietPrefetch(400L)
                     val resolveOk = runCatching {
                         withTimeout(12_000L) {
                             val r = streak.coerceAtLeast(1)
@@ -1959,7 +1946,11 @@ class PlaybackService : MediaSessionService() {
                     }
                 }
                 if (next < exo.mediaItemCount && next != cur) {
+                    StreamPrefetcher.markStreamOk()
                     runCatching { advanceToQueueIndex(exo, next) }
+                    val api = resolvedApiBase()
+                    val q = Holder.queue.map { it.id }
+                    StreamPrefetcher.prefetchByProximity(api, q, next, ahead = 40, force = true)
                     return@Runnable
                 }
                 if (exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 1) {
@@ -1994,6 +1985,10 @@ class PlaybackService : MediaSessionService() {
                 }
             }
             runCatching { advanceToQueueIndex(exo, prev) }
+            StreamPrefetcher.markStreamOk()
+            val api = resolvedApiBase()
+            val q = Holder.queue.map { it.id }
+            StreamPrefetcher.prefetchByProximity(api, q, prev, ahead = 20, force = true)
         }
         if (android.os.Looper.myLooper() == mainLooper) run.run() else h.post(run)
     }
@@ -2024,9 +2019,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Give-up après stall / player-error : tenter un remplacement d’id, sinon **vraiment**
-     * passer au suivant. Contrairement à [replaceOrAdvance], ne rebind JAMAIS le même id
-     * mort (évite la boucle escalate → resolve-keep → mails).
+     * Give-up : passer tout de suite au suivant (pas d’HTTP bloquant sur le
+     * thread player). Le remplaçant YouTube se mappe en fond pour la prochaine fois.
      */
     private fun skipDeadTrackOrAdvance(exo: Player, deadId: String, nextIdx: Int) {
         val track = Holder.queue.firstOrNull { it.id == deadId }
@@ -2039,50 +2033,35 @@ class PlaybackService : MediaSessionService() {
                 extra = mapOf("nextIdx" to nextIdx),
             )
         }
-        val repl = if (track != null) {
-            StreamPrefetcher.fetchReplacementId(
-                resolvedApiBase(),
-                deadId,
-                track.title,
-                track.artistLine(),
-            )
-        } else {
-            null
-        }
-        if (repl != null && track != null) {
-            val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
-            val swapped = track.copy(id = repl)
-            val q = Holder.queue.toMutableList()
-            if (curIdx in q.indices && q[curIdx].id == deadId) q[curIdx] = swapped
-            Holder.queue = q
-            AppLog.i("PlaybackService", "skipDead → remplacé $deadId → $repl")
-            runCatching {
-                val container = YtMusicApp.instance.container
-                val item = mediaItemFor(
-                    swapped,
-                    { tid -> container.remoteStreamUrl(tid) },
-                    Holder.queueTitle,
-                )
-                exo.replaceMediaItem(curIdx, item)
-                exo.seekTo(curIdx, 0L)
-                exo.prepare()
-                exo.playWhenReady = true
-                exo.play()
-            }
-            return
-        }
+        StreamPrefetcher.markStreamOk()
         val end = userQueueEndAfterExtend(nextIdx)
         if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
             exo.playWhenReady = false
             runCatching { exo.pause() }
             return
         }
-        AppLog.w("PlaybackService", "skipDead → advance nextIdx=$nextIdx (pas de remplace pour $deadId)")
+        AppLog.w("PlaybackService", "skipDead → advance nextIdx=$nextIdx (dead=$deadId)")
         if (nextIdx < exo.mediaItemCount) {
             advanceToQueueIndex(exo, nextIdx)
         } else {
             val uiFill = Holder.onSkipAtEnd
             if (uiFill != null) uiFill.invoke() else fillAutoplayFromService(advanceAfterFill = true)
+        }
+        val api = resolvedApiBase()
+        val q = Holder.queue.map { it.id }
+        val from = nextIdx.coerceIn(0, (q.size - 1).coerceAtLeast(0))
+        StreamPrefetcher.prefetchByProximity(api, q, from, ahead = 40, force = true)
+        if (track != null) {
+            scope.launch {
+                runCatching {
+                    StreamPrefetcher.fetchReplacementId(
+                        api,
+                        deadId,
+                        track.title,
+                        track.artistLine(),
+                    )
+                }
+            }
         }
     }
 
@@ -2580,7 +2559,7 @@ class PlaybackService : MediaSessionService() {
             base,
             queue.map { it.id },
             fromIndex,
-            ahead = 12,
+            ahead = 40,
             behind = 0,
         )
         CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 6, behind = 0)

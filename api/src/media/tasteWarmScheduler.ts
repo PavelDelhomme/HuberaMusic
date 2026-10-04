@@ -65,7 +65,7 @@ function userTrackIds(userId: string, limit = 36): string[] {
       .prepare(
         `SELECT track_id FROM library_tracks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`,
       )
-      .all(userId, Math.min(24, limit)) as { track_id: string }[];
+      .all(userId, Math.min(80, limit * 2)) as { track_id: string }[];
     for (const r of lib) push(r.track_id);
   } catch {
     /* ignore */
@@ -116,6 +116,11 @@ export function scheduleUserTasteWarm(
       const diskN = Math.max(0, Math.min(16, opts?.disk ?? 10));
       const needDisk = ids.filter(needsDisk).slice(0, diskN);
       if (needDisk.length) enqueueDiskWarm(needDisk);
+      void import('./ensurePlayable.js')
+        .then(({ ensurePlayableQueueAhead }) =>
+          ensurePlayableQueueAhead(ids.slice(0, 20), { userId }),
+        )
+        .catch(() => {});
       console.info(
         `[tasteWarm] user=${userId.slice(0, 8)} warm=${Math.min(28, ids.length)} disk=${needDisk.length}`,
       );

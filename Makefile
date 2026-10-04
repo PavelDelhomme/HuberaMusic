@@ -29,7 +29,7 @@ SAMPLE_SECS ?= 15
 	adb-fix \
 	adb-fix-keys \
 	adb-wifi adb-wifi-connect adb-wifi-status adb-wifi-wait-unplug adb-wifi-disconnect \
-	adb-wifi-doctor adb-wifi-ensure adb-wifi-pair adb-both adb-devices adb-help \
+	adb-wifi-doctor adb-wifi-ensure adb-wifi-pair samsung-wifi samsung-wifi-pair adb-both adb-devices adb-help \
 	battery-go battery-go-calm battery-suite \
 	battery-test battery-test-short battery-report battery-report-mail \
 	update-apps status status-watch \
@@ -291,8 +291,17 @@ adb-fix-keys: ## Régénère clés ADB (après révocation USB sur le téléphon
 #     → affiche le rapport
 #
 # Si Samsung manque :
-#   A) Branche-le 2 s en USB pendant make adb-wifi-ensure
-#   B) Ou : make adb-wifi-pair  (Débogage sans fil + code)
+#   A) Branche-le 2 s en USB puis : make samsung-wifi
+#   B) Sans câble : make samsung-wifi-pair PAIR=IP:PORT CODE=123456 CONNECT=IP:PORT
+
+samsung-wifi: ## Répare ADB Wi‑Fi Samsung depuis USB (tcpip 5555) — pas Nothing, pas BV
+	@chmod +x $(ROOT)/scripts/adb/samsung-wifi-repair.sh $(ROOT)/scripts/adb/samsung-adb-wifi.sh
+	@bash $(ROOT)/scripts/adb/samsung-wifi-repair.sh || bash $(ROOT)/scripts/adb/samsung-adb-wifi.sh repair
+
+samsung-wifi-pair: ## Pairing Samsung : make samsung-wifi-pair PAIR=192.168.1.177:XXXXX CODE=123456 CONNECT=192.168.1.177:YYYYY
+	@chmod +x $(ROOT)/scripts/adb/samsung-adb-wifi.sh
+	@test -n "$(PAIR)" && test -n "$(CODE)" || { echo "Usage: make samsung-wifi-pair PAIR=IP:PORT CODE=123456 CONNECT=IP:PORT" >&2; exit 2; }
+	@bash $(ROOT)/scripts/adb/samsung-adb-wifi.sh pair "$(PAIR)" "$(CODE)" "$(CONNECT)"
 
 adb-wifi-doctor: ## Vérifie Samsung + Nothing (ignore le reste / virtuel)
 	@chmod +x $(ROOT)/scripts/adb/adb-wifi.sh

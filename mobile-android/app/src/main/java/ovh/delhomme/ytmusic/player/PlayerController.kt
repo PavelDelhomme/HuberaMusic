@@ -1960,7 +1960,7 @@ class PlayerController(
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val base = streamUrl("_").substringBefore("/api/stream/")
-        StreamPrefetcher.prefetchByProximity(base, queue.map { it.id }, centerIndex)
+        StreamPrefetcher.prefetchByProximity(base, queue.map { it.id }, centerIndex, ahead = 40)
     }
 
     private fun warmAround(tracks: List<TrackDto>, startIndex: Int) {
@@ -1972,7 +1972,7 @@ class PlayerController(
             base,
             playable.map { it.id },
             idx,
-            ahead = 12,
+            ahead = 40,
             behind = 1,
         )
         CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)

@@ -242,7 +242,9 @@ async function probeOne(id: string, userId?: string): Promise<Check> {
   } catch (err) {
     const message = String((err as Error)?.message || err);
     if (!looksUnavailable(message)) {
-      // Réseau, quota, délai dépassé : on ne conclut rien — ne PAS marquer ok.
+      void import('./stream.js')
+        .then((m) => m.enqueueListHeadWarm([id]))
+        .catch(() => {});
       return { state: 'ok', network: true, skip: true };
     }
     return { state: 'pending', network: true };
@@ -479,6 +481,17 @@ async function tick() {
         const state = await resolvePending(pending);
         markHealth(pending, state);
         stats[state]++;
+        if (state === 'replaced') {
+          const rid = getReplacementId(pending);
+          if (rid) {
+            void import('./stream.js')
+              .then((m) => {
+                m.enqueueListHeadWarm([rid], { front: true });
+                m.enqueueDiskWarm([rid]);
+              })
+              .catch(() => {});
+          }
+        }
         return;
       }
     }

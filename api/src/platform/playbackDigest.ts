@@ -489,7 +489,7 @@ export async function buildPlaybackDigest(opts?: {
     totalEvents: total,
     trackCount: ranked.length,
     byKind,
-    tracks: ranked.slice(0, 24).map((t) => ({
+    tracks: ranked.slice(0, 48).map((t) => ({
       trackId: t.trackId,
       title: t.title,
       artist: t.artist,
@@ -531,8 +531,15 @@ export async function sendPlaybackDigestNow(opts?: {
   const tracks = digest.tracks || [];
   if (tracks.length) {
     void import('../media/streamHeal.js')
-      .then(({ healTracksFromDigest }) => healTracksFromDigest(tracks))
+      .then(({ healTracksFromDigest, healLibraryGapsFromDigest }) => {
+        healTracksFromDigest(tracks);
+        healLibraryGapsFromDigest();
+      })
       .catch((err) => console.warn('[playbackDigest] heal', err));
+  } else {
+    void import('../media/streamHeal.js')
+      .then(({ healLibraryGapsFromDigest }) => healLibraryGapsFromDigest())
+      .catch(() => {});
   }
   return { ok: true, subject: digest.subject, totalEvents: digest.totalEvents };
 }

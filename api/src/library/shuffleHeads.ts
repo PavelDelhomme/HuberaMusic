@@ -203,6 +203,8 @@ function scheduleWarmHeads(userId: string, ids: string[]): void {
       if (!hot && formatN > 16) enqueueStreamWarm(ids.slice(16, formatN), userId);
       const disk = ids.filter(needsDisk).slice(0, diskN);
       if (disk.length) enqueueDiskWarm(disk);
+      const { ensurePlayableQueueAhead } = await import('../media/ensurePlayable.js');
+      ensurePlayableQueueAhead(ids.slice(0, 20), { userId });
     } catch {
       /* ignore */
     }

@@ -123,10 +123,11 @@ object BatterySaver {
 
     /** Nombre de titres à prefetch en avant (stream). */
     fun streamPrefetchAhead(normal: Int): Int {
-        if (isActive()) return 1.coerceAtMost(normal)
-        if (isSoft()) return (normal / 2).coerceAtLeast(1).coerceAtMost(normal)
-        // En charge : +2 titres (reste borné) — hors charge on garde le budget normal.
-        if (charging) return (normal + 1).coerceAtMost(3)
+        // Même en économie : garder une file d’avance (têtes serveur), sinon coupure.
+        if (isActive()) return 12.coerceAtMost(normal).coerceAtLeast(8)
+        if (isSoft()) return (normal * 3 / 4).coerceAtLeast(16).coerceAtMost(normal)
+        // En charge (nuit) : fenêtre complète, pas un plafond à 3.
+        if (charging) return normal.coerceAtLeast(32)
         return normal
     }
 

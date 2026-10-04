@@ -92,6 +92,7 @@ import {
   startGlobalTasteWarmScheduler,
   runGlobalTasteWarmOnce,
 } from './media/tasteWarmScheduler.js';
+import { ensurePlayableQueueAhead } from './media/ensurePlayable.js';
 import { libraryHealthStatus, startLibraryHealthScan } from './media/libraryHealth.js';
 import {
   startPlaybackDigestScheduler,
@@ -2078,11 +2079,16 @@ app.get('/api/search', accountRequired, async (req, res) => {
     if (!noHistory) addSearchHistory(req.userId!, q);
     const payload = await search(q, String(req.query.filter || 'all'), { userId: req.userId! });
     res.json(payload);
-    const firstId =
-      (payload as { songs?: Array<{ id?: string }>; topResult?: { id?: string } })?.songs?.[0]?.id ||
-      (payload as { topResult?: { id?: string } })?.topResult?.id;
-    if (firstId && /^[a-zA-Z0-9_-]{11}$/.test(firstId)) {
-      replaceSearchWarm([firstId], req.userId!);
+    const songs =
+      (payload as { songs?: Array<{ id?: string }>; topResult?: { id?: string } })?.songs || [];
+    const warmIds = [
+      (payload as { topResult?: { id?: string } })?.topResult?.id,
+      ...songs.map((s) => s.id),
+    ].filter((id): id is string => typeof id === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(id));
+    if (warmIds.length) {
+      const uniq = [...new Set(warmIds)];
+      replaceSearchWarm(uniq.slice(0, 20), req.userId!);
+      ensurePlayableQueueAhead(uniq.slice(0, 20), { userId: req.userId! });
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -2848,6 +2854,10 @@ app.get('/api/stream/:id', (req, res, next) => {
 app.post('/api/download/:id', accountRequired, async (req, res) => {
   try {
     const id = p(req.params.id);
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) {
+      res.status(400).json({ error: 'ID invalide' });
+      return;
+    }
     // Client mobile a déjà le fichier local : ack rapide sans re-télécharger via yt-dlp
     if (String(req.query.ack || req.body?.ack || '') === '1') {
       markDownloaded(req.userId!, id);
@@ -2883,6 +2893,19 @@ app.get('/api/library/contains', accountRequired, (req, res) => {
   }
 });
 
+function librarySongIds(lib: { songs?: Array<{ id?: string }>; liked?: Array<{ id?: string }>; history?: Array<{ id?: string }> }): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of [...(lib.songs || []), ...(lib.liked || []), ...(lib.history || [])]) {
+    const id = String(t?.id || '');
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 /**
  * Têtes Aléatoire biblio (~100 ids) — rotation ~30 min / compte.
  * Warm serveur lancé en fond ; client Android = warm léger de ce batch seulement.
@@ -2893,6 +2916,9 @@ app.get('/api/library/shuffle-heads', accountRequired, (req, res) => {
     const scope = String(req.query.scope || 'all') === 'recent' ? 'recent' : 'all';
     const result = getShuffleHeads(req.userId!, { warm, scope });
     res.json(result);
+    if (warm && result.ids?.length) {
+      ensurePlayableQueueAhead(result.ids.slice(0, 20), { userId: req.userId! });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2904,6 +2930,9 @@ app.post('/api/library/shuffle-heads/refresh', accountRequired, (req, res) => {
     const scope = String(req.query.scope || req.body?.scope || 'all') === 'recent' ? 'recent' : 'all';
     const result = getShuffleHeads(req.userId!, { warm: true, scope });
     res.json(result);
+    if (result.ids?.length) {
+      ensurePlayableQueueAhead(result.ids.slice(0, 20), { userId: req.userId! });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2918,7 +2947,11 @@ app.get('/api/library/list-heads', accountRequired, (req, res) => {
     const raw = String(req.query.scope || 'az');
     const scope = raw === 'recent' || raw === 'liked' ? raw : 'az';
     const warm = String(req.query.warm || '1') !== '0';
-    res.json(getListHeads(req.userId!, scope, { warm }));
+    const heads = getListHeads(req.userId!, scope, { warm });
+    res.json(heads);
+    if (warm && heads.ids?.length) {
+      ensurePlayableQueueAhead(heads.ids.slice(0, 20), { userId: req.userId! });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2928,7 +2961,11 @@ app.post('/api/library/list-heads', accountRequired, (req, res) => {
   try {
     const raw = (req.body as { ids?: unknown } | undefined)?.ids;
     const ids = Array.isArray(raw) ? raw.map((x) => String(x)) : [];
-    res.json(rememberVisibleListHeads(req.userId!, ids));
+    const remembered = rememberVisibleListHeads(req.userId!, ids);
+    res.json(remembered);
+    if (remembered.ids?.length) {
+      ensurePlayableQueueAhead(remembered.ids.slice(0, 20), { userId: req.userId! });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2940,10 +2977,12 @@ app.get('/api/library', accountRequired, async (req, res) => {
     const light = String(req.query.light || '') === '1';
     if (light) {
       const lim = Math.max(10, Math.min(40, Number(req.query.limit) || 12));
-      res.json(getLibraryLight(req.userId!, lim));
+      const lightLib = getLibraryLight(req.userId!, lim);
+      res.json(lightLib);
       scheduleLibraryRepair(req.userId!);
       scheduleUserTasteWarm(req.userId!, [], { disk: 8 });
       warmUserListHeads(req.userId!);
+      ensurePlayableQueueAhead(librarySongIds(lightLib), { userId: req.userId! });
       return;
     }
     // Réponse immédiate — repair méta / albums en fond (E4 : ne plus bloquer 2–3 s)
@@ -2952,6 +2991,7 @@ app.get('/api/library', accountRequired, async (req, res) => {
     scheduleLibraryRepair(req.userId!);
     scheduleUserTasteWarm(req.userId!, [], { disk: 8 });
     warmUserListHeads(req.userId!);
+    ensurePlayableQueueAhead(librarySongIds(library), { userId: req.userId! });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

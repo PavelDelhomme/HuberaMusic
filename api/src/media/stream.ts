@@ -780,6 +780,55 @@ async function pipeDiskFile(
   return true;
 }
 
+/**
+ * Début de piste seulement : même morceau, autre videoId (disque ou 302).
+ * Jamais mid-Range — ça couperait un titre qui joue.
+ */
+async function tryServeCoherentReplacement(
+  req: Request,
+  res: Response,
+  videoId: string,
+  userId?: string,
+): Promise<boolean> {
+  if (res.headersSent) return true;
+  const rangeStart = (() => {
+    const m = /bytes=(\d+)/.exec(String(req.headers.range || ''));
+    return m ? Number(m[1]) : 0;
+  })();
+  if (rangeStart >= 2048) return false;
+  const serve = async (id: string): Promise<boolean> => {
+    if (!id || id === videoId || !/^[a-zA-Z0-9_-]{11}$/.test(id)) return false;
+    const p = cachePath(id);
+    if (
+      (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) &&
+      !isDashBrandFile(p)
+    ) {
+      res.setHeader('X-PLM-Replaced-From', videoId);
+      return pipeDiskFile(req, res, p, id, 'replacement-disk');
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-PLM-Replaced-From', videoId);
+    res.redirect(302, streamPathFor(req, id));
+    return true;
+  };
+  const known = getReplacementId(videoId);
+  if (known && (await serve(known))) return true;
+  try {
+    const found = await Promise.race([
+      findReplacementId(videoId, { userId }),
+      new Promise<string | null>((r) => setTimeout(() => r(null), 2_000)),
+    ]);
+    if (found && found !== videoId) {
+      enqueueStreamWarm([found], userId);
+      enqueueDiskWarm([found]);
+      return serve(found);
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 async function pipeUserUploadFile(
   req: Request,
   res: Response,
@@ -1710,6 +1759,24 @@ export async function handleStream(req: Request, res: Response) {
             /* 302 ci-dessous */
           }
         }
+        enqueueStreamWarm([mapped], userId);
+        enqueueDiskWarm([mapped]);
+        enqueueNextDiskWarm([mapped]);
+        downloadTrack(mapped, {
+          progressiveOnly: true,
+          preferProxies: true,
+          userId,
+          live: true,
+        }).catch(() => {});
+        const readyMapped = await waitUntilDiskServable(
+          mapped,
+          isAndroidClient(req) ? 4_000 : 2_500,
+        );
+        if (readyMapped) {
+          res.setHeader('X-PLM-Replaced-From', videoId);
+          await pipeDiskFile(req, res, readyMapped, mapped, 'replacement-wait');
+          return;
+        }
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('X-PLM-Replaced-From', videoId);
         res.redirect(302, streamPathFor(req, mapped));
@@ -1728,6 +1795,23 @@ export async function handleStream(req: Request, res: Response) {
   }
   // Lecture réelle : cet id passe devant le batch warm (évite 22 s derrière +2/+3).
   bumpWarmPriority(videoId);
+  if (
+    String(req.query.type || req.query.media || '') !== 'video' &&
+    isAndroidClient(req) &&
+    !getReplacementId(videoId)
+  ) {
+    // En parallèle du format : préparer un id de remplacement pour N’IMPORTE quel titre,
+    // pas seulement ceux déjà marqués « unavailable ».
+    void findReplacementId(videoId, { userId: (req as any).userId })
+      .then((id) => {
+        if (id && id !== videoId) {
+          enqueueStreamWarm([id], (req as any).userId);
+          enqueueDiskWarm([id]);
+          enqueueNextDiskWarm([id]);
+        }
+      })
+      .catch(() => {});
+  }
 
   const wantOfflineEarly =
     String(req.query.offline || '') === '1' ||
@@ -2299,12 +2383,12 @@ export async function handleStream(req: Request, res: Response) {
       // Avant 28–35 s : sous charge (Nothing+prefetch) chaque titre brûlait
       // 35 s maison AVANT le VPS → timeouts client 40 s / stalls / skip auto.
       const proxyTimeoutMs = skipHomeForOpenAndroid
-        ? 22_000
+        ? 8_000
         : midNeedsDisk
           ? 14_000
           : 28_000;
       const firstByteMs = skipHomeForOpenAndroid
-        ? 10_000
+        ? 3_500
         : midNeedsDisk
           ? 8_000
           : 12_000;
@@ -2322,14 +2406,14 @@ export async function handleStream(req: Request, res: Response) {
         const fb = softFailHome
           ? 2_000
           : skipHomeForOpenAndroid
-            ? 10_000
+            ? 3_500
             : midNeedsDisk
               ? 8_000
               : 12_000;
         const pt = softFailHome
           ? 8_000
           : skipHomeForOpenAndroid
-            ? 22_000
+            ? 8_000
             : midNeedsDisk
               ? 14_000
               : 28_000;
@@ -2413,7 +2497,10 @@ export async function handleStream(req: Request, res: Response) {
             retryN,
             live: true,
           });
-          const diskP = waitUntilDiskServable(videoId, 18_000);
+          const diskP = waitUntilDiskServable(
+            videoId,
+            isAndroidClient(req) && !midNeedsDisk ? 4_000 : 18_000,
+          );
           const winner = await Promise.race([
             fmtP
               .then((f) => ({ k: 'fmt' as const, f }))
@@ -2634,10 +2721,13 @@ export async function handleStream(req: Request, res: Response) {
       if (rs < 2048 && !formatCircuitOpen(videoId)) {
         const late = await waitUntilDiskServable(
           videoId,
-          isAndroidClient(req) ? 12_000 : 4_000,
+          isAndroidClient(req) ? 2_500 : 4_000,
         );
         if (late) {
           await pipeDiskFile(req, res, late, videoId, 'disk-after-format');
+          return;
+        }
+        if (isAndroidClient(req) && (await tryServeCoherentReplacement(req, res, videoId, (req as any).userId))) {
           return;
         }
         // Timeout format ≠ circuit 410 (YouTube bloque, hedge encore possible).
@@ -2859,6 +2949,11 @@ export async function handleStream(req: Request, res: Response) {
     if (!res.headersSent) {
       const detail = String(err);
       console.warn('[stream] all backends KO:', String((err as Error).message || err).slice(0, 160));
+      const uid = (req as any).userId as string | undefined;
+      // Timeout / 502 en début de piste : même morceau, autre id (pas seulement « video unavailable »).
+      if (!wantVideo && (await tryServeCoherentReplacement(req, res, videoId, uid))) {
+        return;
+      }
       // Remplacement UNIQUEMENT si la vidéo est vraiment morte — un timeout
       // proxy/yt-dlp ne doit pas 302 vers une autre piste (coupe mid-titre).
       if (!wantVideo && looksUnavailable(detail)) {
@@ -3168,7 +3263,8 @@ export function enqueueNextDiskWarm(ids: string[]) {
       likesDiskWarmQueue.splice(li, 1);
       likesDiskWarmQueued.delete(id);
     }
-    if (nextDiskWarmQueue.length >= 12) break;
+    const cap = isPlaybackHot(90_000) ? 8 : 24;
+    if (nextDiskWarmQueue.length >= cap) break;
     nextDiskWarmQueued.add(id);
     nextDiskWarmQueue.push(id);
   }
@@ -3268,7 +3364,7 @@ export function enqueueSearchWarm(ids: string[], userId?: string) {
     } catch {
       /* continue */
     }
-    if (searchWarmQueue.length >= 2) break;
+    if (searchWarmQueue.length >= 12) break;
     searchWarmQueued.add(id);
     searchWarmQueue.push(id);
   }
@@ -3787,6 +3883,9 @@ export async function downloadTrack(
     live?: boolean;
   },
 ): Promise<string> {
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    throw new Error('ID invalide');
+  }
   ensureCache();
   const out = cachePath(videoId);
   if (opts?.progressiveOnly) purgeDashCache(videoId);
