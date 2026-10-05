@@ -2299,7 +2299,7 @@ class PlaybackService : MediaSessionService() {
         if (serviceFillInFlight) return
         val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
         val remaining = (exo.mediaItemCount - idx - 1).coerceAtLeast(0)
-        if (remaining >= 6) return
+        if (remaining >= 8) return
         if (Holder.extendUserQueue() > 0) return
         fillAutoplayFromService(advanceAfterFill = false)
     }
@@ -2329,7 +2329,7 @@ class PlaybackService : MediaSessionService() {
                     return@launch
                 }
                 val existing = Holder.queue.map { it.id }.toHashSet()
-                val toAdd = tracks.filter { it.isMusicTrack() && it.id !in existing }.take(12)
+                val toAdd = tracks.filter { it.isMusicTrack() && it.id !in existing }.take(16)
                 if (toAdd.isEmpty()) return@launch
                 val base = { id: String -> container.remoteStreamUrl(id) }
                 withContext(Dispatchers.Main.immediate) {

@@ -52,11 +52,11 @@ object StreamPrefetcher {
     private const val HEAD_NEXT_METERED = 1_600 * 1024L
 
     /** Batch POST /api/stream/warm — courant + 3 suivants. */
-    private const val MAX_WARM = 4
-    /** Fenêtre glissante : au moins 3 devant, 1 de marge au 4ᵉ skip. */
-    private const val AHEAD_WIFI = 4
-    private const val AHEAD_BUFFER = 6
-    private const val AHEAD_METERED = 3
+    private const val MAX_WARM = 6
+    /** Fenêtre glissante : 6 devant pour l’enchaînement auto « à suivre ». */
+    private const val AHEAD_WIFI = 6
+    private const val AHEAD_BUFFER = 8
+    private const val AHEAD_METERED = 4
     /** Déjà passés : skip 1→4 puis retour au 1er sans tout recharger. */
     private const val BEHIND_WIFI = 4
     private const val BEHIND_METERED = 3

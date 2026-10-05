@@ -1030,15 +1030,28 @@ function agentForProxy(proxyUrl: string): https.Agent {
     });
     connectReq.setTimeout(5_000, () => {
       connectReq.destroy();
+      proxyAgents.delete(proxyUrl);
+      markYoutubeProxyFailure(proxyUrl, 'tcp');
       fail(new Error('proxy CONNECT timeout'));
     });
-    connectReq.on('error', (err) => fail(err instanceof Error ? err : new Error(String(err))));
+    connectReq.on('error', (err) => {
+      proxyAgents.delete(proxyUrl);
+      markYoutubeProxyFailure(proxyUrl, 'tcp');
+      fail(err instanceof Error ? err : new Error(String(err)));
+    });
     connectReq.on('connect', (res, socket) => {
       if ((res.statusCode || 0) !== 200) {
         try {
           socket.destroy();
         } catch {
           /* ignore */
+        }
+        proxyAgents.delete(proxyUrl);
+        markYoutubeProxyFailure(proxyUrl, 'tcp');
+        if (res.statusCode === 407 || res.statusCode === 403 || res.statusCode === 502) {
+          const e = ensureEntry(proxyUrl);
+          e.deadUntil = Date.now() + 30 * 60_000;
+          dropFromPool(proxyUrl);
         }
         fail(new Error(`proxy CONNECT ${res.statusCode}`));
         return;

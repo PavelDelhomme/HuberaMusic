@@ -2,6 +2,17 @@
   "updatedAt": "2026-10-05",
   "versions": [
     {
+      "version": "1.3.349",
+      "date": "2026-10-05",
+      "time": "20:20",
+      "at": "2026-10-05T20:20:00+02:00",
+      "title": "Enchaînement auto : 6 titres d’avance, relais si un son bloque",
+      "notes": [
+        "Le lecteur prépare 6 titres devant (au lieu de 4) pour l’auto-avance « à suivre », et change de relais si un titre froid reste coincé. abcdefu / titres qui chargeaient sans partir sont retentés au lieu de rester en BUFFERING.",
+        "Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
       "version": "1.3.348",
       "date": "2026-10-05",
       "time": "19:20",
