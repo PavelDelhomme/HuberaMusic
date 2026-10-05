@@ -8,6 +8,7 @@ import { enqueueListHeadWarm } from '../media/stream.js';
 
 const HEAD_N = Math.max(10, Math.min(24, Number(process.env.LIST_HEAD_N || 20) || 20));
 const TTL_MS = 12 * 60_000;
+const PLAYED_48H_MS = 48 * 60 * 60 * 1000;
 
 type CacheEntry = { ids: string[]; at: number };
 const mem = new Map<string, CacheEntry>();
@@ -52,6 +53,24 @@ function likedIds(userId: string, n: number): string[] {
          LIMIT ?`,
       )
       .all(userId, n) as { track_id: string }[];
+    return rows.map((r) => r.track_id).filter(validId);
+  } catch {
+    return [];
+  }
+}
+
+/** Titres déjà écoutés (téléphone / autre) dans les 48 dernières heures. */
+function played48hIds(userId: string, n: number): string[] {
+  const since = Date.now() - PLAYED_48H_MS;
+  try {
+    const rows = db
+      .prepare(
+        `SELECT track_id FROM history
+         WHERE user_id = ? AND played_at > ?
+         ORDER BY played_at DESC
+         LIMIT ?`,
+      )
+      .all(userId, since, n) as { track_id: string }[];
     return rows.map((r) => r.track_id).filter(validId);
   } catch {
     return [];
@@ -121,13 +140,14 @@ export function rememberVisibleListHeads(userId: string, ids: string[]): ListHea
   return { ids: clean, scope: 'visible', headN: HEAD_N };
 }
 
-/** Au GET biblio : A–Z (Tout lire Titres) + récents (Tout lire Ajouts). */
+/** Au GET biblio : A–Z + récents + aimés + écoutés 48 h. */
 export function warmUserListHeads(userId: string): void {
   setTimeout(() => {
     try {
       getListHeads(userId, 'az', { warm: true });
       getListHeads(userId, 'recent', { warm: true });
       getListHeads(userId, 'liked', { warm: true });
+      enqueueListHeadWarm(played48hIds(userId, 40), { front: true });
     } catch {
       /* ignore */
     }

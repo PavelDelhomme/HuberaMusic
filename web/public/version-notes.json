@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-05",
   "versions": [
     {
+      "version": "1.3.350",
+      "date": "2026-10-05",
+      "time": "20:50",
+      "at": "2026-10-05T20:50:00+02:00",
+      "title": "Enregistré récemment : les premières secondes déjà sur le serveur",
+      "notes": [
+        "Les titres enregistrés récemment, déjà écoutés (48 h) ou ajoutés en « lire ensuite » gardent leurs premières secondes sur le serveur, même pendant une autre écoute. Changement de relais automatique sans couper le son en cours. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
       "version": "1.3.349",
       "date": "2026-10-05",
       "time": "20:20",

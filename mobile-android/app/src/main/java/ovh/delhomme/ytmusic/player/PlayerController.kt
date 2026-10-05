@@ -1638,14 +1638,11 @@ class PlayerController(
     /** Insère plusieurs titres juste après le courant (ordre conservé). */
     fun playNextMany(tracks: List<TrackDto>) {
         val playable = tracks.filter { it.isPlayable() }
+        val base = PlaybackService.Holder.resolvedApiBase()
+        StreamPrefetcher.prefetchUserQueuedHeads(base, playable.map { it.id }, asNext = true)
         playable.asReversed().forEach { playNext(it) }
-        // Re-priorise le vrai +1 (premier de la liste) après les inserts inversés.
         playable.firstOrNull()?.let { first ->
-            StreamPrefetcher.prefetchUserQueuedHead(
-                PlaybackService.Holder.resolvedApiBase(),
-                first.id,
-                asNext = true,
-            )
+            StreamPrefetcher.prefetchUserQueuedHead(base, first.id, asNext = true)
         }
     }
 
@@ -1674,18 +1671,15 @@ class PlayerController(
     fun addManyToQueue(tracks: List<TrackDto>) {
         val playable = tracks.filter { it.isPlayable() }
         if (playable.isEmpty()) return
+        val base = PlaybackService.Holder.resolvedApiBase()
+        StreamPrefetcher.prefetchUserQueuedHeads(base, playable.map { it.id }, asNext = true)
         playable.forEach { addToQueue(it) }
-        // Dernier ajout = priorité utilisateur « encore et encore »
         playable.lastOrNull()?.let { last ->
             val c = player()
             val idx = c?.currentMediaItemIndex ?: -1
             val q = PlaybackService.Holder.queue
             val pos = q.indexOfLast { it.id == last.id }
-            StreamPrefetcher.prefetchUserQueuedHead(
-                PlaybackService.Holder.resolvedApiBase(),
-                last.id,
-                asNext = pos == idx + 1,
-            )
+            StreamPrefetcher.prefetchUserQueuedHead(base, last.id, asNext = pos == idx + 1)
         }
     }
 

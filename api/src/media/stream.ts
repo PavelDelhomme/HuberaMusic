@@ -232,8 +232,11 @@ async function fetchGooglevideo(
     }
     try {
       return await tryOnce(opts.boundProxy);
-    } catch {
-      /* rotate ci-dessous */
+    } catch (err) {
+      markYoutubeProxyFailure(opts.boundProxy, 'gv');
+      // URL googlevideo liée à l’IP du relais mort : ne pas retenter la même URL
+      // sur 8 autres proxies (403 × 8 = >5 s). Le caller re-résout le format.
+      throw err instanceof Error ? err : new Error(String(err));
     }
   }
 
@@ -1024,7 +1027,7 @@ async function isHomeUpstreamReachable(homeBase: string): Promise<boolean> {
   }
   try {
     const r = await fetch(`${base}/api/health`, {
-      signal: AbortSignal.timeout(1_400),
+      signal: AbortSignal.timeout(700),
       headers: { Accept: 'application/json' },
     });
     const ok = r.ok;
@@ -1665,6 +1668,19 @@ export async function handleStream(req: Request, res: Response) {
   }
   watchStreamRequest(req, res, videoId);
 
+  // Tête RAM tout de suite (titre déjà écouté / préchauffé) — avant wait / maison / yt-dlp.
+  {
+    const wantVideoTop = String(req.query.type || req.query.media || '') === 'video';
+    const rangeTop = String(req.headers.range || '');
+    const startTop = (() => {
+      const m = /bytes=(\d+)/.exec(rangeTop);
+      return m ? Number(m[1]) : 0;
+    })();
+    if (!wantVideoTop && (!rangeTop || startTop < 2048) && tryServeRamHead(req, res, videoId)) {
+      return;
+    }
+  }
+
   const clientTitle = String(req.query.title || '').trim();
   const clientArtist = String(req.query.artist || '').trim();
   const clientDurationSec = Number(req.query.duration || req.query.durationSec || 0) || undefined;
@@ -2287,8 +2303,8 @@ export async function handleStream(req: Request, res: Response) {
         }
       })();
       const incomplete = downloadInflight.has(videoId);
-      // Un préfixe hedge 256 Ko n’est pas « mort » — le jeter = BUFFERING Samsung.
-      if (size > 0 && size < 256 * 1024 && !incomplete) {
+      // Un préfixe 64–512 Ko est jouable (tête biblio). < 64 Ko sans download = cadavre.
+      if (size > 0 && size < 64 * 1024 && !incomplete) {
         try {
           unlinkSync(cached);
           console.warn(`[stream] purge partiel mort ${videoId} (${size} o)`);
@@ -2650,7 +2666,34 @@ export async function handleStream(req: Request, res: Response) {
       }
       const rangeHdr = req.headers.range ? String(req.headers.range) : undefined;
       const gvOpts = { preferProxies, boundProxy: format.viaProxy, userId: streamUserId };
-      let upstream = await withDeadline('fetchGV', fetchGooglevideo(format.url, rangeHdr, gvOpts));
+      let upstream: globalThis.Response;
+      try {
+        upstream = await withDeadline('fetchGV', fetchGooglevideo(format.url, rangeHdr, gvOpts));
+      } catch {
+        invalidateAudioFormat(videoId);
+        invalidateVideoFormat(videoId);
+        invalidateStreamHead(videoId);
+        format = wantVideo
+          ? await withDeadline('getVideoFormat2e', getVideoFormat(videoId), 18_000)
+          : await withDeadline(
+              'getAudioFormat2e',
+              getAudioFormatViaYtDlpOnly(videoId, {
+                live: true,
+                preferProxies: true,
+                userId: streamUserId,
+              }),
+              12_000,
+            );
+        if (!format.url) throw new Error('upstream audio rotate');
+        upstream = await withDeadline(
+          'fetchGV-rotate',
+          fetchGooglevideo(format.url, rangeHdr, {
+            preferProxies,
+            boundProxy: format.viaProxy,
+            userId: streamUserId,
+          }),
+        );
+      }
       // URL morte / anti-bot → invalide le cache format et retente 1× avant fallbacks
       if (upstream.status === 403 || upstream.status === 401 || upstream.status === 404) {
         invalidateAudioFormat(videoId);
@@ -3276,7 +3319,7 @@ async function runDiskWarmWorker() {
   try {
     while (
       nextDiskWarmQueue.length ||
-      (!isPlaybackHot(90_000) && listHeadWarmQueue.length) ||
+      listHeadWarmQueue.length ||
       (!isPlaybackHot(90_000) && libPrefixWarmQueue.length) ||
       searchWarmQueue.length ||
       likesDiskWarmQueue.length ||
@@ -3294,7 +3337,9 @@ async function runDiskWarmWorker() {
         await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 200 : 120));
         continue;
       }
-      const listId = isPlaybackHot(90_000) ? undefined : listHeadWarmQueue.shift();
+      // Têtes « Enregistré récemment » / lire ensuite : même pendant une écoute
+      // (préfixe 256 Ko, 1 slot). Sinon les ajouts récents restent froids > 5 s.
+      const listId = listHeadWarmQueue.shift();
       if (listId) {
         listHeadWarmQueued.delete(listId);
         try {
@@ -3302,7 +3347,7 @@ async function runDiskWarmWorker() {
         } catch {
           /* best-effort */
         }
-        await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 280 : 140));
+        await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 220 : 140));
         continue;
       }
       const prefixId = isPlaybackHot(90_000) ? undefined : libPrefixWarmQueue.shift();
@@ -3698,6 +3743,7 @@ export async function handleStreamWarm(req: Request, res: Response) {
     String(req.query.wait || req.body?.wait || '') === '1' ||
     String(req.query.wait || req.body?.wait || '') === 'true';
   if (wait) {
+    enqueueListHeadWarm(ids.slice(0, 24), { front: true });
     const results = await Promise.allSettled(
       ids.map((id: string) => getAudioFormat(id, { userId: uid })),
     );
@@ -3713,19 +3759,16 @@ export async function handleStreamWarm(req: Request, res: Response) {
     );
     return;
   }
-  enqueueStreamWarm(ids.slice(0, isPlaybackHot(90_000) ? 4 : ids.length), uid);
+  enqueueStreamWarm(ids.slice(0, isPlaybackHot(90_000) ? 8 : ids.length), uid);
+  enqueueListHeadWarm(ids.slice(0, 24), { front: true });
+  enqueueNextDiskWarm(ids.slice(0, isPlaybackHot(90_000) ? 6 : ids.length));
   if (!isPlaybackHot(90_000)) {
-    enqueueNextDiskWarm(ids);
-    enqueueListHeadWarm(ids, { front: true });
     try {
       const { ensurePlayableQueueAhead } = await import('./ensurePlayable.js');
       ensurePlayableQueueAhead(ids, { userId: uid });
     } catch {
       /* ignore */
     }
-  } else {
-    enqueueNextDiskWarm(ids.slice(0, 4));
-    enqueueListHeadWarm(ids.slice(0, 4), { front: true });
   }
   res.json({
     ok: true,

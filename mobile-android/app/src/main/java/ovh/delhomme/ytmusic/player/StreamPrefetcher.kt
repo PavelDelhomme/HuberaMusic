@@ -624,6 +624,24 @@ object StreamPrefetcher {
         }
     }
 
+    /**
+     * Album / single / « lire ensuite » : une POST warm pour toute la liste,
+     * puis les premières secondes de chaque titre (cap 16).
+     */
+    fun prefetchUserQueuedHeads(
+        baseApi: String,
+        trackIds: List<String>,
+        asNext: Boolean = false,
+    ) {
+        val ids = trackIds.filter { it.length == 11 && !isLocalOffline(it) }.distinct().take(24)
+        if (ids.isEmpty() || isStreamDown()) return
+        if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        warmBatch(baseApi, ids)
+        ids.take(16).forEachIndexed { i, id ->
+            prefetchUserQueuedHead(baseApi, id, asNext = asNext && i == 0)
+        }
+    }
+
     /** Fenêtre glissante : maintient idx+1…idx+[window] à jour pendant la lecture. */
     fun maintainRollingPrefetch(
         baseApi: String,

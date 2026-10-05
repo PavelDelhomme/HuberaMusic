@@ -152,11 +152,15 @@ fun LibraryScreen(
             .sortedBy { it.title.lowercase() }
             .take(20)
             .map { it.id }
-        val recentIds = lib?.songs.orEmpty()
+        val recentIds = (repo.sorted?.additionsPlayable ?: lib?.songs.orEmpty())
             .filter { it.isPlayable() && it.id.length == 11 }
-            .take(20)
+            .take(24)
             .map { it.id }
-        container.libraryHeadPrefetcher.warmDisplayedList((azIds + recentIds).distinct())
+        val historyIds = lib?.history.orEmpty()
+            .filter { it.isPlayable() && it.id.length == 11 }
+            .take(24)
+            .map { it.id }
+        container.libraryHeadPrefetcher.warmDisplayedList((azIds + recentIds + historyIds).distinct())
     }
 
     // Sync live des DL locaux → filtre Téléchargés (sans republier 14k titres à chaque DL).

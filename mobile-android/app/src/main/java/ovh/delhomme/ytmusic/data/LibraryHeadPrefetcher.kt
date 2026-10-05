@@ -34,6 +34,9 @@ class LibraryHeadPrefetcher(
         scope.launch(Dispatchers.IO) {
             delay(START_DELAY_MS)
             while (true) {
+                // Même pendant une écoute : le VPS doit garder les têtes « récents / 48 h ».
+                runCatching { warmServerRecentHeads() }
+                runCatching { warmServerListHeads(force = false) }
                 if (playerBusy()) {
                     delay(8_000L)
                     continue
@@ -86,9 +89,8 @@ class LibraryHeadPrefetcher(
     /** Warm ciblé « Enregistré récemment » (scope=recent) — ne remplace pas la tête Aléatoire globale. */
     private suspend fun warmServerRecentHeads() {
         if (!NetworkMonitor.isOnline()) return
-        if (playerBusy()) return
         val now = System.currentTimeMillis()
-        if (now - prefs.getLong(KEY_RECENT_FETCH, 0L) < 8 * 60_000L) return
+        if (now - prefs.getLong(KEY_RECENT_FETCH, 0L) < 4 * 60_000L) return
         runCatching { container.ensureFreshToken() }
         val r = runCatching { container.api.shuffleHeads(warm = 1, scope = "recent") }.getOrNull() ?: return
         val ids = r.ids.filter { it.length == 11 }.distinct()
@@ -96,19 +98,18 @@ class LibraryHeadPrefetcher(
         prefs.edit().putLong(KEY_RECENT_FETCH, now).apply()
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
-        StreamPrefetcher.warmFormatsLight(base, ids.take(20), limit = 20)
-        if (!StreamPrefetcher.isQuiet() && !PlaybackService.Holder.isPlaybackActiveSafe()) {
-            StreamPrefetcher.warmHeads3s(base, ids.take(10), limit = 10)
+        StreamPrefetcher.warmFormatsLight(base, ids.take(24), limit = 24)
+        if (!playerBusy()) {
+            StreamPrefetcher.warmHeads3s(base, ids.take(12), limit = 12)
         }
-        AppLog.i("LibHeads", "shuffle-heads recent n=${ids.size} pool=${r.poolSize}")
+        AppLog.i("LibHeads", "shuffle-heads recent n=${ids.size} pool=${r.poolSize} exo=${!playerBusy()}")
     }
 
     /** A–Z / récents / aimés : 20 débuts sur le VPS + têtes téléphone. */
     private suspend fun warmServerListHeads(force: Boolean) {
         if (!NetworkMonitor.isOnline()) return
-        if (playerBusy()) return
         val now = System.currentTimeMillis()
-        if (!force && now - prefs.getLong(KEY_LIST_FETCH, 0L) < 4 * 60_000L) return
+        if (!force && now - prefs.getLong(KEY_LIST_FETCH, 0L) < 3 * 60_000L) return
         runCatching { container.ensureFreshToken() }
         val az = runCatching { container.api.listHeads(warm = 1, scope = "az") }.getOrNull()?.ids.orEmpty()
         val recent = runCatching { container.api.listHeads(warm = 1, scope = "recent") }.getOrNull()?.ids.orEmpty()
@@ -118,9 +119,11 @@ class LibraryHeadPrefetcher(
         prefs.edit().putLong(KEY_LIST_FETCH, now).apply()
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
-        StreamPrefetcher.warmFormatsLight(base, ids.take(20), limit = 20)
-        StreamPrefetcher.warmHeads3s(base, ids.take(16), limit = 16)
-        AppLog.i("LibHeads", "list-heads az=${az.size} recent=${recent.size} liked=${liked.size}")
+        StreamPrefetcher.warmFormatsLight(base, ids.take(24), limit = 24)
+        if (!playerBusy()) {
+            StreamPrefetcher.warmHeads3s(base, ids.take(16), limit = 16)
+        }
+        AppLog.i("LibHeads", "list-heads az=${az.size} recent=${recent.size} liked=${liked.size} exo=${!playerBusy()}")
     }
 
     /**

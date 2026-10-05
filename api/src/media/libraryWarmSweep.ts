@@ -9,6 +9,7 @@
  */
 import { db } from '../library/db.js';
 import { getShuffleHeads } from '../library/shuffleHeads.js';
+import { getListHeads } from '../library/listHeads.js';
 import {
   enqueueStreamWarm,
   enqueueListHeadWarm,
@@ -74,8 +75,18 @@ export async function runLibraryWarmSweepOnce(): Promise<{
   likes: number;
 }> {
   if (isPlaybackHot(120_000)) {
-    console.info('[libraryWarm] skip sweep — lecture en cours');
-    return { users: 0, ids: lastStats.ids, likes: lastStats.likes };
+    // Pas le crawl 14k, mais les têtes « récents / 48 h » restent chaudes.
+    const uids = allUserIds();
+    for (const uid of uids) {
+      try {
+        getListHeads(uid, 'recent', { warm: true });
+        getListHeads(uid, 'liked', { warm: true });
+      } catch {
+        /* un compte */
+      }
+    }
+    console.info(`[libraryWarm] skip full sweep — lecture ; têtes récents users=${uids.length}`);
+    return { users: uids.length, ids: lastStats.ids, likes: lastStats.likes };
   }
   if (running) return { users: 0, ids: lastStats.ids, likes: lastStats.likes };
   running = true;
