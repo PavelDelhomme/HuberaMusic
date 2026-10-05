@@ -103,6 +103,7 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var programmaticAdvance: Boolean = false
     /** Anti double-tap Maps + MediaSession (un clic = un titre). */
     @Volatile private var lastSkipNextAtMs: Long = 0L
+    @Volatile private var lastSkipDeadAtMs: Long = 0L
     private val stallHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var stallRunnable: Runnable? = null
     @Volatile private var bufferingSinceElapsed: Long = 0L
@@ -280,10 +281,14 @@ class PlaybackService : MediaSessionService() {
             val nextId = Holder.queue.getOrNull(exo.currentMediaItemIndex + 1)?.id
             val nextHot = !neverHeard && !nextId.isNullOrBlank() &&
                 StreamPrefetcher.wasHeadReadyRecently(nextId, withinMs = 120_000L)
-            // Titre jamais écouté (reprise app) : ne pas raccourcir parce que +1 est chaud.
+            val upcomingHot = (1..3).any { d ->
+                val id = Holder.queue.getOrNull(exo.currentMediaItemIndex + d)?.id
+                !id.isNullOrBlank() && StreamPrefetcher.hasPlayableHead(id, 280L * 1024L)
+            }
+            // Titre jamais écouté : 5 s si un des 3 suivants est prêt, sinon 18 s (plus 55 s).
             val coldGraceMs = when {
-                // yt-dlp anti-DASH ~28 s ; un rebind à 32 s tuait l’URL en vol (Triste / Nothing).
-                neverHeard -> 55_000L
+                neverHeard && upcomingHot -> 5_000L
+                neverHeard -> 18_000L
                 headWarmed -> 12_000L
                 nextHot -> 10_000L
                 else -> 14_000L
@@ -319,12 +324,19 @@ class PlaybackService : MediaSessionService() {
             val stuckHard =
                 samePos &&
                     (
-                        // Cold mort (410 / format timeout) : skip vite, pas 7×16 s de BUFFERING.
-                        (coldStuck && neverHeard && stallSessionCount >= 5) ||
-                            (coldStuck && !neverHeard && stallSessionCount >= 3) ||
-                            (!coldStuck && stallSessionCount >= 3)
+                        (coldStuck && neverHeard && upcomingHot && stallSessionCount >= 2) ||
+                            (coldStuck && neverHeard && stallSessionCount >= 4) ||
+                            (coldStuck && !neverHeard && stallSessionCount >= 5) ||
+                            (!coldStuck && stallSessionCount >= 4)
                     )
             if (stuckHard) {
+                val nowDead = android.os.SystemClock.elapsedRealtime()
+                if (nowDead - lastSkipDeadAtMs < 12_000L) {
+                    AppLog.w("PlaybackService", "stall skipDead cooldown id=$curId")
+                    armStallWatch(exo)
+                    return@Runnable
+                }
+                lastSkipDeadAtMs = nowDead
                 AppLog.w(
                     "PlaybackService",
                     "stall-buffer give-up → next id=$curId pos=$pos " +
@@ -358,7 +370,7 @@ class PlaybackService : MediaSessionService() {
             }
             // Titre froid : ne pas rebind/télémetrie au 1er tick après la grâce
             // (incrémenter + rebind relançait /url et stream-heal).
-            if (neverHeard && stallSessionCount <= 1 && waited < 70_000L) {
+            if (neverHeard && stallSessionCount <= 1 && waited < (if (upcomingHot) 8_000L else 20_000L)) {
                 stallSessionCount = (stallSessionCount - 1).coerceAtLeast(0)
                 stallRebindCount = (stallRebindCount - 1).coerceAtLeast(0)
                 AppLog.i(
@@ -664,7 +676,9 @@ class PlaybackService : MediaSessionService() {
                     val idx = player.currentMediaItemIndex
                     if (api.isNotBlank() && q.isNotEmpty() && idx in q.indices) {
                         Thread {
-                            StreamPrefetcher.prefetchByProximity(api, q.map { it.id }, idx)
+                            val ids = q.map { it.id }
+                            StreamPrefetcher.prefetchByProximity(api, ids, idx, ahead = 4, force = false)
+                            StreamPrefetcher.prefetchNextDuringPlayback(api, ids, idx, ignoreQuiet = true)
                         }.apply {
                             name = "ytm-proximity-prefetch"
                             isDaemon = true
@@ -795,6 +809,14 @@ class PlaybackService : MediaSessionService() {
                             resolvedApiBase(),
                             ids,
                             idx,
+                            ahead = 4,
+                            force = false,
+                        )
+                        StreamPrefetcher.prefetchNextDuringPlayback(
+                            resolvedApiBase(),
+                            ids,
+                            idx,
+                            ignoreQuiet = false,
                         )
                     }
                 }
@@ -854,6 +876,8 @@ class PlaybackService : MediaSessionService() {
                 resolvedApiBase(),
                 qIds,
                 curIdx,
+                ahead = 4,
+                force = true,
             )
             val curDur = Holder.queue.getOrNull(curIdx)?.durationMsOrNull() ?: 0L
             if (curDur in 1L..90_000L || curDur <= 0L) {
@@ -1175,17 +1199,31 @@ class PlaybackService : MediaSessionService() {
                             "UnknownHost|Unable to resolve host|ECONNRESET|SocketTimeout",
                             RegexOption.IGNORE_CASE,
                         ).containsMatchIn(errBlobEarly)
+                val retrySame =
+                    (httpStatus != null && httpStatus == 503 &&
+                        Regex("STREAM_RETRY|temporairement saturé|Retry-After", RegexOption.IGNORE_CASE)
+                            .containsMatchIn(httpBody)) ||
+                        (httpStatus != null && httpStatus == 503)
                 val coldStart = pos < 8_000L
                 val giveUpStreak = when {
-                    // Titre mort (410 / unavailable) : skip dès le 1er échec confirmé.
                     unavailable -> 1
-                    // 5xx à froid : 1 retry puis suivant — silence 8× = file coincée.
-                    coldStart && httpStatus != null && httpStatus >= 500 -> 2
-                    httpStatus != null && httpStatus >= 500 -> 3
+                    // 503 temporaire : retenter CE titre, ne pas brûler la file.
+                    retrySame -> 10
+                    coldStart && httpStatus != null && httpStatus >= 500 -> 8
+                    httpStatus != null && httpStatus >= 500 -> 5
                     transientNetwork -> Int.MAX_VALUE
-                    else -> 3
+                    else -> 4
                 }
                 if (streak >= giveUpStreak) {
+                    val nowDead = android.os.SystemClock.elapsedRealtime()
+                    if (nowDead - lastSkipDeadAtMs < 12_000L && !unavailable) {
+                        AppLog.w(
+                            "PlaybackService",
+                            "onPlayerError skipDead cooldown — retry same id=$id streak=$streak",
+                        )
+                        streamFailStreak.set((streak - 1).coerceAtLeast(0))
+                    } else {
+                    lastSkipDeadAtMs = nowDead
                     AppLog.w(
                         "PlaybackService",
                         "onPlayerError give-up streak=$streak → next id=$id pos=$pos http=$httpStatus unavailable=$unavailable",
@@ -1214,9 +1252,9 @@ class PlaybackService : MediaSessionService() {
                     cancelStallWatch()
                     clearStallSession()
                     val nextIdx = exo.currentMediaItemIndex + 1
-                    // Silencieux + vrai skip (pas replaceOrAdvance → resolve-keep)
                     runCatching { skipDeadTrackOrAdvance(exo, id, nextIdx) }
                     return
+                    }
                 }
                 val attempt = recoverGen.incrementAndGet()
                 val resumePos = exo.currentPosition.coerceAtLeast(0L)
@@ -1947,10 +1985,16 @@ class PlaybackService : MediaSessionService() {
                 }
                 if (next < exo.mediaItemCount && next != cur) {
                     StreamPrefetcher.markStreamOk()
-                    runCatching { advanceToQueueIndex(exo, next) }
                     val api = resolvedApiBase()
                     val q = Holder.queue.map { it.id }
-                    StreamPrefetcher.prefetchByProximity(api, q, next, ahead = 40, force = true)
+                    val target = StreamPrefetcher.pickReadySkipTarget(
+                        api, q, next, direction = 1, window = 4, timeoutMs = 0L,
+                    )
+                    runCatching { advanceToQueueIndex(exo, target) }
+                    scope.launch(Dispatchers.IO) {
+                        StreamPrefetcher.prefetchByProximity(api, q, target, ahead = 4, force = true)
+                        StreamPrefetcher.prefetchNextDuringPlayback(api, q, target, ignoreQuiet = true)
+                    }
                     return@Runnable
                 }
                 if (exo.repeatMode == Player.REPEAT_MODE_ALL && exo.mediaItemCount > 1) {
@@ -1984,11 +2028,17 @@ class PlaybackService : MediaSessionService() {
                     return@Runnable
                 }
             }
-            runCatching { advanceToQueueIndex(exo, prev) }
             StreamPrefetcher.markStreamOk()
             val api = resolvedApiBase()
             val q = Holder.queue.map { it.id }
-            StreamPrefetcher.prefetchByProximity(api, q, prev, ahead = 20, force = true)
+            val target = StreamPrefetcher.pickReadySkipTarget(
+                api, q, prev, direction = -1, window = 2, timeoutMs = 0L,
+            )
+            runCatching { advanceToQueueIndex(exo, target) }
+            scope.launch(Dispatchers.IO) {
+                StreamPrefetcher.prefetchByProximity(api, q, target, ahead = 4, force = true)
+                StreamPrefetcher.prefetchNextDuringPlayback(api, q, target, ignoreQuiet = true)
+            }
         }
         if (android.os.Looper.myLooper() == mainLooper) run.run() else h.post(run)
     }
@@ -2050,7 +2100,8 @@ class PlaybackService : MediaSessionService() {
         val api = resolvedApiBase()
         val q = Holder.queue.map { it.id }
         val from = nextIdx.coerceIn(0, (q.size - 1).coerceAtLeast(0))
-        StreamPrefetcher.prefetchByProximity(api, q, from, ahead = 40, force = true)
+        StreamPrefetcher.prefetchByProximity(api, q, from, ahead = 4, force = true)
+        StreamPrefetcher.prefetchNextDuringPlayback(api, q, from, ignoreQuiet = true)
         if (track != null) {
             scope.launch {
                 runCatching {
@@ -2559,8 +2610,8 @@ class PlaybackService : MediaSessionService() {
             base,
             queue.map { it.id },
             fromIndex,
-            ahead = 40,
-            behind = 0,
+            ahead = 4,
+            behind = 4,
         )
         CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 6, behind = 0)
         enqueueOfflineAhead(fromIndex)
@@ -2584,6 +2635,8 @@ class PlaybackService : MediaSessionService() {
             resolvedApiBase(),
             ids,
             fromIndex,
+            ahead = 4,
+            force = true,
         )
         CoverPrefetcher.warmCovers(queue, fromIndex, ahead = 2, behind = 0)
     }
@@ -3117,8 +3170,8 @@ private class YtmForwardingPlayer(
         if (queue.isEmpty()) return
         val api = PlaybackService.Holder.resolvedApiBase()
         // Seek notif/UI : +1 fort + fenêtre courte (le rolling tick élargit ensuite)
-        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 3, behind = 0)
-        StreamPrefetcher.prefetchByProximity(api, queue.map { it.id }, index)
+        StreamPrefetcher.warmAround(api, queue.map { it.id }, index, ahead = 4, behind = 4)
+        StreamPrefetcher.prefetchByProximity(api, queue.map { it.id }, index, ahead = 4, force = true)
         CoverPrefetcher.warmCovers(queue, index, ahead = 3, behind = 0)
     }
 
@@ -3164,7 +3217,7 @@ fun ExoPlayer.playTracks(baseStreamUrl: (String) -> String, tracks: List<TrackDt
     PlaybackService.Holder.queue = window
     PlaybackService.Holder.index = idx
     PlaybackService.Holder.rememberFullQueue(playable, loadedUpTo)
-    StreamPrefetcher.quietPrefetch(10_000L)
+    StreamPrefetcher.quietPrefetch(1_800L)
     val current = window.getOrNull(idx)
     if (current != null && current.id.length == 11) {
         StreamPrefetcher.warmTrackFormatOnly(PlaybackService.Holder.resolvedApiBase(), current.id)

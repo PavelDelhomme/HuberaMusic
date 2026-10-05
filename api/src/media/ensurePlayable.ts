@@ -24,7 +24,7 @@ import { findReplacementId, getReplacementId } from './trackReplacement.js';
 /** Fenêtre à pré-vérifier (format + proxy + tête disque) avant que l’utilisateur arrive. */
 export const PREFLIGHT_AHEAD = 20;
 /** .m4a intégral : seulement les tout prochains — 20 téléchargements complets noient yt-dlp. */
-const FULL_DISK_HOT = 4;
+const FULL_DISK_HOT = 3;
 const FULL_DISK_IDLE = 8;
 const VERIFIED_TTL_MS = 30 * 60_000;
 
@@ -211,18 +211,19 @@ export function ensurePlayableQueueAhead(
     ...new Set(ids.filter((id) => /^[a-zA-Z0-9_-]{11}$/.test(id))),
   ].slice(0, 50);
   if (!uniq.length) return;
-  const ahead = uniq.slice(0, PREFLIGHT_AHEAD);
   const hot = isPlaybackHot(90_000);
+  const aheadN = hot ? 4 : PREFLIGHT_AHEAD;
+  const ahead = uniq.slice(0, aheadN);
   const fullN = hot ? FULL_DISK_HOT : FULL_DISK_IDLE;
   enqueueStreamWarm(ahead, opts?.userId);
-  enqueueListHeadWarm(ahead, { front: true });
+  if (!hot) enqueueListHeadWarm(ahead, { front: true });
   enqueueNextDiskWarm(ahead.slice(0, fullN));
-  enqueueLikesDiskWarm(ahead.slice(0, 4));
+  if (!hot) enqueueLikesDiskWarm(ahead.slice(0, 4));
   const [first, ...rest] = ahead;
   if (first) {
     void ensurePlayableOnDisk(first, {
       userId: opts?.userId,
-      waitMs: hot ? 5_000 : 8_000,
+      waitMs: hot ? 0 : 8_000,
       preferProxies: true,
     }).then((r) => {
       if (r?.ok) markVerified(first, r.playId);
@@ -235,7 +236,7 @@ export function ensurePlayableQueueAhead(
       preferProxies: true,
     });
   }
-  enqueuePreflightTwenty(ahead, opts?.userId);
+  if (!hot) enqueuePreflightTwenty(ahead, opts?.userId);
 }
 
 function enqueuePreflightTwenty(ids: string[], userId?: string) {

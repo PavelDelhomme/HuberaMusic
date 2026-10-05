@@ -269,7 +269,6 @@ class LocalOfflineStore(
                     lastError is java.net.SocketTimeoutException ||
                     lastError is java.net.UnknownHostException
             if (infra) {
-                ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(180_000L)
                 partFile(track.id).delete()
                 return@withContext Result.failure(lastError ?: Exception("stream infra"))
             }

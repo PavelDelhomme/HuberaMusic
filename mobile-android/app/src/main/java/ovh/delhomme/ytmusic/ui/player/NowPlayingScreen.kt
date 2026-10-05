@@ -839,6 +839,7 @@ fun NowPlayingScreen(
                                         track = track,
                                         positionMs = ui.positionMs,
                                         durationMs = ui.durationMs,
+                                        playing = ui.playing,
                                         onSeek = { player.seek(it) },
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1000,6 +1001,7 @@ fun NowPlayingScreen(
                                                 track = track,
                                                 positionMs = ui.positionMs,
                                                 durationMs = ui.durationMs,
+                                                playing = ui.playing,
                                                 onSeek = { player.seek(it) },
                                                 modifier = Modifier
                                                     .fillMaxSize()
@@ -3199,6 +3201,7 @@ private fun InlineSyncedLyrics(
     track: TrackDto,
     positionMs: Long,
     durationMs: Long = 0L,
+    playing: Boolean = true,
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -3525,36 +3528,34 @@ private fun InlineSyncedLyrics(
                 modifier = Modifier.padding(top = 24.dp),
             )
             timed.isNotEmpty() -> {
-                val prevLine = if (active > 0) timed[active - 1] else null
-                val currentLine = if (active >= 0) timed[active] else null
-                val nextLine = when {
-                    active < 0 -> timed.firstOrNull()
-                    active < timed.lastIndex -> timed[active + 1]
-                    else -> null
+                val listState = rememberLazyListState()
+                var userBrowsing by remember(track.id) { mutableStateOf(false) }
+                val scrolling = listState.isScrollInProgress
+                LaunchedEffect(scrolling) {
+                    if (scrolling) userBrowsing = true
                 }
-                Column(
+                LaunchedEffect(playing, track.id) {
+                    if (playing) userBrowsing = false
+                }
+                LaunchedEffect(active, playing, userBrowsing, track.id) {
+                    if (!playing || userBrowsing || active < 0 || timed.isEmpty()) return@LaunchedEffect
+                    val target = active.coerceIn(0, timed.lastIndex)
+                    runCatching { listState.animateScrollToItem(target, scrollOffset = -48) }
+                }
+                LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
+                    contentPadding = PaddingValues(vertical = 12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    FocusLyricLine(
-                        text = prevLine?.text,
-                        current = false,
-                        onClick = prevLine?.let { { onSeek(it.startMsLong()) } },
-                        onLongClick = prevLine?.let { { calibrateToLine(it.startMsLong()) } },
-                    )
-                    FocusLyricLine(
-                        text = currentLine?.text,
-                        current = true,
-                        onClick = currentLine?.let { { onSeek(it.startMsLong()) } },
-                        onLongClick = currentLine?.let { { calibrateToLine(it.startMsLong()) } },
-                    )
-                    FocusLyricLine(
-                        text = nextLine?.text,
-                        current = false,
-                        onClick = nextLine?.let { { onSeek(it.startMsLong()) } },
-                        onLongClick = nextLine?.let { { calibrateToLine(it.startMsLong()) } },
-                    )
+                    itemsIndexed(timed, key = { i, line -> "$i-${line.startMsLong()}" }) { i, line ->
+                        FocusLyricLine(
+                            text = line.text,
+                            current = i == active,
+                            onClick = if (playing) ({ onSeek(line.startMsLong()) }) else null,
+                            onLongClick = { calibrateToLine(line.startMsLong()) },
+                        )
+                    }
                 }
             }
             !text.isNullOrBlank() -> {
@@ -3838,10 +3839,13 @@ private fun FocusLyricLine(
             .clip(RoundedCornerShape(12.dp))
             .background(if (current && !text.isNullOrBlank()) SeekRed.copy(alpha = 0.22f) else Color.Transparent)
             .then(
-                if (onClick != null && onLongClick != null) {
-                    Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                } else {
-                    Modifier
+                when {
+                    onClick != null && onLongClick != null ->
+                        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                    onClick != null -> Modifier.clickable(onClick = onClick)
+                    onLongClick != null ->
+                        Modifier.combinedClickable(onClick = {}, onLongClick = onLongClick)
+                    else -> Modifier
                 },
             )
             .padding(horizontal = 10.dp, vertical = if (current) 10.dp else 4.dp),

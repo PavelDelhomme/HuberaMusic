@@ -65,7 +65,7 @@ import {
   saveMix,
   removeMix,
   isMixSaved,
-  saveArtist,
+  saveArtistWithTracks,
   removeArtist,
   createPlaylist,
   updatePlaylist,
@@ -3085,9 +3085,15 @@ app.delete('/api/library/albums/:id', accountRequired, (req, res) => {
   res.json({ ok: true, ...result, library: getFullLibrary(req.userId!) });
 });
 
-app.post('/api/library/artists', accountRequired, (req, res) => {
+app.post('/api/library/artists', accountRequired, async (req, res) => {
   try {
-    res.json({ artist: saveArtist(req.userId!, req.body), library: getFullLibrary(req.userId!) });
+    const result = await saveArtistWithTracks(req.userId!, req.body || {});
+    res.json({
+      artist: result.artist,
+      tracksAdded: result.tracksAdded,
+      tracksTotal: result.tracksTotal,
+      library: getFullLibrary(req.userId!),
+    });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

@@ -338,29 +338,35 @@ class PlayerController(
             StreamPrefetcher.quietPrefetch(
                 when {
                     offlineReady || headReady -> 80L
-                    else -> 12_000L
+                    else -> 1_800L
                 },
             )
             val startId = firstId
             scope.launch {
-                delay(if (offlineReady || headReady) 60L else 8_000L)
+                delay(if (offlineReady || headReady) 60L else 1_200L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
-                // Suivants seulement après que le courant ait vraiment démarré.
                 val pos = player()?.currentPosition ?: 0L
-                if (pos < 1_500L && !headReady && !offlineReady) {
-                    delay(8_000L)
+                if (pos < 800L && !headReady && !offlineReady) {
+                    delay(1_200L)
                     if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 }
-                playable.drop(idx + 1).take(2).forEach { t ->
+                playable.drop(idx + 1).take(3).forEach { t ->
                     StreamPrefetcher.warmTrackFormatOnly(base, t.id)
                 }
                 warmAround(playable, idx)
+                StreamPrefetcher.prefetchByProximity(
+                    base,
+                    playable.map { it.id },
+                    idx,
+                    ahead = 4,
+                    force = true,
+                )
                 StreamPrefetcher.prefetchUpcomingHeadsTiered(
                     base,
                     playable.map { it.id },
                     idx,
                     count = 3,
-                    ignoreQuiet = false,
+                    ignoreQuiet = true,
                 )
             }
         }
@@ -1383,7 +1389,7 @@ class PlayerController(
             if (q.isNotEmpty()) {
                 StreamPrefetcher.cancelIdle(preserveNext = true)
                 if (PlaybackService.Holder.isCurrentStreamLoading()) {
-                    StreamPrefetcher.quietPrefetch(10_000L)
+                    StreamPrefetcher.quietPrefetch(1_800L)
                 }
                 val base = PlaybackService.Holder.resolvedApiBase()
                 if (base.isNotBlank()) {
@@ -1870,42 +1876,42 @@ class PlayerController(
         if (headReady && !currentId.isNullOrBlank()) {
             StreamPrefetcher.markHeadReady(currentId)
         }
-        // Si tête déjà là : quiet court. Sinon kick warm IO immédiat (sans bloquer le UI).
-        // Cold : 25 s de silence LibHeads / prefetch, sinon 16+8 têtes noient yt-dlp
-        // (Triste restait BUFFERING pendant shuffle-heads + format burst).
-        StreamPrefetcher.quietPrefetch(if (headReady && !coldResume) 80L else 25_000L)
+        // Courant d’abord ~1,8 s, puis les 3 suivants (plus de silence 25 s qui laisse le skip à froid).
+        StreamPrefetcher.quietPrefetch(if (headReady && !coldResume) 80L else 1_800L)
         if (!currentId.isNullOrBlank() && (!headReady || coldResume)) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
-            if (!coldResume) {
-                scope.launch(Dispatchers.IO) {
-                    StreamPrefetcher.prepareRestoredCurrent(
-                        base,
-                        currentId,
-                        window.drop(idx + 1).map { it.id },
-                        force = false,
-                    )
-                    if (autoplay) {
-                        window.drop(idx + 1).take(2).forEachIndexed { i, t ->
-                            StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
-                        }
-                    }
+            scope.launch(Dispatchers.IO) {
+                StreamPrefetcher.prepareRestoredCurrent(
+                    base,
+                    currentId,
+                    window.drop(idx + 1).map { it.id },
+                    force = false,
+                )
+                window.drop(idx + 1).take(3).forEachIndexed { i, t ->
+                    StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
                 }
             }
         } else if (!currentId.isNullOrBlank() && headReady) {
-            // Courant chaud : pousser +1/+2 immédiatement (skip sans 10 s)
             scope.launch(Dispatchers.IO) {
-                window.drop(idx + 1).take(2).forEachIndexed { i, t ->
+                window.drop(idx + 1).take(3).forEachIndexed { i, t ->
                     StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
                 }
             }
         }
-        if (autoplay && !coldResume) {
+        if (autoplay) {
             val startId = currentId
             scope.launch {
-                delay(80)
+                delay(if (headReady && !coldResume) 80L else 1_200L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
-                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 3)
+                StreamPrefetcher.prefetchByProximity(
+                    base,
+                    window.map { it.id },
+                    idx,
+                    ahead = 4,
+                    force = true,
+                )
+                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 4)
                 if (!ovh.delhomme.ytmusic.data.BatterySaver.isActive()) {
                     runCatching {
                         YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
@@ -1960,7 +1966,7 @@ class PlayerController(
         val queue = PlaybackService.Holder.queue
         if (queue.isEmpty()) return
         val base = streamUrl("_").substringBefore("/api/stream/")
-        StreamPrefetcher.prefetchByProximity(base, queue.map { it.id }, centerIndex, ahead = 40)
+        StreamPrefetcher.prefetchByProximity(base, queue.map { it.id }, centerIndex, ahead = 4, force = true)
     }
 
     private fun warmAround(tracks: List<TrackDto>, startIndex: Int) {
@@ -1972,8 +1978,8 @@ class PlayerController(
             base,
             playable.map { it.id },
             idx,
-            ahead = 40,
-            behind = 1,
+            ahead = 4,
+            behind = 4,
         )
         CoverPrefetcher.warmCovers(playable, idx, ahead = 3, behind = 1)
     }
@@ -2112,13 +2118,13 @@ class PlayerController(
                         "PlayerController",
                         "buffer stuck cold: on attend le 1er /url id=$trackId (pas de rebind)",
                     )
-                    StreamPrefetcher.quietPrefetch(20_000L)
+                    StreamPrefetcher.quietPrefetch(2_000L)
                     bufferWatchExhaustedId = trackId
                     return@launch
                 }
                 AppLog.i("PlayerController", "buffer stuck → rebind keepCache id=$trackId cold=$coldStart")
                 StreamPrefetcher.markStreamOk()
-                StreamPrefetcher.quietPrefetch(12_000L)
+                StreamPrefetcher.quietPrefetch(2_000L)
                 val title = _state.value.track?.title
                 val artist = _state.value.track?.artistLine()
                 if (!coldStart) {

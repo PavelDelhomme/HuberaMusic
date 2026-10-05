@@ -7,7 +7,7 @@ import {
   updateOfflineJob,
   getFullLibrary,
 } from './library.js';
-import { getAlbum, getPlaylist, getArtist } from '../youtube/yt.js';
+import { getAlbum, getPlaylist, getArtistSongs } from '../youtube/yt.js';
 import { upsertTrack } from './db.js';
 import type { Track } from '../youtube/types.js';
 
@@ -41,7 +41,11 @@ async function downloadMany(userId: string, jobId: string, tracks: Track[]) {
     try {
       await waitIfYtDlpCoolingDown();
       upsertTrack(track);
-      const path = await downloadTrack(track.id);
+      const path = await downloadTrack(track.id, {
+        progressiveOnly: true,
+        preferProxies: true,
+        userId,
+      });
       markDownloaded(userId, track.id, path);
     } catch (err) {
       console.error('offline download fail', track.id, err);
@@ -79,8 +83,8 @@ export async function startOfflineCollection(
       tracks = t;
     }
   } else if (kind === 'artist') {
-    const { songs } = await getArtist(targetId);
-    tracks = songs.slice(0, 30);
+    const { tracks: t } = await getArtistSongs(targetId, { limit: 800 });
+    tracks = t;
   }
 
   const playable = tracks.filter((t) => /^[a-zA-Z0-9_-]{11}$/.test(t.id));

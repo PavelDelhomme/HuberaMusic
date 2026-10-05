@@ -80,7 +80,7 @@ suspend fun playLibraryShuffled(
         )
     // Ne pas cancelAll avant Exo si on a déjà une tête utile
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(400L)
+    StreamPrefetcher.quietPrefetch(2_500L)
     runCatching { container.downloadManager.cancelOpportunistic() }
     if (lead0Hot) {
         StreamPrefetcher.markHeadReady(lead0)
@@ -92,21 +92,21 @@ suspend fun playLibraryShuffled(
     ShuffleHeadStore.rememberPlayed(ctx, shuffled.take(1).map { it.id })
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
-            // Le courant joue : ne pas voler la bande. Ensuite +1, +2… par proximité.
-            kotlinx.coroutines.delay(if (lead0Hot) 800L else 2_800L)
-            StreamPrefetcher.prefetchByProximity(base, shuffled.map { it.id }, 0, ahead = 40, force = true)
+            kotlinx.coroutines.delay(if (lead0Hot) 1_800L else 2_800L)
+            StreamPrefetcher.prefetchByProximity(base, shuffled.map { it.id }, 0, ahead = 4, force = true)
+            StreamPrefetcher.prefetchNextDuringPlayback(base, shuffled.map { it.id }, 0, ignoreQuiet = true)
             if (!lead0Hot) {
                 runCatching { StreamPrefetcher.warmTrackFormatOnly(base, lead0) }
             }
             withTimeoutOrNull(LEAD_WARM_TIMEOUT_MS) {
-                runCatching { StreamPrefetcher.prepareShuffleLead(base, leadIds) }
+                runCatching { StreamPrefetcher.prepareShuffleLead(base, leadIds.take(2)) }
             }
             runCatching {
-                val nextHead = shuffled.drop(1).take(40).map { it.id }
-                StreamPrefetcher.warmFormatsLight(base, nextHead, limit = 40)
+                val nextHead = shuffled.drop(1).take(4).map { it.id }
+                StreamPrefetcher.warmFormatsLight(base, nextHead, limit = 4)
                 val fp = ShuffleHeadStore.fingerprint(playable.take(500))
                 val cacheKey = ShuffleHeadStore.keyFor(sourceKey, fp)
-                ShuffleHeadStore.saveHead(ctx, cacheKey, shuffled.drop(1).take(40).map { it.id })
+                ShuffleHeadStore.saveHead(ctx, cacheKey, nextHead)
             }
             container.libraryHeadPrefetcher.requestSoon("after-shuffle")
         }
@@ -192,19 +192,20 @@ suspend fun playQueueWithLead(
         )
     if (hot) StreamPrefetcher.markHeadReady(lead0)
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(400L)
+    StreamPrefetcher.quietPrefetch(2_500L)
     onPlay(window, localIdx)
     ovh.delhomme.ytmusic.player.PlaybackService.Holder.rememberFullQueue(playable, from + window.size)
-    container.libraryHeadPrefetcher.warmDisplayedList(lead)
+    container.libraryHeadPrefetcher.warmDisplayedList(lead.take(3))
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
             runCatching { container.downloadManager.cancelOpportunistic() }
-            kotlinx.coroutines.delay(if (hot) 800L else 2_800L)
-            StreamPrefetcher.prefetchByProximity(base, window.map { it.id }, localIdx, ahead = 40, force = true)
+            kotlinx.coroutines.delay(if (hot) 1_800L else 2_800L)
+            StreamPrefetcher.prefetchByProximity(base, window.map { it.id }, localIdx, ahead = 4, force = true)
+            StreamPrefetcher.prefetchNextDuringPlayback(base, window.map { it.id }, localIdx, ignoreQuiet = true)
             withTimeoutOrNull(LEAD_WARM_TIMEOUT_MS) {
-                runCatching { StreamPrefetcher.prepareShuffleLead(base, lead.take(3)) }
+                runCatching { StreamPrefetcher.prepareShuffleLead(base, lead.take(2)) }
             }
-            StreamPrefetcher.warmFormatsLight(base, lead.drop(1).take(40), limit = 40)
+            StreamPrefetcher.warmFormatsLight(base, lead.drop(1).take(4), limit = 4)
         }
     }
 }

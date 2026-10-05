@@ -769,6 +769,35 @@ export function saveArtist(userId: string, artist: Record<string, unknown>) {
   return artist;
 }
 
+/**
+ * Enregistre l’artiste ET tout son catalogue dans « Titres » (comme un album).
+ */
+export async function saveArtistWithTracks(
+  userId: string,
+  artist: Record<string, unknown>,
+): Promise<{ artist: Record<string, unknown>; tracksAdded: number; tracksTotal: number }> {
+  const id = String(artist.id || '').trim();
+  if (!id) throw new Error('artist id manquant');
+  const saved = saveArtist(userId, { ...artist, type: 'artist', id });
+  let tracks: Track[] = [];
+  try {
+    const { getArtistSongs } = await import('../youtube/yt.js');
+    const full = await getArtistSongs(id, { limit: 800 });
+    tracks = (full?.tracks || []).filter((t) => t && typeof t === 'object');
+  } catch (err) {
+    console.warn('[saveArtist] getArtistSongs', id, (err as Error).message);
+  }
+  let tracksAdded = 0;
+  for (const raw of tracks) {
+    const t = sanitizeTrack({
+      ...raw,
+      type: raw.type === 'video' ? 'video' : 'song',
+    });
+    if (ensureLibraryTrack(userId, t, { manual: false })) tracksAdded += 1;
+  }
+  return { artist: saved, tracksAdded, tracksTotal: tracks.length };
+}
+
 export function removeArtist(userId: string, artistId: string) {
   db.prepare('DELETE FROM library_artists WHERE user_id = ? AND artist_id = ?').run(userId, artistId);
 }

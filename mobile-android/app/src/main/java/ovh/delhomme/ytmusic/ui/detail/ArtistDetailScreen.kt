@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.LibraryAddCheck
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
@@ -103,6 +104,8 @@ fun ArtistDetailScreen(
     var inLib by remember { mutableStateOf(false) }
     var following by remember { mutableStateOf(false) }
     var radioBusy by remember { mutableStateOf(false) }
+    var libBusy by remember { mutableStateOf(false) }
+    var dlBusy by remember { mutableStateOf(false) }
     var showFullBio by remember { mutableStateOf(false) }
     val listState = rememberSaveable(artistId, saver = LazyListState.Saver) {
         LazyListState()
@@ -262,9 +265,15 @@ fun ArtistDetailScreen(
                                     Button(
                                         onClick = {
                                             scope.launch {
+                                                val catalog = runCatching {
+                                                    container.api.artistSongs(artistId, limit = 800).tracks
+                                                }.getOrNull().orEmpty()
+                                                    .filter { it.isPlayable() }
+                                                    .distinctBy { it.id }
+                                                    .ifEmpty { songs }
                                                 ovh.delhomme.ytmusic.ui.library.playQueueWithLead(
                                                     container,
-                                                    songs,
+                                                    catalog,
                                                     0,
                                                     onPlay,
                                                 )
@@ -279,9 +288,15 @@ fun ArtistDetailScreen(
                                     OutlinedButton(
                                         onClick = {
                                             scope.launch {
+                                                val catalog = runCatching {
+                                                    container.api.artistSongs(artistId, limit = 800).tracks
+                                                }.getOrNull().orEmpty()
+                                                    .filter { it.isPlayable() }
+                                                    .distinctBy { it.id }
+                                                    .ifEmpty { songs }
                                                 ovh.delhomme.ytmusic.ui.library.playLibraryShuffled(
                                                     container,
-                                                    songs,
+                                                    catalog,
                                                     onPlay,
                                                     sourceKey = "artist:$artistId",
                                                 )
@@ -359,6 +374,8 @@ fun ArtistDetailScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = {
+                                        if (libBusy) return@OutlinedButton
+                                        libBusy = true
                                         scope.launch {
                                             runCatching {
                                                 if (inLib) {
@@ -366,7 +383,13 @@ fun ArtistDetailScreen(
                                                     inLib = false
                                                     Toast.makeText(context, "Retiré de la bibliothèque", Toast.LENGTH_SHORT).show()
                                                 } else {
-                                                    container.api.saveArtist(
+                                                    val catalog = runCatching {
+                                                        container.api.artistSongs(artistId, limit = 800).tracks
+                                                    }.getOrNull().orEmpty()
+                                                        .filter { it.isPlayable() }
+                                                        .distinctBy { it.id }
+                                                        .ifEmpty { songs }
+                                                    val saved = container.api.saveArtist(
                                                         TrackDto(
                                                             id = artistId,
                                                             title = name,
@@ -375,13 +398,33 @@ fun ArtistDetailScreen(
                                                         ),
                                                     )
                                                     inLib = true
-                                                    Toast.makeText(context, "Artiste enregistré", Toast.LENGTH_SHORT).show()
+                                                    val added = (saved["tracksAdded"] as? Number)?.toInt()
+                                                        ?: catalog.size
+                                                    Toast.makeText(
+                                                        context,
+                                                        if (added > 0) {
+                                                            "$added titre${if (added > 1) "s" else ""} ajoutés — lecture"
+                                                        } else {
+                                                            "Artiste enregistré — lecture"
+                                                        },
+                                                        Toast.LENGTH_LONG,
+                                                    ).show()
+                                                    if (catalog.isNotEmpty()) {
+                                                        ovh.delhomme.ytmusic.ui.library.playQueueWithLead(
+                                                            container,
+                                                            catalog,
+                                                            0,
+                                                            onPlay,
+                                                        )
+                                                    }
                                                 }
                                             }.onFailure {
                                                 Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
                                             }
+                                            libBusy = false
                                         }
                                     },
+                                    enabled = !libBusy,
                                     modifier = Modifier.weight(1f),
                                 ) {
                                     Icon(
@@ -431,6 +474,38 @@ fun ArtistDetailScreen(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    if (dlBusy) return@OutlinedButton
+                                    dlBusy = true
+                                    scope.launch {
+                                        runCatching {
+                                            val catalog = runCatching {
+                                                container.api.artistSongs(artistId, limit = 800).tracks
+                                            }.getOrNull().orEmpty()
+                                                .filter { it.isPlayable() }
+                                                .distinctBy { it.id }
+                                                .ifEmpty { songs }
+                                            val n = container.downloadManager.enqueueMany(catalog)
+                                            Toast.makeText(
+                                                context,
+                                                if (n > 0) "Téléchargement de $n titres…" else "Déjà en téléchargement",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                        }.onFailure {
+                                            Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                                        }
+                                        dlBusy = false
+                                    }
+                                },
+                                enabled = !dlBusy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Default.Download, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (dlBusy) "Téléchargement…" else "Télécharger tout")
                             }
                         }
                         description?.let { bio ->

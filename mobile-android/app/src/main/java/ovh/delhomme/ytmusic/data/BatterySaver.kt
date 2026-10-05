@@ -121,14 +121,12 @@ object BatterySaver {
 
     fun allowBackgroundDownloads(): Boolean = !isActive()
 
-    /** Nombre de titres à prefetch en avant (stream). */
+    /** Nombre de titres à prefetch en avant (stream). Fenêtre glissante, pas 32 en charge USB. */
     fun streamPrefetchAhead(normal: Int): Int {
-        // Même en économie : garder une file d’avance (têtes serveur), sinon coupure.
-        if (isActive()) return 12.coerceAtMost(normal).coerceAtLeast(8)
-        if (isSoft()) return (normal * 3 / 4).coerceAtLeast(16).coerceAtMost(normal)
-        // En charge (nuit) : fenêtre complète, pas un plafond à 3.
-        if (charging) return normal.coerceAtLeast(32)
-        return normal
+        val want = normal.coerceAtLeast(3)
+        val cap = 6
+        if (isActive()) return want.coerceAtMost(cap)
+        return want.coerceAtMost(cap)
     }
 
     /** Prefetch clips vidéo : combien d’avance. */

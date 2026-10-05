@@ -383,9 +383,8 @@ class OfflineDownloadManager(
                         if (priority == Priority.User && isStreamInfraFailure(lastFail ?: Exception(msg))) {
                             AppLog.w(
                                 "offline",
-                                "user DL infra ${track.id} attempt=$attempt — wait/retry",
+                                "user DL infra ${track.id} attempt=$attempt — wait/retry (lecture intacte)",
                             )
-                            ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(25_000L)
                             cancelOpportunistic()
                             delay(3_000L * attempt)
                             continue
@@ -416,8 +415,7 @@ class OfflineDownloadManager(
                 if (priority == Priority.Opportunistic && isStreamInfraFailure(e)) {
                     onStreamInfraFailure(msg)
                 } else if (priority == Priority.User && isStreamInfraFailure(e)) {
-                    // Soft : coupe seulement l’ahead, garde les autres user DL.
-                    ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(45_000L)
+                    // Soft : coupe seulement l’ahead, ne coupe PAS la lecture live.
                     cancelOpportunistic()
                     AppLog.w("offline", "user DL failed infra ${track.id}: ${msg.take(120)}")
                 }
@@ -470,11 +468,10 @@ class OfflineDownloadManager(
     }
 
     private fun onStreamInfraFailure(detail: String) {
-        ovh.delhomme.ytmusic.player.StreamPrefetcher.markStreamDown(180_000L)
         val n = cancelOpportunistic()
         AppLog.w(
             "offline",
-            "circuit-breaker stream down — cancelOpportunistic=$n detail=${detail.take(120)}",
+            "circuit-breaker DL only — cancelOpportunistic=$n detail=${detail.take(120)}",
         )
     }
 

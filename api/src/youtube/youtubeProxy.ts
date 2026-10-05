@@ -691,36 +691,49 @@ function leasePoolForUser(userId: string): string[] {
   return [...set];
 }
 
+export type ProxyPurpose = 'stream' | 'download';
+
+/** Stripe disjoint : lecture vs téléchargement ne se marchent pas dessus. */
+function proxyStripe(url: string): ProxyPurpose {
+  return (hash32(url) & 1) === 0 ? 'stream' : 'download';
+}
+
 /** Prochain proxy à essayer (null = direct, sans proxy). */
 export async function nextYoutubeProxy(
   exclude: Set<string> = new Set(),
   userId?: string,
+  purpose: ProxyPurpose = 'stream',
 ): Promise<string | null> {
   await ensureYoutubeProxyPool();
 
-  const pickFrom = (preferUnleased: boolean): ProxyEntry[] => {
-    if (userId) {
-      return leasePoolForUser(userId)
-        .filter((u) => !exclude.has(u))
-        .map((u) => pool.get(u))
-        .filter((e): e is ProxyEntry => Boolean(e && usable(e)));
-    }
-    return [...pool.values()].filter((e) => {
-      if (!usable(e) || exclude.has(e.url)) return false;
-      if (preferUnleased && proxyLease.has(e.url)) return false;
-      return true;
-    });
+  const pickFrom = (preferUnleased: boolean, strictStripe: boolean): ProxyEntry[] => {
+    const base = userId
+      ? leasePoolForUser(userId)
+          .filter((u) => !exclude.has(u))
+          .map((u) => pool.get(u))
+          .filter((e): e is ProxyEntry => Boolean(e && usable(e)))
+      : [...pool.values()].filter((e) => {
+          if (!usable(e) || exclude.has(e.url)) return false;
+          if (preferUnleased && proxyLease.has(e.url)) return false;
+          return true;
+        });
+    if (!strictStripe) return base;
+    const striped = base.filter((e) => proxyStripe(e.url) === purpose);
+    return striped;
   };
 
-  let candidates = pickFrom(true);
+  let candidates = pickFrom(true, true);
   if (!candidates.length) {
     if (youtubeProxyFreeEnabled() && Date.now() - lastForceRefreshAt > 15_000) {
       lastForceRefreshAt = Date.now();
       cachedFree = null;
       await ensureYoutubeProxyPool(true);
     }
-    candidates = pickFrom(true);
-    if (!candidates.length) candidates = pickFrom(false);
+    candidates = pickFrom(true, true);
+    if (!candidates.length) candidates = pickFrom(false, true);
+    // Pénurie : seulement alors on recoupe l’autre stripe.
+    if (!candidates.length) candidates = pickFrom(true, false);
+    if (!candidates.length) candidates = pickFrom(false, false);
     if (!candidates.length) return null;
   }
   return rankPick(candidates).url;
@@ -747,6 +760,8 @@ export async function youtubeProxyAttempts(opts?: {
   /** Soft-probe TCP avant d’inclure (évite 12 s yt-dlp sur proxy mort). */
   probe?: boolean;
   userId?: string;
+  /** Lecture live vs DL hors-ligne : pools disjoints. */
+  purpose?: ProxyPurpose;
 }): Promise<(string | null)[]> {
   const max = Math.max(1, Math.min(opts?.max ?? 4, 16));
   const includeDirect = opts?.includeDirect !== false;
@@ -756,6 +771,7 @@ export async function youtubeProxyAttempts(opts?: {
   const proxies: string[] = [];
   const raw: string[] = [];
   const userId = opts?.userId;
+  const purpose = opts?.purpose ?? 'stream';
 
   const fixed = (process.env.YOUTUBE_HTTP_PROXY || '').trim();
   const fixedN = fixed ? normalizeProxyUrl(fixed, { allowAuth: true }) : null;
@@ -771,7 +787,7 @@ export async function youtubeProxyAttempts(opts?: {
     if (usableCount() < LOW_POOL_REFRESH && youtubeProxyFreeEnabled()) {
       void ensureYoutubeProxyPool(true);
     }
-    const p = await nextYoutubeProxy(used, userId);
+    const p = await nextYoutubeProxy(used, userId, purpose);
     if (!p) break;
     used.add(p);
     raw.push(p);

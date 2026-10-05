@@ -1,6 +1,83 @@
 {
-  "updatedAt": "2026-10-04",
+  "updatedAt": "2026-10-05",
   "versions": [
+    {
+      "version": "1.3.348",
+      "date": "2026-10-05",
+      "time": "19:20",
+      "at": "2026-10-05T19:20:00+02:00",
+      "title": "Paroles en pause, biblio artiste complète, DL sans casser l’écoute",
+      "notes": [
+        "En pause tu fais défiler les paroles sans bouger la lecture. Le bouton Biblio d’un artiste ajoute tout son catalogue et lance la lecture. Les téléchargements (titre, album, artiste) passent par d’autres relais que le son en cours, pour ne plus rendre tes favoris inécoutables.",
+        "Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.347",
+      "date": "2026-10-05",
+      "time": "15:10",
+      "at": "2026-10-05T15:10:00+02:00",
+      "title": "3 titres d’avance sans noyer le son en cours",
+      "notes": [
+        "Pendant l’écoute, les 3 suivants se préparent sans voler la bande au titre actuel. Skip et retour arrière restent fluides, sans brûler toute la file.",
+        "Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.346",
+      "date": "2026-10-05",
+      "time": "15:05",
+      "at": "2026-10-05T15:05:00+02:00",
+      "title": "Skip immédiat, 3 titres déjà en buffer",
+      "notes": [
+        "Pendant l’écoute les 3 suivants se chargent. Un skip va tout de suite sur un titre déjà prêt (pas d’attente, pas de file brûlée). Le retour arrière garde le cache.",
+        "Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.345",
+      "date": "2026-10-05",
+      "time": "15:00",
+      "at": "2026-10-05T15:00:00+02:00",
+      "title": "Skip : on enchaîne sur un titre déjà prêt",
+      "notes": [
+        "Les 3 suivants se chargent pendant l’écoute. Si un titre refuse de démarrer, on passe à celui d’après déjà en buffer — plus de file entière brûlée, plus d’attente infinie.",
+        "Retour arrière : les titres déjà entendus restent en cache. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.344",
+      "date": "2026-10-05",
+      "time": "14:50",
+      "at": "2026-10-05T14:50:00+02:00",
+      "title": "Les 3 titres suivants se chargent vraiment pendant l’écoute",
+      "notes": [
+        "Pendant que tu écoutes, les 3 suivants (et le 4ᵉ en marge) se préparent. Si tu sautes 1, 2, 3, 4 puis tu reviens au premier, le buffer reste et la suite continue de charger.",
+        "Plus de skip qui brûle toute la file sur Samsung. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.343",
+      "date": "2026-10-05",
+      "time": "14:40",
+      "at": "2026-10-05T14:40:00+02:00",
+      "title": "Toujours 3 titres d’avance, même en skippant",
+      "notes": [
+        "Pendant l’écoute : les 3 suivants se chargent. Si tu en sautes plusieurs, la fenêtre avance avec toi. Si tu reviens au premier, on garde le buffer et on continue à préparer la suite.",
+        "Plus de skip auto en chaîne qui brûle toute la file. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.342",
+      "date": "2026-10-05",
+      "time": "14:20",
+      "at": "2026-10-05T14:20:00+02:00",
+      "title": "Le titre suivant se prépare pendant que tu écoutes",
+      "notes": [
+        "Pendant chaque morceau, le suivant est chargé en avance (tête + fichier), sans noyer le titre en cours.",
+        "Skip et accès rapide : on enchaîne sans rester coincé en chargement. Mise à jour proposée, pas forcée."
+      ]
+    },
     {
       "version": "1.3.341",
       "date": "2026-10-04",
