@@ -2343,7 +2343,7 @@ async function parseCaptionTrack(
   };
 }
 
-export type LyricsHints = { title?: string; artist?: string; forceRefetch?: boolean };
+export type LyricsHints = { title?: string; artist?: string; forceRefetch?: boolean; fastOnly?: boolean };
 
 function lyricsCacheHit(videoId: string, title: string, artist: string): LyricsResult | null {
   const cached = lyricsCache.get(lyricsCacheKey(videoId, title, artist));
@@ -2396,6 +2396,10 @@ export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<L
       }
     }
     if (borrowedText?.lyrics) {
+      if (hints?.fastOnly) {
+        putLyricsCache(videoId, borrowedText, hintTitle, hintArtist);
+        return borrowedText;
+      }
       const metaEarly = await getTrack(videoId, { light: true }).catch(() => null);
       const titleEarly = hintTitle || metaEarly?.track?.title || '';
       const artistEarly =
@@ -2477,6 +2481,10 @@ export async function getLyrics(videoId: string, hints?: LyricsHints): Promise<L
     }
   } catch {
     /* store pas encore prêt */
+  }
+
+  if (hints?.fastOnly) {
+    return { lyrics: null, timed: null, source: null };
   }
 
   const innertube = await getYT();
@@ -3586,7 +3594,7 @@ export async function getAudioFormat(
   // Important : le promise exposé (et l’inflight) doit aussi expirer,
   // sinon un 1er appel « abandonné » bloque tous les suivants sur la même clé.
   // Live écoute : budget plus large (warm concurrent ne doit pas faire échouer Blue).
-  const deadlineMs = live ? 40_000 : 16_000;
+  const deadlineMs = live ? 40_000 : 40_000;
   const capped = Promise.race([
     job,
     new Promise<AudioFormat>((_, rej) =>

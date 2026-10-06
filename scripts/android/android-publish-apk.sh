@@ -3,6 +3,10 @@
 # téléchargement (admin QR / GET /api/deploy/apk).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+if [[ "${SKIP_NREG:-0}" != "1" ]]; then
+  echo "==> Non-régression avant publication APK"
+  bash "$ROOT/scripts/qa/preprod-nreg.sh"
+fi
 APP="$ROOT/mobile-android"
 OUT_DIR="$ROOT/data/public/android"
 

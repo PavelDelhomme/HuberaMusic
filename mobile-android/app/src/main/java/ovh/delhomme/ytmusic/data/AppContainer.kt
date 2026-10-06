@@ -364,6 +364,10 @@ class AppContainer(context: Context) {
                 chain.withReadTimeout(70, TimeUnit.SECONDS)
                     .withConnectTimeout(20, TimeUnit.SECONDS)
                     .proceed(chain.request())
+            } else if (path.contains("/lyrics")) {
+                chain.withReadTimeout(20, TimeUnit.SECONDS)
+                    .withConnectTimeout(8, TimeUnit.SECONDS)
+                    .proceed(chain.request())
             } else {
                 chain.proceed(chain.request())
             }

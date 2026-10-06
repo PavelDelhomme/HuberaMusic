@@ -328,6 +328,7 @@ data class LyricsResponse(
     val segmentsFromUser: Boolean? = null,
     val suggestions: List<LyricSuggestionDto>? = null,
     val searchUrls: List<LyricSearchUrlDto>? = null,
+    val pending: Boolean? = null,
 )
 
 @JsonClass(generateAdapter = false)

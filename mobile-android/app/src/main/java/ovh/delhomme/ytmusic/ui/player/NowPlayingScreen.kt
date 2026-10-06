@@ -3277,6 +3277,7 @@ private fun InlineSyncedLyrics(
         }
             .onSuccess { first ->
                 fun applyLyrics(it: ovh.delhomme.ytmusic.data.LyricsResponse) {
+                    if (it.lyrics.isNullOrBlank()) return
                     val learned = it.userOffsetMs ?: 0L
                     if (learned != 0L && syncPrefs.getLong(track.id, 0L) == 0L) {
                         userOffsetMs = learned.coerceIn(-90_000L, 90_000L)
@@ -3321,19 +3322,20 @@ private fun InlineSyncedLyrics(
                     }
                 }
                 applyLyrics(first)
-                // Auto-fallback : 2ᵉ passe API si vide (TTL cache null court côté serveur)
-                if (first.lyrics.isNullOrBlank()) {
-                    delay(500)
-                    runCatching {
+                var pending = first.pending == true || first.lyrics.isNullOrBlank()
+                var attempt = 0
+                while (pending && attempt < 4) {
+                    delay(3_000)
+                    attempt += 1
+                    val next = runCatching {
                         container.api.lyrics(
                             track.id,
                             track.title,
                             track.artistLine().takeIf { it != "Artiste" },
                         )
-                    }
-                        .getOrNull()
-                        ?.takeIf { !it.lyrics.isNullOrBlank() }
-                        ?.let { applyLyrics(it) }
+                    }.getOrNull() ?: continue
+                    applyLyrics(next)
+                    pending = next.pending == true || next.lyrics.isNullOrBlank()
                 }
             }
             .onFailure {

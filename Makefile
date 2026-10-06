@@ -23,7 +23,7 @@ SAMPLE_SECS ?= 15
 	dev up up-full down down-clean restart restart-api ensure-api \
 	dev-server dev-web build start deploy-local clean-vite icons \
 	docker-dev docker-dev-down docker-build \
-	mobile-qr mobile-hint mobile-adb mobile-install-adb test-register-adb \
+	mobile-qr mobile-hint mobile-adb mobile-install-adb test-register-adb nreg \
 	android-sync android-build android-install android-logs android-publish android-upload-apk android-prod android \
 	android-docker-image android-docker-apk \
 	adb-fix \
@@ -91,6 +91,10 @@ test-verify-email: ## Teste validation email (API locale)
 
 test-search: ## Batterie tests recherche (ranking + live YouTube)
 	cd $(ROOT) && npx tsx scripts/test/test-search.mjs
+
+nreg: ## Non-régression lecture/paroles + unit tests mobile (avant prod)
+	@chmod +x $(ROOT)/scripts/qa/preprod-nreg.sh
+	bash $(ROOT)/scripts/qa/preprod-nreg.sh
 
 env-check: ## Vérifie que .env et .env.example ont les mêmes clés
 	@chmod +x $(ROOT)/scripts/dev/env-check.sh

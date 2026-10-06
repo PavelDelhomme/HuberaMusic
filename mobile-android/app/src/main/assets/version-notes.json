@@ -2,6 +2,26 @@
   "updatedAt": "2026-10-06",
   "versions": [
     {
+      "version": "1.3.354",
+      "date": "2026-10-06",
+      "time": "20:45",
+      "at": "2026-10-06T20:45:00+02:00",
+      "title": "Lecture à froid + paroles de nouveau calées",
+      "notes": [
+        "Un titre jamais écouté attend que le fichier soit prêt (~30 s) au lieu d’un refus immédiat. Les paroles déjà en cache restent synchronisées : une réponse vide ne les efface plus. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.353",
+      "date": "2026-10-06",
+      "time": "20:20",
+      "at": "2026-10-06T20:20:00+02:00",
+      "title": "Lecture froide : plus de skip pendant le chargement YouTube",
+      "notes": [
+        "Un titre jamais écouté attend le flux YouTube (~40 s) au lieu d’être sauté à 5–18 s. Les paroles ne bloquent plus le son. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
       "version": "1.3.352",
       "date": "2026-10-06",
       "time": "16:10",

@@ -2608,28 +2608,54 @@ app.get('/api/track/:id/lyrics', accountRequired, async (req, res) => {
     const trackId = p(req.params.id);
     const qTitle = typeof req.query.title === 'string' ? req.query.title : '';
     const qArtist = typeof req.query.artist === 'string' ? req.query.artist : '';
-    const lyrics = await getLyrics(trackId, {
-      title: qTitle,
-      artist: qArtist,
-      forceRefetch: req.query.refresh === '1' || req.query.force === '1',
-    });
-    const profile = resolveLyricSync(req.userId!, trackId);
-    const onsetMs = Math.abs(Number(lyrics.syncOffsetMs) || 0);
-    // Intro déjà collée côté serveur : ne pas rejouer le +37 s appris à la main.
-    const learned =
-      onsetMs >= 5_000
-        ? 0
-        : profile.userOffsetMs !== 0
-          ? profile.userOffsetMs
-          : profile.crowdOffsetMs;
-    res.json({
-      ...lyrics,
-      userOffsetMs: learned,
-      crowdOffsetMs: onsetMs >= 5_000 ? 0 : profile.crowdOffsetMs,
-      personalOffsetMs: onsetMs >= 5_000 ? 0 : profile.userOffsetMs,
-      segments: profile.segments,
-      segmentsFromUser: profile.segmentsFromUser,
-    });
+    const force = req.query.refresh === '1' || req.query.force === '1';
+    const hints = { title: qTitle, artist: qArtist, forceRefetch: force };
+    const pack = (lyrics: Awaited<ReturnType<typeof getLyrics>>, pending = false) => {
+      const profile = resolveLyricSync(req.userId!, trackId);
+      const onsetMs = Math.abs(Number(lyrics.syncOffsetMs) || 0);
+      const learned =
+        onsetMs >= 5_000
+          ? 0
+          : profile.userOffsetMs !== 0
+            ? profile.userOffsetMs
+            : profile.crowdOffsetMs;
+      return {
+        ...lyrics,
+        pending,
+        userOffsetMs: learned,
+        crowdOffsetMs: onsetMs >= 5_000 ? 0 : profile.crowdOffsetMs,
+        personalOffsetMs: onsetMs >= 5_000 ? 0 : profile.userOffsetMs,
+        segments: profile.segments,
+        segmentsFromUser: profile.segmentsFromUser,
+      };
+    };
+    const fast = await getLyrics(trackId, { ...hints, fastOnly: true });
+    if (fast.lyrics) {
+      res.json(pack(fast, false));
+      getLyrics(trackId, hints).catch(() => {});
+      return;
+    }
+    const lyricsP = getLyrics(trackId, hints);
+    const raced = await Promise.race([
+      lyricsP.then((lyrics) => ({ ok: true as const, lyrics })),
+      new Promise<{ ok: false }>((resolve) => setTimeout(() => resolve({ ok: false }), 12_000)),
+    ]);
+    if (!raced.ok) {
+      lyricsP.catch(() => {});
+      res.json(
+        pack(
+          {
+            lyrics: null,
+            timed: null,
+            source: null,
+            syncOffsetMs: 0,
+          },
+          true,
+        ),
+      );
+      return;
+    }
+    res.json(pack(raced.lyrics, false));
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

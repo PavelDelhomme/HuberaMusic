@@ -93,8 +93,8 @@ object StreamPrefetcher {
     private val client: OkHttpClient by lazy {
         val dir = File(YtMusicApp.instance.cacheDir, "stream-prefetch").apply { mkdirs() }
         val dispatcher = okhttp3.Dispatcher().apply {
-            maxRequests = 6
-            maxRequestsPerHost = 4
+            maxRequests = 8
+            maxRequestsPerHost = 6
         }
         OkHttpClient.Builder()
             .dispatcher(dispatcher)

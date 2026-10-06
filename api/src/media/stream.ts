@@ -23,6 +23,11 @@ import {
   ytDlpProxyCliArgs,
 } from '../youtube/youtubeCookies.js';
 import {
+  ANDROID_COLD_DISK_WAIT_MS,
+  downloadFailCooldownMs,
+  downloadFailKind,
+} from '../nreg/playbackPolicy.js';
+import {
   isProxyWorthRetry,
   isUpstream5xx,
   markYoutubeProxyFailure,
@@ -1790,7 +1795,7 @@ export async function handleStream(req: Request, res: Response) {
       // Déjà écouté (.m4a ou clip .mp4) : ne PAS relancer YouTube.
       if (!already) {
         const blocked = downloadFailUntil.get(videoId);
-        if (blocked && Date.now() < blocked.until) {
+        if (blocked && Date.now() < blocked.until && downloadFailKind(blocked.msg) !== 'transient') {
           if (await tryServeCoherentReplacement(req, res, videoId, userId)) return;
           sendStreamRetryLater(res, videoId, blocked.msg);
           return;
@@ -1802,9 +1807,8 @@ export async function handleStream(req: Request, res: Response) {
           signal: userSignal,
           live: true,
         }).catch(() => {});
-        // Micro-attente seulement si le fichier grossit déjà — plus de 4–6 s
-        // qui empilent les GET et font timeout /api/health.
-        const waitMs = downloadInflight.has(videoId) ? 700 : 350;
+        // yt-dlp à froid ~28–40 s. 350 ms → 503 immédiat → BUFFERING 0:00.
+        const waitMs = ANDROID_COLD_DISK_WAIT_MS;
         const ready = await waitUntilDiskServable(videoId, waitMs);
         if (ready) noteFormatOk(videoId);
       } else if (already.path.endsWith('.mp4') || isMuxedVideoFile(already.path)) {
@@ -2672,7 +2676,7 @@ export async function handleStream(req: Request, res: Response) {
           });
           const diskP = waitUntilDiskServable(
             videoId,
-            isAndroidClient(req) && !midNeedsDisk ? 1_400 : 8_000,
+            isAndroidClient(req) && !midNeedsDisk ? ANDROID_COLD_DISK_WAIT_MS : 8_000,
           );
           const winner = await Promise.race([
             fmtP
@@ -2686,7 +2690,7 @@ export async function handleStream(req: Request, res: Response) {
           }
           if (winner.k === 'fmt' && winner.f?.url) return winner.f;
           if (winner.k === 'err') throw winner.e;
-          return await withDeadline('getAudioFormatRace', fmtP, 12_000);
+          return await withDeadline('getAudioFormatRace', fmtP, 40_000);
         })();
     if (format.url) {
       noteFormatOk(videoId);
@@ -2985,7 +2989,8 @@ export async function handleStream(req: Request, res: Response) {
       blockedNow &&
       Date.now() < blockedNow.until &&
       isAndroidClient(req) &&
-      !res.headersSent
+      !res.headersSent &&
+      downloadFailKind(blockedNow.msg) !== 'transient'
     ) {
       if (await tryServeCoherentReplacement(req, res, videoId, streamUserId)) return;
       sendStreamRetryLater(res, videoId, blockedNow.msg);
@@ -3007,13 +3012,13 @@ export async function handleStream(req: Request, res: Response) {
         const fmt = await antiDashRace(
           'ytdlpUrlAntiDash',
           getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId }),
-          8_000,
+          42_000,
         );
         if (fmt?.url && !res.headersSent) {
           const upstream = await antiDashRace(
             'fetchGVAntiDash',
           fetchGooglevideo(fmt.url, rangeHdr, { preferProxies: true, userId: streamUserId, boundProxy: fmt.viaProxy }),
-            12_000,
+            18_000,
           );
           if (upstream.status < 400 && upstream.body) {
             const reader = upstream.body.getReader();
@@ -3060,7 +3065,7 @@ export async function handleStream(req: Request, res: Response) {
       try {
         // 2) Pipe progressif — budget un peu plus large, hors deadline globale.
         noteStreamSource(res, 'yt-dlp pipe (anti-DASH)');
-        await antiDashRace('ytdlpPipeAntiDash', streamViaYtDlp(videoId, res, true), 8_000);
+        await antiDashRace('ytdlpPipeAntiDash', streamViaYtDlp(videoId, res, true), 45_000);
         return;
       } catch (e) {
         console.warn(
@@ -3070,7 +3075,7 @@ export async function handleStream(req: Request, res: Response) {
         if (!res.headersSent) {
           // Timeout yt-dlp ≠ titre mort. JSON 502 = Source error Exo → skip_dead.
           if (isAndroidClient(req)) {
-            const late = await waitUntilDiskServable(videoId, 2_000);
+            const late = await waitUntilDiskServable(videoId, 20_000);
             if (late) {
               await pipeDiskFile(req, res, late, videoId, 'disk-after-ytdlp');
               return;
@@ -4426,12 +4431,13 @@ export async function downloadTrack(
     // Remux OAuth a déjà été tenté : cooldown court (pas 3 min) pour ne pas bloquer ensure.
     if (/cooling down|Sign in to confirm|rate-limited|not a bot|LOGIN_REQUIRED/i.test(failMsg)) {
       downloadFailUntil.set(videoId, {
-        until: Date.now() + Math.max(45_000, Math.min(120_000, ytDlpCooldownRemainingMs())),
+        until: Date.now() + downloadFailCooldownMs('bot', ytDlpCooldownRemainingMs()),
         msg: failMsg.slice(0, 160),
       });
     } else {
+      const kind = downloadFailKind(failMsg);
       downloadFailUntil.set(videoId, {
-        until: Date.now() + 30_000,
+        until: Date.now() + downloadFailCooldownMs(kind, ytDlpCooldownRemainingMs()),
         msg: failMsg.slice(0, 160),
       });
     }

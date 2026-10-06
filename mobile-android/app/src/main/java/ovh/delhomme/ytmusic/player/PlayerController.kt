@@ -1542,6 +1542,7 @@ class PlayerController(
                     hint?.title,
                     hint?.artistLine()?.takeIf { it != "Artiste" },
                 )
+                if (r.lyrics.isNullOrBlank()) return@runCatching
                 val timed = r.timed.orEmpty()
                 val prefs = context.getSharedPreferences("plm_lyrics_cache_v6", Context.MODE_PRIVATE)
                 prefs.edit()
@@ -1556,13 +1557,8 @@ class PlayerController(
                     lastLyricEndMs = timed.maxOf { it.startMsLong() }
                 }
             }.onFailure { lyricsWarmed.remove(trackId) }
-            // Prefetch paroles des 2 suivants (karaoké prêt au skip)
-            val q = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
-            val idx = q.indexOfFirst { it.id == trackId }.takeIf { it >= 0 }
-                ?: _state.value.queueIndex
-            q.drop(idx + 1).take(3).forEach { next ->
-                if (next.id.length == 11) prefetchLyricsEnd(next.id)
-            }
+            // Pas de fan-out récursif : 4 GET lyrics ~21 s saturent OkHttp et
+            // cancel /api/stream/{id}/url → BUFFERING 0:00.
         }
     }
 

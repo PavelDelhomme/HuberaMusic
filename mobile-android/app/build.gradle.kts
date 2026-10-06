@@ -275,6 +275,8 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    testImplementation("junit:junit:4.13.2")
+
     // QR login : génération (ZXing) + scan (CameraX + ML Kit)
     implementation("com.google.zxing:core:3.5.3")
     implementation("androidx.camera:camera-camera2:1.4.0")

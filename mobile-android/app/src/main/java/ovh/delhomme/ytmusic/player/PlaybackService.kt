@@ -281,14 +281,10 @@ class PlaybackService : MediaSessionService() {
             val nextId = Holder.queue.getOrNull(exo.currentMediaItemIndex + 1)?.id
             val nextHot = !neverHeard && !nextId.isNullOrBlank() &&
                 StreamPrefetcher.wasHeadReadyRecently(nextId, withinMs = 120_000L)
-            val upcomingHot = (1..3).any { d ->
-                val id = Holder.queue.getOrNull(exo.currentMediaItemIndex + d)?.id
-                !id.isNullOrBlank() && StreamPrefetcher.hasPlayableHead(id, 280L * 1024L)
-            }
-            // Titre jamais écouté : 5 s si un des 3 suivants est prêt, sinon 18 s (plus 55 s).
+            // Titre jamais écouté : yt-dlp /url prend ~28–40 s. Rebind à 5/18 s
+            // annulait la requête → BUFFERING 0:00 en boucle (skip sans lecture).
             val coldGraceMs = when {
-                neverHeard && upcomingHot -> 5_000L
-                neverHeard -> 18_000L
+                neverHeard -> ovh.delhomme.ytmusic.player.LyricsApplyPolicy.COLD_GRACE_MS
                 headWarmed -> 12_000L
                 nextHot -> 10_000L
                 else -> 14_000L
@@ -324,8 +320,7 @@ class PlaybackService : MediaSessionService() {
             val stuckHard =
                 samePos &&
                     (
-                        (coldStuck && neverHeard && upcomingHot && stallSessionCount >= 2) ||
-                            (coldStuck && neverHeard && stallSessionCount >= 4) ||
+                        (coldStuck && neverHeard && stallSessionCount >= 8) ||
                             (coldStuck && !neverHeard && stallSessionCount >= 5) ||
                             (!coldStuck && stallSessionCount >= 4)
                     )
@@ -370,7 +365,7 @@ class PlaybackService : MediaSessionService() {
             }
             // Titre froid : ne pas rebind/télémetrie au 1er tick après la grâce
             // (incrémenter + rebind relançait /url et stream-heal).
-            if (neverHeard && stallSessionCount <= 1 && waited < (if (upcomingHot) 8_000L else 20_000L)) {
+            if (neverHeard && stallSessionCount <= 1 && waited < ovh.delhomme.ytmusic.player.LyricsApplyPolicy.COLD_GRACE_MS) {
                 stallSessionCount = (stallSessionCount - 1).coerceAtLeast(0)
                 stallRebindCount = (stallRebindCount - 1).coerceAtLeast(0)
                 AppLog.i(
