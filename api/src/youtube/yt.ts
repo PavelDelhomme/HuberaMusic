@@ -3086,15 +3086,16 @@ async function ytDlpGetUrl(
           finish(() => reject(new Error('aborted')));
         };
         signal?.addEventListener('abort', onAbort, { once: true });
-        // Live : 22 s (sous charge le slot attend + Innertube). Warm : 12 s.
+        // Live : 9 s par proxy (la course anti-DASH a 42 s : un kill à 22 s
+        // ne laisse qu’un ou deux relais, et les process zombies saturent le gate).
         const killTimer = setTimeout(() => {
           try {
             proc.kill('SIGKILL');
           } catch {
             /* ignore */
           }
-          finish(() => reject(new Error(live ? 'yt-dlp -g timeout 22s' : 'yt-dlp -g timeout 12s')));
-        }, live ? 22_000 : 12_000);
+          finish(() => reject(new Error(live ? 'yt-dlp -g timeout 9s' : 'yt-dlp -g timeout 12s')));
+        }, live ? 9_000 : 12_000);
         proc.stdout.on('data', (c) => {
           out += String(c);
         });

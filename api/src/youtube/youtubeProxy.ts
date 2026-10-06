@@ -866,7 +866,12 @@ export function markYoutubeProxyFailure(proxy: string | null, kind: 'tcp' | 'gv'
   e.fails += 1;
   e.lastFailAt = Date.now();
   if (kind === 'gv') e.gvMiss = (e.gvMiss || 0) + 1;
-  // Proxy mort → quarantine courte puis éviction si récidive
+  // TCP mort (ECONNREFUSED, CONNECT timeout, cert) : quarantaine tout de suite,
+  // sinon le même relais reprend 5–22 s du budget stream.
+  if (kind === 'tcp') {
+    e.deadUntil = Date.now() + Math.min(COOLDOWN_MS, 10 * 60_000);
+  }
+  // Proxy mort → quarantine puis éviction si récidive
   if (e.fails >= MAX_FAILS) {
     e.deadUntil = Date.now() + COOLDOWN_MS;
   }
