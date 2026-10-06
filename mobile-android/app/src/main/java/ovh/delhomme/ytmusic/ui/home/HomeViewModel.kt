@@ -200,9 +200,6 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     }
                     if (base.isNotBlank() && pinSongIds.isNotEmpty()) {
                         StreamPrefetcher.warmFormatsLight(base, pinSongIds, limit = 24)
-                        pinSongIds.take(12).forEach { id ->
-                            StreamPrefetcher.requestServerDiskCache(base, id)
-                        }
                     }
                     val ids = buildList {
                         addAll(pinSongIds)

@@ -86,7 +86,7 @@ import {
   scheduleLibraryRepair,
   libraryMembership,
 } from './library/library.js';
-import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, replaceSearchWarm } from './media/stream.js';
+import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, replaceSearchWarm, enqueueListHeadWarm, enqueueNextDiskWarm, isPlaybackHot } from './media/stream.js';
 import {
   scheduleUserTasteWarm,
   startGlobalTasteWarmScheduler,
@@ -2869,9 +2869,13 @@ app.post('/api/download/:id', accountRequired, async (req, res) => {
       res.json({ ok: true, ack: true });
       return;
     }
-    const path = await downloadTrack(id);
-    markDownloaded(req.userId!, id, path);
-    res.json({ ok: true, path, streamUrl: `/api/stream/${id}` });
+    enqueueListHeadWarm([id], { front: true });
+    if (isPlaybackHot(90_000)) {
+      res.json({ ok: true, queued: 'prefix', streamUrl: `/api/stream/${id}` });
+      return;
+    }
+    enqueueNextDiskWarm([id]);
+    res.json({ ok: true, queued: true, streamUrl: `/api/stream/${id}` });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

@@ -787,17 +787,48 @@ function isGrowingDiskServable(path: string): boolean {
   }
 }
 
+/**
+ * Fichier disque jouable tout de suite (sans YouTube).
+ * Beaucoup de titres « déjà écoutés » n’existent qu’en clip .mp4 muxé :
+ * le .m4a n’a jamais été extrait → Exo BUFFERING infini si on ignore le mp4.
+ * Exo lit l’AAC dans le conteneur MP4 (Content-Type audio/mp4).
+ */
+function playableAudioPath(videoId: string): { path: string; growing: boolean } | null {
+  const audio = cachePath(videoId);
+  const video = videoCachePath(videoId);
+  try {
+    if (existsSync(audio) && !isDashBrandFile(audio)) {
+      if (isCompleteEnoughDisk(audio) || isGrowingDiskServable(audio)) {
+        return { path: audio, growing: !isCompleteEnoughDisk(audio) };
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (
+      existsSync(video) &&
+      !isDashBrandFile(video) &&
+      (isCompleteEnoughDisk(video) || isGrowingDiskServable(video))
+    ) {
+      return { path: video, growing: !isCompleteEnoughDisk(video) };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 async function waitUntilDiskServable(videoId: string, ms: number): Promise<string | null> {
   const t0 = Date.now();
-  const p = cachePath(videoId);
   while (Date.now() - t0 < ms) {
     try {
-      if (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) {
-        if (isCompleteEnoughDisk(p) && isMuxedVideoFile(p)) {
-          const audio = await ensureTitleAudio(videoId);
-          if (audio) return audio;
+      const hit = playableAudioPath(videoId);
+      if (hit) {
+        if (hit.path.endsWith('.mp4') || isMuxedVideoFile(hit.path)) {
+          void ensureTitleAudio(videoId);
         }
-        return p;
+        return hit.path;
       }
     } catch {
       /* retry */
@@ -805,7 +836,8 @@ async function waitUntilDiskServable(videoId: string, ms: number): Promise<strin
     await new Promise((r) => setTimeout(r, 200));
   }
   try {
-    if (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) return p;
+    const hit = playableAudioPath(videoId);
+    if (hit) return hit.path;
   } catch {
     /* none */
   }
@@ -845,8 +877,8 @@ async function pipeDiskFile(
     isCompleteEnoughDisk(file) &&
     isMuxedVideoFile(file)
   ) {
-    const extracted = await ensureTitleAudio(videoId);
-    if (extracted) file = extracted;
+    // Ne pas attendre ffmpeg : servir le MP4 muxé tout de suite (Exo lit l’AAC).
+    void ensureTitleAudio(videoId);
   }
   const size = statSync(file).size;
   rememberAdvertisedTotal(videoId, size);
@@ -972,6 +1004,9 @@ function isCompleteEnoughDisk(path: string): boolean {
     const size = statSync(path).size;
     if (size < MIN_COMPLETE_DISK_BYTES) return false;
     if (isDashBrandFile(path)) return false;
+    // Un .m4a ≥ 512 Ko déjà sur disque se joue. Ne pas le disqualifier
+    // parce qu’un Content-Length googlevideo (souvent trop grand) a été mémorisé.
+    if (size >= 512 * 1024) return true;
     const id = path.split('/').pop()?.replace(/\.m4a$/, '');
     const advertised = id && /^[a-zA-Z0-9_-]{11}$/.test(id) ? getAdvertisedTotal(id) : null;
     if (advertised && advertised > MIN_COMPLETE_DISK_BYTES && size < advertised * 0.85) {
@@ -1039,26 +1074,15 @@ export function resolveStreamUpstream(): string | null {
 
 /**
  * Relais maison (IP résidentielle) :
- * - `ALLOW_STREAM_UPSTREAM=1` (Portainer), ou
- * - fichier `data/stream-upstream.url` posé par `link-home-stream.sh`.
- * Sans l’un des deux, le VPS reste autonome (OAuth TV) — OK audio, souvent KO vidéo progressive.
+ * - **uniquement** `ALLOW_STREAM_UPSTREAM=1` (Portainer).
+ * Le fichier `data/stream-upstream.url` (ex. 172.17.0.1:18788) ne suffit plus :
+ * un tunnel mort ouvrait TCP, renvoyait une réponse vide, et coincait Exo en BUFFERING.
  */
 export function isStreamUpstreamAllowed(): boolean {
-  if (
+  return (
     process.env.ALLOW_STREAM_UPSTREAM === '1' ||
     process.env.ALLOW_STREAM_UPSTREAM === 'true'
-  ) {
-    return true;
-  }
-  try {
-    if (existsSync(STREAM_UPSTREAM_FILE)) {
-      const v = readFileSync(STREAM_UPSTREAM_FILE, 'utf8').trim();
-      if (v.startsWith('http://') || v.startsWith('https://')) return true;
-    }
-  } catch {
-    /* ignore */
-  }
-  return false;
+  );
 }
 
 /** Relais stream vers l’API maison (évite le blocage IP datacenter YouTube). */
@@ -1612,7 +1636,6 @@ async function tryServeWarmPrefix(
   userId?: string,
 ): Promise<boolean> {
   enqueueListHeadWarm([videoId], { front: true });
-  enqueueNextDiskWarm([videoId]);
   if (tryServeRamHead(req, res, videoId)) return true;
   const ready = await waitUntilDiskServable(videoId, 2_500);
   if (ready) {
@@ -1763,24 +1786,9 @@ export async function handleStream(req: Request, res: Response) {
       !formatCircuitOpen(videoId) &&
       startOfTrack
     ) {
-      const pWait = cachePath(videoId);
-      const vWait = videoCachePath(videoId);
-      // Déjà écouté en clip .mp4 : extraire l’audio au lieu de re-résoudre YouTube.
-      if (
-        !isCompleteEnoughDisk(pWait) &&
-        !isGrowingDiskServable(pWait) &&
-        existsSync(vWait)
-      ) {
-        try {
-          await Promise.race([
-            ensureTitleAudio(videoId),
-            new Promise<null>((r) => setTimeout(() => r(null), 2_000)),
-          ]);
-        } catch {
-          /* course format plus bas */
-        }
-      }
-      if (!isCompleteEnoughDisk(pWait) && !isGrowingDiskServable(pWait)) {
+      const already = playableAudioPath(videoId);
+      // Déjà écouté (.m4a ou clip .mp4) : ne PAS relancer YouTube.
+      if (!already) {
         const blocked = downloadFailUntil.get(videoId);
         if (blocked && Date.now() < blocked.until) {
           if (await tryServeCoherentReplacement(req, res, videoId, userId)) return;
@@ -1799,6 +1807,8 @@ export async function handleStream(req: Request, res: Response) {
         const waitMs = downloadInflight.has(videoId) ? 700 : 350;
         const ready = await waitUntilDiskServable(videoId, waitMs);
         if (ready) noteFormatOk(videoId);
+      } else if (already.path.endsWith('.mp4') || isMuxedVideoFile(already.path)) {
+        void ensureTitleAudio(videoId);
       }
     } else if (
       !wantVideoEarly &&
@@ -1824,19 +1834,17 @@ export async function handleStream(req: Request, res: Response) {
       }
     }
     if (!wantVideoEarly) {
-      let cachedEarly = cachePath(videoId);
-      if (isCompleteEnoughDisk(cachedEarly) && isMuxedVideoFile(cachedEarly)) {
-        const extracted = await ensureTitleAudio(videoId);
-        if (extracted) cachedEarly = extracted;
+      const playable = playableAudioPath(videoId);
+      const cachedEarly = playable?.path || cachePath(videoId);
+      if (playable && (cachedEarly.endsWith('.mp4') || isMuxedVideoFile(cachedEarly))) {
+        // Ne PAS attendre ffmpeg sur le GET live (BUFFERING infini sur titres déjà chauds).
+        void ensureTitleAudio(videoId);
       }
-      if (
-        (isCompleteEnoughDisk(cachedEarly) || isGrowingDiskServable(cachedEarly)) &&
-        !isDashBrandFile(cachedEarly)
-      ) {
+      if (playable) {
         // Servir IMMÉDIATEMENT (surtout relais maison) — avant bumpWarm / ensure /
         // open-ended wait qui bloquent l’event loop et font abort le VPS à 2 s.
         try {
-          const growing = !isCompleteEnoughDisk(cachedEarly);
+          const growing = playable.growing;
           if (growing && !isWarmPrefetch) {
             downloadTrack(videoId, {
               progressiveOnly: true,
@@ -1943,7 +1951,7 @@ export async function handleStream(req: Request, res: Response) {
         }
         enqueueStreamWarm([mapped], userId);
         enqueueDiskWarm([mapped]);
-        enqueueNextDiskWarm([mapped]);
+        enqueueListHeadWarm([mapped], { front: true });
         downloadTrack(mapped, {
           progressiveOnly: true,
           preferProxies: true,
@@ -1993,7 +2001,7 @@ export async function handleStream(req: Request, res: Response) {
         if (id && id !== videoId) {
           enqueueStreamWarm([id], (req as any).userId);
           enqueueDiskWarm([id]);
-          enqueueNextDiskWarm([id]);
+          enqueueListHeadWarm([id], { front: true });
         }
       })
       .catch(() => {});
@@ -2024,7 +2032,7 @@ export async function handleStream(req: Request, res: Response) {
           signal: userSignal,
           live: !isWarmPrefetch,
         }).catch(() => {});
-        enqueueNextDiskWarm([videoId]);
+        enqueueListHeadWarm([videoId], { front: true });
 
         let formatOk = false;
         try {
@@ -2211,6 +2219,8 @@ export async function handleStream(req: Request, res: Response) {
   // Googlevideo (MWEB/IOS…) refuse souvent les Ranges mid au-delà ~1 MiB → 403.
   // Dès le début : télécharge le .m4a en fond pour les Ranges suivantes.
   if (!wantVideo && audioRangeStart === 0 && !isWarmPrefetch) {
+    const already = cachePath(videoId);
+    if (!isCompleteEnoughDisk(already) && !isGrowingDiskServable(already)) {
     const { isYtDlpCoolingDown } = await import('./ytDlpGate.js');
     if (!isYtDlpCoolingDown(streamUserId)) {
       // Progressif pour TOUS (web + Android) — rejet DASH universel depuis 1.3.240.
@@ -2225,6 +2235,7 @@ export async function handleStream(req: Request, res: Response) {
         if (/cooling down|bot\/rate-limit|Sign in to confirm|rate-limited/i.test(msg)) return;
         console.warn('[stream] prefetch downloadTrack KO:', msg.slice(0, 120));
       });
+    }
     }
   }
   // Mid-range : deadline plus longue (yt-dlp peut prendre 30–90 s la 1ʳᵉ fois).
@@ -2262,8 +2273,7 @@ export async function handleStream(req: Request, res: Response) {
   // provoque stalls Exo → mails « auth-or-blocked / android.player.stall ».
   if (androidClient && !isWarmPrefetch) {
     purgeDashCache(videoId);
-    const cachedEarly = cachePath(videoId);
-    if (!isCompleteEnoughDisk(cachedEarly)) {
+    if (!playableAudioPath(videoId)) {
       downloadTrack(videoId, {
         progressiveOnly: true,
         preferProxies,
@@ -2278,7 +2288,8 @@ export async function handleStream(req: Request, res: Response) {
 
   // Cache disque AVANT relais maison — mid-range seek (GV coupe souvent après ~1 Mo).
   if (!wantVideo) {
-    const cached = cachePath(videoId);
+    const playableLate = playableAudioPath(videoId);
+    const cached = playableLate?.path || cachePath(videoId);
     if (existsSync(cached) && (isDashBrandFile(cached) || !statSync(cached).size)) {
       try {
         const wasDash = isDashBrandFile(cached);
@@ -3493,12 +3504,12 @@ export function enqueueNextDiskWarm(ids: string[]) {
       likesDiskWarmQueue.splice(li, 1);
       likesDiskWarmQueued.delete(id);
     }
-    if (nextDiskWarmQueue.length >= 40) break;
+    const cap = isPlaybackHot(90_000) ? 4 : 8;
+    if (nextDiskWarmQueue.length >= cap) break;
     nextDiskWarmQueued.add(id);
     nextDiskWarmQueue.push(id);
     added.push(id);
   }
-  if (added.length) enqueueListHeadWarm(added, { front: true });
   kickNextWarm();
   if (searchWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
     void runDiskWarmWorker();
@@ -3689,11 +3700,25 @@ export function diskWarmQueueStats(): {
   };
 }
 
-/** Pendant une écoute : ne plus jeter le préchauffage biblio (multi-user). */
-export function suspendBackgroundDiskWarm(_keepCurrentId?: string) {
+/** Pendant une écoute : vider recherche + limiter les fichiers complets au courant + 3 suivants. */
+export function suspendBackgroundDiskWarm(keepCurrentId?: string) {
   while (searchWarmQueue.length) {
     const id = searchWarmQueue.shift()!;
     searchWarmQueued.delete(id);
+  }
+  const keep = new Set<string>();
+  if (keepCurrentId && /^[a-zA-Z0-9_-]{11}$/.test(keepCurrentId)) keep.add(keepCurrentId);
+  const retained: string[] = [];
+  for (const id of nextDiskWarmQueue) {
+    if (keep.has(id) || retained.length < 3) {
+      if (!retained.includes(id)) retained.push(id);
+    }
+  }
+  for (const id of nextDiskWarmQueue) nextDiskWarmQueued.delete(id);
+  nextDiskWarmQueue.length = 0;
+  for (const id of retained) {
+    nextDiskWarmQueue.push(id);
+    nextDiskWarmQueued.add(id);
   }
 }
 
@@ -3815,7 +3840,7 @@ export async function handleStreamWarm(req: Request, res: Response) {
   }
   enqueueStreamWarm(ids.slice(0, 12), uid);
   enqueueListHeadWarm(ids.slice(0, 24), { front: true });
-  enqueueNextDiskWarm(ids.slice(0, 24));
+  enqueueNextDiskWarm(ids.slice(0, 4));
   try {
     const { ensurePlayableQueueAhead } = await import('./ensurePlayable.js');
     ensurePlayableQueueAhead(ids, { userId: uid });

@@ -143,8 +143,7 @@ class LibraryHeadPrefetcher(
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
         StreamPrefetcher.warmFormatsLight(base, pins, limit = 24)
-        pins.take(12).forEach { StreamPrefetcher.requestServerDiskCache(base, it) }
-        AppLog.i("LibHeads", "pins-disk n=${pins.size}")
+        AppLog.i("LibHeads", "pins-prefix n=${pins.size}")
     }
 
     /**

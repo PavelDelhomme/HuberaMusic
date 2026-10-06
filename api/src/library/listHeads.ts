@@ -5,7 +5,7 @@
  */
 import { db } from './db.js';
 import { listPins } from './prefs.js';
-import { enqueueListHeadWarm, enqueueNextDiskWarm } from '../media/stream.js';
+import { enqueueListHeadWarm } from '../media/stream.js';
 
 const HEAD_N = Math.max(10, Math.min(24, Number(process.env.LIST_HEAD_N || 20) || 20));
 const TTL_MS = 12 * 60_000;
@@ -59,7 +59,7 @@ export function pinSongIds(userId: string, n = 48): string[] {
   return out;
 }
 
-/** Accès rapide + déjà écoutés : fichier .m4a sur le VPS, sans repasser par YouTube au clic. */
+/** Accès rapide + déjà écoutés : préfixe ~3 s seulement. Le fichier entier noie yt-dlp et tue les titres froids. */
 export function warmUserPinnedAndHeard(userId: string): void {
   const front = [
     ...new Set([
@@ -71,7 +71,6 @@ export function warmUserPinnedAndHeard(userId: string): void {
   ];
   if (!front.length) return;
   enqueueListHeadWarm(front, { front: true });
-  enqueueNextDiskWarm(front);
 }
 
 function titleOf(payload: string | null): string {

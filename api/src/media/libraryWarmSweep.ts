@@ -14,7 +14,6 @@ import {
   enqueueStreamWarm,
   enqueueListHeadWarm,
   enqueueLibraryPrefixWarm,
-  enqueueNextDiskWarm,
   isPlaybackHot,
   diskWarmQueueStats,
 } from './stream.js';
@@ -105,7 +104,7 @@ export async function runLibraryWarmSweepOnce(): Promise<{
           }
         }
         scheduleUserTasteWarm(uid);
-        enqueueNextDiskWarm(pinSongIds(uid, 48));
+        enqueueListHeadWarm(pinSongIds(uid, 48), { front: true });
       } catch {
         /* un compte KO n’arrête pas les autres */
       }

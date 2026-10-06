@@ -24,8 +24,8 @@ import { findReplacementId, getReplacementId } from './trackReplacement.js';
 /** Fenêtre à pré-vérifier (format + proxy + tête disque) avant que l’utilisateur arrive. */
 export const PREFLIGHT_AHEAD = 20;
 /** .m4a intégral : seulement les tout prochains — 20 téléchargements complets noient yt-dlp. */
-const FULL_DISK_HOT = 5;
-const FULL_DISK_IDLE = 10;
+const FULL_DISK_HOT = 3;
+const FULL_DISK_IDLE = 4;
 const VERIFIED_TTL_MS = 30 * 60_000;
 
 const verified = new Map<string, { playId: string; at: number }>();
