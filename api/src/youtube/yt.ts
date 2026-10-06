@@ -3187,6 +3187,20 @@ async function audioFormatViaYtDlpFast(
       }
       lastErr = e instanceof Error ? e : new Error(msg);
     }
+    // Relais publics morts : cookies + IP VPS tout de suite (pas 12 × 9 s).
+    try {
+      return await tryProxy(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (
+        /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
+          msg,
+        )
+      ) {
+        throw e instanceof Error ? e : new Error(msg);
+      }
+      lastErr = e instanceof Error ? e : new Error(msg);
+    }
   }
 
   const proxies = live
@@ -3302,6 +3316,28 @@ async function audioFormatViaYtDlp(
         ) {
           throw lastErr;
         }
+      }
+    }
+    try {
+      const cookieArgs = cookieSets.find((s) => s.length) || cookieSets[0] || [];
+      const url = await ytDlpGetUrl(
+        videoId,
+        formats[0]!,
+        cookieArgs,
+        null,
+        extractorSets[0] || [],
+        live,
+        userId,
+      );
+      return pack(url, null);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (
+        /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available|has been removed|copyright/i.test(
+          lastErr.message,
+        )
+      ) {
+        throw lastErr;
       }
     }
   }
