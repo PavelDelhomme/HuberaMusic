@@ -338,20 +338,16 @@ class PlayerController(
             StreamPrefetcher.quietPrefetch(
                 when {
                     offlineReady || headReady -> 80L
-                    else -> 1_800L
+                    else -> 400L
                 },
             )
             val startId = firstId
             scope.launch {
-                delay(if (offlineReady || headReady) 60L else 1_200L)
+                delay(if (offlineReady || headReady) 40L else 80L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
-                val pos = player()?.currentPosition ?: 0L
-                if (pos < 800L && !headReady && !offlineReady) {
-                    delay(1_200L)
-                    if (player()?.currentMediaItem?.mediaId != startId) return@launch
-                }
                 playable.drop(idx + 1).take(3).forEach { t ->
                     StreamPrefetcher.warmTrackFormatOnly(base, t.id)
+                    StreamPrefetcher.requestServerDiskCache(base, t.id)
                 }
                 warmAround(playable, idx)
                 StreamPrefetcher.prefetchByProximity(
@@ -1389,14 +1385,13 @@ class PlayerController(
             if (q.isNotEmpty()) {
                 StreamPrefetcher.cancelIdle(preserveNext = true)
                 if (PlaybackService.Holder.isCurrentStreamLoading()) {
-                    StreamPrefetcher.quietPrefetch(1_800L)
+                    StreamPrefetcher.quietPrefetch(400L)
                 }
                 val base = PlaybackService.Holder.resolvedApiBase()
                 if (base.isNotBlank()) {
                     scope.launch(Dispatchers.IO) {
-                        val wait = if (PlaybackService.Holder.isCurrentStreamLoading()) 3_500L else 400L
-                        delay(wait)
-                        StreamPrefetcher.prefetchByProximity(base, q.map { it.id }, idx)
+                        delay(80L)
+                        StreamPrefetcher.prefetchByProximity(base, q.map { it.id }, idx, force = true)
                     }
                 }
             }
@@ -1870,8 +1865,8 @@ class PlayerController(
         if (headReady && !currentId.isNullOrBlank()) {
             StreamPrefetcher.markHeadReady(currentId)
         }
-        // Courant d’abord ~1,8 s, puis les 3 suivants (plus de silence 25 s qui laisse le skip à froid).
-        StreamPrefetcher.quietPrefetch(if (headReady && !coldResume) 80L else 1_800L)
+        // Courant d’abord ~0,4 s, puis les 3 suivants sur le stripe serveur download.
+        StreamPrefetcher.quietPrefetch(if (headReady && !coldResume) 80L else 400L)
         if (!currentId.isNullOrBlank() && (!headReady || coldResume)) {
             StreamPrefetcher.warmTrackFormatOnly(base, currentId)
             scope.launch(Dispatchers.IO) {
@@ -1895,7 +1890,7 @@ class PlayerController(
         if (autoplay) {
             val startId = currentId
             scope.launch {
-                delay(if (headReady && !coldResume) 80L else 1_200L)
+                delay(if (headReady && !coldResume) 80L else 120L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
                 warmAround(window, idx)
                 StreamPrefetcher.prefetchByProximity(

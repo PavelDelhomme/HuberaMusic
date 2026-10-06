@@ -80,7 +80,7 @@ suspend fun playLibraryShuffled(
         )
     // Ne pas cancelAll avant Exo si on a déjà une tête utile
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(2_500L)
+    StreamPrefetcher.quietPrefetch(400L)
     runCatching { container.downloadManager.cancelOpportunistic() }
     if (lead0Hot) {
         StreamPrefetcher.markHeadReady(lead0)
@@ -92,7 +92,7 @@ suspend fun playLibraryShuffled(
     ShuffleHeadStore.rememberPlayed(ctx, shuffled.take(1).map { it.id })
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
-            kotlinx.coroutines.delay(if (lead0Hot) 1_800L else 2_800L)
+            kotlinx.coroutines.delay(if (lead0Hot) 80L else 120L)
             StreamPrefetcher.prefetchByProximity(base, shuffled.map { it.id }, 0, ahead = 4, force = true)
             StreamPrefetcher.prefetchNextDuringPlayback(base, shuffled.map { it.id }, 0, ignoreQuiet = true)
             if (!lead0Hot) {
@@ -192,14 +192,14 @@ suspend fun playQueueWithLead(
         )
     if (hot) StreamPrefetcher.markHeadReady(lead0)
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(2_500L)
+    StreamPrefetcher.quietPrefetch(400L)
     onPlay(window, localIdx)
     ovh.delhomme.ytmusic.player.PlaybackService.Holder.rememberFullQueue(playable, from + window.size)
     container.libraryHeadPrefetcher.warmDisplayedList(lead.take(3))
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
             runCatching { container.downloadManager.cancelOpportunistic() }
-            kotlinx.coroutines.delay(if (hot) 1_800L else 2_800L)
+            kotlinx.coroutines.delay(if (hot) 80L else 120L)
             StreamPrefetcher.prefetchByProximity(base, window.map { it.id }, localIdx, ahead = 4, force = true)
             StreamPrefetcher.prefetchNextDuringPlayback(base, window.map { it.id }, localIdx, ignoreQuiet = true)
             withTimeoutOrNull(LEAD_WARM_TIMEOUT_MS) {

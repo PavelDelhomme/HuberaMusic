@@ -111,7 +111,7 @@ import { importByKind, importByQueryOrUrl, importLocalAudioFile } from './media/
 import { getOwnedUpload } from './media/userUploads.js';
 import { handleOfflineStatus, startOfflineCollection } from './library/offline.js';
 import { getShuffleHeads, invalidateShuffleHeads } from './library/shuffleHeads.js';
-import { getListHeads, rememberVisibleListHeads, warmUserListHeads } from './library/listHeads.js';
+import { getListHeads, rememberVisibleListHeads, warmUserListHeads, warmUserPinnedAndHeard } from './library/listHeads.js';
 import { handleImageProxy } from './media/img.js';
 import {
   deployInfo,
@@ -2412,6 +2412,11 @@ app.post('/api/prefs/onboarding', accountRequired, (req, res) => {
 
 app.get('/api/pins', accountRequired, (req, res) => {
   res.json({ pins: listPins(req.userId!) });
+  try {
+    warmUserPinnedAndHeard(req.userId!);
+  } catch {
+    /* best-effort */
+  }
 });
 
 app.post('/api/pins', accountRequired, (req, res) => {

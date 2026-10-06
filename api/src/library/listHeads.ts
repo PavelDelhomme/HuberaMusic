@@ -4,7 +4,8 @@
  * sur le VPS, mis à jour régulièrement par compte.
  */
 import { db } from './db.js';
-import { enqueueListHeadWarm } from '../media/stream.js';
+import { listPins } from './prefs.js';
+import { enqueueListHeadWarm, enqueueNextDiskWarm } from '../media/stream.js';
 
 const HEAD_N = Math.max(10, Math.min(24, Number(process.env.LIST_HEAD_N || 20) || 20));
 const TTL_MS = 12 * 60_000;
@@ -15,6 +16,62 @@ const mem = new Map<string, CacheEntry>();
 
 function validId(id: string): boolean {
   return /^[a-zA-Z0-9_-]{11}$/.test(id);
+}
+
+/** Titres chanson de l’Accès rapide (pins song + ids dans le payload mix). */
+export function pinSongIds(userId: string, n = 48): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw: unknown) => {
+    const id = String(raw || '');
+    if (!validId(id) || seen.has(id) || out.length >= n) return;
+    seen.add(id);
+    out.push(id);
+  };
+  try {
+    for (const p of listPins(userId)) {
+      const kind = String(p.kind || 'song');
+      push(p.targetId);
+      const payload = (p.payload && typeof p.payload === 'object' ? p.payload : {}) as Record<
+        string,
+        unknown
+      >;
+      push(payload.id);
+      push(payload.videoId);
+      if (kind === 'song' || kind === 'video' || kind === 'track') continue;
+      const nested = [payload.items, payload.tracks, payload.songs, payload.videos];
+      for (const arr of nested) {
+        if (!Array.isArray(arr)) continue;
+        for (const it of arr.slice(0, 8)) {
+          if (it && typeof it === 'object') {
+            const row = it as Record<string, unknown>;
+            push(row.id);
+            push(row.videoId);
+          } else {
+            push(it);
+          }
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
+/** Accès rapide + déjà écoutés : fichier .m4a sur le VPS, sans repasser par YouTube au clic. */
+export function warmUserPinnedAndHeard(userId: string): void {
+  const front = [
+    ...new Set([
+      ...pinSongIds(userId, 48),
+      ...played48hIds(userId, 48),
+      ...recentLibraryIds(userId, 24),
+      ...likedIds(userId, 24),
+    ]),
+  ];
+  if (!front.length) return;
+  enqueueListHeadWarm(front, { front: true });
+  enqueueNextDiskWarm(front);
 }
 
 function titleOf(payload: string | null): string {
@@ -140,14 +197,14 @@ export function rememberVisibleListHeads(userId: string, ids: string[]): ListHea
   return { ids: clean, scope: 'visible', headN: HEAD_N };
 }
 
-/** Au GET biblio : A–Z + récents + aimés + écoutés 48 h. */
+/** Au GET biblio : A–Z + récents + aimés + écoutés 48 h + Accès rapide sur disque. */
 export function warmUserListHeads(userId: string): void {
   setTimeout(() => {
     try {
       getListHeads(userId, 'az', { warm: true });
       getListHeads(userId, 'recent', { warm: true });
       getListHeads(userId, 'liked', { warm: true });
-      enqueueListHeadWarm(played48hIds(userId, 40), { front: true });
+      warmUserPinnedAndHeard(userId);
     } catch {
       /* ignore */
     }

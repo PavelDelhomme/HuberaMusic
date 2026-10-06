@@ -216,7 +216,7 @@ export function ensurePlayableQueueAhead(
   const ahead = uniq.slice(0, aheadN);
   const fullN = hot ? FULL_DISK_HOT : FULL_DISK_IDLE;
   enqueueStreamWarm(ahead, opts?.userId);
-  if (!hot) enqueueListHeadWarm(ahead, { front: true });
+  enqueueListHeadWarm(ahead, { front: true });
   enqueueNextDiskWarm(ahead.slice(0, fullN));
   if (!hot) enqueueLikesDiskWarm(ahead.slice(0, 4));
   const [first, ...rest] = ahead;

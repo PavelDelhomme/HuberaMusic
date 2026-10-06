@@ -377,7 +377,7 @@ class PlaybackService : MediaSessionService() {
                     "PlaybackService",
                     "stall-buffer cold hold ${waited}ms id=$curId (pas de rebind)",
                 )
-                StreamPrefetcher.quietPrefetch(15_000L)
+                StreamPrefetcher.quietPrefetch(2_000L)
                 armStallWatch(exo)
                 return@Runnable
             }
@@ -427,7 +427,7 @@ class PlaybackService : MediaSessionService() {
                 stallLastPos = pos
                 stallPosFrozenSince = android.os.SystemClock.elapsedRealtime()
                 // Libère bande : coupe prefetch / DL pendant recovery.
-                StreamPrefetcher.quietPrefetch(8_000L)
+                StreamPrefetcher.quietPrefetch(2_000L)
                 StreamPrefetcher.cancelIdle(preserveNext = true)
                 runCatching { YtMusicApp.instance.container.downloadManager.cancelOpportunistic() }
                 scope.launch {
@@ -469,7 +469,7 @@ class PlaybackService : MediaSessionService() {
             bufferingSinceElapsed = android.os.SystemClock.elapsedRealtime()
             stallLastPos = pos
             stallPosFrozenSince = android.os.SystemClock.elapsedRealtime()
-            StreamPrefetcher.quietPrefetch(6_000L)
+            StreamPrefetcher.quietPrefetch(2_000L)
             if (local) {
                 val container = runCatching { YtMusicApp.instance.container }.getOrNull()
                 scope.launch {
@@ -3217,7 +3217,7 @@ fun ExoPlayer.playTracks(baseStreamUrl: (String) -> String, tracks: List<TrackDt
     PlaybackService.Holder.queue = window
     PlaybackService.Holder.index = idx
     PlaybackService.Holder.rememberFullQueue(playable, loadedUpTo)
-    StreamPrefetcher.quietPrefetch(1_800L)
+    StreamPrefetcher.quietPrefetch(400L)
     val current = window.getOrNull(idx)
     if (current != null && current.id.length == 11) {
         StreamPrefetcher.warmTrackFormatOnly(PlaybackService.Holder.resolvedApiBase(), current.id)

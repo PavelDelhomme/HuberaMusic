@@ -193,8 +193,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                             .filter { it.isPlayable() && it.id.length == 11 }
                             .map { it.id }
                     }.getOrDefault(emptyList())
+                    val base = container.resolvedApiBase()
                     if (pinSongIds.isNotEmpty()) {
                         container.libraryHeadPrefetcher.boostVisible(pinSongIds)
+                        container.libraryHeadPrefetcher.warmDisplayedList(pinSongIds.take(20))
+                    }
+                    if (base.isNotBlank() && pinSongIds.isNotEmpty()) {
+                        StreamPrefetcher.warmFormatsLight(base, pinSongIds, limit = 24)
+                        pinSongIds.take(12).forEach { id ->
+                            StreamPrefetcher.requestServerDiskCache(base, id)
+                        }
                     }
                     val ids = buildList {
                         addAll(pinSongIds)
@@ -206,12 +214,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                             }
                         }
                     }.distinct().filter { it.length == 11 }.take(24)
-                    if (ids.isNotEmpty()) {
-                        val base = container.resolvedApiBase()
-                        if (base.isNotBlank()) {
-                            StreamPrefetcher.warmTracks(base, ids)
-                            StreamPrefetcher.prefetchLibraryHeads(base, ids, limit = 10)
-                        }
+                    if (ids.isNotEmpty() && base.isNotBlank()) {
+                        StreamPrefetcher.warmFormatsLight(base, ids, limit = 24)
+                        StreamPrefetcher.prefetchLibraryHeads(base, ids, limit = 10)
                     }
                 }
 

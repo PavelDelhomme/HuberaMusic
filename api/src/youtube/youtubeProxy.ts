@@ -288,13 +288,19 @@ let hotRr = 0;
 const recentResolveAt = new Map<string, number>();
 const RESOLVE_COOLDOWN_MS = 25_000;
 
-export function pickHotProxies(n = 2, exclude: Set<string> = new Set()): string[] {
+export function pickHotProxies(
+  n = 2,
+  exclude: Set<string> = new Set(),
+  purpose?: ProxyPurpose,
+): string[] {
   const now = Date.now();
+  const stripeOk = (url: string) => !purpose || proxyStripe(url) === purpose;
   const hot = [...pool.values()]
     .filter(
       (e) =>
         usable(e) &&
         isHttpProxy(e.url) &&
+        stripeOk(e.url) &&
         (e.gvHits || 0) > 0 &&
         now - (e.lastOkAt || 0) < HOT_EXPIRE_MS &&
         !exclude.has(e.url),
@@ -302,7 +308,14 @@ export function pickHotProxies(n = 2, exclude: Set<string> = new Set()): string[
     .sort((a, b) => (b.gvHits || 0) - (a.gvHits || 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0));
   const window = hot.slice(0, Math.min(hot.length, Math.max(12, n * 6)));
   const extra = [...pool.values()]
-    .filter((e) => usable(e) && isHttpProxy(e.url) && !exclude.has(e.url) && !window.some((h) => h.url === e.url))
+    .filter(
+      (e) =>
+        usable(e) &&
+        isHttpProxy(e.url) &&
+        stripeOk(e.url) &&
+        !exclude.has(e.url) &&
+        !window.some((h) => h.url === e.url),
+    )
     .sort((a, b) => (b.connectOkUntil > now ? 1 : 0) - (a.connectOkUntil > now ? 1 : 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0));
   // Ne jamais réduire le pool à 1 gagnant gv — YouTube bannit cette IP.
   const poolList = [...window];
@@ -930,7 +943,11 @@ export function userProxyPoolStats(userId: string): { size: number; usable: numb
 }
 
 /** 3 proxies distincts du pool user pour une course de résolution. */
-export function youtubeProxyStripe(userId: string | undefined, n = 3) {
+export function youtubeProxyStripe(
+  userId: string | undefined,
+  n = 3,
+  purpose: ProxyPurpose = 'stream',
+) {
   return youtubeProxyAttempts({
     max: n,
     userId,
@@ -938,6 +955,7 @@ export function youtubeProxyStripe(userId: string | undefined, n = 3) {
     probe: true,
     shuffle: false,
     directLast: true,
+    purpose,
   });
 }
 

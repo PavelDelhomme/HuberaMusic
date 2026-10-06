@@ -9,11 +9,12 @@
  */
 import { db } from '../library/db.js';
 import { getShuffleHeads } from '../library/shuffleHeads.js';
-import { getListHeads } from '../library/listHeads.js';
+import { getListHeads, pinSongIds, warmUserPinnedAndHeard } from '../library/listHeads.js';
 import {
   enqueueStreamWarm,
   enqueueListHeadWarm,
   enqueueLibraryPrefixWarm,
+  enqueueNextDiskWarm,
   isPlaybackHot,
   diskWarmQueueStats,
 } from './stream.js';
@@ -74,18 +75,18 @@ export async function runLibraryWarmSweepOnce(): Promise<{
   ids: number;
   likes: number;
 }> {
-  if (isPlaybackHot(120_000)) {
-    // Pas le crawl 14k, mais les têtes « récents / 48 h » restent chaudes.
-    const uids = allUserIds();
-    for (const uid of uids) {
-      try {
-        getListHeads(uid, 'recent', { warm: true });
-        getListHeads(uid, 'liked', { warm: true });
-      } catch {
-        /* un compte */
-      }
+  const uids = allUserIds();
+  for (const uid of uids) {
+    try {
+      getListHeads(uid, 'recent', { warm: true });
+      getListHeads(uid, 'liked', { warm: true });
+      warmUserPinnedAndHeard(uid);
+    } catch {
+      /* un compte */
     }
-    console.info(`[libraryWarm] skip full sweep — lecture ; têtes récents users=${uids.length}`);
+  }
+  if (isPlaybackHot(120_000)) {
+    console.info(`[libraryWarm] skip full sweep — lecture ; pins/récents users=${uids.length}`);
     return { users: uids.length, ids: lastStats.ids, likes: lastStats.likes };
   }
   if (running) return { users: 0, ids: lastStats.ids, likes: lastStats.likes };
@@ -104,6 +105,7 @@ export async function runLibraryWarmSweepOnce(): Promise<{
           }
         }
         scheduleUserTasteWarm(uid);
+        enqueueNextDiskWarm(pinSongIds(uid, 48));
       } catch {
         /* un compte KO n’arrête pas les autres */
       }

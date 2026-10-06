@@ -37,6 +37,7 @@ class LibraryHeadPrefetcher(
                 // Même pendant une écoute : le VPS doit garder les têtes « récents / 48 h ».
                 runCatching { warmServerRecentHeads() }
                 runCatching { warmServerListHeads(force = false) }
+                runCatching { warmServerPins() }
                 if (playerBusy()) {
                     delay(8_000L)
                     continue
@@ -126,6 +127,26 @@ class LibraryHeadPrefetcher(
         AppLog.i("LibHeads", "list-heads az=${az.size} recent=${recent.size} liked=${liked.size} exo=${!playerBusy()}")
     }
 
+    /** Accès rapide : fichiers complets sur le VPS, même pendant une écoute. */
+    private suspend fun warmServerPins() {
+        if (!NetworkMonitor.isOnline()) return
+        if (StreamPrefetcher.isStreamDown()) return
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong(KEY_PINS_FETCH, 0L) < 2 * 60_000L) return
+        val pins = runCatching {
+            container.quickAccess.pins.first().map { it.id }.filter { it.length == 11 }.distinct()
+        }.getOrDefault(emptyList())
+        if (pins.isEmpty()) return
+        prefs.edit().putLong(KEY_PINS_FETCH, now).apply()
+        runCatching { container.ensureFreshToken() }
+        runCatching { container.api.postListHeads(ListHeadsBody(pins.take(24))) }
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return
+        StreamPrefetcher.warmFormatsLight(base, pins, limit = 24)
+        pins.take(12).forEach { StreamPrefetcher.requestServerDiskCache(base, it) }
+        AppLog.i("LibHeads", "pins-disk n=${pins.size}")
+    }
+
     /**
      * File affichée (Tout lire, album, artiste, singles) : VPS + téléphone en parallèle.
      */
@@ -141,9 +162,12 @@ class LibraryHeadPrefetcher(
             val base = container.resolvedApiBase()
             if (base.isBlank()) return@launch
             StreamPrefetcher.warmFormatsLight(base, clean, limit = 20)
-            if (!PlaybackService.Holder.isPlaybackActiveSafe()) {
-                StreamPrefetcher.warmHeads3s(base, clean, limit = 16)
-            }
+            StreamPrefetcher.warmHeads3s(
+                base,
+                clean.take(8),
+                limit = 8,
+                ignoreQuiet = true,
+            )
             AppLog.i("LibHeads", "visible-list n=${clean.size}")
         }
     }
@@ -332,5 +356,6 @@ class LibraryHeadPrefetcher(
         private const val KEY_SHUFFLE_FETCH = "shuffle_head_fetch"
         private const val KEY_RECENT_FETCH = "shuffle_recent_fetch"
         private const val KEY_LIST_FETCH = "list_head_fetch"
+        private const val KEY_PINS_FETCH = "pins_disk_fetch"
     }
 }

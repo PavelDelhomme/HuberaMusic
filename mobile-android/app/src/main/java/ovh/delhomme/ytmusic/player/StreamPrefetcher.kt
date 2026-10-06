@@ -663,7 +663,7 @@ object StreamPrefetcher {
         val now = System.currentTimeMillis()
         val nextOnly = idx == rollingAnchor && now - rollingLastAt < 4_000L
         if (nextOnly) {
-            prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = false)
+            prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = true)
             return
         }
         if (idx == rollingAnchor && now - rollingLastAt < 5_000L) return
@@ -682,7 +682,7 @@ object StreamPrefetcher {
         // Formats pour toute la fenêtre (serveur priorise via warm)
         slice.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
         // +1 toujours prioritaire
-        prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = false)
+        prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = true)
         // Lecture : têtes Exo sur 10–16 suivants (10–20 %), pas seulement +1/+2.
         slice.forEachIndexed { i, id ->
             val dist = i + 1
@@ -758,6 +758,7 @@ object StreamPrefetcher {
         val bytes = when {
             saver -> HEAD_NEXT_METERED
             !isUnmetered() -> HEAD_NEXT_METERED
+            isPlaybackActive() -> HEAD_NEAR_WIFI
             else -> HEAD_NEXT_PLAYING
         }
         val already = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, bytes)
@@ -876,12 +877,14 @@ object StreamPrefetcher {
         }
         if (upcoming.isEmpty() && behind.isEmpty()) return
         (upcoming + behind).chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
-        prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = false)
+        prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = true)
         upcoming.forEachIndexed { i, id ->
             val dist = i + 1
             val url = streamPrefetchUrl(baseApi, id)
             val bytes = when {
-                dist == 1 -> if (isUnmetered()) HEAD_NEXT_PLAYING else HEAD_NEXT_METERED
+                dist == 1 -> if (isUnmetered()) {
+                    if (isPlaybackActive()) HEAD_NEAR_WIFI else HEAD_NEXT_PLAYING
+                } else HEAD_NEXT_METERED
                 dist <= 3 -> HEAD_PCT_NEAR
                 dist <= 12 -> HEAD_3S
                 else -> HEAD_FAR_WIFI
@@ -976,8 +979,8 @@ object StreamPrefetcher {
      * Précharge ~3 s de tête pour une liste (file / biblio visible).
      * Limité pour ne pas saturer le réseau.
      */
-    fun warmHeads3s(baseApi: String, trackIds: List<String>, limit: Int = 12) {
-        if (isQuiet()) return
+    fun warmHeads3s(baseApi: String, trackIds: List<String>, limit: Int = 12, ignoreQuiet: Boolean = false) {
+        if (!ignoreQuiet && isQuiet()) return
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val capped = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(limit.coerceIn(1, 16))
         val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(capped)

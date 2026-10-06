@@ -33,6 +33,7 @@ import {
   fetchUrlViaProxy,
   isHttpProxy,
   pickHotProxies,
+  type ProxyPurpose,
 } from '../youtube/youtubeProxy.js';
 import {
   peekStreamHead,
@@ -184,7 +185,12 @@ export function streamRetryN(req: Request): number {
 async function fetchGooglevideo(
   url: string,
   range?: string,
-  opts?: { preferProxies?: boolean; boundProxy?: string | null; userId?: string },
+  opts?: {
+    preferProxies?: boolean;
+    boundProxy?: string | null;
+    userId?: string;
+    purpose?: ProxyPurpose;
+  },
 ): Promise<globalThis.Response> {
   const headers = googlevideoHeaders(url, range);
   const prefer = opts?.preferProxies !== false && youtubeProxyFreeEnabled();
@@ -266,7 +272,7 @@ async function fetchGooglevideo(
     shuffle: true,
     probe: true,
     userId: opts?.userId,
-    purpose: 'stream',
+    purpose: opts?.purpose ?? 'stream',
   });
   let lastErr: Error | null = null;
   for (const proxy of proxies) {
@@ -279,6 +285,77 @@ async function fetchGooglevideo(
     }
   }
   throw lastErr || new Error('upstream audio 5xx (proxies épuisés)');
+}
+
+/**
+ * Titres suivants pendant une écoute : relais stripe `download`, pas le proxy
+ * du flux en cours. Écrit 256–512 Ko sur disque + tête RAM.
+ */
+async function fetchPrefixViaDownloadStripe(
+  videoId: string,
+  userId?: string,
+): Promise<{ buf: Buffer; total: number } | null> {
+  const proxies = pickHotProxies(3, new Set(), 'download');
+  for (const proxy of proxies) {
+    try {
+      const fmt = await Promise.race([
+        getAudioFormat(videoId, { userId, boundProxy: proxy }),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('fmt timeout')), 8_000)),
+      ]);
+      if (!fmt?.url) continue;
+      const res = await Promise.race([
+        fetchGooglevideo(fmt.url, `bytes=0-${FIRST_BYTES - 1}`, {
+          preferProxies: true,
+          boundProxy: proxy,
+          userId,
+          purpose: 'download',
+        }),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('prefix gv timeout')), 8_000)),
+      ]);
+      if (res.status !== 206 && res.status !== 200) {
+        try {
+          await res.body?.cancel();
+        } catch {
+          /* ignore */
+        }
+        continue;
+      }
+      const total = parseContentTotal(res);
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length < 64_000 || isDashBrandBuffer(buf)) continue;
+      markYoutubeProxySuccess(proxy, 'gv');
+      return {
+        buf,
+        total: Number.isFinite(total) && total > 0 ? total : buf.length,
+      };
+    } catch {
+      /* relais download suivant */
+    }
+  }
+  return null;
+}
+
+function writePrefixToDisk(videoId: string, buf: Buffer, total?: number): void {
+  if (buf.length < 64_000) return;
+  const early = cachePath(videoId);
+  try {
+    const already = existsSync(early) ? statSync(early).size : 0;
+    if (already >= buf.length) {
+      putStreamHead(videoId, buf, { totalSize: total ?? getAdvertisedTotal(videoId) });
+      return;
+    }
+    const efd = openSync(early, already > 0 ? 'r+' : 'w');
+    try {
+      writeSync(efd, buf, 0, buf.length, 0);
+      if (already < buf.length) ftruncateSync(efd, buf.length);
+    } finally {
+      closeSync(efd);
+    }
+  } catch {
+    /* RAM head quand même */
+  }
+  if (total && total > 0) rememberAdvertisedTotal(videoId, total);
+  putStreamHead(videoId, buf, { totalSize: total ?? getAdvertisedTotal(videoId) });
 }
 
 /**
@@ -1524,9 +1601,9 @@ function tryServeRamHead(req: Request, res: Response, videoId: string): boolean 
   return true;
 }
 
-/** Prefetch +1 : servir une vraie tête (disque / format déjà chaud), pas un 204 vide. */
+/** Prefetch +1 : servir une vraie tête (disque / stripe download), pas un 204 vide. */
 let warmPrefixBusy = 0;
-const WARM_PREFIX_MAX = 2;
+const WARM_PREFIX_MAX = 4;
 
 async function tryServeWarmPrefix(
   req: Request,
@@ -1534,89 +1611,37 @@ async function tryServeWarmPrefix(
   videoId: string,
   userId?: string,
 ): Promise<boolean> {
-  enqueueStreamWarm([videoId], userId);
+  enqueueListHeadWarm([videoId], { front: true });
   enqueueNextDiskWarm([videoId]);
   if (tryServeRamHead(req, res, videoId)) return true;
-  const waitMs = isPlaybackHot(90_000) ? 900 : 2_000;
-  const ready = await waitUntilDiskServable(videoId, waitMs);
+  const ready = await waitUntilDiskServable(videoId, 2_500);
   if (ready) {
     return pipeDiskFile(req, res, ready, videoId, 'disk-warm');
   }
   if (res.headersSent) return true;
   if (warmPrefixBusy >= WARM_PREFIX_MAX) {
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(204).end();
-    return true;
-  }
-  const peeked = peekCachedAudioFormat(videoId, userId);
-  if (!peeked?.url) {
+    const late = await waitUntilDiskServable(videoId, 1_200);
+    if (late) return pipeDiskFile(req, res, late, videoId, 'disk-warm');
+    if (tryServeRamHead(req, res, videoId)) return true;
     res.setHeader('Cache-Control', 'no-store');
     res.status(204).end();
     return true;
   }
   warmPrefixBusy += 1;
   try {
-    const rangeHdr = req.headers.range ? String(req.headers.range) : 'bytes=0-524287';
-    const upstream = await Promise.race([
-      fetchGooglevideo(peeked.url, rangeHdr, {
-        preferProxies: true,
-        userId,
-        boundProxy: peeked.viaProxy,
-      }),
-      new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error('warm gv timeout')), 2_500),
-      ),
-    ]);
-    if (res.headersSent) return true;
-    if (upstream.status >= 400 || !upstream.body) {
-      res.setHeader('Cache-Control', 'no-store');
-      res.status(204).end();
-      return true;
-    }
-    const reader = upstream.body.getReader();
-    const first = await Promise.race([
-      reader.read(),
-      new Promise<never>((_, rej) =>
-        setTimeout(() => rej(new Error('warm gv first-byte')), 2_000),
-      ),
-    ]);
-    if (first.done || !first.value?.byteLength) {
-      res.setHeader('Cache-Control', 'no-store');
-      res.status(204).end();
-      return true;
-    }
-    const firstBuf = Buffer.from(first.value);
-    if (isDashBrandBuffer(firstBuf)) {
-      try {
-        await reader.cancel();
-      } catch {
-        /* ignore */
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      res.status(204).end();
-      return true;
-    }
-    noteStreamSource(res, 'warm googlevideo');
-    res.status(upstream.status);
-    const ct = upstream.headers.get('content-type');
-    if (ct) res.setHeader('Content-Type', ct);
-    else res.setHeader('Content-Type', 'audio/mp4');
-    const cr = upstream.headers.get('content-range');
-    if (cr) res.setHeader('Content-Range', cr);
-    const cl = upstream.headers.get('content-length');
-    if (cl) res.setHeader('Content-Length', cl);
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'private, max-age=120');
-    res.setHeader('X-PLM-Stream-Cache', 'warm-gv');
-    if (!res.write(firstBuf)) await new Promise((r) => res.once('drain', r));
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value && !res.write(Buffer.from(value))) {
-        await new Promise((r) => res.once('drain', r));
+    const got = await fetchPrefixViaDownloadStripe(videoId, userId);
+    if (got) {
+      writePrefixToDisk(videoId, got.buf, got.total);
+      if (tryServeRamHead(req, res, videoId)) return true;
+      const p = cachePath(videoId);
+      if (isGrowingDiskServable(p) || isCompleteEnoughDisk(p)) {
+        return pipeDiskFile(req, res, p, videoId, 'disk-warm');
       }
     }
-    res.end();
+    if (!res.headersSent) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(204).end();
+    }
     return true;
   } catch {
     if (!res.headersSent) {
@@ -3299,7 +3324,13 @@ const searchWarmQueued = new Set<string>();
 const listHeadWarmQueue: string[] = [];
 const listHeadWarmQueued = new Set<string>();
 let diskWarmBusyCount = 0;
+let nextWarmBusyCount = 0;
+let nextFullBusyCount = 0;
 const DISK_WARM_CONCURRENCY = 3;
+/** Pendant l’écoute : 3 workers préfixe (stripe download), 1 fichier complet. */
+const NEXT_WARM_CONCURRENCY = 3;
+const NEXT_FULL_MAX_HOT = 1;
+const NEXT_FULL_MAX_IDLE = 2;
 const libPrefixWarmQueue: string[] = [];
 const libPrefixWarmQueued = new Set<string>();
 const LIB_PREFIX_CAP = 8_000;
@@ -3312,33 +3343,19 @@ function likesDiskWarmCap(): number {
   return Math.max(80, Math.min(2000, Number(process.env.LIKES_DISK_WARM_QUEUE || 800) || 800));
 }
 
-async function runDiskWarmWorker() {
-  const maxBusy = isPlaybackHot(90_000) ? 1 : DISK_WARM_CONCURRENCY;
-  if (diskWarmBusyCount >= maxBusy) return;
-  diskWarmBusyCount += 1;
+function kickNextWarm() {
+  if (listHeadWarmQueue.length || nextDiskWarmQueue.length) void runNextWarmWorker();
+}
+
+/**
+ * File d’écoute : préfixes 512 Ko en parallèle sur relais `download`,
+ * puis 1 téléchargement complet. Jamais le sleep 4 s ni le slot unique « hot ».
+ */
+async function runNextWarmWorker() {
+  if (nextWarmBusyCount >= NEXT_WARM_CONCURRENCY) return;
+  nextWarmBusyCount += 1;
   try {
-    while (
-      nextDiskWarmQueue.length ||
-      listHeadWarmQueue.length ||
-      (!isPlaybackHot(90_000) && libPrefixWarmQueue.length) ||
-      searchWarmQueue.length ||
-      likesDiskWarmQueue.length ||
-      diskWarmQueue.length
-    ) {
-      const nextId = nextDiskWarmQueue.shift();
-      if (nextId) {
-        nextDiskWarmQueued.delete(nextId);
-        try {
-          await downloadTrack(nextId, { progressiveOnly: true, preferProxies: true });
-        } catch {
-          /* best-effort */
-        }
-        if (nextDiskWarmQueue.length) void runDiskWarmWorker();
-        await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 200 : 120));
-        continue;
-      }
-      // Têtes « Enregistré récemment » / lire ensuite : même pendant une écoute
-      // (préfixe 256 Ko, 1 slot). Sinon les ajouts récents restent froids > 5 s.
+    while (listHeadWarmQueue.length || nextDiskWarmQueue.length) {
       const listId = listHeadWarmQueue.shift();
       if (listId) {
         listHeadWarmQueued.delete(listId);
@@ -3347,9 +3364,45 @@ async function runDiskWarmWorker() {
         } catch {
           /* best-effort */
         }
-        await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 220 : 140));
+        kickNextWarm();
         continue;
       }
+      const fullMax = isPlaybackHot(90_000) ? NEXT_FULL_MAX_HOT : NEXT_FULL_MAX_IDLE;
+      if (nextFullBusyCount >= fullMax) {
+        if (listHeadWarmQueue.length) continue;
+        break;
+      }
+      const nextId = nextDiskWarmQueue.shift();
+      if (!nextId) break;
+      nextDiskWarmQueued.delete(nextId);
+      nextFullBusyCount += 1;
+      try {
+        await downloadTrack(nextId, { progressiveOnly: true, preferProxies: true });
+      } catch {
+        /* best-effort */
+      } finally {
+        nextFullBusyCount = Math.max(0, nextFullBusyCount - 1);
+      }
+      kickNextWarm();
+    }
+  } finally {
+    nextWarmBusyCount = Math.max(0, nextWarmBusyCount - 1);
+    kickNextWarm();
+  }
+}
+
+async function runDiskWarmWorker() {
+  kickNextWarm();
+  const maxBusy = isPlaybackHot(90_000) ? 1 : DISK_WARM_CONCURRENCY;
+  if (diskWarmBusyCount >= maxBusy) return;
+  diskWarmBusyCount += 1;
+  try {
+    while (
+      (!isPlaybackHot(90_000) && libPrefixWarmQueue.length) ||
+      searchWarmQueue.length ||
+      likesDiskWarmQueue.length ||
+      diskWarmQueue.length
+    ) {
       const prefixId = isPlaybackHot(90_000) ? undefined : libPrefixWarmQueue.shift();
       if (prefixId) {
         libPrefixWarmQueued.delete(prefixId);
@@ -3358,7 +3411,7 @@ async function runDiskWarmWorker() {
         } catch {
           /* best-effort */
         }
-        await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 700 : 180));
+        await new Promise((r) => setTimeout(r, 180));
         continue;
       }
       const searchId = searchWarmQueue.shift();
@@ -3383,11 +3436,7 @@ async function runDiskWarmWorker() {
         await new Promise((r) => setTimeout(r, 180));
         continue;
       }
-      // Lecture utilisateur : ne PAS consommer de slots yt-dlp génériques (sinon Aléatoire timeout).
-      if (isPlaybackHot(60_000)) {
-        await new Promise((r) => setTimeout(r, 4_000));
-        continue;
-      }
+      if (isPlaybackHot(60_000)) break;
       const id = likesDiskWarmQueue.shift() || diskWarmQueue.shift();
       if (!id) break;
       likesDiskWarmQueued.delete(id);
@@ -3404,13 +3453,12 @@ async function runDiskWarmWorker() {
       } catch {
         /* best-effort — le titre reste candidate au prochain sweep */
       }
-      await new Promise((r) => setTimeout(r, isPlaybackHot(60_000) ? 2_000 : 400));
+      await new Promise((r) => setTimeout(r, 400));
     }
   } finally {
     diskWarmBusyCount = Math.max(0, diskWarmBusyCount - 1);
+    kickNextWarm();
     if (
-      nextDiskWarmQueue.length ||
-      listHeadWarmQueue.length ||
       libPrefixWarmQueue.length ||
       searchWarmQueue.length ||
       likesDiskWarmQueue.length ||
@@ -3422,9 +3470,13 @@ async function runDiskWarmWorker() {
 }
 
 export function enqueueNextDiskWarm(ids: string[]) {
+  const added: string[] = [];
   for (const id of ids) {
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
-    if (nextDiskWarmQueued.has(id)) continue;
+    if (nextDiskWarmQueued.has(id)) {
+      added.push(id);
+      continue;
+    }
     try {
       const p = cachePath(id);
       if (isCompleteEnoughDisk(p) && statSync(p).size >= 3 * 1024 * 1024) continue;
@@ -3441,18 +3493,14 @@ export function enqueueNextDiskWarm(ids: string[]) {
       likesDiskWarmQueue.splice(li, 1);
       likesDiskWarmQueued.delete(id);
     }
-    const cap = isPlaybackHot(90_000) ? 4 : 12;
-    if (nextDiskWarmQueue.length >= cap) break;
+    if (nextDiskWarmQueue.length >= 40) break;
     nextDiskWarmQueued.add(id);
     nextDiskWarmQueue.push(id);
+    added.push(id);
   }
-  if (
-    nextDiskWarmQueue.length ||
-    listHeadWarmQueue.length ||
-    searchWarmQueue.length ||
-    likesDiskWarmQueue.length ||
-    diskWarmQueue.length
-  ) {
+  if (added.length) enqueueListHeadWarm(added, { front: true });
+  kickNextWarm();
+  if (searchWarmQueue.length || likesDiskWarmQueue.length || diskWarmQueue.length) {
     void runDiskWarmWorker();
   }
 }
@@ -3465,7 +3513,7 @@ export function enqueueListHeadWarm(ids: string[], opts?: { front?: boolean }) {
   const cap = 80;
   for (const id of ids) {
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
-    if (listHeadWarmQueued.has(id) || nextDiskWarmQueued.has(id)) continue;
+    if (listHeadWarmQueued.has(id)) continue;
     try {
       const p = cachePath(id);
       if (isCompleteEnoughDisk(p) || isGrowingDiskServable(p)) continue;
@@ -3486,7 +3534,8 @@ export function enqueueListHeadWarm(ids: string[], opts?: { front?: boolean }) {
     if (opts?.front) listHeadWarmQueue.unshift(id);
     else listHeadWarmQueue.push(id);
   }
-  if (listHeadWarmQueue.length || libPrefixWarmQueue.length) void runDiskWarmWorker();
+  kickNextWarm();
+  if (libPrefixWarmQueue.length) void runDiskWarmWorker();
 }
 
 /** Préfixes 256 Ko (~quelques secondes AAC) partagés par tous les comptes. */
@@ -3511,21 +3560,26 @@ async function warmTrackPrefix(videoId: string): Promise<void> {
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return;
   const out = cachePath(videoId);
   try {
-    if (isCompleteEnoughDisk(out) || isGrowingDiskServable(out)) return;
+    if (isCompleteEnoughDisk(out) || isGrowingDiskServable(out)) {
+      try {
+        const head = readFileSync(out).subarray(0, Math.min(statSync(out).size, SWARM_CHUNK_BYTES));
+        putStreamHead(videoId, head, { totalSize: getAdvertisedTotal(videoId) });
+      } catch {
+        /* déjà jouable */
+      }
+      return;
+    }
   } catch {
     /* continue */
   }
   const sig = addDownloadConsumer(videoId, 'warm:listhead');
   try {
-    await resolveFormatHedged(videoId, undefined, sig, false);
-    try {
-      if (existsSync(out) && statSync(out).size >= 64_000) {
-        const head = readFileSync(out).subarray(0, Math.min(statSync(out).size, SWARM_CHUNK_BYTES));
-        putStreamHead(videoId, head, { totalSize: getAdvertisedTotal(videoId) });
-      }
-    } catch {
-      /* RAM head optionnel */
+    const got = await fetchPrefixViaDownloadStripe(videoId);
+    if (got) {
+      writePrefixToDisk(videoId, got.buf, got.total);
+      return;
     }
+    void sig;
   } finally {
     removeDownloadConsumer(videoId, 'warm:listhead');
   }
@@ -3631,7 +3685,7 @@ export function diskWarmQueueStats(): {
     listHeads: listHeadWarmQueue.length,
     libPrefix: libPrefixWarmQueue.length,
     next: nextDiskWarmQueue.length,
-    busy: diskWarmBusyCount > 0,
+    busy: diskWarmBusyCount > 0 || nextWarmBusyCount > 0,
   };
 }
 
@@ -3655,7 +3709,7 @@ async function runWarmWorker() {
       warmQueued.delete(job.id);
       try {
         const format = await getAudioFormat(job.id, { userId: job.userId });
-        if (format?.url) {
+        if (format?.url && !isPlaybackHot(90_000)) {
           await warmStreamHead(job.id, (range) =>
             fetchGooglevideo(format.url, range, { userId: job.userId, boundProxy: format.viaProxy }),
           );
@@ -3759,23 +3813,21 @@ export async function handleStreamWarm(req: Request, res: Response) {
     );
     return;
   }
-  enqueueStreamWarm(ids.slice(0, isPlaybackHot(90_000) ? 8 : ids.length), uid);
+  enqueueStreamWarm(ids.slice(0, 12), uid);
   enqueueListHeadWarm(ids.slice(0, 24), { front: true });
-  enqueueNextDiskWarm(ids.slice(0, isPlaybackHot(90_000) ? 6 : ids.length));
-  if (!isPlaybackHot(90_000)) {
-    try {
-      const { ensurePlayableQueueAhead } = await import('./ensurePlayable.js');
-      ensurePlayableQueueAhead(ids, { userId: uid });
-    } catch {
-      /* ignore */
-    }
+  enqueueNextDiskWarm(ids.slice(0, 24));
+  try {
+    const { ensurePlayableQueueAhead } = await import('./ensurePlayable.js');
+    ensurePlayableQueueAhead(ids, { userId: uid });
+  } catch {
+    /* ignore */
   }
   res.json({
     ok: true,
     requested: ids.length,
     queued: true,
     pending: warmQueue.length + warmWorkers,
-    ensure: !isPlaybackHot(90_000),
+    ensure: true,
   });
 }
 
