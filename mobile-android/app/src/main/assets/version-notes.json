@@ -1,6 +1,26 @@
 {
-  "updatedAt": "2026-10-06",
+  "updatedAt": "2026-10-07",
   "versions": [
+    {
+      "version": "1.3.356",
+      "date": "2026-10-07",
+      "time": "16:20",
+      "at": "2026-10-07T16:20:00+02:00",
+      "title": "Paroles : tu peux faire défiler, retour auto après 8 s",
+      "notes": [
+        "Toutes les lignes sont scrollables (avant / après). La ligne chantée reste en évidence. Si tu ne touches plus, ça revient à la ligne en cours au bout de 8 secondes — plus un blocage sur 3 lignes. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.355",
+      "date": "2026-10-07",
+      "time": "13:15",
+      "at": "2026-10-07T13:15:00+02:00",
+      "title": "Karaoké : la ligne chantée reste à l’écran",
+      "notes": [
+        "Les paroles synchronisées affichent la ligne en cours au centre (précédente / actuelle / suivante), plus un mur qui défile hors cadre. Mise à jour proposée, pas forcée."
+      ]
+    },
     {
       "version": "1.3.354",
       "date": "2026-10-06",

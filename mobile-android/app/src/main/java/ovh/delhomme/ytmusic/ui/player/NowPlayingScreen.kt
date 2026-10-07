@@ -3530,31 +3530,71 @@ private fun InlineSyncedLyrics(
                 modifier = Modifier.padding(top = 24.dp),
             )
             timed.isNotEmpty() -> {
-                val listState = rememberLazyListState()
-                var userBrowsing by remember(track.id) { mutableStateOf(false) }
-                val scrolling = listState.isScrollInProgress
-                LaunchedEffect(scrolling) {
-                    if (scrolling) userBrowsing = true
+                val lyricsListState = rememberLazyListState()
+                var followLyrics by remember(track.id) { mutableStateOf(true) }
+                var programmaticScroll by remember { mutableStateOf(false) }
+                var lastUserScrollAt by remember(track.id) { mutableLongStateOf(0L) }
+
+                LaunchedEffect(lyricsListState, track.id) {
+                    snapshotFlow { lyricsListState.isScrollInProgress }
+                        .collect { scrolling ->
+                            if (scrolling && !programmaticScroll) {
+                                followLyrics = false
+                                lastUserScrollAt = SystemClock.elapsedRealtime()
+                            }
+                        }
                 }
-                LaunchedEffect(playing, track.id) {
-                    if (playing) userBrowsing = false
+
+                LaunchedEffect(followLyrics, lastUserScrollAt, track.id) {
+                    if (followLyrics) return@LaunchedEffect
+                    delay(8_000L)
+                    if (
+                        !lyricsListState.isScrollInProgress &&
+                        SystemClock.elapsedRealtime() - lastUserScrollAt >= 7_500L
+                    ) {
+                        followLyrics = true
+                    }
                 }
-                LaunchedEffect(active, playing, userBrowsing, track.id) {
-                    if (!playing || userBrowsing || active < 0 || timed.isEmpty()) return@LaunchedEffect
-                    val target = active.coerceIn(0, timed.lastIndex)
-                    runCatching { listState.animateScrollToItem(target, scrollOffset = -48) }
+
+                LaunchedEffect(active, followLyrics, timed.size, track.id) {
+                    if (!followLyrics || timed.isEmpty()) return@LaunchedEffect
+                    val target = active.coerceAtLeast(0).coerceAtMost(timed.lastIndex)
+                    val info = lyricsListState.layoutInfo
+                    val vis = info.visibleItemsInfo
+                    val currentItem = vis.firstOrNull { it.index == target }
+                    val viewportH = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
+                    val inComfort = currentItem != null &&
+                        currentItem.offset > viewportH * 0.16f &&
+                        (currentItem.offset + currentItem.size) < viewportH * 0.84f
+                    if (inComfort) return@LaunchedEffect
+                    programmaticScroll = true
+                    runCatching {
+                        lyricsListState.animateScrollToItem((target - 2).coerceAtLeast(0))
+                    }
+                    delay(40)
+                    programmaticScroll = false
                 }
+
                 LazyColumn(
-                    state = listState,
+                    state = lyricsListState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 12.dp),
+                    contentPadding = PaddingValues(vertical = 28.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
+                    userScrollEnabled = true,
                 ) {
-                    itemsIndexed(timed, key = { i, line -> "$i-${line.startMsLong()}" }) { i, line ->
+                    itemsIndexed(
+                        timed,
+                        key = { i, line -> "${track.id}-$i-${line.startMsLong()}" },
+                    ) { i, line ->
+                        val isCurrent = i == active.coerceAtLeast(0)
                         FocusLyricLine(
                             text = line.text,
-                            current = i == active,
-                            onClick = if (playing) ({ onSeek(line.startMsLong()) }) else null,
+                            current = isCurrent,
+                            onClick = if (playing) {
+                                { onSeek(line.startMsLong()) }
+                            } else {
+                                null
+                            },
                             onLongClick = { calibrateToLine(line.startMsLong()) },
                         )
                     }
@@ -3833,7 +3873,7 @@ private fun FocusLyricLine(
         lineHeight = if (current) 24.sp else 20.sp,
         textAlign = TextAlign.Center,
         softWrap = true,
-        maxLines = if (current) 2 else 1,
+        maxLines = if (current) 4 else 2,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier
             .fillMaxWidth()

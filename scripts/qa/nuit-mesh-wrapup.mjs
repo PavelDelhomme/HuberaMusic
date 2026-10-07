@@ -135,11 +135,12 @@ ${liveTail}
 
 ## À revoir mercredi matin 7 oct
 
-1. Blackview : lecture réelle encore nulle au dernier pointage — proxies / cold wait 28 s.
-2. Fuel 1.4.166 : ne pas overlay 165 comme 166 ; login Samsung paul@ à finir (clavier).
-3. Mail Samsung : timeout gateway malgré identifiants.
-4. Ne **pas** relancer Watchtower sur ytmusic.
-5. Autres stacks (Jobs, Budget, Taskflow, Stream, Mail, Drive, Pass, Press, Cloudity) : **déjà up**, ne pas `down -v`.
+1. Samsung : seulement **387 s** de lecture vs Blackview **2204 s** — file froide / 503 yt-dlp encore trop fréquents (skip-buf 203/223).
+2. Proxies publics encore morts (CONNECT timeout, 403, cert) : cookies + IP VPS en secours, pas un pool sain.
+3. Fuel 1.4.166 : ne pas overlay 165 comme 166 ; login Samsung paul@ à finir (clavier).
+4. Mail Samsung : timeout gateway malgré identifiants.
+5. Ne **pas** relancer Watchtower sur ytmusic.
+6. Autres stacks (Jobs, Budget, Taskflow, Stream, Mail, Drive, Pass, Press, Cloudity) : **déjà up**, ne pas \`down -v\`.
 
 Fichiers : \`${OUT}\`
 `;
