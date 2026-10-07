@@ -407,21 +407,15 @@ class AppContainer(context: Context) {
         .create(YtMusicApi::class.java)
 
     fun streamUrl(trackId: String): String {
+        // Déjà téléchargé + probe OK → jouer le .m4a local même en ligne
+        // (évite un proxy qui stall puis purge le fichier).
+        val localUri = offlineStore.playUri(trackId)?.toString()
+        if (localUri != null) return localUri
         val now = System.currentTimeMillis()
         streamUrlCache[trackId]?.let { (url, ts) ->
             if (now - ts < STREAM_URL_TTL_MS) return url
         }
-        val online = runCatching {
-            ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
-        }.getOrDefault(true)
-        // En ligne : toujours le proxy (têtes SimpleCache = démarrage rapide).
-        // Les .m4a locaux ne servent qu’hors-ligne — en online ils bloquent parfois
-        // Exo en BUFFERING plusieurs minutes sans erreur.
-        val resolved = if (!online) {
-            offlineStore.playUri(trackId)?.toString()
-        } else {
-            null
-        } ?: run {
+        val resolved = run {
             val base = resolvedApiBase() + "/api/stream/$trackId"
             val token = tokenStore.peekAccess()
             if (!token.isNullOrBlank()) {

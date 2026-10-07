@@ -94,21 +94,50 @@ printf 'sdk.dir=%s\n' "$ANDROID_HOME" >"$APP/local.properties"
 
 cd "$APP"
 chmod +x ./gradlew
-# Publication Admin QR = toujours le package prod (sans .dev)
-./gradlew :app:assembleProdDebug -PAPI_BASE_URL="$API_BASE_URL" --no-daemon
-
+# Dual slots OTA : Hubera (cloud.hubera.music) + legacy (ovh.delhomme.ytmusic)
 APK_SRC="$APP/app/build/outputs/apk/prod/debug/app-prod-debug.apk"
+write_manifest() {
+  local file="$1" pkg="$2" apk="$3"
+  OUT_DIR="$OUT_DIR" API_BASE_URL="$API_BASE_URL" APP_ENV="${APP_ENV:-local}" \
+  VERSION_NAME="$VERSION_NAME" VERSION_CODE="$VERSION_CODE" BUILT_AT="$BUILT_AT" \
+  FILE="$file" PKG="$pkg" APK="$apk" python3 - <<'PY'
+import json, os
+from pathlib import Path
+out = Path(os.environ["OUT_DIR"])
+apk = Path(os.environ["APK"])
+manifest = {
+  "file": os.environ["FILE"],
+  "apiBaseUrl": os.environ["API_BASE_URL"].rstrip("/"),
+  "appEnv": os.environ.get("APP_ENV", "local"),
+  "versionName": os.environ.get("VERSION_NAME", "unknown"),
+  "versionCode": int(os.environ.get("VERSION_CODE") or 0),
+  "sizeBytes": apk.stat().st_size if apk.is_file() else 0,
+  "builtAt": os.environ.get("BUILT_AT"),
+  "package": os.environ["PKG"],
+}
+name = "hubera-manifest.json" if os.environ["FILE"] == "hubera-music.apk" else "manifest.json"
+(out / name).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+print(json.dumps(manifest, indent=2))
+PY
+}
+
+echo "==> Gradle Hubera Music (cloud.hubera.music)"
+./gradlew :app:assembleProdDebug -PAPI_BASE_URL="$API_BASE_URL" --no-daemon
 if [[ ! -f "$APK_SRC" ]]; then
   echo "APK introuvable: $APK_SRC" >&2
   exit 1
 fi
+cp -f "$APK_SRC" "$OUT_DIR/hubera-music.apk"
 
-APK_DST="$OUT_DIR/ytmusic.apk"
-cp -f "$APK_SRC" "$APK_DST"
-SIZE="$(stat -c%s "$APK_DST" 2>/dev/null || wc -c <"$APK_DST")"
+echo "==> Gradle legacy (ovh.delhomme.ytmusic)"
+./gradlew :app:assembleProdDebug -PAPI_BASE_URL="$API_BASE_URL" -PlegacyAppId=true --no-daemon
+if [[ ! -f "$APK_SRC" ]]; then
+  echo "APK introuvable: $APK_SRC" >&2
+  exit 1
+fi
+cp -f "$APK_SRC" "$OUT_DIR/ytmusic.apk"
+
 BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-# Aligné sur mobile-android/app/build.gradle.kts (VERSION + canal d+/p+)
 SEMVER="$(tr -d '[:space:]' <"$ROOT/VERSION" 2>/dev/null || echo 0.0.0)"
 IFS=. read -r MA MI PA <<<"$SEMVER"
 MA=${MA:-0}; MI=${MI:-0}; PA=${PA:-0}
@@ -121,26 +150,11 @@ else
 fi
 VERSION_NAME="${CHANNEL}+${SEMVER}"
 
-OUT_DIR="$OUT_DIR" API_BASE_URL="$API_BASE_URL" APP_ENV="${APP_ENV:-local}" \
-VERSION_NAME="$VERSION_NAME" VERSION_CODE="$VERSION_CODE" SIZE="$SIZE" BUILT_AT="$BUILT_AT" \
-python3 - <<'PY'
-import json, os
-from pathlib import Path
-out = Path(os.environ["OUT_DIR"])
-manifest = {
-  "file": "ytmusic.apk",
-  "apiBaseUrl": os.environ["API_BASE_URL"].rstrip("/"),
-  "appEnv": os.environ.get("APP_ENV", "local"),
-  "versionName": os.environ.get("VERSION_NAME", "unknown"),
-  "versionCode": int(os.environ.get("VERSION_CODE") or 0),
-  "sizeBytes": int(os.environ.get("SIZE") or 0),
-  "builtAt": os.environ.get("BUILT_AT"),
-  "package": "cloud.hubera.music",
-}
-(out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-print(json.dumps(manifest, indent=2))
-PY
+write_manifest "hubera-music.apk" "cloud.hubera.music" "$OUT_DIR/hubera-music.apk"
+write_manifest "ytmusic.apk" "ovh.delhomme.ytmusic" "$OUT_DIR/ytmusic.apk"
 
-echo "==> Publié : $APK_DST ($(du -h "$APK_DST" | cut -f1))"
-echo "    Manifest : $OUT_DIR/manifest.json"
-echo "    Téléchargement : /api/deploy/apk"
+echo "==> Publié Hubera : $OUT_DIR/hubera-music.apk ($(du -h "$OUT_DIR/hubera-music.apk" | cut -f1))"
+echo "    Manifest Hubera : $OUT_DIR/hubera-manifest.json"
+echo "==> Publié legacy : $OUT_DIR/ytmusic.apk ($(du -h "$OUT_DIR/ytmusic.apk" | cut -f1))"
+echo "    Manifest legacy : $OUT_DIR/manifest.json"
+echo "    Téléchargement : /api/deploy/apk?package=cloud.hubera.music"

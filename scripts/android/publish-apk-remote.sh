@@ -98,12 +98,22 @@ upload_via_ssh() {
     'mkdir -p /tmp/ytmusic-apk-upload'
   scp -o BatchMode=yes -o ConnectTimeout=20 "$APK" "$target:/tmp/ytmusic-apk-upload/ytmusic.apk"
   scp -o BatchMode=yes -o ConnectTimeout=20 "$MANIFEST" "$target:/tmp/ytmusic-apk-upload/manifest.json"
+  if [[ -f "$OUT_DIR/hubera-music.apk" && -f "$OUT_DIR/hubera-manifest.json" ]]; then
+    scp -o BatchMode=yes -o ConnectTimeout=20 "$OUT_DIR/hubera-music.apk" "$target:/tmp/ytmusic-apk-upload/hubera-music.apk"
+    scp -o BatchMode=yes -o ConnectTimeout=20 "$OUT_DIR/hubera-manifest.json" "$target:/tmp/ytmusic-apk-upload/hubera-manifest.json"
+  fi
   ssh -o BatchMode=yes -o ConnectTimeout=20 "$target" 'bash -s' <<'REMOTE'
 set -euo pipefail
 docker cp /tmp/ytmusic-apk-upload/ytmusic.apk ytmusic:/app/data/public/android/ytmusic.apk
 docker cp /tmp/ytmusic-apk-upload/manifest.json ytmusic:/app/data/public/android/manifest.json
+if [[ -f /tmp/ytmusic-apk-upload/hubera-music.apk ]]; then
+  docker cp /tmp/ytmusic-apk-upload/hubera-music.apk ytmusic:/app/data/public/android/hubera-music.apk
+  docker cp /tmp/ytmusic-apk-upload/hubera-manifest.json ytmusic:/app/data/public/android/hubera-manifest.json
+fi
 docker exec -u root ytmusic chown ytmusic:ytmusic \
-  /app/data/public/android/ytmusic.apk /app/data/public/android/manifest.json
+  /app/data/public/android/ytmusic.apk /app/data/public/android/manifest.json \
+  /app/data/public/android/hubera-music.apk /app/data/public/android/hubera-manifest.json 2>/dev/null || true
+docker exec ytmusic cat /app/data/public/android/hubera-manifest.json || true
 docker exec ytmusic cat /app/data/public/android/manifest.json
 rm -rf /tmp/ytmusic-apk-upload
 REMOTE

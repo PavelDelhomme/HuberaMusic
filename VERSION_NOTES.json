@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-07",
   "versions": [
     {
+      "version": "1.3.357",
+      "date": "2026-10-07",
+      "time": "17:00",
+      "at": "2026-10-07T17:00:00+02:00",
+      "title": "Paroles calées, next en karaoké, titres déjà téléchargés",
+      "notes": [
+        "Ton calage paroles reste le calage : plus d’écrasement par le rythme des autres. Next / précédent depuis les bords ou le chip, sans fermer le karaoké. Un titre déjà téléchargé se joue en local même en ligne. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
       "version": "1.3.356",
       "date": "2026-10-07",
       "time": "16:20",

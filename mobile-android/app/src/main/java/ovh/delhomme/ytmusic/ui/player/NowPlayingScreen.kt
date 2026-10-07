@@ -21,6 +21,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -841,6 +842,8 @@ fun NowPlayingScreen(
                                         durationMs = ui.durationMs,
                                         playing = ui.playing,
                                         onSeek = { player.seek(it) },
+                                        onSkipNext = { skipNextFromSwipe() },
+                                        onSkipPrev = { skipPrevFromSwipe() },
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(lyricsH)
@@ -1003,6 +1006,8 @@ fun NowPlayingScreen(
                                                 durationMs = ui.durationMs,
                                                 playing = ui.playing,
                                                 onSeek = { player.seek(it) },
+                                                onSkipNext = { skipNextFromSwipe() },
+                                                onSkipPrev = { skipPrevFromSwipe() },
                                                 modifier = Modifier
                                                     .fillMaxSize()
                                                     .background(Color.Black.copy(alpha = 0.38f)),
@@ -1319,35 +1324,32 @@ fun NowPlayingScreen(
                                             .fillMaxWidth()
                                             .zIndex(5f)
                                             .background(Color.Black.copy(alpha = 0.72f))
-                                            .then(
-                                                if (showLyrics) Modifier
-                                                else Modifier.nowPlayingMediaGestures(
-                                                    key = "chrome-${track.id}",
-                                                    onDismissDelta = { delta ->
-                                                        if (queueProgress.value > 0.02f) {
-                                                            onQueueDrag(delta)
-                                                        } else if (!dismissArmed) {
-                                                            dragOffset = 0f
-                                                        } else {
-                                                            dragOffset = (dragOffset + delta).coerceAtLeast(0f)
-                                                        }
-                                                    },
-                                                    onDismissEnd = {
-                                                        if (queueProgress.value > 0.02f) settleQueue(0f)
-                                                        else settleOrClose()
-                                                    },
-                                                    onHorizontalDelta = { dx ->
-                                                        mediaSlideX = (mediaSlideX + dx).coerceIn(-120f, 120f)
-                                                    },
-                                                    onHorizontalEnd = { totalX ->
-                                                        when {
-                                                            totalX < -72f -> skipNextFromSwipe()
-                                                            totalX > 72f -> skipPrevFromSwipe()
-                                                            else -> mediaSlideX = 0f
-                                                        }
-                                                    },
-                                                    onHorizontalCancel = { mediaSlideX = 0f },
-                                                ),
+                                            .nowPlayingMediaGestures(
+                                                key = "chrome-${track.id}",
+                                                onDismissDelta = { delta ->
+                                                    if (queueProgress.value > 0.02f) {
+                                                        onQueueDrag(delta)
+                                                    } else if (!dismissArmed) {
+                                                        dragOffset = 0f
+                                                    } else {
+                                                        dragOffset = (dragOffset + delta).coerceAtLeast(0f)
+                                                    }
+                                                },
+                                                onDismissEnd = {
+                                                    if (queueProgress.value > 0.02f) settleQueue(0f)
+                                                    else settleOrClose()
+                                                },
+                                                onHorizontalDelta = { dx ->
+                                                    mediaSlideX = (mediaSlideX + dx).coerceIn(-120f, 120f)
+                                                },
+                                                onHorizontalEnd = { totalX ->
+                                                    when {
+                                                        totalX < -72f -> skipNextFromSwipe()
+                                                        totalX > 72f -> skipPrevFromSwipe()
+                                                        else -> mediaSlideX = 0f
+                                                    }
+                                                },
+                                                onHorizontalCancel = { mediaSlideX = 0f },
                                             )
                                             .padding(horizontal = 18.dp)
                                             .padding(top = 10.dp, bottom = 0.dp),
@@ -3058,6 +3060,64 @@ private fun Modifier.nowPlayingMediaGestures(
     )
 }
 
+@Composable
+private fun BoxScope.LyricsSkipOverlays(
+    onSkipNext: () -> Unit,
+    onSkipPrev: () -> Unit,
+) {
+    val edgeSwipe = { isRight: Boolean ->
+        Modifier
+            .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
+            .fillMaxHeight()
+            .width(48.dp)
+            .zIndex(10f)
+            .pointerInput(isRight) {
+                var totalX = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { totalX = 0f },
+                    onDragEnd = {
+                        when {
+                            totalX < -72f -> onSkipNext()
+                            totalX > 72f -> onSkipPrev()
+                        }
+                    },
+                    onHorizontalDrag = { change, dx ->
+                        change.consume()
+                        totalX += dx
+                    },
+                )
+            }
+    }
+    Box(edgeSwipe(false))
+    Box(edgeSwipe(true))
+    Row(
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(6.dp)
+            .zIndex(12f)
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable(onClick = onSkipNext)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            Icons.Default.SkipNext,
+            contentDescription = "Titre suivant",
+            tint = Color.White,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            "Next",
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QueueTrackRow(
@@ -3203,6 +3263,8 @@ private fun InlineSyncedLyrics(
     durationMs: Long = 0L,
     playing: Boolean = true,
     onSeek: (Long) -> Unit,
+    onSkipNext: () -> Unit = {},
+    onSkipPrev: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -3278,15 +3340,26 @@ private fun InlineSyncedLyrics(
             .onSuccess { first ->
                 fun applyLyrics(it: ovh.delhomme.ytmusic.data.LyricsResponse) {
                     if (it.lyrics.isNullOrBlank()) return
-                    val learned = it.userOffsetMs ?: 0L
-                    if (learned != 0L && syncPrefs.getLong(track.id, 0L) == 0L) {
-                        userOffsetMs = learned.coerceIn(-90_000L, 90_000L)
+                    val localOff = syncPrefs.getLong(track.id, 0L)
+                    val personal = it.personalOffsetMs ?: 0L
+                    if (localOff != 0L) {
+                        userOffsetMs = localOff.coerceIn(-90_000L, 90_000L)
+                    } else if (personal != 0L) {
+                        userOffsetMs = personal.coerceIn(-90_000L, 90_000L)
                         syncPrefs.edit().putLong(track.id, userOffsetMs).apply()
                     }
-                    it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
-                        if (segments.size < 2) {
+                    val hasCalibrated = userOffsetMs != 0L || localOff != 0L || personal != 0L
+                    if (it.segmentsFromUser == true) {
+                        it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
                             segments = segs
                             saveLyricSegments(segPrefs, track.id, segs)
+                        }
+                    } else if (!hasCalibrated) {
+                        it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
+                            if (segments.size < 2) {
+                                segments = segs
+                                saveLyricSegments(segPrefs, track.id, segs)
+                            }
                         }
                     }
                     text = it.lyrics
@@ -3349,7 +3422,9 @@ private fun InlineSyncedLyrics(
     }
 
     // Re-calage dès que la durée réelle est connue (évite estimation figée à ~60 s).
-    LaunchedEffect(durationMs, track.id, text, lyricsSource) {
+    // Interdit si l’utilisateur a déjà calé : ne pas réécrire le cache v6.
+    LaunchedEffect(durationMs, track.id, text, lyricsSource, userOffsetMs) {
+        if (userOffsetMs != 0L) return@LaunchedEffect
         if (durationMs < 20_000L || text.isNullOrBlank() || timed.size < 2) return@LaunchedEffect
         val src = lyricsSource.orEmpty()
         val last = timed.last().startMsLong()
@@ -3400,9 +3475,11 @@ private fun InlineSyncedLyrics(
                         source = source,
                     ),
                 )
-                resp.segments?.takeIf { it.size >= 2 }?.let { segs ->
-                    segments = segs
-                    saveLyricSegments(segPrefs, track.id, segs)
+                if (resp.segmentsFromUser == true || clamped == 0L) {
+                    resp.segments?.takeIf { it.size >= 2 }?.let { segs ->
+                        segments = segs
+                        saveLyricSegments(segPrefs, track.id, segs)
+                    }
                 }
             }
         }
@@ -3575,42 +3652,48 @@ private fun InlineSyncedLyrics(
                     programmaticScroll = false
                 }
 
-                LazyColumn(
-                    state = lyricsListState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 28.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    userScrollEnabled = true,
-                ) {
-                    itemsIndexed(
-                        timed,
-                        key = { i, line -> "${track.id}-$i-${line.startMsLong()}" },
-                    ) { i, line ->
-                        val isCurrent = i == active.coerceAtLeast(0)
-                        FocusLyricLine(
-                            text = line.text,
-                            current = isCurrent,
-                            onClick = if (playing) {
-                                { onSeek(line.startMsLong()) }
-                            } else {
-                                null
-                            },
-                            onLongClick = { calibrateToLine(line.startMsLong()) },
-                        )
+                Box(Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        state = lyricsListState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(vertical = 28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        userScrollEnabled = true,
+                    ) {
+                        itemsIndexed(
+                            timed,
+                            key = { i, line -> "${track.id}-$i-${line.startMsLong()}" },
+                        ) { i, line ->
+                            val isCurrent = i == active.coerceAtLeast(0)
+                            FocusLyricLine(
+                                text = line.text,
+                                current = isCurrent,
+                                onClick = if (playing) {
+                                    { onSeek(line.startMsLong()) }
+                                } else {
+                                    null
+                                },
+                                onLongClick = { calibrateToLine(line.startMsLong()) },
+                            )
+                        }
                     }
+                    LyricsSkipOverlays(onSkipNext = onSkipNext, onSkipPrev = onSkipPrev)
                 }
             }
             !text.isNullOrBlank() -> {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    item {
-                        Text(
-                            text!!,
-                            color = PlayerFg,
-                            style = MaterialTheme.typography.bodyLarge,
-                            softWrap = true,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
-                        )
+                Box(Modifier.fillMaxSize()) {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        item {
+                            Text(
+                                text!!,
+                                color = PlayerFg,
+                                style = MaterialTheme.typography.bodyLarge,
+                                softWrap = true,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+                            )
+                        }
                     }
+                    LyricsSkipOverlays(onSkipNext = onSkipNext, onSkipPrev = onSkipPrev)
                 }
             }
             else -> Column(
@@ -3788,6 +3871,7 @@ private fun lyricOffsetAtMs(
     atMs: Long,
     durationMs: Long,
 ): Long {
+    if (baseOffsetMs != 0L) return baseOffsetMs
     if (segments.size < 2 || durationMs <= 0L) return baseOffsetMs
     val r = (atMs.toDouble() / durationMs.toDouble()).coerceIn(0.0, 1.0)
     val pts = segments

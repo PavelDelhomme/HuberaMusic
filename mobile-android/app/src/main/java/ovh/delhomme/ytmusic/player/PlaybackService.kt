@@ -123,6 +123,8 @@ class PlaybackService : MediaSessionService() {
     @Volatile private var stallSessionTrackId: String = ""
     @Volatile private var stallSessionCount: Int = 0
     @Volatile private var stallSessionAnchorPos: Long = -1L
+    /** 1er stall / erreur sur un .m4a local : retry sans purge. */
+    @Volatile private var localRetryTrackId: String = ""
 
     private fun cancelStallWatch(resetTrack: Boolean = true) {
         stallRunnable?.let { stallHandler.removeCallbacks(it) }
@@ -467,26 +469,49 @@ class PlaybackService : MediaSessionService() {
             StreamPrefetcher.quietPrefetch(2_000L)
             if (local) {
                 val container = runCatching { YtMusicApp.instance.container }.getOrNull()
-                scope.launch {
-                    runCatching { container?.offlineStore?.remove(curId) }
-                    runCatching { container?.invalidateStreamUrlCache(curId) }
-                    runCatching { PlayerCache.invalidate(this@PlaybackService, curId) }
-                    if (exo.currentMediaItem?.mediaId != curId) return@launch
-                    val track = Holder.queue.firstOrNull { it.id == curId } ?: return@launch
-                    val remote = container?.remoteStreamUrl(curId) ?: return@launch
-                    val rebuilt = mediaItemFor(track, { _ -> remote }, Holder.queueTitle)
-                    runCatching {
-                        val seekPos = exo.currentPosition.coerceAtLeast(0L)
-                        exo.replaceMediaItem(exo.currentMediaItemIndex, rebuilt)
-                        exo.seekTo(exo.currentMediaItemIndex, seekPos)
-                        exo.prepare()
-                        exo.playWhenReady = true
-                        exo.play()
+                if (localRetryTrackId != curId) {
+                    localRetryTrackId = curId
+                    AppLog.w("PlaybackService", "stall local retry sans purge id=$curId")
+                    scope.launch {
+                        val localUri = container?.offlineStore?.playUri(curId)?.toString()
+                        if (localUri == null || exo.currentMediaItem?.mediaId != curId) {
+                            android.os.Handler(mainLooper).post { armStallWatch(exo) }
+                            return@launch
+                        }
+                        val track = Holder.queue.firstOrNull { it.id == curId } ?: return@launch
+                        val rebuilt = mediaItemFor(track, { _ -> localUri }, Holder.queueTitle)
+                        runCatching {
+                            val seekPos = exo.currentPosition.coerceAtLeast(0L)
+                            exo.replaceMediaItem(exo.currentMediaItemIndex, rebuilt)
+                            exo.seekTo(exo.currentMediaItemIndex, seekPos)
+                            exo.prepare()
+                            exo.playWhenReady = true
+                            exo.play()
+                        }
+                        android.os.Handler(mainLooper).post { armStallWatch(exo) }
                     }
-                    android.os.Handler(mainLooper).post { armStallWatch(exo) }
-                }
-                android.os.Handler(mainLooper).post {
-                    toastMain("Fichier local KO — reprise en streaming…", Toast.LENGTH_SHORT)
+                } else {
+                    scope.launch {
+                        runCatching { container?.offlineStore?.remove(curId) }
+                        runCatching { container?.invalidateStreamUrlCache(curId) }
+                        runCatching { PlayerCache.invalidate(this@PlaybackService, curId) }
+                        if (exo.currentMediaItem?.mediaId != curId) return@launch
+                        val track = Holder.queue.firstOrNull { it.id == curId } ?: return@launch
+                        val remote = container?.remoteStreamUrl(curId) ?: return@launch
+                        val rebuilt = mediaItemFor(track, { _ -> remote }, Holder.queueTitle)
+                        runCatching {
+                            val seekPos = exo.currentPosition.coerceAtLeast(0L)
+                            exo.replaceMediaItem(exo.currentMediaItemIndex, rebuilt)
+                            exo.seekTo(exo.currentMediaItemIndex, seekPos)
+                            exo.prepare()
+                            exo.playWhenReady = true
+                            exo.play()
+                        }
+                        android.os.Handler(mainLooper).post { armStallWatch(exo) }
+                    }
+                    android.os.Handler(mainLooper).post {
+                        toastMain("Fichier local KO — reprise en streaming…", Toast.LENGTH_SHORT)
+                    }
                 }
             } else {
                 // Soft rebind : URL fraîche + wipe cache Exo (partiel poisonné → stalls en boucle).
@@ -1043,9 +1068,33 @@ class PlaybackService : MediaSessionService() {
                 )
             }
 
-            // Fichier local corrompu / manquant : purge + retenter le stream (même titre).
+            // Fichier local : 1 retry sans purge, puis purge + stream si encore KO.
             if (localFile) {
                 val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
+                if (localRetryTrackId != id) {
+                    localRetryTrackId = id
+                    AppLog.w("PlaybackService", "fichier local KO → retry sans purge id=$id")
+                    val localUri = container?.offlineStore?.playUri(id)
+                    if (localUri != null) {
+                        streamFailStreak.set(0)
+                        val attempt = recoverGen.incrementAndGet()
+                        scope.launch {
+                            if (attempt != recoverGen.get()) return@launch
+                            if (exo.currentMediaItem?.mediaId != id) return@launch
+                            val track = Holder.queue.firstOrNull { it.id == id } ?: return@launch
+                            val rebuilt = mediaItemFor(track, { _ -> localUri.toString() }, Holder.queueTitle)
+                            runCatching {
+                                val posRetry = exo.currentPosition.coerceAtLeast(0L)
+                                exo.replaceMediaItem(exo.currentMediaItemIndex, rebuilt)
+                                exo.seekTo(exo.currentMediaItemIndex, posRetry)
+                                exo.prepare()
+                                exo.playWhenReady = true
+                                exo.play()
+                            }
+                        }
+                        return
+                    }
+                }
                 AppLog.w("PlaybackService", "fichier local invalide → purge id=$id")
                 val online = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
                 if (online && container != null) {
@@ -2560,7 +2609,12 @@ class PlaybackService : MediaSessionService() {
             if (fromStateEnded && exo.currentMediaItem?.mediaId != prevId) return@launch
             runCatching { PlayerCache.invalidate(this@PlaybackService, prevId) }
             if (container?.offlineStore?.has(prevId) == true) {
-                runCatching { container.offlineStore.remove(prevId) }
+                if (localRetryTrackId == prevId) {
+                    runCatching { container.offlineStore.remove(prevId) }
+                } else {
+                    localRetryTrackId = prevId
+                    AppLog.w("PlaybackService", "early_end local retry sans purge id=$prevId")
+                }
             }
             // Bust format côté API (URL/CDN morte) puis URI avec cache-buster Exo
             runCatching {
