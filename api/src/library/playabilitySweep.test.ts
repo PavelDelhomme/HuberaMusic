@@ -14,7 +14,9 @@ const {
   getPlayability,
   isMusicCandidate,
   isPlayableId,
+  isTransientProbeError,
   looksLikeHtml,
+  productionDeps,
   recoverTrack,
   runPlayabilitySweep,
   savePlayability,
@@ -180,5 +182,43 @@ describe('playabilitySweep', () => {
       durationMs: null,
     });
     assert.equal(isPlayableId(DEAD), false);
+  });
+
+  it('403 / timeout / pas d’URL ne remplace pas Amsterdam par un autre titre', async () => {
+    let searches = 0;
+    let persisted = 0;
+    for (const error of ['http-403', 'probe-timeout', 'no-stream-url', 'streaming data not available']) {
+      searches = 0;
+      persisted = 0;
+      assert.equal(isTransientProbeError(error), true);
+      const r = await sweepOne(
+        { videoId: DEAD, title: 'Amsterdam', artist: 'Jacques Brel', durationMs: 180_000 },
+        {
+          resolveStream: async () => (error === 'no-stream-url' ? null : { url: 'https://audio.test/dead' }),
+          probeAudio: async () => ({ ok: false, error }),
+          searchSongs: async () => {
+            searches += 1;
+            return [{ id: GOOD, title: 'Amsterdam', artist: 'Jacques Brel', type: 'song', isMusic: true }];
+          },
+          listTracks: async () => [],
+          persistReplacement: () => {
+            persisted += 1;
+          },
+          remapLibrary: () => {},
+          upsertFts: () => {},
+          sleep: async () => {},
+        },
+        true,
+      );
+      assert.equal(r.status, 'fail', error);
+      assert.equal(r.replacementVideoId || null, null, error);
+      assert.equal(searches, 0, error);
+      assert.equal(persisted, 0, error);
+    }
+  });
+
+  it('productionDeps.resolveStream est le resolver /api/stream (pas un Innertube isolé)', () => {
+    const deps = productionDeps();
+    assert.equal(deps.resolveStream.name, 'defaultResolveStream');
   });
 });

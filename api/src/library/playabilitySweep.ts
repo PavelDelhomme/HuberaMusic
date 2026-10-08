@@ -8,7 +8,7 @@
  * Légal : YouTube Music / Innertube uniquement. Pas un dump YouTube, pas de torrent.
  */
 import Database from 'better-sqlite3';
-import { existsSync, mkdirSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readSync, statSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getTrackPayload, upsertTrack, findUserByEmail } from './db.js';
@@ -60,6 +60,8 @@ export type LibrarySweepItem = {
 export type StreamResolve = {
   url: string;
   durationMs?: number | null;
+  viaProxy?: string | null;
+  diskPath?: string;
 };
 
 export type ProbeResult = {
@@ -80,7 +82,11 @@ export type SongCandidate = {
 
 export type SweepDeps = {
   resolveStream: (videoId: string) => Promise<StreamResolve | null>;
-  probeAudio: (url: string, expectedDurationMs?: number | null) => Promise<ProbeResult>;
+  probeAudio: (
+    url: string,
+    expectedDurationMs?: number | null,
+    resolved?: StreamResolve,
+  ) => Promise<ProbeResult>;
   searchSongs: (title: string, artist: string) => Promise<SongCandidate[]>;
   listTracks: (opts?: { userId?: string; ids?: string[]; limit?: number }) => Promise<LibrarySweepItem[]>;
   persistReplacement?: (deadId: string, newId: string, title: string, artist: string, score: number) => void;
@@ -187,7 +193,7 @@ export function canonicalVideoId(videoId: string): string {
 }
 
 const TRANSIENT_PROBE =
-  /no-stream-url|http-403|http-401|probe-timeout|probe-net|end-http-403|end-http-401|end-net/;
+  /no-stream-url|http-401|http-403|http-429|http-502|http-503|http-504|probe-timeout|probe-net|end-http-401|end-http-403|end-http-429|end-http-502|end-net|resolve-timeout|streaming data not available/;
 
 export function isTransientProbeError(error?: string | null): boolean {
   return TRANSIENT_PROBE.test(error || '');
@@ -298,11 +304,99 @@ function parseDurFromUrl(url: string): number | null {
   return null;
 }
 
+function probeDiskFile(path: string, expectedDurationMs?: number | null): ProbeResult {
+  try {
+    const st = statSync(path);
+    if (st.size < MIN_AUDIO_BYTES) return { ok: false, error: 'empty-body' };
+    const fd = openSync(path, 'r');
+    try {
+      const head = Buffer.alloc(Math.min(2048, st.size));
+      readSync(fd, head, 0, head.length, 0);
+      if (looksLikeHtml(head)) return { ok: false, error: 'html-body' };
+      if (st.size > 8192) {
+        const tail = Buffer.alloc(2048);
+        readSync(fd, tail, 0, 2048, st.size - 2048);
+        if (looksLikeHtml(tail)) return { ok: false, error: 'end-html' };
+      }
+    } finally {
+      closeSync(fd);
+    }
+    return { ok: true, durationMs: expectedDurationMs ?? null, bytes: st.size };
+  } catch (err) {
+    return { ok: false, error: `probe-net:${String((err as Error).message || err).slice(0, 80)}` };
+  }
+}
+
+function isGooglevideoUrl(url: string): boolean {
+  return /googlevideo\.com|youtube\.com\/videoplayback/i.test(url);
+}
+
+async function finishProbeFromHead(
+  head: {
+    status: number;
+    contentType: string;
+    contentRange: string;
+    contentLength: string;
+    body: Uint8Array;
+  },
+  url: string,
+  expectedDurationMs?: number | null,
+  viaProxy?: string | null,
+): Promise<ProbeResult> {
+  if (head.status === 403 || head.status === 401) {
+    return { ok: false, error: `http-${head.status}` };
+  }
+  if (head.status === 0) return { ok: false, error: 'probe-timeout' };
+  if (head.status === 404 || head.status === 410) {
+    return { ok: false, error: `http-${head.status}` };
+  }
+  if (head.status !== 200 && head.status !== 206) {
+    return { ok: false, error: `http-${head.status}` };
+  }
+  const ct = (head.contentType || '').toLowerCase();
+  if (/text\/html|application\/json|text\/plain/.test(ct) && !/audio|mp4|octet-stream/.test(ct)) {
+    return { ok: false, error: `content-type:${ct.slice(0, 40)}` };
+  }
+  if (head.body.length < MIN_AUDIO_BYTES) return { ok: false, error: 'empty-body' };
+  if (looksLikeHtml(head.body)) return { ok: false, error: 'html-body' };
+  const totalMatch = /\/(\d+)\s*$/.exec(head.contentRange || '');
+  const total = totalMatch ? Number(totalMatch[1]) : Number(head.contentLength || 0);
+  const durationMs = parseDurFromUrl(url) || expectedDurationMs || null;
+  if (!durationClose(durationMs, expectedDurationMs)) {
+    return { ok: false, error: 'duration-mismatch', durationMs, bytes: head.body.length };
+  }
+  if (total > 8192) {
+    const from = Math.max(0, total - 2048);
+    const { fetchProductionStreamHead } = await import('../media/stream.js');
+    const end = await fetchProductionStreamHead(url, `bytes=${from}-${total - 1}`, viaProxy);
+    if (end.status === 403 || end.status === 401) {
+      return { ok: false, error: `end-http-${end.status}`, durationMs, bytes: total };
+    }
+    if (end.status === 0) return { ok: false, error: 'end-net:timeout', durationMs, bytes: total };
+    if (end.status !== 200 && end.status !== 206) {
+      return { ok: false, error: `end-http-${end.status}`, durationMs, bytes: total };
+    }
+    if (end.body.length < 16) return { ok: false, error: 'end-empty', durationMs, bytes: total };
+    if (looksLikeHtml(end.body)) return { ok: false, error: 'end-html', durationMs, bytes: total };
+  }
+  return { ok: true, durationMs, bytes: total || head.body.length };
+}
+
 export async function defaultProbeAudio(
   url: string,
   expectedDurationMs?: number | null,
+  resolved?: StreamResolve,
 ): Promise<ProbeResult> {
-  if (!url || /^data:|^file:/.test(url)) return { ok: false, error: 'url-invalide' };
+  if (!url || /^data:/.test(url)) return { ok: false, error: 'url-invalide' };
+  const disk = resolved?.diskPath || (url.startsWith('file:') ? url.replace(/^file:\/\//, '') : '');
+  if (disk) return probeDiskFile(disk, expectedDurationMs);
+
+  if (isGooglevideoUrl(url) || resolved?.viaProxy) {
+    const { fetchProductionStreamHead } = await import('../media/stream.js');
+    const head = await fetchProductionStreamHead(url, 'bytes=0-2047', resolved?.viaProxy);
+    return finishProbeFromHead(head, url, expectedDurationMs, resolved?.viaProxy);
+  }
+
   const signal = abortAfter(PROBE_TIMEOUT_MS);
   let res: Response;
   try {
@@ -368,18 +462,10 @@ export async function defaultProbeAudio(
   return { ok: true, durationMs, bytes: total || buf.length };
 }
 
-async function defaultResolveStream(videoId: string): Promise<StreamResolve | null> {
-  const { getAudioFormat } = await import('../youtube/yt.js');
-  try {
-    const fmt = await Promise.race([
-      getAudioFormat(videoId, { live: true }),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('resolve-timeout')), 20_000)),
-    ]);
-    if (!fmt?.url) return null;
-    return { url: fmt.url, durationMs: parseDurFromUrl(fmt.url) };
-  } catch {
-    return null;
-  }
+/** Resolver prod = handleStream (disque + cookies container + proxy lié), pas un Innertube isolé. */
+export async function defaultResolveStream(videoId: string): Promise<StreamResolve | null> {
+  const { resolveProductionStream } = await import('../media/stream.js');
+  return resolveProductionStream(videoId);
 }
 
 async function defaultSearchSongs(title: string, artist: string): Promise<SongCandidate[]> {
@@ -538,7 +624,7 @@ async function probeVideo(
 ): Promise<ProbeResult> {
   const resolved = await deps.resolveStream(videoId);
   if (!resolved?.url) return { ok: false, error: 'no-stream-url' };
-  return deps.probeAudio(resolved.url, expectedDurationMs ?? resolved.durationMs);
+  return deps.probeAudio(resolved.url, expectedDurationMs ?? resolved.durationMs, resolved);
 }
 
 export async function recoverTrack(

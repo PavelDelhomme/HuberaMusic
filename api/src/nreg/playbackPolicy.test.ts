@@ -7,6 +7,8 @@ import {
   downloadFailCooldownMs,
   downloadFailKind,
   shouldReplaceCachedLyrics,
+  shouldKeepLocalFileUri,
+  clipPositionStuck,
 } from './playbackPolicy.js';
 
 describe('playbackPolicy — non-régression lecture / paroles', () => {
@@ -38,5 +40,20 @@ describe('playbackPolicy — non-régression lecture / paroles', () => {
     assert.equal(shouldReplaceCachedLyrics(null), false);
     assert.equal(shouldReplaceCachedLyrics('short'), false);
     assert.equal(shouldReplaceCachedLyrics('Couplet un\nCouplet deux\nRefrain'), true);
+  });
+
+  it('ne recâble jamais un file:// local vers le proxy (même en ligne)', () => {
+    assert.equal(shouldKeepLocalFileUri('file'), true);
+    assert.equal(shouldKeepLocalFileUri('file:///data/user/0/cloud.hubera.music/files/offline/abc.m4a'), true);
+    assert.equal(shouldKeepLocalFileUri('/data/user/0/x/files/offline/abc.mp4'), true);
+    assert.equal(shouldKeepLocalFileUri('https://music.hubera.cloud/api/stream/abc?type=video'), false);
+    assert.equal(shouldKeepLocalFileUri('http'), false);
+  });
+
+  it('un clip officiel >30 s n’a pas POSITION coincée', () => {
+    const advancing = [0, 5_000, 12_000, 20_000, 31_200];
+    assert.equal(clipPositionStuck(advancing), false);
+    const stuck = [1_200, 1_200, 1_250, 1_200];
+    assert.equal(clipPositionStuck(stuck), true);
   });
 });
