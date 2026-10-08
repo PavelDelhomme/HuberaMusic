@@ -13,9 +13,11 @@ const {
   collapseDuplicateGroups,
   getPlayability,
   isMusicCandidate,
+  isPlayableId,
   looksLikeHtml,
   recoverTrack,
   runPlayabilitySweep,
+  savePlayability,
   sweepOne,
 } = await import('./playabilitySweep.js');
 
@@ -115,10 +117,9 @@ describe('playabilitySweep', () => {
     const summary = await runPlayabilitySweep(
       { ids: [DEAD], limit: 1, concurrency: 1, sleepMs: 0, collapseDuplicates: false },
       {
-        resolveStream: async (id) =>
-          id === GOOD ? { url: `https://audio.test/${id}`, durationMs: 180_000 } : null,
+        resolveStream: async (id) => ({ url: `https://audio.test/${id}`, durationMs: 180_000 }),
         probeAudio: async (url) =>
-          url.includes(GOOD) ? { ok: true, durationMs: 180_000 } : { ok: false, error: 'empty-body' },
+          url.includes(GOOD) ? { ok: true, durationMs: 180_000 } : { ok: false, error: 'html-body' },
         searchSongs: async () => [
           { id: GOOD, title: 'Amsterdam', artist: 'Jacques Brel', type: 'song', isMusic: true, durationSeconds: 180 },
         ],
@@ -158,5 +159,26 @@ describe('playabilitySweep', () => {
     assert.equal(r.status, 'ok');
     assert.equal(searches, 0);
     assert.equal(getPlayability(GOOD)?.status, 'ok');
+  });
+
+  it('un fail transitoire (403 / pas d’URL) ne cache pas le titre', () => {
+    savePlayability({
+      videoId: DEAD,
+      status: 'fail',
+      replacementVideoId: null,
+      lastChecked: Date.now(),
+      error: 'no-stream-url',
+      durationMs: null,
+    });
+    assert.equal(isPlayableId(DEAD), true);
+    savePlayability({
+      videoId: DEAD,
+      status: 'fail',
+      replacementVideoId: null,
+      lastChecked: Date.now(),
+      error: 'html-body',
+      durationMs: null,
+    });
+    assert.equal(isPlayableId(DEAD), false);
   });
 });

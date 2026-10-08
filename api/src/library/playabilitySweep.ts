@@ -186,12 +186,22 @@ export function canonicalVideoId(videoId: string): string {
   return hop && VIDEO_ID.test(hop) ? hop : videoId;
 }
 
+const TRANSIENT_PROBE =
+  /no-stream-url|http-403|http-401|probe-timeout|probe-net|end-http-403|end-http-401|end-net/;
+
+export function isTransientProbeError(error?: string | null): boolean {
+  return TRANSIENT_PROBE.test(error || '');
+}
+
 export function isPlayableId(videoId: string): boolean {
   const row = getPlayability(videoId);
   if (!row) return true;
   if (row.status === 'ok') return true;
   if (row.status === 'replaced' && row.replacementVideoId) return true;
-  return false;
+  // Proxy / 403 / timeout : le titre n’est pas « mort ». Ne pas le cacher.
+  if (row.status === 'fail' && isTransientProbeError(row.error)) return true;
+  if (row.status === 'fail' && row.error === 'aucun-candidat-jouable') return true;
+  return row.status !== 'fail';
 }
 
 export function annotateTrackPlayability<T extends Track>(t: T): T {
@@ -605,7 +615,7 @@ export async function sweepOne(item: LibrarySweepItem, deps: SweepDeps, recover 
     savePlayability(row);
     return { videoId: item.videoId, status: 'ok', durationMs: row.durationMs };
   }
-  if (!recover) {
+  if (!recover || isTransientProbeError(probe.error)) {
     savePlayability({
       videoId: item.videoId,
       status: 'fail',
