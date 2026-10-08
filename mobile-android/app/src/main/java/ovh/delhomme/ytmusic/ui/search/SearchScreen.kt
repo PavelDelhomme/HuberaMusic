@@ -68,6 +68,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
+import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.TrackRow
 
 data class SearchSection(val title: String, val items: List<TrackDto>)
@@ -391,6 +392,8 @@ fun SearchScreen(
     onMore: (TrackDto) -> Unit,
     onOpenDetail: (TrackDto) -> Unit,
     onOpenArtist: ((String?, String) -> Unit)? = null,
+    onOpenAccount: () -> Unit = {},
+    onMenuClick: () -> Unit = {},
     vm: SearchViewModel = viewModel(factory = SearchViewModel.factory(container)),
 ) {
     val state by vm.state.collectAsState()
@@ -405,11 +408,10 @@ fun SearchScreen(
     )
 
     Column(Modifier.fillMaxSize()) {
-        Text(
-            "Recherche",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        AppTopBar(
+            title = "Recherche",
+            onAccountClick = onOpenAccount,
+            onMenuClick = onMenuClick,
         )
         OutlinedTextField(
             value = state.query,

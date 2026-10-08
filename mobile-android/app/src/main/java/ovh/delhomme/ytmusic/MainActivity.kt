@@ -39,11 +39,18 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDrawerState
+import cloud.hubera.chrome.HuberaDrawerContent
+import cloud.hubera.chrome.HuberaProduct
 import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -253,6 +260,7 @@ private sealed class Tab(val route: String, val label: String, val icon: ImageVe
     data object Library : Tab("library", "Biblio", Icons.Default.LibraryMusic)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YtMusicAppContent(
     container: AppContainer,
@@ -1388,6 +1396,8 @@ private fun MainTabs(
     // Mini-lecteur aussi sur artiste / album / playlist (pas seulement Accueil)
     val showMiniPlayer = chromeOk && (playerUi.track != null || pendingRemoteLabel != null)
     val showBottomChrome = showNavBar || showMiniPlayer
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val userEmail by container.tokenStore.userEmail.collectAsState(initial = null)
 
     // Ferme le lecteur vide (« Rien en lecture ») → retour accueil/biblio si besoin
     LaunchedEffect(playerUi.track?.id, playerUi.queueSize, expanded, routeRoot) {
@@ -1417,6 +1427,23 @@ private fun MainTabs(
         }
     }
 
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = showNavBar && !playerExpanded,
+        drawerContent = {
+            ModalDrawerSheet {
+                HuberaDrawerContent(
+                    current = HuberaProduct.MUSIC,
+                    versionLabel = "v${BuildConfig.VERSION_NAME}",
+                    onAccountClick = {
+                        scope.launch { drawerState.close() }
+                        nav.navigate("account")
+                    },
+                    userEmail = userEmail,
+                )
+            }
+        },
+    ) {
     Scaffold(
         // Compte / Historique / Aide ont déjà un TopAppBar (status bar).
         // Si seul le mini-lecteur est visible, ne pas re-appliquer l’inset top
@@ -1599,6 +1626,7 @@ private fun MainTabs(
                     onOpenDetail = ::openDetail,
                     onOpenArtist = ::openArtist,
                     onOpenAccount = { nav.navigate("account") },
+                    onMenuClick = { scope.launch { drawerState.open() } },
                     onOpenDownloads = {
                         nav.navigate("downloads") {
                             launchSingleTop = true
@@ -1628,6 +1656,8 @@ private fun MainTabs(
                     onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenDetail = ::openDetail,
                     onOpenArtist = ::openArtist,
+                    onOpenAccount = { nav.navigate("account") },
+                    onMenuClick = { scope.launch { drawerState.open() } },
                 )
             }
             composable(Tab.Library.route) {
@@ -1638,6 +1668,7 @@ private fun MainTabs(
                     onOpenDetail = ::openDetail,
                     onOpenArtist = ::openArtist,
                     onOpenAccount = { nav.navigate("account") },
+                    onMenuClick = { scope.launch { drawerState.open() } },
                 )
             }
             composable("account") {
@@ -1806,6 +1837,7 @@ private fun MainTabs(
                 )
             }
         }
+    }
     }
 
     menuTrack?.let { track ->

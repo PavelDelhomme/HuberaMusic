@@ -725,14 +725,9 @@ class PlaybackService : MediaSessionService() {
             if (events.contains(Player.EVENT_IS_PLAYING_CHANGED)) {
                 PlaybackIdleGuard.onPlayingChanged(player.isPlaying)
             }
-            // Titre courant encore en file:// alors qu’on est en ligne → bascule proxy
-            if (
-                events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
-                (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
-                    player.playbackState == Player.STATE_READY)
-            ) {
-                demoteCurrentLocalIfOnline(player)
-            }
+            // file:// local en ligne : on le GARDE (streamUrl + probe OK).
+            // L’ancienne bascule READY → proxy recâblait un .m4a jouable sur
+            // SimpleCache HTTP empoisonné → BUFFERING / son haché.
             if (
                 events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
                 events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
@@ -2715,69 +2710,25 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * Remplace les MediaItem HTTP des titres suivants par `file://` dès qu’un DL est prêt
-     * **uniquement hors-ligne**. En ligne : rebascule file:// → proxy (les .m4a locaux
-     * provoquaient des KO mid-song + mails « local=true »).
+     * Prochains titres : `file://` dès qu’un .m4a local est complet — **aussi en ligne**.
+     * Recâbler vers le proxy en Wi‑Fi renvoyait Exo sur un SimpleCache HTTP
+     * (1 MiB / 416) alors que le fichier local était bon.
      */
     private fun promoteUpcomingToLocal(exo: ExoPlayer, fromIndex: Int) {
         val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return
-        val online = runCatching {
-            ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
-        }.getOrDefault(true)
         val queue = Holder.queue
         val start = fromIndex.coerceAtLeast(0)
         val end = (start + 4).coerceAtMost(minOf(queue.size, exo.mediaItemCount))
         for (i in start until end) {
             val track = queue.getOrNull(i) ?: continue
-            val cur = exo.getMediaItemAt(i)
-            val scheme = cur.localConfiguration?.uri?.scheme
-            if (online) {
-                // Remonter au proxy si un file:// trainait depuis une session hors-ligne
-                if (scheme != "file") continue
-                runCatching {
-                    exo.replaceMediaItem(
-                        i,
-                        mediaItemFor(track, { tid -> container.remoteStreamUrl(tid) }, Holder.queueTitle),
-                    )
-                }
-                continue
-            }
             if (!container.offlineStore.has(track.id)) continue
-            if (scheme == "file") continue
+            val cur = exo.getMediaItemAt(i)
+            if (cur.localConfiguration?.uri?.scheme == "file") continue
             runCatching {
                 exo.replaceMediaItem(
                     i,
                     mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle),
                 )
-            }
-        }
-    }
-
-    /** Si le titre courant est encore file:// en Wi‑Fi → proxy immédiat (évite KO local). */
-    private fun demoteCurrentLocalIfOnline(exo: Player) {
-        val scheme = exo.currentMediaItem?.localConfiguration?.uri?.scheme ?: return
-        if (scheme != "file") return
-        val online = runCatching {
-            ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
-        }.getOrDefault(true)
-        if (!online) return
-        val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return
-        val id = exo.currentMediaItem?.mediaId ?: return
-        val track = Holder.queue.firstOrNull { it.id == id } ?: return
-        val pos = exo.currentPosition.coerceAtLeast(0L)
-        val wantPlay = exo.playWhenReady || exo.isPlaying
-        AppLog.i("PlaybackService", "demote local→proxy id=$id pos=$pos")
-        runCatching {
-            val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
-            exo.replaceMediaItem(
-                idx,
-                mediaItemFor(track, { tid -> container.remoteStreamUrl(tid) }, Holder.queueTitle),
-            )
-            exo.seekTo(idx, pos)
-            exo.prepare()
-            if (wantPlay) {
-                exo.playWhenReady = true
-                exo.play()
             }
         }
     }
@@ -3313,27 +3264,30 @@ fun mediaItemFor(
         // Hint UI notif / Android Auto — Exo reste maître pour le seek réel
         meta.setDurationMs(ms)
     }
+    val rawUri = baseStreamUrl(t.id)
+    val localFile = rawUri.startsWith("file:", ignoreCase = true)
+    val playUri = if (localFile) {
+        rawUri.substringBefore('?')
+    } else {
+        var uri = rawUri
+        if (!uri.contains("title=")) {
+            val extra = mutableListOf<String>()
+            if (t.title.isNotBlank()) extra += "title=" + java.net.URLEncoder.encode(t.title, "UTF-8")
+            val artist = t.artistLine()
+            if (artist.isNotBlank()) extra += "artist=" + java.net.URLEncoder.encode(artist, "UTF-8")
+            t.durationMsOrNull()?.takeIf { it > 0L }?.let { ms ->
+                extra += "duration=${(ms / 1000L).coerceAtLeast(1L)}"
+            }
+            if (extra.isNotEmpty()) {
+                uri += (if (uri.contains("?")) "&" else "?") + extra.joinToString("&")
+            }
+        }
+        uri
+    }
     return MediaItem.Builder()
         .setMediaId(t.id)
-        .setUri(
-            run {
-                var uri = baseStreamUrl(t.id)
-                if (!uri.contains("title=")) {
-                    val extra = mutableListOf<String>()
-                    if (t.title.isNotBlank()) extra += "title=" + java.net.URLEncoder.encode(t.title, "UTF-8")
-                    val artist = t.artistLine()
-                    if (artist.isNotBlank()) extra += "artist=" + java.net.URLEncoder.encode(artist, "UTF-8")
-                    t.durationMsOrNull()?.takeIf { it > 0L }?.let { ms ->
-                        extra += "duration=${(ms / 1000L).coerceAtLeast(1L)}"
-                    }
-                    if (extra.isNotEmpty()) {
-                        uri += (if (uri.contains("?")) "&" else "?") + extra.joinToString("&")
-                    }
-                }
-                uri
-            }
-        )
-        .setCustomCacheKey(PlayerCache.keyFor(t.id))
+        .setUri(playUri)
+        .setCustomCacheKey(if (localFile) "${t.id}:file" else PlayerCache.keyFor(t.id))
         .setMediaMetadata(meta.build())
         .build()
 }

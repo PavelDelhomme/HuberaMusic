@@ -2,6 +2,36 @@
   "updatedAt": "2026-10-07",
   "versions": [
     {
+      "version": "1.3.360",
+      "date": "2026-10-08",
+      "time": "16:40",
+      "at": "2026-10-08T16:40:00+02:00",
+      "title": "Menu suite Hubera, comme Gmail",
+      "notes": [
+        "Hamburger à gauche, compte à droite, bas Accueil / Recherche / Biblio. Le tiroir ouvre les autres apps Hubera. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.359",
+      "date": "2026-10-08",
+      "time": "16:20",
+      "at": "2026-10-08T16:20:00+02:00",
+      "title": "Titres déjà téléchargés : lecture locale, plus de blocage",
+      "notes": [
+        "Un titre déjà sur le téléphone se joue vraiment en local, même en Wi‑Fi : on ne le recâble plus vers le serveur (ça coincait le chargement et abîmait le son). Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.358",
+      "date": "2026-10-08",
+      "time": "15:50",
+      "at": "2026-10-08T15:50:00+02:00",
+      "title": "Continuer avec un compte Hubera déjà sur le téléphone",
+      "notes": [
+        "Si tu es déjà connecté dans une autre app Hubera (ID, Mail, Docs…), Music propose Continuer avec ton e-mail. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
       "version": "1.3.357",
       "date": "2026-10-07",
       "time": "17:00",

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import cloud.hubera.id.sso.HuberaIdAccounts
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -51,6 +52,21 @@ class TokenStore(private val context: Context) {
             if (refresh != null) it[refreshKey] = refresh
             if (email != null) it[emailKey] = email
             if (name != null) it[nameKey] = name
+        }
+        val em = email?.trim()?.takeIf { it.isNotBlank() }
+            ?: context.dataStore.data.first()[emailKey]
+        if (!em.isNullOrBlank()) {
+            runCatching {
+                HuberaIdAccounts.saveSession(
+                    context.applicationContext,
+                    em,
+                    token,
+                    refresh ?: cachedRefresh.orEmpty(),
+                    name.orEmpty(),
+                    issuer = "music",
+                    gatewayUrl = "",
+                )
+            }
         }
     }
 

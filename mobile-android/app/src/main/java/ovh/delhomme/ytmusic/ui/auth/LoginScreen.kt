@@ -147,6 +147,45 @@ fun LoginScreen(
         }
         Spacer(modifier = Modifier.height(20.dp))
 
+        val showPicker = state.deviceAccounts.isNotEmpty() &&
+            !state.hideDevicePicker &&
+            !state.registerMode &&
+            !state.forgotMode
+        if (showPicker) {
+            Text(
+                "Continuer avec un compte Hubera",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            for (acc in state.deviceAccounts) {
+                Button(
+                    onClick = { vm.continueWithAccount(acc) },
+                    enabled = !state.loading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                ) {
+                    Text("Continuer avec ${acc.email}")
+                }
+            }
+            TextButton(
+                onClick = vm::hideDevicePicker,
+                enabled = !state.loading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Utiliser un autre compte")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "ou avec e-mail",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
         if (!state.registerMode && !state.forgotMode) {
             Text(
                 "Connexion rapide (QR)",

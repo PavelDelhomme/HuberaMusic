@@ -240,6 +240,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":hubera-id-sso"))
+    implementation(project(":hubera-chrome"))
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)

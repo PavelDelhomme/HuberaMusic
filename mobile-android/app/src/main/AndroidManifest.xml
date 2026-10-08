@@ -31,6 +31,17 @@
         <package android:name="com.x8bit.bitwarden" />
         <package android:name="com.x8bit.bitwarden.beta" />
         <package android:name="com.google.android.gms" />
+        <package android:name="cloud.hubera.maps" />
+        <package android:name="ovh.delhomme.maps" />
+        <package android:name="cloud.hubera.fuel" />
+        <package android:name="com.gasoiltracking.app" />
+        <package android:name="cloud.hubera.docs" />
+        <package android:name="cloud.hubera.calendar" />
+        <package android:name="cloud.hubera.drive" />
+        <package android:name="cloud.hubera.mail" />
+        <package android:name="cloud.hubera.pass" />
+        <package android:name="cloud.hubera.jobs" />
+        <package android:name="cloud.hubera.id" />
     </queries>
 
     <application

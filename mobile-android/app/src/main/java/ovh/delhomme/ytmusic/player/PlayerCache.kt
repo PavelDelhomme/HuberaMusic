@@ -6,9 +6,12 @@ import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.FileDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheEvictor
@@ -124,13 +127,66 @@ object PlayerCache {
             .setDefaultRequestProperties(props)
     }
 
-    fun dataSourceFactory(context: Context): CacheDataSource.Factory {
+    private fun cacheHttpFactory(context: Context): CacheDataSource.Factory {
         val appCtx = context.applicationContext
         val upstream = DefaultDataSource.Factory(appCtx, httpFactory(appCtx))
         return CacheDataSource.Factory()
             .setCache(get(appCtx))
             .setUpstreamDataSourceFactory(upstream)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+
+    /**
+     * `file://` (titre déjà téléchargé) ne passe PAS par SimpleCache :
+     * la clé `id:s4` y mélangeait un flux HTTP tronqué / 416 avec le .m4a local
+     * → BUFFERING, son haché, « Fichier local KO ».
+     */
+    fun dataSourceFactory(context: Context): DataSource.Factory {
+        val appCtx = context.applicationContext
+        val httpCache = cacheHttpFactory(appCtx)
+        val fileSrc = FileDataSource.Factory()
+        return DataSource.Factory {
+            FileOrCacheDataSource(httpCache.createDataSource(), fileSrc.createDataSource())
+        }
+    }
+
+    private class FileOrCacheDataSource(
+        private val httpCache: DataSource,
+        private val file: DataSource,
+    ) : DataSource {
+        private var active: DataSource? = null
+
+        override fun addTransferListener(transferListener: TransferListener) {
+            httpCache.addTransferListener(transferListener)
+            file.addTransferListener(transferListener)
+        }
+
+        override fun open(dataSpec: DataSpec): Long {
+            val fileUri = dataSpec.uri.scheme.equals("file", ignoreCase = true)
+            active = if (fileUri) file else httpCache
+            val spec = if (fileUri && !dataSpec.uri.query.isNullOrEmpty()) {
+                dataSpec.buildUpon().setUri(dataSpec.uri.buildUpon().clearQuery().build()).build()
+            } else {
+                dataSpec
+            }
+            return active!!.open(spec)
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+            active!!.read(buffer, offset, length)
+
+        override fun getUri(): Uri? = active?.uri
+
+        override fun getResponseHeaders(): Map<String, List<String>> =
+            active?.responseHeaders ?: emptyMap()
+
+        override fun close() {
+            try {
+                active?.close()
+            } finally {
+                active = null
+            }
+        }
     }
 
     fun videoDataSourceFactory(context: Context): DefaultDataSource.Factory {
@@ -182,6 +238,9 @@ object PlayerCache {
         if (bare.isNotBlank() && bare != key) {
             runCatching { get(context.applicationContext).removeResource(bare) }
         }
+        if (bare.isNotBlank()) {
+            runCatching { get(context.applicationContext).removeResource("$bare:file") }
+        }
         prefetchInFlight.remove(key)
         prefetchInFlight.remove(bare)
         targetBytes.remove(key)
@@ -222,7 +281,7 @@ object PlayerCache {
                     unsetBogusContentLength(cache, key, need)
                     return@execute
                 }
-                val dataSource = dataSourceFactory(appCtx).createDataSource()
+                val dataSource = cacheHttpFactory(appCtx).createDataSource()
                 val dataSpec = DataSpec.Builder()
                     .setUri(Uri.parse(streamUrl))
                     .setLength(need)
@@ -231,7 +290,7 @@ object PlayerCache {
                 CacheWriter(dataSource, dataSpec, null, null).cache()
                 val extended = target.get()
                 if (extended > need) {
-                    val more = dataSourceFactory(appCtx).createDataSource()
+                    val more = cacheHttpFactory(appCtx).createDataSource()
                     val moreSpec = DataSpec.Builder()
                         .setUri(Uri.parse(streamUrl))
                         .setLength(extended)
@@ -287,7 +346,7 @@ object PlayerCache {
                 unsetBogusContentLength(cache, key, bytes)
                 return
             }
-            val dataSource = dataSourceFactory(appCtx).createDataSource()
+            val dataSource = cacheHttpFactory(appCtx).createDataSource()
             val dataSpec = DataSpec.Builder()
                 .setUri(Uri.parse(streamUrl))
                 .setLength(bytes)

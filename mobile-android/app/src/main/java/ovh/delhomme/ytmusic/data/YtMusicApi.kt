@@ -603,6 +603,9 @@ interface YtMusicApi {
     @POST("api/auth/login")
     suspend fun login(@Body body: LoginBody): AuthResponse
 
+    @POST("api/auth/login/hubera-sso")
+    suspend fun loginHuberaSso(@Body body: HuberaSsoBody): AuthResponse
+
     @POST("api/auth/register")
     suspend fun register(@Body body: RegisterBody): AuthResponse
 

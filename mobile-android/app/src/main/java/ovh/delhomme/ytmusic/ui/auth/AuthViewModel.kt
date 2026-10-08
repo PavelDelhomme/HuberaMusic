@@ -14,8 +14,12 @@ import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.DeviceLoginDeepLink
 import ovh.delhomme.ytmusic.auth.DeviceLoginQr
 import ovh.delhomme.ytmusic.auth.PasskeyAuth
+import cloud.hubera.id.sso.HuberaIdAccount
+import cloud.hubera.id.sso.HuberaIdAccounts
+import ovh.delhomme.ytmusic.YtMusicApp
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ForgotPasswordBody
+import ovh.delhomme.ytmusic.data.HuberaSsoBody
 import ovh.delhomme.ytmusic.data.LoginBody
 import ovh.delhomme.ytmusic.data.RegisterBody
 import retrofit2.HttpException
@@ -41,6 +45,8 @@ data class AuthUiState(
     /** URL à encoder en QR (appareil déjà connecté doit scanner). */
     val deviceApproveUrl: String? = null,
     val deviceQrStatus: String = "idle",
+    val deviceAccounts: List<HuberaIdAccount> = emptyList(),
+    val hideDevicePicker: Boolean = false,
 )
 
 class AuthViewModel(private val container: AppContainer) : ViewModel() {
@@ -63,7 +69,11 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     init {
         viewModelScope.launch {
             val allow = runCatching { container.api.authConfig().allowRegister == true }.getOrDefault(false)
-            _state.value = _state.value.copy(allowRegister = allow)
+            val peers = runCatching {
+                HuberaIdAccounts.listAccounts(YtMusicApp.instance)
+                    .filter { it.email.isNotBlank() }
+            }.getOrDefault(emptyList())
+            _state.value = _state.value.copy(allowRegister = allow, deviceAccounts = peers)
             if (!allow && _state.value.registerMode) {
                 _state.value = _state.value.copy(registerMode = false)
             }
@@ -71,6 +81,68 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                 _state.value = _state.value.copy(loggedIn = true)
             } else {
                 startDeviceLoginQr()
+            }
+        }
+    }
+
+    fun hideDevicePicker() {
+        _state.value = _state.value.copy(hideDevicePicker = true)
+    }
+
+    fun continueWithAccount(account: HuberaIdAccount) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, error = null, email = account.email)
+            try {
+                if (account.isMusicIssuer && account.accessToken.isNotBlank()) {
+                    container.tokenStore.saveSession(
+                        account.accessToken,
+                        account.refreshToken.ifBlank { null },
+                        account.email,
+                        account.displayName.ifBlank { null },
+                    )
+                    if (container.validateSession()) {
+                        authPrefs.edit().putString(KEY_LAST_EMAIL, account.email).apply()
+                        stopDeviceLoginQr()
+                        _state.value = _state.value.copy(loading = false, loggedIn = true)
+                        return@launch
+                    }
+                    runCatching { container.tokenStore.clear() }
+                }
+                if (account.accessToken.isNotBlank()) {
+                    val res = container.api.loginHuberaSso(
+                        HuberaSsoBody(
+                            accessToken = account.accessToken,
+                            refreshToken = account.refreshToken.ifBlank { null },
+                        ),
+                    )
+                    container.tokenStore.saveSession(
+                        res.token,
+                        res.refreshToken,
+                        res.user.email,
+                        res.user.name,
+                    )
+                    authPrefs.edit().putString(KEY_LAST_EMAIL, res.user.email).apply()
+                    stopDeviceLoginQr()
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        loggedIn = true,
+                        email = res.user.email,
+                    )
+                    return@launch
+                }
+                _state.value = _state.value.copy(
+                    loading = false,
+                    hideDevicePicker = true,
+                    email = account.email,
+                    error = "Session expirée — entre le mot de passe Hubera ID.",
+                )
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    hideDevicePicker = false,
+                    email = account.email,
+                    error = e.message ?: "Impossible de reprendre ce compte — mot de passe.",
+                )
             }
         }
     }

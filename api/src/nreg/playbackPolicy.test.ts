@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   ANDROID_COLD_DISK_WAIT_MS,
+  ANDROID_CLIENT_UA_RE,
   GET_AUDIO_FORMAT_DEADLINE_MS,
   downloadFailCooldownMs,
   downloadFailKind,
@@ -24,6 +25,12 @@ describe('playbackPolicy — non-régression lecture / paroles', () => {
   it('un blocage bot reste en cooldown long', () => {
     assert.equal(downloadFailKind('Sign in to confirm you are not a bot'), 'bot');
     assert.ok(downloadFailCooldownMs('bot', 60_000) >= 45_000);
+  });
+
+  it('reconnaît l’UA Android HuberaMusic (pas seulement PLM-Android)', () => {
+    assert.equal(ANDROID_CLIENT_UA_RE.test('HuberaMusic-Android'), true);
+    assert.equal(ANDROID_CLIENT_UA_RE.test('PLM-Android/1.3.357'), true);
+    assert.equal(ANDROID_CLIENT_UA_RE.test('Mozilla/5.0'), false);
   });
 
   it('ne remplace pas des paroles synchronisées par une réponse vide', () => {

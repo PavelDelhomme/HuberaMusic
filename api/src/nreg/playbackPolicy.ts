@@ -6,6 +6,8 @@
 export const ANDROID_COLD_DISK_WAIT_MS = 28_000;
 export const GET_AUDIO_FORMAT_DEADLINE_MS = 40_000;
 export const LYRICS_FULL_WAIT_MS = 12_000;
+/** UA Exo / OkHttp — PLM historique + HuberaMusic actuel. */
+export const ANDROID_CLIENT_UA_RE = /PLM-Android|HuberaMusic-Android/i;
 
 /** Un échec timeout ne doit pas 503 toutes les retries Exo pendant 30 s. */
 export function downloadFailKind(msg: string): 'bot' | 'soft' | 'transient' {

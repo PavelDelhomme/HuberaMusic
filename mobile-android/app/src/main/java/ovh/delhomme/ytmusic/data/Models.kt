@@ -47,6 +47,12 @@ data class LoginBody(
 )
 
 @JsonClass(generateAdapter = false)
+data class HuberaSsoBody(
+    val accessToken: String? = null,
+    val refreshToken: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class RegisterBody(
     val email: String,
     val password: String,
