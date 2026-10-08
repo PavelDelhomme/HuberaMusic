@@ -95,6 +95,12 @@ import {
 import { ensurePlayableQueueAhead } from './media/ensurePlayable.js';
 import { libraryHealthStatus, startLibraryHealthScan } from './media/libraryHealth.js';
 import {
+  startPlayabilitySweep,
+  runPlayabilitySweep,
+  playabilitySweepStatus,
+  triggerOnDemandRecover,
+} from './library/playabilitySweep.js';
+import {
   startPlaybackDigestScheduler,
   sendPlaybackDigestNow,
   buildPlaybackDigest,
@@ -1457,9 +1463,40 @@ app.get('/api/admin/playback-trace', requireAdmin, (req, res) => {
 app.get('/api/admin/library-health', requireAdmin, async (_req, res) => {
   try {
     const { sharedCatalogStats } = await import('./library/sharedCatalog.js');
-    res.json({ ...libraryHealthStatus(), shared: sharedCatalogStats() });
+    res.json({ ...libraryHealthStatus(), shared: sharedCatalogStats(), playability: playabilitySweepStatus() });
   } catch {
-    res.json(libraryHealthStatus());
+    res.json({ ...libraryHealthStatus(), playability: playabilitySweepStatus() });
+  }
+});
+
+app.get('/api/admin/playability', requireAdmin, (_req, res) => {
+  res.json({ ok: true, forceUpdate: false, ...playabilitySweepStatus() });
+});
+
+/** Balayage jouabilité — admin/deploy uniquement, jamais public. */
+app.post('/api/admin/playability/sweep', requireAdmin, async (req, res) => {
+  try {
+    const body = (req.body || {}) as {
+      limit?: number;
+      ids?: string[];
+      user?: string;
+      userId?: string;
+      dryRun?: boolean;
+      recover?: boolean;
+    };
+    const summary = await runPlayabilitySweep({
+      limit: Math.max(1, Math.min(40, Number(body.limit || 8))),
+      ids: Array.isArray(body.ids) ? body.ids.map(String) : undefined,
+      userEmail: body.user,
+      userId: body.userId,
+      dryRun: body.dryRun === true,
+      recover: body.recover !== false,
+      concurrency: 2,
+      sleepMs: 800,
+    });
+    res.json({ ok: true, forceUpdate: false, ...summary });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
   }
 });
 
@@ -3056,6 +3093,28 @@ app.post('/api/library/repair-meta', accountRequired, async (req, res) => {
   }
 });
 
+/** Réparer un titre mort : re-résout Innertube (songs) + upsert canonique. */
+app.post('/api/library/repair-playability', accountRequired, async (req, res) => {
+  try {
+    const videoId = String((req.body as { videoId?: string } | undefined)?.videoId || '');
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      res.status(400).json({ ok: false, error: 'videoId invalide' });
+      return;
+    }
+    triggerOnDemandRecover(videoId);
+    const summary = await runPlayabilitySweep({
+      ids: [videoId],
+      limit: 1,
+      userId: req.userId!,
+      concurrency: 1,
+      sleepMs: 0,
+    });
+    res.json({ ok: true, forceUpdate: false, ...summary });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+  }
+});
+
 app.post('/api/library/like', accountRequired, (req, res) => {
   try {
     const track = req.body as Track;
@@ -3675,6 +3734,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Hubera Music LAN → http://0.0.0.0:${PORT} (toutes interfaces)`);
   console.log(`Hubera Music WS  → ws://localhost:${PORT}/ws`);
   startLibraryHealthScan();
+  startPlayabilitySweep();
   startGlobalTasteWarmScheduler();
   startPlaybackDigestScheduler();
   startLibraryWarmSweep();

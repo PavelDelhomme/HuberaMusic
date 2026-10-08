@@ -70,6 +70,16 @@ export function getReplacementId(deadId: string): string | null {
   }
 }
 
+export function recordReplacement(
+  deadId: string,
+  replacementId: string,
+  title: string,
+  artist: string,
+  score: number,
+) {
+  saveReplacement(deadId, replacementId, title, artist, score);
+}
+
 function saveReplacement(
   deadId: string,
   replacementId: string,

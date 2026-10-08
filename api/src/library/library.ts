@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { db, getTrackPayload, upsertTrack } from './db.js';
 import { sanitizeTrack, sanitizeLibraryItem, isWeakTitle } from '../youtube/mappers.js';
 import type { Track } from '../youtube/types.js';
+import { presentLibraryTracks } from './playabilitySweep.js';
 
 export type LibraryPlaylist = {
   id: string;
@@ -127,8 +128,8 @@ export function getFullLibrary(userId: string) {
       .all(userId) as { track_id: string }[]
   ).map((r) => r.track_id);
 
-  const liked = likedRows.map(trackFromRow);
-  const songs = songRows.map(trackFromRow);
+  const liked = presentLibraryTracks(likedRows.map(trackFromRow));
+  const songs = presentLibraryTracks(songRows.map(trackFromRow));
 
   return {
     songs,
@@ -211,8 +212,8 @@ export function getLibraryLight(userId: string, limit = 24) {
   const counts = libraryCounts(userId);
 
   return {
-    songs: songRows.map(trackFromRow),
-    liked: likedRows.map(trackFromRow),
+    songs: presentLibraryTracks(songRows.map(trackFromRow)),
+    liked: presentLibraryTracks(likedRows.map(trackFromRow)),
     likedPlaylists,
     albums,
     artists,

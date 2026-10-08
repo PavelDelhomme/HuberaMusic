@@ -97,6 +97,8 @@ data class TrackDto(
     val thumbnails: List<Thumb>? = emptyList(),
     val type: String? = "song",
     val source: String? = null,
+    val playable: Boolean? = null,
+    val canonicalId: String? = null,
 ) {
     fun artistLine(): String {
         val names = artists?.mapNotNull { it.name.trim().takeIf { n -> n.isNotEmpty() } }
@@ -207,7 +209,8 @@ data class TrackDto(
 
     /** Titre audio (pas playlist / artiste / album / mix). Les vidéos YT restent jouables. */
     fun isPlayable(): Boolean =
-        !isPlaylist() && !isArtist() && !isAlbum() && !isMix() &&
+        playable != false &&
+            !isPlaylist() && !isArtist() && !isAlbum() && !isMix() &&
             id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))
 
     /** Préféré pour Accueil / autoplay (évite Shorts, hors-musique, talk). */

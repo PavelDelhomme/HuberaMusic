@@ -9,6 +9,10 @@ export type Track = {
   type: 'song' | 'video' | 'album' | 'playlist' | 'artist' | 'unknown';
   /** Fichier MP3 stocké sur le compte (pas un flux YouTube). */
   source?: 'upload' | 'youtube';
+  /** false = flux mort, le client peut afficher « réparer ». Absent = inconnu / jouable. */
+  playable?: boolean;
+  /** videoId canonique après sweeper (alias de l’ancien id). */
+  canonicalId?: string;
 };
 
 export type PlaylistMeta = {
