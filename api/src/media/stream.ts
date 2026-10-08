@@ -2010,6 +2010,9 @@ export async function handleStream(req: Request, res: Response) {
         }
       })
       .catch(() => {});
+    void import('../library/playabilitySweep.js')
+      .then((m) => m.triggerOnDemandRecover(videoId))
+      .catch(() => {});
   }
 
   const wantOfflineEarly =
@@ -2910,6 +2913,9 @@ export async function handleStream(req: Request, res: Response) {
         /* 410 ci-dessous */
       }
       void findReplacementId(videoId, { userId: (req as any).userId }).catch(() => null);
+      void import('../library/playabilitySweep.js')
+        .then((m) => m.triggerOnDemandRecover(videoId))
+        .catch(() => {});
       noteFormatTimeout(videoId);
       sendStreamUnavailable(res, videoId, msg);
       return;
@@ -3192,6 +3198,9 @@ export async function handleStream(req: Request, res: Response) {
       const cookies = resolveYoutubeCookieHeader();
       noteStreamNote(res, `tous les backends KO : ${detail.slice(0, 200)}`);
       if (!wantVideo && looksUnavailable(detail)) {
+        void import('../library/playabilitySweep.js')
+          .then((m) => m.triggerOnDemandRecover(videoId))
+          .catch(() => {});
         res.status(410).json({
           error: 'Impossible de streamer audio',
           code: 'VIDEO_UNAVAILABLE',

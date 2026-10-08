@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "playability:sweep": "tsx src/library/playabilitySweep.ts --once",
+    "test:playability": "tsx --test src/library/playabilitySweep.test.ts src/library/searchIndex.test.ts"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.2",

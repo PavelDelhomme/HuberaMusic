@@ -29,6 +29,8 @@ import ovh.delhomme.ytmusic.data.VideoPlaybackPrefs
 import ovh.delhomme.ytmusic.data.VisualIdCache
 import ovh.delhomme.ytmusic.data.VisualIds
 import ovh.delhomme.ytmusic.debug.AppLog
+import ovh.delhomme.ytmusic.player.CancellationPolicy
+import ovh.delhomme.ytmusic.player.PlaybackScopes
 import ovh.delhomme.ytmusic.player.PlayerController
 import ovh.delhomme.ytmusic.player.PlayerUiState
 import ovh.delhomme.ytmusic.player.VisualClipPrefetcher
@@ -217,7 +219,9 @@ fun rememberVideoPlaybackUi(
                 video.streamUrl = container.videoStreamUrl(vid)
                 video.resolving = false
                 video.error = null
-                runCatching { container.api.streamResolveUrl(vid, "video") }
+                PlaybackScopes.launchPlayback {
+                    runCatching { container.api.streamResolveUrl(vid, "video") }
+                }
             }
             val slow = container.api.trackVisual(
                 track.id,
@@ -234,7 +238,9 @@ fun rememberVideoPlaybackUi(
                 video.visualId = better
                 video.streamUrl = container.offlineStore.videoPlayUri(track.id)?.toString()
                     ?: container.videoStreamUrl(better)
-                runCatching { container.api.streamResolveUrl(better, "video") }
+                PlaybackScopes.launchPlayback {
+                    runCatching { container.api.streamResolveUrl(better, "video") }
+                }
                 video.resolving = false
                 video.error = null
             } else if (better != null) {
@@ -247,6 +253,7 @@ fun rememberVideoPlaybackUi(
                 video.resolving = false
             }
         }.onFailure {
+            CancellationPolicy.rethrowIfCancelled(it)
             if (!SessionMediaMode.video || ui.track?.id != track.id) return@onFailure
             video.resolving = false
             if (video.streamUrl == null) {

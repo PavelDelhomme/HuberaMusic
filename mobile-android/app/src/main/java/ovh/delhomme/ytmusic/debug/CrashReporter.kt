@@ -44,6 +44,10 @@ object CrashReporter {
 
     fun coroutineHandler(tag: String = "coroutine"): CoroutineExceptionHandler =
         CoroutineExceptionHandler { _: CoroutineContext, t: Throwable ->
+            if (ovh.delhomme.ytmusic.player.CancellationPolicy.isScopeCancellation(t)) {
+                AppLog.w(tag, "coroutine annulée (scope UI) — lecture non cassée")
+                return@CoroutineExceptionHandler
+            }
             // Timeouts / DNS pendant offline ou warm : jamais « fatal » mail — stream down.
             val soft = isSoftNetworkFailure(t)
             AppLog.e(tag, "exception non catchée${if (soft) " (réseau soft)" else ""}", t)
