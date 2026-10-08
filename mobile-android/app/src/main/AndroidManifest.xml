@@ -36,12 +36,27 @@
         <package android:name="cloud.hubera.fuel" />
         <package android:name="com.gasoiltracking.app" />
         <package android:name="cloud.hubera.docs" />
+        <package android:name="ovh.delhomme.hubera.docs" />
         <package android:name="cloud.hubera.calendar" />
+        <package android:name="fr.cloudity.cloudity_calendar" />
         <package android:name="cloud.hubera.drive" />
+        <package android:name="fr.cloudity.cloudity_drive" />
         <package android:name="cloud.hubera.mail" />
+        <package android:name="fr.cloudity.cloudity_mail" />
         <package android:name="cloud.hubera.pass" />
+        <package android:name="com.cloudity.cloudity_pass" />
         <package android:name="cloud.hubera.jobs" />
         <package android:name="cloud.hubera.id" />
+        <package android:name="cloud.hubera.photos" />
+        <package android:name="cloud.hubera.contacts" />
+        <package android:name="cloud.hubera.notes" />
+        <package android:name="cloud.hubera.cook" />
+        <package android:name="cloud.hubera.tasks" />
+        <package android:name="cloud.hubera.office.docs" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application
@@ -156,6 +171,7 @@
                 <data android:scheme="plm" android:host="login-device" />
                 <data android:scheme="hubera" android:host="login-device" />
                 <data android:scheme="ytmusic" android:host="open" android:pathPrefix="/" />
+                <data android:scheme="hubera-music" />
             </intent-filter>
         </activity>
 
