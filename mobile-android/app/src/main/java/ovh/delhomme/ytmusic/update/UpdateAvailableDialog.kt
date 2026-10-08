@@ -104,15 +104,19 @@ fun UpdateAvailableDialog(
         },
         text = {
             Column {
+                val notes = ui.releaseNotes?.takeIf { it.isNotBlank() }
                 Text(
-                    ui.message.ifBlank {
-                        versionName?.let { "Version $it prête à installer." }
-                            ?: "Une nouvelle version de Hubera Music est disponible."
-                    },
+                    notes
+                        ?: ui.message.ifBlank {
+                            versionName?.let { "Version $it — nouveautés et améliorations." }
+                                ?: "Une nouvelle version de Hubera Music est disponible."
+                        },
                 )
-                updater.lastHuberaMessage()?.let { notice ->
-                    Spacer(Modifier.height(10.dp))
-                    Text(notice)
+                if (notes == null) {
+                    versionName?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Version $it")
+                    }
                 }
                 if (showProgress) {
                     Spacer(Modifier.height(12.dp))

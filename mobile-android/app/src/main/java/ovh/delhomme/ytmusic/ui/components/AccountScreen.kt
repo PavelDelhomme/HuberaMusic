@@ -352,14 +352,19 @@ fun AccountScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             }
 
-            item {
-                Text(
-                    updater.lastHuberaMessage()
-                        ?: "PLM fait partie de Hubera Music. Tes données et ton compte restent. Nouveau domaine : music.hubera.cloud — plm.delhomme.ovh continue.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                )
+            if (updateUi.phase != ApkUpdateManager.Phase.Downloading &&
+                updateUi.phase != ApkUpdateManager.Phase.Installing &&
+                updateUi.phase != ApkUpdateManager.Phase.Available
+            ) {
+                item {
+                    Text(
+                        updater.lastHuberaMessage()
+                            ?: "PLM fait partie de Hubera Music. Tes données et ton compte restent. Nouveau domaine : music.hubera.cloud — plm.delhomme.ovh continue.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                    )
+                }
             }
 
             // MAJ en haut : visible sur petits écrans sans scroller toute la liste
@@ -450,6 +455,15 @@ fun AccountScreen(
                             }
                         },
                     )
+                    val notes = updateUi.releaseNotes?.takeIf { it.isNotBlank() }
+                    if ((busy || phase == ApkUpdateManager.Phase.Available) && notes != null) {
+                        Text(
+                            notes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        )
+                    }
                     if (busy || phase == ApkUpdateManager.Phase.AwaitingConfirm) {
                         val determinate = phase == ApkUpdateManager.Phase.Downloading ||
                             phase == ApkUpdateManager.Phase.Installing

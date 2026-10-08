@@ -109,6 +109,35 @@ class ApkUpdateManager(
 
     fun lastHuberaMessage(): String? = lastHubera
 
+    private fun loadVersionNotesFor(versionName: String?): String? {
+        val version = versionName?.replace(Regex("^[pbd]\\+"), "")?.trim().orEmpty()
+        if (version.isBlank()) return lastLoadedNotes
+        val raw = runCatching {
+            context.assets.open("version-notes.json").bufferedReader().use { it.readText() }
+        }.getOrNull() ?: return lastLoadedNotes
+        val arr = org.json.JSONObject(raw).optJSONArray("versions") ?: return lastLoadedNotes
+        fun fmt(o: org.json.JSONObject): String {
+            val title = o.optString("title").trim()
+            val bullets = buildString {
+                val n = o.optJSONArray("notes") ?: return@buildString
+                for (j in 0 until n.length()) {
+                    n.optString(j).takeIf { it.isNotBlank() }?.let {
+                        append("• ").append(it).append('\n')
+                    }
+                }
+            }.trim()
+            return listOf(title, bullets).filter { it.isNotBlank() }.joinToString("\n\n")
+        }
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val v = o.optString("version").replace(Regex("^[pbd]\\+"), "")
+            if (v == version) return fmt(o).ifBlank { null }
+        }
+        return arr.optJSONObject(0)?.let { fmt(it).ifBlank { null } }
+    }
+
+    private var lastLoadedNotes: String? = null
+
     private var lastHubera: String? = null
     private val busy = AtomicBoolean(false)
     private val notifier = UpdateProgressNotifier(context.applicationContext)
@@ -136,6 +165,8 @@ class ApkUpdateManager(
         val remoteName: String? = null,
         val remoteCode: Int = 0,
         val available: Boolean = false,
+        /** Nouveautés de la version distante (VERSION_NOTES), pas le message Hubera générique. */
+        val releaseNotes: String? = null,
     )
 
     private val _ui = MutableStateFlow(restoreUi())
@@ -312,14 +343,16 @@ class ApkUpdateManager(
             }
             else -> prefs.getString(KEY_UI_MESSAGE, "") ?: ""
         }
+        val remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null)
         return UiState(
             phase = safe,
             progress = 0f,
             message = message,
-            remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
+            remoteName = remoteName,
             remoteCode = remoteCode,
             available = safe == Phase.Available ||
                 (safe == Phase.Error && remoteCode > BuildConfig.VERSION_CODE),
+            releaseNotes = loadVersionNotesFor(remoteName),
         )
     }
 
@@ -416,10 +449,13 @@ class ApkUpdateManager(
     }
 
     private fun publish(state: UiState) {
-        _ui.value = state
+        val notes = state.releaseNotes ?: loadVersionNotesFor(state.remoteName)
+        lastLoadedNotes = notes
+        val out = if (notes == state.releaseNotes) state else state.copy(releaseNotes = notes)
+        _ui.value = out
         prefs.edit()
-            .putString(KEY_UI_PHASE, state.phase.name)
-            .putString(KEY_UI_MESSAGE, state.message)
+            .putString(KEY_UI_PHASE, out.phase.name)
+            .putString(KEY_UI_MESSAGE, out.message)
             .apply()
     }
 
