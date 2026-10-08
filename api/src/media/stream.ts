@@ -825,6 +825,91 @@ function playableAudioPath(videoId: string): { path: string; growing: boolean } 
   return null;
 }
 
+function durMsFromStreamUrl(url: string): number | null {
+  try {
+    const dur = new URL(url).searchParams.get('dur');
+    if (dur) {
+      const s = Number(dur);
+      if (s > 1 && s < 86_400) return Math.round(s * 1000);
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/**
+ * Même résolution que `GET /api/stream/:id` : disque local d’abord, puis
+ * getAudioFormat (cookies Innertube du container + yt-dlp / proxy lié).
+ * À utiliser par le sweeper — pas un second client Innertube.
+ */
+export async function resolveProductionStream(videoId: string): Promise<{
+  url: string;
+  durationMs?: number | null;
+  viaProxy?: string | null;
+  diskPath?: string;
+} | null> {
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+  const disk = playableAudioPath(videoId);
+  if (disk?.path) {
+    return { url: `file://${disk.path}`, diskPath: disk.path };
+  }
+  try {
+    const fmt = await Promise.race([
+      getAudioFormat(videoId, { live: true }),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('resolve-timeout')), 20_000)),
+    ]);
+    if (!fmt?.url) return null;
+    return {
+      url: fmt.url,
+      durationMs: durMsFromStreamUrl(fmt.url),
+      viaProxy: fmt.viaProxy ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Tête / fin googlevideo via le même fetch lié au proxy que `/api/stream`. */
+export async function fetchProductionStreamHead(
+  url: string,
+  range: string,
+  viaProxy?: string | null,
+): Promise<{
+  status: number;
+  contentType: string;
+  contentRange: string;
+  contentLength: string;
+  body: Uint8Array;
+}> {
+  try {
+    const res = await fetchGooglevideo(url, range, {
+      preferProxies: true,
+      boundProxy: viaProxy || undefined,
+      purpose: 'download',
+    });
+    const body = new Uint8Array(await res.arrayBuffer());
+    return {
+      status: res.status,
+      contentType: res.headers.get('content-type') || '',
+      contentRange: res.headers.get('content-range') || '',
+      contentLength: res.headers.get('content-length') || '',
+      body,
+    };
+  } catch (err) {
+    const msg = String((err as Error).message || err);
+    const code = /(\b)([45]\d\d)\b/.exec(msg)?.[2];
+    const status = code ? Number(code) : /abort|timeout/i.test(msg) ? 0 : 0;
+    return {
+      status: status || (/403/.test(msg) ? 403 : /401/.test(msg) ? 401 : 0),
+      contentType: '',
+      contentRange: '',
+      contentLength: '',
+      body: new Uint8Array(),
+    };
+  }
+}
+
 async function waitUntilDiskServable(videoId: string, ms: number): Promise<string | null> {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {

@@ -1003,11 +1003,23 @@ class PlayerController(
         }
         val p = player() ?: PlaybackService.Holder.player
         if (p != null) {
-            // Seek in-place — ne pas prepare/rebind (sinon retour au début sur mid-range)
-            // Accepte les positions non encore bufferisées (Exo bufferise à la cible).
+            if (ClipPlaybackPolicy.clipOwnsTimeline(SessionMediaMode.video, musicDucked)) {
+                _state.value = _state.value.copy(positionMs = target)
+                return
+            }
+            // Seek-to-start hors-ligne : basculer HTTP → file:// AVANT le seek
+            // (SimpleCache n’a souvent pas les octets à 0).
+            PlaybackService.Holder.service?.ensureCurrentIsLocalFile()
+            val stateBefore = p.playbackState
             p.seekTo(target)
-            if (!p.playWhenReady && userWantsPlaying == true) {
+            if (LocalPlaybackPolicy.needsPrepareAfterSeek(stateBefore) ||
+                LocalPlaybackPolicy.needsPrepareAfterSeek(p.playbackState)
+            ) {
+                runCatching { p.prepare() }
+            }
+            if (userWantsPlaying == true) {
                 p.playWhenReady = true
+                runCatching { p.play() }
             }
         }
         // Met à jour la timeline UI même en pause (sync multi-appareils)
@@ -1045,10 +1057,22 @@ class PlayerController(
         if (target == cur) return
         // Seek in-place uniquement (même mediaItemIndex).
         if (p != null) {
+            if (ClipPlaybackPolicy.clipOwnsTimeline(SessionMediaMode.video, musicDucked)) {
+                _state.value = _state.value.copy(positionMs = target, durationMs = dur)
+                return
+            }
+            PlaybackService.Holder.service?.ensureCurrentIsLocalFile()
             val idx = p.currentMediaItemIndex.coerceAtLeast(0)
+            val stateBefore = p.playbackState
             runCatching { p.seekTo(idx, target) }
-            if (!p.playWhenReady && userWantsPlaying == true) {
+            if (LocalPlaybackPolicy.needsPrepareAfterSeek(stateBefore) ||
+                LocalPlaybackPolicy.needsPrepareAfterSeek(p.playbackState)
+            ) {
+                runCatching { p.prepare() }
+            }
+            if (userWantsPlaying == true) {
                 p.playWhenReady = true
+                runCatching { p.play() }
             }
         }
         _state.value = _state.value.copy(positionMs = target, durationMs = dur)
@@ -1805,7 +1829,10 @@ class PlayerController(
         pendingAutoplay = true
         publishOptimistic(playable, idx)
         player.seekTo(idx, 0L)
-        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        PlaybackService.Holder.service?.ensureCurrentIsLocalFile()
+        if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
+            player.prepare()
+        }
         player.playWhenReady = true
         player.play()
         warmAround(playable, idx)

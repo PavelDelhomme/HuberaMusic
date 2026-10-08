@@ -469,7 +469,19 @@ class PlaybackService : MediaSessionService() {
             StreamPrefetcher.quietPrefetch(2_000L)
             if (local) {
                 val container = runCatching { YtMusicApp.instance.container }.getOrNull()
-                if (localRetryTrackId != curId) {
+                val hasFile = container?.offlineStore?.has(curId) == true
+                val offlineNow = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+                if (!LocalPlaybackPolicy.shouldEscalateLocalStallToRemote(true, hasFile, offlineNow)) {
+                    AppLog.w("PlaybackService", "stall local keep file:// id=$curId (pas de proxy)")
+                    android.os.Handler(mainLooper).post {
+                        runCatching {
+                            exo.prepare()
+                            exo.playWhenReady = true
+                            exo.play()
+                        }
+                        armStallWatch(exo)
+                    }
+                } else if (localRetryTrackId != curId) {
                     localRetryTrackId = curId
                     AppLog.w("PlaybackService", "stall local retry sans purge id=$curId")
                     scope.launch {
@@ -1063,9 +1075,24 @@ class PlaybackService : MediaSessionService() {
                 )
             }
 
-            // Fichier local : 1 retry sans purge, puis purge + stream si encore KO.
+            // Fichier local : retry file://. Jamais recâbler vers le proxy hors-ligne
+            // (ni si le .m4a est encore là — seek-to-start 361).
             if (localFile) {
                 val container = runCatching { ovh.delhomme.ytmusic.YtMusicApp.instance.container }.getOrNull()
+                val hasFile = container?.offlineStore?.has(id) == true
+                val offlineNow = !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
+                if (!LocalPlaybackPolicy.shouldEscalateLocalStallToRemote(true, hasFile, offlineNow)) {
+                    AppLog.w("PlaybackService", "erreur locale → keep file:// id=$id")
+                    streamFailStreak.set(0)
+                    android.os.Handler(mainLooper).post {
+                        runCatching {
+                            exo.prepare()
+                            exo.playWhenReady = true
+                            exo.play()
+                        }
+                    }
+                    return
+                }
                 if (localRetryTrackId != id) {
                     localRetryTrackId = id
                     AppLog.w("PlaybackService", "fichier local KO → retry sans purge id=$id")
@@ -1611,7 +1638,7 @@ class PlaybackService : MediaSessionService() {
             store.revision.collect {
                 val p = player ?: return@collect
                 val idx = p.currentMediaItemIndex
-                promoteUpcomingToLocal(p, idx + 1)
+                promoteUpcomingToLocal(p, idx)
             }
         }
     }
@@ -2706,13 +2733,14 @@ class PlaybackService : MediaSessionService() {
                 .enqueueAheadDuringPlayback(ahead, limit = 3)
         }
         val p = player ?: return
-        promoteUpcomingToLocal(p, fromIndex + 1)
+        promoteUpcomingToLocal(p, fromIndex)
     }
 
     /**
-     * Prochains titres : `file://` dès qu’un .m4a local est complet — **aussi en ligne**.
+     * Titre courant + suivants : `file://` dès qu’un .m4a local est complet — **aussi en ligne**.
      * Recâbler vers le proxy en Wi‑Fi renvoyait Exo sur un SimpleCache HTTP
-     * (1 MiB / 416) alors que le fichier local était bon.
+     * (1 MiB / 416) alors que le fichier local était bon. Le courant restait en HTTP
+     * → seek-to-start BUFFERING 0:00 hors-ligne.
      */
     private fun promoteUpcomingToLocal(exo: ExoPlayer, fromIndex: Int) {
         val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return
@@ -2723,14 +2751,49 @@ class PlaybackService : MediaSessionService() {
             val track = queue.getOrNull(i) ?: continue
             if (!container.offlineStore.has(track.id)) continue
             val cur = exo.getMediaItemAt(i)
-            if (cur.localConfiguration?.uri?.scheme == "file") continue
+            if (LocalPlaybackPolicy.shouldKeepLocalFileUri(cur.localConfiguration?.uri?.scheme)) continue
             runCatching {
-                exo.replaceMediaItem(
-                    i,
-                    mediaItemFor(track, { tid -> container.streamUrl(tid) }, Holder.queueTitle),
-                )
+                val localUri = container.offlineStore.playUri(track.id)?.toString() ?: container.streamUrl(track.id)
+                val item = mediaItemFor(track, { _ -> localUri }, Holder.queueTitle)
+                if (i == exo.currentMediaItemIndex) {
+                    val pos = exo.currentPosition.coerceAtLeast(0L)
+                    val want = exo.playWhenReady
+                    exo.replaceMediaItem(i, item)
+                    exo.seekTo(i, pos)
+                    exo.prepare()
+                    exo.playWhenReady = want
+                    if (want) exo.play()
+                } else {
+                    exo.replaceMediaItem(i, item)
+                }
             }
         }
+    }
+
+    /**
+     * Seek / stall : si le .m4a existe, l’item courant doit être `file://`
+     * (pas le proxy HTTP / SimpleCache).
+     */
+    fun ensureCurrentIsLocalFile(): Boolean {
+        val exo = player ?: return false
+        val id = exo.currentMediaItem?.mediaId ?: return false
+        val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return false
+        val local = container.offlineStore.playUri(id) ?: return false
+        val scheme = exo.currentMediaItem?.localConfiguration?.uri?.scheme
+        if (LocalPlaybackPolicy.shouldKeepLocalFileUri(scheme)) return true
+        val track = Holder.queue.firstOrNull { it.id == id } ?: return false
+        val pos = exo.currentPosition.coerceAtLeast(0L)
+        val want = exo.playWhenReady
+        val rebuilt = mediaItemFor(track, { _ -> local.toString() }, Holder.queueTitle)
+        return runCatching {
+            val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
+            exo.replaceMediaItem(idx, rebuilt)
+            exo.seekTo(idx, pos)
+            exo.prepare()
+            exo.playWhenReady = want
+            if (want) exo.play()
+            true
+        }.getOrDefault(false)
     }
 
     /**
@@ -2761,7 +2824,12 @@ class PlaybackService : MediaSessionService() {
         val id = exo.currentMediaItem?.mediaId ?: return
         if (id.isBlank()) return
         val scheme = exo.currentMediaItem?.localConfiguration?.uri?.scheme
-        if (scheme == "file") {
+        val containerPeek = runCatching { YtMusicApp.instance.container }.getOrNull()
+        val hasLocal = containerPeek?.offlineStore?.has(id) == true
+        if (!LocalPlaybackPolicy.allowRemoteRebind(scheme, hasLocal)) {
+            if (hasLocal && !LocalPlaybackPolicy.shouldKeepLocalFileUri(scheme)) {
+                ensureCurrentIsLocalFile()
+            }
             if (forcePlay && !exo.isPlaying) {
                 runCatching {
                     exo.prepare()
@@ -2771,7 +2839,7 @@ class PlaybackService : MediaSessionService() {
             }
             return
         }
-        val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return
+        val container = containerPeek ?: return
         val track = Holder.queue.firstOrNull { it.id == id } ?: return
         val pos = (seekPos ?: bestKnownPos(exo)).coerceAtLeast(0L)
         // Coupure pile à la fin : enchaîner, ne pas rebobiner (ex. 215s → 146s).

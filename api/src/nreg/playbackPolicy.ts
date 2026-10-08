@@ -31,3 +31,27 @@ export function downloadFailCooldownMs(kind: ReturnType<typeof downloadFailKind>
 export function shouldReplaceCachedLyrics(incoming: string | null | undefined): boolean {
   return Boolean(incoming && incoming.trim().length >= 8);
 }
+
+/**
+ * Un .m4a / .mp4 déjà sur disque (`file://`) ne doit JAMAIS être recâblé
+ * vers le proxy `/api/stream` — même en Wi‑Fi. Sinon Exo reprend un SimpleCache HTTP
+ * tronqué et POSITION reste coincé (régression 357–359).
+ */
+export function shouldKeepLocalFileUri(schemeOrUri: string | null | undefined): boolean {
+  const s = String(schemeOrUri || '').trim().toLowerCase();
+  return s === 'file' || s.startsWith('file:') || (s.startsWith('/') && !s.startsWith('//'));
+}
+
+/** Clip officiel : lecture ≥ 30 s ⇒ la position doit avancer (pas collée). */
+export function clipPositionStuck(
+  samplesMs: number[],
+  minAdvanceMs = 25_000,
+  epsilonMs = 800,
+): boolean {
+  if (!samplesMs.length) return true;
+  const first = samplesMs[0]!;
+  const last = samplesMs[samplesMs.length - 1]!;
+  const span = last - first;
+  if (span < epsilonMs) return true;
+  return span < minAdvanceMs;
+}
