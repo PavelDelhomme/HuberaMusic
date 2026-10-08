@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="cloud.hubera.music" />
+        <package android:name="ovh.delhomme.ytmusic" />
+        <package android:name="cloud.hubera.maps" />
+        <package android:name="ovh.delhomme.maps" />
+        <package android:name="cloud.hubera.fuel" />
+        <package android:name="com.gasoiltracking.app" />
+        <package android:name="cloud.hubera.docs" />
+        <package android:name="cloud.hubera.calendar" />
+        <package android:name="cloud.hubera.drive" />
+        <package android:name="cloud.hubera.mail" />
+        <package android:name="cloud.hubera.pass" />
+        <package android:name="cloud.hubera.jobs" />
+        <package android:name="cloud.hubera.id" />
+        <package android:name="cloud.hubera.photos" />
+        <package android:name="cloud.hubera.contacts" />
+        <package android:name="cloud.hubera.notes" />
+        <package android:name="cloud.hubera.cook" />
+    </queries>
+</manifest>

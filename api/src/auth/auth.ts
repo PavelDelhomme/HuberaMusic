@@ -71,6 +71,63 @@ const HUBERA_ID_LOGIN_URLS = [
   'https://mail.hubera.cloud/auth/login',
 ];
 
+const HUBERA_ID_VALIDATE_URLS = [
+  'https://id.hubera.cloud/auth/validate',
+  'https://api.cloudity.delhomme.ovh/auth/validate',
+  'https://mail.hubera.cloud/auth/validate',
+  'https://calendar.hubera.cloud/auth/validate',
+];
+
+function emailFromProbeJson(j: Record<string, unknown> | null): string {
+  if (!j) return '';
+  const direct = String(j.email || '').trim().toLowerCase();
+  if (direct) return direct;
+  const user = j.user as Record<string, unknown> | undefined;
+  return String(user?.email || '').trim().toLowerCase();
+}
+
+/** Access token Hubera ID / Cloudity / JWT Music déjà émis. Ne crée pas de compte. */
+export async function loginWithHuberaAccessToken(
+  accessToken: string,
+  opts?: { deviceLabel?: string },
+) {
+  const token = String(accessToken || '').trim();
+  if (!token) throw new Error('token requis');
+  let email = '';
+  try {
+    const local = await verifyToken(token);
+    email = String(local.email || '').trim().toLowerCase();
+  } catch {
+    /* pas un JWT Music — sonder Hubera ID */
+  }
+  if (!email) {
+    for (const url of HUBERA_ID_VALIDATE_URLS) {
+      try {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 8000);
+        const r = await fetch(url, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          signal: ac.signal,
+        });
+        clearTimeout(t);
+        if (!r.ok) continue;
+        email = emailFromProbeJson(
+          (await r.json().catch(() => null)) as Record<string, unknown> | null,
+        );
+        if (email) break;
+      } catch {
+        /* hôte suivant */
+      }
+    }
+  }
+  if (!email) throw new Error('Jeton Hubera ID invalide ou expiré');
+  assertEmailAllowed(email);
+  const user = findUserByEmail(email);
+  if (!user) throw new Error('Pas de compte Music pour cet e-mail — connexion mot de passe une fois.');
+  return issueSession(user, opts?.deviceLabel || 'hubera-sso');
+}
+
 /** Mot de passe Hubera ID : ne crée pas de compte Music. Relie seulement un user déjà existant. */
 async function huberaIdPasswordOk(email: string, password: string): Promise<boolean> {
   for (const url of HUBERA_ID_LOGIN_URLS) {

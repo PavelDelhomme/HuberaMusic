@@ -180,6 +180,7 @@ import {
   issueSession,
   loginGoogle,
   loginLocal,
+  loginWithHuberaAccessToken,
   registerLocal,
   requestPasswordReset,
   resetPasswordWithToken,
@@ -519,6 +520,21 @@ app.post('/api/auth/register', authBurst, authStrict, async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: String((err as Error).message || err) });
+  }
+});
+
+app.post('/api/auth/login/hubera-sso', authBurst, authStrict, async (req, res) => {
+  try {
+    const token = String(req.body?.accessToken || req.body?.access_token || '').trim();
+    const result = await loginWithHuberaAccessToken(token, {
+      deviceLabel: String(req.body?.deviceLabel || req.headers['user-agent'] || 'android-sso').slice(0, 120),
+    });
+    const opts = sessionCookieOptions(req);
+    res.cookie('ytm_token', result.token, opts);
+    res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
+    res.json(result);
+  } catch (err) {
+    res.status(401).json({ error: String((err as Error).message || err) });
   }
 });
 

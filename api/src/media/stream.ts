@@ -24,6 +24,7 @@ import {
 } from '../youtube/youtubeCookies.js';
 import {
   ANDROID_COLD_DISK_WAIT_MS,
+  ANDROID_CLIENT_UA_RE,
   downloadFailCooldownMs,
   downloadFailKind,
 } from '../nreg/playbackPolicy.js';
@@ -770,7 +771,7 @@ function isDashBrandBuffer(buf: Buffer): boolean {
 function isAndroidClient(req: Request): boolean {
   return (
     String(req.headers['x-ytm-client'] || '') === 'android' ||
-    /PLM-Android/i.test(String(req.headers['user-agent'] || '')) ||
+    ANDROID_CLIENT_UA_RE.test(String(req.headers['user-agent'] || '')) ||
     String(req.query?.client || '') === 'android'
   );
 }
@@ -2181,10 +2182,7 @@ export async function handleStream(req: Request, res: Response) {
         }
       };
       refreshDisk();
-      const isAndroid =
-        String(req.headers['x-ytm-client'] || '') === 'android' ||
-        /PLM-Android/i.test(String(req.headers['user-agent'] || '')) ||
-        String(req.query?.client || '') === 'android';
+      const isAndroid = isAndroidClient(req);
       if (diskBytes <= 256 * 1024 && !isWarmPrefetch) {
         void downloadTrack(videoId, {
           progressiveOnly: true,
