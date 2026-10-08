@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-08",
   "versions": [
     {
+      "version": "1.3.365",
+      "date": "2026-10-08",
+      "time": "22:35",
+      "at": "2026-10-08T22:35:00+02:00",
+      "title": "En-tête Music d’avant le tiroir grille",
+      "notes": [
+        "Plus de menu hamburger avec la grille d’apps Hubera. Accueil retrouve le logo et le titre, comme avant. Les autres apps s’ouvrent depuis Compte si besoin. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
       "version": "1.3.364",
       "date": "2026-10-08",
       "time": "21:40",

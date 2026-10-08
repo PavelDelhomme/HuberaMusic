@@ -88,7 +88,6 @@ fun LibraryScreen(
     onOpenDetail: (TrackDto) -> Unit,
     onOpenArtist: ((String?, String) -> Unit)? = null,
     onOpenAccount: () -> Unit = {},
-    onMenuClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -252,7 +251,6 @@ fun LibraryScreen(
             title = "Bibliothèque",
             userPictureUrl = userPicture,
             onAccountClick = onOpenAccount,
-            onMenuClick = onMenuClick,
             onHistoryClick = null,
         )
 
