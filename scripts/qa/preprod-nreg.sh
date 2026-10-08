@@ -9,7 +9,8 @@ echo "==> nreg API (node:test)"
 npx --yes tsx --test \
   api/src/nreg/playbackPolicy.test.ts \
   api/src/youtube/lyricsTiming.test.ts \
-  api/src/media/id3Meta.test.ts
+  api/src/media/id3Meta.test.ts \
+  api/src/library/searchIndex.test.ts
 
 echo "==> nreg Android (unit tests)"
 export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk}"

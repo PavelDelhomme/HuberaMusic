@@ -69,6 +69,7 @@ import {
   loadSearchHitsSeed,
   resolveSearchHit,
 } from '../reco/searchHits.js';
+import { localSearchSufficient, searchIndexed, upsertIndexedTracks } from '../library/searchIndex.js';
 import type { AlbumMeta, ArtistMeta, PlaylistMeta, Shelf, Track } from './types.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -875,7 +876,7 @@ function buildSearchPersonalization(userId: string): SearchPersonalization {
 export async function search(
   query: string,
   filter?: string,
-  opts?: { userId?: string },
+  opts?: { userId?: string; skipLocal?: boolean },
 ) {
   const q = String(query || '').trim().replace(/\s+/g, ' ');
   const rawFilter = String(filter || 'all').toLowerCase().trim();
@@ -901,6 +902,39 @@ export async function search(
                     ? 'audiobook'
                     : rawFilter;
   if (!q) return emptyBuckets();
+
+  if (
+    !opts?.skipLocal &&
+    (filterNorm === 'all' || filterNorm === 'song' || filterNorm === 'video')
+  ) {
+    try {
+      const local = searchIndexed(q, 24);
+      if (localSearchSufficient(q, local)) {
+        const songs = local.filter((t) => t.type !== 'video');
+        const videos = local.filter((t) => t.type === 'video');
+        setImmediate(() => {
+          void search(q, filter, { ...opts, skipLocal: true })
+            .then((full) => {
+              upsertIndexedTracks([
+                ...(full.songs || []),
+                ...(full.videos || []),
+              ]);
+            })
+            .catch(() => {});
+        });
+        return {
+          topResult: songs[0] || videos[0] || local[0] || null,
+          songs: filterNorm === 'video' ? [] : songs,
+          videos: filterNorm === 'song' ? [] : videos.length ? videos : local.filter((t) => t.type === 'video'),
+          albums: [],
+          artists: [],
+          playlists: [],
+        };
+      }
+    } catch {
+      /* index FTS optionnel */
+    }
+  }
 
   // Podcast / livre audio : chemin dédié (pas de type Innertube music fiable)
   if (filterNorm === 'podcast' || filterNorm === 'audiobook') {
@@ -1067,6 +1101,11 @@ export async function search(
 
   songsOut = applyCachedDurations(songsOut);
   let videosOut = applyCachedDurations(videos);
+  try {
+    upsertIndexedTracks([...songsOut, ...videosOut].slice(0, 80));
+  } catch {
+    /* */
+  }
 
   if (
     (filterNorm === 'all' || filterNorm === 'song' || filterNorm === 'video') &&
