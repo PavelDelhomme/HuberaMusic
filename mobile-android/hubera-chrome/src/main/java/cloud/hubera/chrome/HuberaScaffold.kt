@@ -168,9 +168,9 @@ fun HuberaDrawerContent(
             columns = GridCells.Fixed(4),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
+                .height(240.dp)
                 .padding(horizontal = 8.dp),
-            userScrollEnabled = false,
+            userScrollEnabled = true,
             verticalArrangement = Arrangement.spacedBy(4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -183,7 +183,7 @@ fun HuberaDrawerContent(
                             if (selected) HuberaTeal.copy(alpha = 0.12f)
                             else MaterialTheme.colorScheme.surfaceVariant,
                         )
-                        .clickable(enabled = !selected) { openHuberaApp(context, app) }
+                        .clickable(enabled = !selected) { HuberaAppLauncher.openOrWeb(context, app.id) }
                         .padding(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
