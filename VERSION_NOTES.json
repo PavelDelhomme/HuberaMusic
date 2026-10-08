@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-07",
   "versions": [
     {
+      "version": "1.3.361",
+      "date": "2026-10-08",
+      "time": "18:40",
+      "at": "2026-10-08T18:40:00+02:00",
+      "title": "Recherche quasi instantanée (index musique)",
+      "notes": [
+        "Les titres déjà vus (biblio, recherches) sortent tout de suite via un index local. YouTube Music complète en fond. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
       "version": "1.3.360",
       "date": "2026-10-08",
       "time": "16:40",
