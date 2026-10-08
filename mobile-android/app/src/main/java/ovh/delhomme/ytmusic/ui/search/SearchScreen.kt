@@ -393,7 +393,6 @@ fun SearchScreen(
     onOpenDetail: (TrackDto) -> Unit,
     onOpenArtist: ((String?, String) -> Unit)? = null,
     onOpenAccount: () -> Unit = {},
-    onMenuClick: () -> Unit = {},
     vm: SearchViewModel = viewModel(factory = SearchViewModel.factory(container)),
 ) {
     val state by vm.state.collectAsState()
@@ -411,7 +410,6 @@ fun SearchScreen(
         AppTopBar(
             title = "Recherche",
             onAccountClick = onOpenAccount,
-            onMenuClick = onMenuClick,
         )
         OutlinedTextField(
             value = state.query,

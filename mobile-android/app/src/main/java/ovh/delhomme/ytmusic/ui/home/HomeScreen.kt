@@ -105,7 +105,6 @@ fun HomeScreen(
     onOpenDetail: (TrackDto) -> Unit,
     onOpenArtist: ((String?, String) -> Unit)? = null,
     onOpenAccount: () -> Unit = {},
-    onMenuClick: () -> Unit = {},
     onOpenDownloads: () -> Unit = {},
     onOpenQuickAccess: () -> Unit = {},
     onMoreMix: ((id: String, title: String, covers: List<TrackDto>) -> Unit)? = null,
@@ -205,7 +204,6 @@ fun HomeScreen(
             showBrandLogo = true,
             userPictureUrl = userPicture,
             onAccountClick = onOpenAccount,
-            onMenuClick = onMenuClick,
         )
 
         when {
