@@ -418,10 +418,9 @@ fun SearchScreen(
             onValueChange = vm::onQuery,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .heightIn(max = 52.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(lineHeight = 22.sp),
             placeholder = {
                 Text(
                     "Titres, artistes…",

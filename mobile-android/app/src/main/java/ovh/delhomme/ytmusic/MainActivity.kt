@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -1449,7 +1450,8 @@ private fun MainTabs(
         // Si seul le mini-lecteur est visible, ne pas re-appliquer l’inset top
         // sinon la flèche retour est trop basse.
         contentWindowInsets = when {
-            showNavBar || isDetailRoute -> WindowInsets.safeDrawing
+            showNavBar -> WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+            isDetailRoute -> WindowInsets.safeDrawing
             showMiniPlayer ->
                 WindowInsets.safeDrawing.only(
                     WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
@@ -1458,7 +1460,11 @@ private fun MainTabs(
         },
         bottomBar = {
             if (showBottomChrome) {
-                Column(Modifier.navigationBarsPadding()) {
+                Column(
+                    Modifier.windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom),
+                    ),
+                ) {
                     val online by ovh.delhomme.ytmusic.data.NetworkMonitor.onlineFlow.collectAsState(
                         initial = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline(),
                     )
@@ -1589,6 +1595,7 @@ private fun MainTabs(
                     val landscapeChrome = isLandscape()
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface,
+                        windowInsets = WindowInsets(0, 0, 0, 0),
                         modifier = if (landscapeChrome) Modifier.height(52.dp) else Modifier,
                     ) {
                         tabs.forEach { tab ->

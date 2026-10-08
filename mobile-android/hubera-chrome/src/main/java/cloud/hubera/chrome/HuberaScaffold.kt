@@ -13,7 +13,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -107,6 +111,7 @@ fun HuberaTopBar(
             extraActions()
             HuberaAccountButton(onClick = onAccountClick, userPicture = userPicture)
         },
+        windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
@@ -234,7 +239,10 @@ fun HuberaBottomNav(
     onSelect: (String) -> Unit,
 ) {
     if (items.isEmpty()) return
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surface,
+        windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom),
+    ) {
         items.forEach { item ->
             NavigationBarItem(
                 selected = item.id == selectedId,
@@ -276,7 +284,9 @@ fun HuberaScaffold(
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
-            ModalDrawerSheet {
+            ModalDrawerSheet(
+                windowInsets = WindowInsets.safeDrawing,
+            ) {
                 HuberaDrawerContent(
                     current = current,
                     versionLabel = versionLabel,
@@ -310,6 +320,7 @@ fun HuberaScaffold(
                     }
                 }
             },
+            contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal),
             floatingActionButton = floatingActionButton,
             snackbarHost = snackbarHost,
             content = content,
