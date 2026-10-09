@@ -968,11 +968,15 @@ class ApkUpdateManager(
             !context.packageManager.canRequestPackageInstalls()
         ) {
             UpdateRelaunch.markPendingAfterPermission(context)
-            withContext(Dispatchers.Main) {
-                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
-                    .setData(Uri.parse("package:${context.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
+            val last = prefs.getLong(KEY_PERM_ASKED_AT, 0L)
+            if (System.currentTimeMillis() - last > 90_000L) {
+                prefs.edit().putLong(KEY_PERM_ASKED_AT, System.currentTimeMillis()).apply()
+                withContext(Dispatchers.Main) {
+                    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                        .setData(Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                }
             }
             return "Autorise l’installation pour Hubera Music, puis reviens — on relance auto"
         }
@@ -1116,13 +1120,17 @@ class ApkUpdateManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
-            withContext(Dispatchers.Main) {
-                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
-                    .setData(Uri.parse("package:${context.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
+            val last = prefs.getLong(KEY_PERM_ASKED_AT, 0L)
+            if (System.currentTimeMillis() - last > 90_000L) {
+                prefs.edit().putLong(KEY_PERM_ASKED_AT, System.currentTimeMillis()).apply()
+                withContext(Dispatchers.Main) {
+                    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                        .setData(Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                }
             }
-            return@withContext "Autorise l’installation pour Hubera Music, puis réessaie"
+            return@withContext "Autorise l’installation pour Hubera Music, puis réessaie — rien n’a encore été téléchargé"
         }
 
         // Pause + stop service avant DL (évite ANR + « rien en lecture » + vol Netflix)
@@ -1501,6 +1509,7 @@ class ApkUpdateManager(
         private const val KEY_SNOOZED_CODE = "snoozed_version_code"
         private const val KEY_SNOOZE_CODE = "snooze_version_code"
         private const val KEY_SNOOZE_UNTIL = "snooze_until_ms"
+        private const val KEY_PERM_ASKED_AT = "perm_asked_at"
         private const val KEY_REPROMPT_INSTALL = "reprompt_after_install_cancel"
         private const val KEY_PROMPTED_SLOT = "prompted_slot"
         private const val KEY_LAST_REMOTE_CODE = "last_remote_code"
