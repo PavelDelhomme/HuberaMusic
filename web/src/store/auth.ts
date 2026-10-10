@@ -2,6 +2,12 @@ import { create } from 'zustand';
 import { api, setRefreshToken, setToken, type User } from '../api';
 import { sessionSocket } from '../lib/auth/session';
 import { useSession } from './session';
+import {
+  detectHuberaSession,
+  quickLoginWithHuberaId,
+  clearHuberaSession,
+  type HuberaDetectResult,
+} from '../lib/huberaId';
 
 type AuthState = {
   user: User | null;
@@ -9,11 +15,14 @@ type AuthState = {
   googleClientId: string | null;
   allowRegister: boolean;
   loaded: boolean;
+  huberaIdDetected: HuberaDetectResult | null;
   init: () => Promise<void>;
   login: (email: string, password: string, totp?: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   loginGoogle: (credential: string) => Promise<void>;
   logout: () => Promise<void>;
+  checkHuberaId: () => Promise<HuberaDetectResult | null>;
+  continueWithHuberaId: () => Promise<boolean>;
 };
 
 function reconnectSession() {
@@ -26,12 +35,13 @@ function applySession(r: { user: User; token: string; refreshToken?: string }) {
   if (r.refreshToken) setRefreshToken(r.refreshToken);
 }
 
-export const useAuth = create<AuthState>((set) => ({
+export const useAuth = create<AuthState>((set, get) => ({
   user: null,
   googleEnabled: false,
   googleClientId: null,
   allowRegister: false,
   loaded: false,
+  huberaIdDetected: null,
 
   init: async () => {
     const failSafe = window.setTimeout(() => {
@@ -101,7 +111,8 @@ export const useAuth = create<AuthState>((set) => ({
     await api.logout().catch(() => undefined);
     setToken(null);
     setRefreshToken(null);
-    set({ user: null });
+    clearHuberaSession();
+    set({ user: null, huberaIdDetected: null });
     const { clearPinsLocalCache } = await import('./pins');
     clearPinsLocalCache();
     try {
@@ -111,5 +122,49 @@ export const useAuth = create<AuthState>((set) => ({
       /* ignore */
     }
     reconnectSession();
+  },
+
+  checkHuberaId: async () => {
+    if (get().user) return null;
+    try {
+      const detected = await detectHuberaSession();
+      set({ huberaIdDetected: detected.found ? detected : null });
+      return detected.found ? detected : null;
+    } catch {
+      return null;
+    }
+  },
+
+  continueWithHuberaId: async () => {
+    try {
+      const result = await quickLoginWithHuberaId();
+      if (!result) return false;
+
+      setToken(result.accessToken);
+      setRefreshToken(result.refreshToken);
+
+      const user: User = {
+        id: result.userId,
+        email: result.email,
+        name: result.email.split('@')[0],
+      };
+
+      set({ user, huberaIdDetected: null });
+      reconnectSession();
+
+      try {
+        const me = await api.me();
+        if (me.user) {
+          set({ user: me.user });
+        }
+      } catch {
+        /* use basic user from quick login */
+      }
+
+      return true;
+    } catch (error) {
+      console.error('[HuberaID] continueWithHuberaId error:', error);
+      return false;
+    }
   },
 }));

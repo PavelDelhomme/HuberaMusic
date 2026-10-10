@@ -24,8 +24,9 @@ const isProdHost =
   !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
 
 export function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { login, register, loginGoogle, googleEnabled, googleClientId, user, init, allowRegister } = useAuth();
+  const { login, register, loginGoogle, googleEnabled, googleClientId, user, init, allowRegister, huberaIdDetected, checkHuberaId, continueWithHuberaId } = useAuth();
   const refresh = useLibrary((s) => s.refresh);
+  const [huberaLoading, setHuberaLoading] = useState(false);
   const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [email, setEmail] = useState(() =>
     import.meta.env.DEV && !isProdHost ? String(import.meta.env.VITE_DEV_EMAIL || '') : '',
@@ -64,8 +65,10 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
       setQr(null);
       setQrStatus('idle');
       setShowClaimScanner(false);
+    } else {
+      void checkHuberaId();
     }
-  }, [open]);
+  }, [open, checkHuberaId]);
 
   // QR login : appareil à connecter poll jusqu’à approbation (téléphone déjà connecté)
   useEffect(() => {
@@ -270,6 +273,43 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
               </button>
             )}
           </p>
+        )}
+
+        {huberaIdDetected?.found && huberaIdDetected.email && mode === 'login' && (
+          <div className="mb-4 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4">
+            <p className="mb-2 text-center text-sm font-medium text-indigo-400">
+              Compte Hubera ID détecté
+            </p>
+            <button
+              type="button"
+              disabled={huberaLoading}
+              className="w-full rounded-full bg-indigo-600 py-2.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              onClick={() => {
+                setHuberaLoading(true);
+                setError('');
+                void (async () => {
+                  try {
+                    const success = await continueWithHuberaId();
+                    if (success) {
+                      await refresh();
+                      onClose();
+                    } else {
+                      setError('Connexion Hubera ID impossible. Essayez avec email/mot de passe.');
+                    }
+                  } catch (e) {
+                    setError(String((e as Error).message || e));
+                  } finally {
+                    setHuberaLoading(false);
+                  }
+                })();
+              }}
+            >
+              {huberaLoading ? 'Connexion...' : `Continuer avec ${huberaIdDetected.email}`}
+            </button>
+            <p className="mt-2 text-center text-xs text-yt-muted">
+              Connexion automatique via Hubera ID (SSO cross-app)
+            </p>
+          </div>
         )}
 
         {googleEnabled && mode !== 'forgot' && (
