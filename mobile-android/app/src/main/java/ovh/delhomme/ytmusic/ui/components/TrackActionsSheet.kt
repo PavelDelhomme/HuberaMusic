@@ -462,11 +462,18 @@ fun TrackActionsSheet(
                     val shareBase = ovh.delhomme.ytmusic.BuildConfig.PUBLIC_API_URL
                         .trimEnd('/')
                         .ifBlank { "https://music.hubera.cloud" }
+                    val ytId = ovh.delhomme.ytmusic.data.VisualIdCache.get(context, enriched.id)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: enriched.id
+                    val hubera = "$shareBase/watch/${enriched.id}"
+                    val youtube = "https://www.youtube.com/watch?v=$ytId"
                     val send = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
                         putExtra(
                             Intent.EXTRA_TEXT,
-                            "${enriched.title} — ${enriched.artistLine()}\n$shareBase/watch/${enriched.id}",
+                            "${enriched.title} — ${enriched.artistLine()}\n" +
+                                "Hubera Music : $hubera\n" +
+                                "YouTube : $youtube",
                         )
                     }
                     context.startActivity(Intent.createChooser(send, "Partager"))
