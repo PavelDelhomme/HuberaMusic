@@ -403,11 +403,11 @@ class ApkUpdateManager(
             busy.set(false)
             publish(
                 UiState(
-                    phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.Idle,
+                    phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.UpToDate,
                     message = if (remote > BuildConfig.VERSION_CODE) {
                         "Mise à jour prête — appuie pour télécharger"
                     } else {
-                        "Installée ${BuildConfig.VERSION_NAME}"
+                        "Application à jour — ${BuildConfig.VERSION_NAME}"
                     },
                     remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
                     remoteCode = remote,
@@ -707,8 +707,8 @@ class ApkUpdateManager(
                 else -> {
                     publish(
                         UiState(
-                            phase = Phase.Idle,
-                            message = result.message ?: "Installée ${BuildConfig.VERSION_NAME}",
+                            phase = Phase.UpToDate,
+                            message = result.message ?: "Application à jour — ${BuildConfig.VERSION_NAME}",
                             available = false,
                         ),
                     )
@@ -716,11 +716,15 @@ class ApkUpdateManager(
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Quitter Compte pendant « Vérification… » ne doit PAS laisser l’UI coincée.
-            if (_ui.value.phase == Phase.Checking) {
+                if (_ui.value.phase == Phase.Checking) {
                 publish(
                     UiState(
-                        phase = Phase.Idle,
-                        message = "Installée ${BuildConfig.VERSION_NAME}",
+                        phase = if (current.available) Phase.Available else Phase.UpToDate,
+                        message = if (current.available) {
+                            "Mise à jour prête — appuie pour télécharger"
+                        } else {
+                            "Application à jour — ${BuildConfig.VERSION_NAME}"
+                        },
                         remoteName = current.remoteName,
                         remoteCode = current.remoteCode,
                         available = current.available,
@@ -754,7 +758,7 @@ class ApkUpdateManager(
             ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
         publish(
             UiState(
-                phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.Idle,
+                phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.UpToDate,
                 message = if (remote > BuildConfig.VERSION_CODE) {
                     "Mise à jour prête — appuie pour télécharger"
                 } else {
@@ -932,7 +936,7 @@ class ApkUpdateManager(
                                 phase = if (remote > BuildConfig.VERSION_CODE) {
                                     Phase.Available
                                 } else {
-                                    Phase.Idle
+                                    Phase.UpToDate
                                 },
                                 message = "Mise à jour interrompue — réessaie",
                                 remoteName = _ui.value.remoteName,

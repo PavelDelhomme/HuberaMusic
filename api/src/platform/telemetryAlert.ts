@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { mailBrand, sendMail, getAppEnv, appUrl } from './mail.js';
 import { buildTextPdf } from './textPdf.js';
 import {
@@ -357,10 +359,11 @@ export async function maybeAlertTelemetryError(ev: {
   <pre style="margin:0;white-space:pre-wrap;background:#fef3c7;padding:12px 14px;border-radius:10px;border:1px solid #f59e0b;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5">${esc(diagText)}${esc(skipNote)}</pre>
 
   ${sectionCard('Message', esc(ev.message || '(vide)'))}
-  ${sectionCard('Stack (nettoyée)', esc(stack.slice(0, 6_000)) + (stack.length > 6_000 ? esc('\n…[PDF]') : ''), 'dark')}
-  ${sectionCard('Breadcrumbs', esc(crumbs.slice(0, 4_000)))}
-  ${sectionCard('Logs récents (filtrés)', esc(logs.slice(-6_000)))}
-  ${sectionCard('Meta', esc(metaLite.slice(0, 3_500)))}
+  ${sectionCard('Stack (nettoyée)', esc(stack.slice(0, 8_000)) + (stack.length > 8_000 ? esc('\n…[PDF]') : ''), 'dark')}
+  ${sectionCard('Stack brute', esc((ev.stack || logsRaw || '(vide)').slice(0, 8_000)), 'dark')}
+  ${sectionCard('Breadcrumbs', esc(crumbs.slice(0, 6_000)))}
+  ${sectionCard('Logs récents (filtrés)', esc(logs.slice(-10_000)))}
+  ${sectionCard('Meta', esc(metaLite.slice(0, 6_000)))}
   ${heavy ? '<p style="color:#666;font-size:13px"><em>Dump complet joint en PDF.</em></p>' : ''}
 </div>`.trim();
 
@@ -391,7 +394,8 @@ export async function maybeAlertTelemetryError(ev: {
   } catch (err) {
     console.error('[telemetry-alert] rapport KO', err);
   }
-  if (heavy || !ev.stack || logsRaw.length > 2_000) {
+  {
+    // Toujours un PDF : les mails sans PJ perdaient stacks / logs / traces.
     try {
       const pdf = buildTextPdf({
         title: `${mailBrand()} ${env} · ${level} · ${ev.kind} · ${ev.id}`,
@@ -437,6 +441,13 @@ export async function maybeAlertTelemetryError(ev: {
       text: textSummary,
       attachments,
     });
+    try {
+      const dir = join(process.cwd(), 'data', 'incidents');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${ev.id}.md`), fullDump, 'utf8');
+    } catch (err) {
+      console.error('[telemetry-alert] dump file KO', err);
+    }
     console.info(
       `[telemetry-alert] sent to=${to} kind=${ev.kind} id=${ev.id} tracks=${tracks.length} pdf=${attachments.some((a) => a.contentType === 'application/pdf')}`,
     );

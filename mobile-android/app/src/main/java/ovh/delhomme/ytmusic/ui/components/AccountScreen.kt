@@ -387,7 +387,7 @@ fun AccountScreen(
                     ApkUpdateManager.Phase.Checking -> "Vérification…"
                     ApkUpdateManager.Phase.Idle ->
                         if (updateUi.available) "Mettre à jour l’application"
-                        else "Mise à jour de l’app"
+                        else "Application à jour"
                 }
                 val subtitle = updateUi.message.ifBlank {
                     "Installée ${BuildConfig.VERSION_NAME}"

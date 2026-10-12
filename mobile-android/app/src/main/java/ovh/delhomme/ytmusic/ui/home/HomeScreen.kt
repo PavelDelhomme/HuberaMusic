@@ -119,6 +119,17 @@ fun HomeScreen(
     var showHistory by remember { mutableStateOf(false) }
     var userPicture by remember { mutableStateOf<String?>(null) }
 
+    LaunchedEffect(state.updatePrompt?.available, state.updatePrompt?.info?.versionName) {
+        val p = state.updatePrompt
+        if (p?.available == true) {
+            Toast.makeText(
+                context,
+                "Mise à jour ${p.info?.versionName ?: ""} disponible — ouvre Compte",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
     state.updatePrompt?.takeIf { it.available }?.let { upd ->
         ovh.delhomme.ytmusic.update.UpdateAvailableDialog(
             versionName = upd.info?.versionName,
