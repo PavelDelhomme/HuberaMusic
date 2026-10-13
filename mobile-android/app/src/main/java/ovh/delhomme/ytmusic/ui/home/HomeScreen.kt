@@ -94,6 +94,8 @@ import ovh.delhomme.ytmusic.ui.components.dragReorderLongPress
 import ovh.delhomme.ytmusic.ui.components.rememberDragReorderState
 import ovh.delhomme.ytmusic.ui.components.PinnedBadge
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import cloud.hubera.chrome.HuberaAppsDialog
+import cloud.hubera.chrome.HuberaProduct
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -118,6 +120,7 @@ fun HomeScreen(
     val haptic = LocalHapticFeedback.current
     var showHistory by remember { mutableStateOf(false) }
     var userPicture by remember { mutableStateOf<String?>(null) }
+    var appsOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.updatePrompt?.available, state.updatePrompt?.info?.versionName) {
         val p = state.updatePrompt
@@ -215,7 +218,14 @@ fun HomeScreen(
             showBrandLogo = true,
             userPictureUrl = userPicture,
             onAccountClick = onOpenAccount,
+            onBrandClick = { appsOpen = true },
         )
+        if (appsOpen) {
+            HuberaAppsDialog(
+                current = HuberaProduct.MUSIC,
+                onDismiss = { appsOpen = false },
+            )
+        }
 
         when {
             state.loading && state.shelves.isEmpty() -> {

@@ -2,6 +2,7 @@ package ovh.delhomme.ytmusic.ui.components
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -44,6 +45,7 @@ fun AppTopBar(
     onAccountClick: () -> Unit,
     onMenuClick: (() -> Unit)? = null,
     onHistoryClick: (() -> Unit)? = null,
+    onBrandClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -66,11 +68,15 @@ fun AppTopBar(
         } else if (showBrandLogo) {
             Image(
                 painter = painterResource(R.drawable.ic_brand),
-                contentDescription = null,
+                contentDescription = "Apps Hubera",
                 modifier = Modifier
                     .padding(start = 8.dp)
                     .size(32.dp)
-                    .clip(CircleShape),
+                    .clip(CircleShape)
+                    .then(
+                        if (onBrandClick != null) Modifier.clickable(onClick = onBrandClick)
+                        else Modifier,
+                    ),
                 contentScale = ContentScale.Crop,
             )
             Spacer(Modifier.width(4.dp))

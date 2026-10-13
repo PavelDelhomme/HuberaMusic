@@ -7,6 +7,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -72,6 +73,15 @@ class PlaybackService : MediaSessionService() {
     private val cmdToggleShuffle = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
     private val cmdAddPlaylist = SessionCommand(ACTION_ADD_PLAYLIST, Bundle.EMPTY)
     private val cmdOpenLyrics = SessionCommand(ACTION_OPEN_LYRICS, Bundle.EMPTY)
+    private val cmdSkipNext = SessionCommand(ACTION_SKIP_NEXT, Bundle.EMPTY)
+    private val cmdSkipPrev = SessionCommand(ACTION_SKIP_PREV, Bundle.EMPTY)
+    private val lyricHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val lyricTick = object : Runnable {
+        override fun run() {
+            publishLyricExtras()
+            lyricHandler.postDelayed(this, 480)
+        }
+    }
 
     private val recoverGen = AtomicInteger(0)
     private val streamFailStreak = AtomicInteger(0)
@@ -1627,6 +1637,8 @@ class PlaybackService : MediaSessionService() {
 
         Holder.player = exo
         Holder.service = this
+        lyricHandler.removeCallbacks(lyricTick)
+        lyricHandler.post(lyricTick)
         refreshPlaybackActiveFlag(exo)
         if (exo.audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
             AudioEqualizer.attach(exo.audioSessionId)
@@ -1757,6 +1769,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        lyricHandler.removeCallbacks(lyricTick)
         persistPlaybackSnapshot(durable = true)
         scope.cancel()
         audioFocus?.abandon(force = true)
@@ -1923,6 +1936,8 @@ class PlaybackService : MediaSessionService() {
                 .add(cmdToggleShuffle)
                 .add(cmdAddPlaylist)
                 .add(cmdOpenLyrics)
+                .add(cmdSkipNext)
+                .add(cmdSkipPrev)
                 .build()
             // Force next/prev toujours dispo (sinon Samsung grise « suivant » sans item suivant)
             val playerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
@@ -1970,6 +1985,12 @@ class PlaybackService : MediaSessionService() {
                 }
                 ACTION_OPEN_LYRICS -> {
                     openAppFromMediaAction(MainActivity.EXTRA_OPEN_LYRICS)
+                }
+                ACTION_SKIP_NEXT -> {
+                    skipToNextFromExternal(restoreRepeatOne = false)
+                }
+                ACTION_SKIP_PREV -> {
+                    skipToPreviousFromExternal()
                 }
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -2021,7 +2042,7 @@ class PlaybackService : MediaSessionService() {
      * Jamais [Player.seekToNext] : un flux YouTube DASH « dynamique » relance alors
      * le titre courant à 0. On avance par **index de file**, comme le précédent.
      */
-    fun skipToNextFromExternal() {
+    fun skipToNextFromExternal(restoreRepeatOne: Boolean = true) {
         val h = android.os.Handler(mainLooper)
         val run = Runnable {
             val exo = player ?: return@Runnable
@@ -2069,7 +2090,7 @@ class PlaybackService : MediaSessionService() {
                 }
                 fillAutoplayFromService(advanceAfterFill = true)
             } finally {
-                if (wasOne) exo.repeatMode = Player.REPEAT_MODE_ONE
+                if (wasOne && restoreRepeatOne) exo.repeatMode = Player.REPEAT_MODE_ONE
             }
         }
         if (android.os.Looper.myLooper() == mainLooper) run.run() else h.post(run)
@@ -3138,6 +3159,71 @@ class PlaybackService : MediaSessionService() {
         const val ACTION_TOGGLE_SHUFFLE = "ytm.action.TOGGLE_SHUFFLE"
         const val ACTION_ADD_PLAYLIST = "ytm.action.ADD_PLAYLIST"
         const val ACTION_OPEN_LYRICS = "ytm.action.OPEN_LYRICS"
+        const val ACTION_SKIP_NEXT = "ytm.action.SKIP_NEXT"
+        const val ACTION_SKIP_PREV = "ytm.action.SKIP_PREV"
+    }
+
+    private fun publishLyricExtras() {
+        val exo = player ?: return
+        val id = exo.currentMediaItem?.mediaId.orEmpty()
+        val pos = exo.currentPosition.coerceAtLeast(0L)
+        val t = LyricNow.triple(this, id, pos)
+        session?.setSessionExtras(
+            Bundle().apply {
+                putString("lyricPrev", t.first)
+                putString("lyricCur", t.second)
+                putString("lyricNext", t.third)
+            },
+        )
+    }
+}
+
+private object LyricNow {
+    fun triple(ctx: Context, trackId: String, posMs: Long): Triple<String, String, String> {
+        if (trackId.isBlank()) return Triple("", "", "")
+        val prefs = ctx.getSharedPreferences("plm_lyrics_cache_v6", Context.MODE_PRIVATE)
+        val timed = prefs.getString("l_$trackId", null)
+        val lines = if (!timed.isNullOrBlank()) parseTimed(timed) else parseLrc(prefs.getString("t_$trackId", null))
+        if (lines.isEmpty()) return Triple("", "", "")
+        var i = 0
+        while (i + 1 < lines.size && lines[i + 1].first <= posMs) i++
+        val prev = if (i > 0) lines[i - 1].second else ""
+        val cur = lines[i].second
+        val next = if (i + 1 < lines.size) lines[i + 1].second else ""
+        return Triple(prev, cur, next)
+    }
+
+    private fun parseTimed(raw: String): List<Pair<Long, String>> {
+        val out = ArrayList<Pair<Long, String>>()
+        for (line in raw.lineSequence()) {
+            val p = line.split('|', limit = 2)
+            if (p.size < 2) continue
+            val ms = p[0].toLongOrNull() ?: continue
+            val text = p[1].trim()
+            if (text.isNotEmpty()) out += ms to text
+        }
+        return out
+    }
+
+    private fun parseLrc(raw: String?): List<Pair<Long, String>> {
+        if (raw.isNullOrBlank()) return emptyList()
+        val re = Regex("""\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?]\s*(.*)""")
+        val out = ArrayList<Pair<Long, String>>()
+        for (line in raw.lineSequence()) {
+            val m = re.find(line.trim()) ?: continue
+            val min = m.groupValues[1].toLongOrNull() ?: continue
+            val sec = m.groupValues[2].toLongOrNull() ?: continue
+            val frac = m.groupValues[3]
+            val fracMs = when {
+                frac.isEmpty() -> 0L
+                frac.length == 1 -> frac.toLong() * 100
+                frac.length == 2 -> frac.toLong() * 10
+                else -> frac.take(3).toLong()
+            }
+            val text = m.groupValues[4].trim()
+            if (text.isNotEmpty()) out += ((min * 60 + sec) * 1000L + fracMs) to text
+        }
+        return out
     }
 }
 

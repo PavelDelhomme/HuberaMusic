@@ -220,6 +220,50 @@ fun HuberaBottomNav(
     }
 }
 
+@Composable
+fun HuberaAppsDialog(
+    current: HuberaProduct,
+    onDismiss: () -> Unit,
+) {
+    val waffleCtx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Apps Hubera") },
+        text = {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.fillMaxWidth().height(280.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(HuberaProduct.suite) { app ->
+                    Column(
+                        Modifier
+                            .clip(MaterialTheme.shapes.medium)
+                            .background(
+                                if (app == current) HuberaTeal.copy(alpha = 0.12f)
+                                else MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                            .clickable(enabled = app != current) {
+                                onDismiss()
+                                HuberaAppLauncher.openOrWeb(waffleCtx, app.id)
+                            }
+                            .padding(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(app.icon, contentDescription = app.title, tint = HuberaTeal)
+                        Spacer(Modifier.height(4.dp))
+                        Text(app.title, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Fermer") }
+        },
+    )
+}
+
 /**
  * Squelette Google-like : hamburger à gauche, titre, compte à droite, drawer suite, nav bas.
  */
@@ -247,43 +291,10 @@ fun HuberaScaffold(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     var waffleOpen by remember { mutableStateOf(false) }
-    val waffleCtx = LocalContext.current
     if (waffleOpen) {
-        AlertDialog(
-            onDismissRequest = { waffleOpen = false },
-            title = { Text("Apps Hubera") },
-            text = {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    modifier = Modifier.fillMaxWidth().height(280.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(HuberaProduct.suite) { app ->
-                        Column(
-                            Modifier
-                                .clip(MaterialTheme.shapes.medium)
-                                .background(
-                                    if (app == current) HuberaTeal.copy(alpha = 0.12f)
-                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                )
-                                .clickable(enabled = app != current) {
-                                    waffleOpen = false
-                                    HuberaAppLauncher.openOrWeb(waffleCtx, app.id)
-                                }
-                                .padding(10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Icon(app.icon, contentDescription = app.title, tint = HuberaTeal)
-                            Spacer(Modifier.height(4.dp))
-                            Text(app.title, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { waffleOpen = false }) { Text("Fermer") }
-            },
+        HuberaAppsDialog(
+            current = current,
+            onDismiss = { waffleOpen = false },
         )
     }
     ModalNavigationDrawer(

@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,6 +38,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -467,19 +469,23 @@ fun AccountScreen(
                     if (busy || phase == ApkUpdateManager.Phase.AwaitingConfirm) {
                         val determinate = phase == ApkUpdateManager.Phase.Downloading ||
                             phase == ApkUpdateManager.Phase.Installing
-                        if (determinate) {
-                            LinearProgressIndicator(
-                                progress = { updateUi.progress.coerceIn(0f, 1f) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                        Row(
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.5.dp,
                             )
-                        } else {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                            )
+                            Spacer(Modifier.size(10.dp))
+                            if (determinate) {
+                                LinearProgressIndicator(
+                                    progress = { updateUi.progress.coerceIn(0f, 1f) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            } else {
+                                LinearProgressIndicator(modifier = Modifier.weight(1f))
+                            }
                         }
                         if (phase == ApkUpdateManager.Phase.AwaitingConfirm) {
                             TextButton(
