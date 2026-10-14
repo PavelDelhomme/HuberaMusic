@@ -82,6 +82,8 @@ data class SearchUiState(
     val recent: List<String> = emptyList(),
     /** Suggestions API tant que l’utilisateur tape (vide = mode historique). */
     val suggestions: List<String> = emptyList(),
+    /** Affiché si la recherche dépasse quelques secondes. */
+    val slowHint: String? = null,
 )
 
 private val FILTERS = listOf(
@@ -166,6 +168,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             suggestions = emptyList(),
             error = null,
             loading = false,
+            slowHint = null,
         )
     }
 
@@ -242,7 +245,19 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             val currentQ = _state.value.query.trim()
             val currentFilter = _state.value.filter
             if (currentQ.length < 2) return@launch
-            _state.value = _state.value.copy(loading = true, error = null, sections = emptyList())
+            _state.value = _state.value.copy(loading = true, error = null, slowHint = null)
+            launch {
+                delay(3500)
+                if (
+                    _state.value.loading &&
+                    _state.value.query.trim() == currentQ &&
+                    _state.value.filter == currentFilter
+                ) {
+                    _state.value = _state.value.copy(
+                        slowHint = "La recherche prend plus de temps que d’habitude. Ça continue, ce n’est pas bloqué.",
+                    )
+                }
+            }
 
             // Toujours chercher d’abord dans les téléchargements locaux (offline-capable)
             val offlineHits = filterOfflineDownloads(currentQ, currentFilter)
@@ -300,7 +315,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                         }
                     }
                 }
-                _state.value = _state.value.copy(loading = false, sections = sections, error = null)
+                _state.value = _state.value.copy(loading = false, sections = sections, error = null, slowHint = null)
                 // Ne pas préchauffer 8 titres : ça noie yt-dlp pendant que tu lances un résultat.
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -512,6 +527,14 @@ fun SearchScreen(
                         suggestions = state.suggestions,
                         onPick = vm::commitSearch,
                     )
+                    if (state.slowHint != null) {
+                        Text(
+                            state.slowHint!!,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     SearchLoadingSkeleton()
                 }
             }
@@ -610,6 +633,16 @@ fun SearchScreen(
             }
             else -> {
                 LazyColumn(contentPadding = PaddingValues(bottom = 24.dp, top = 4.dp)) {
+                    if (state.slowHint != null) {
+                        item(key = "slow-hint") {
+                            Text(
+                                state.slowHint!!,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     if (state.suggestions.isNotEmpty()) {
                         item(key = "sug-header") {
                             SearchSuggestionsBlock(

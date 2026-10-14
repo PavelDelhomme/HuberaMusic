@@ -132,6 +132,9 @@ class QuickAccessStore(
      * retirés / ajoutés sur l’autre téléphone au pull-to-refresh.
      * Les ajouts/suppressions passent déjà par addPin/removePin à l’action.
      */
+    private val pendingAdds = mutableSetOf<String>()
+    private val pendingRemoves = mutableSetOf<String>()
+
     suspend fun syncFromApi(api: YtMusicApi, userEmail: String? = null) {
         val email = (userEmail ?: currentEmail())?.trim()?.lowercase().orEmpty()
         val bound = boundUserEmail()
@@ -141,8 +144,13 @@ class QuickAccessStore(
         val remote = runCatching { api.pins().pins }.getOrDefault(emptyList())
         val tracks = remote.mapNotNull { pinToTrack(it) }
             .distinctBy { it.id }
-            .take(48)
-        replaceAll(tracks, boundEmail = email.ifBlank { null })
+            .toMutableList()
+        val local = pins.first()
+        for (t in local) {
+            if (t.id in pendingAdds && tracks.none { it.id == t.id }) tracks.add(t)
+        }
+        val kept = tracks.filter { it.id !in pendingRemoves }.distinctBy { it.id }.take(48)
+        replaceAll(kept, boundEmail = email.ifBlank { null })
     }
 
     /**
@@ -181,6 +189,8 @@ class QuickAccessStore(
             if (idx >= 0) {
                 current.removeAt(idx)
                 nowPinned = false
+                pendingRemoves.add(track.id)
+                pendingAdds.remove(track.id)
             } else {
                 // Premier épinglé = gauche ; le plus récent = droite (append).
                 current.add(track.copy(type = when (track.type) {
@@ -188,6 +198,8 @@ class QuickAccessStore(
                     else -> track.type
                 }))
                 nowPinned = true
+                pendingAdds.add(track.id)
+                pendingRemoves.remove(track.id)
             }
             prefs[key] = adapter.toJson(current.distinctBy { it.id }.take(48))
             if (email.isNotBlank()) prefs[boundUserKey] = email
@@ -209,6 +221,7 @@ class QuickAccessStore(
                 runCatching {
                     if (pinnedSnapshot) {
                         api.addPin(trackToPinBody(track.copy(type = pinType)))
+                        pendingAdds.remove(track.id)
                         when (pinType) {
                             "album" -> runCatching { api.saveAlbum(track.copy(type = "album")) }
                             "artist" -> runCatching { api.saveArtist(track.copy(type = "artist")) }
@@ -223,6 +236,7 @@ class QuickAccessStore(
                         }
                     } else {
                         api.removePin(track.id)
+                        pendingRemoves.remove(track.id)
                     }
                 }
             }
