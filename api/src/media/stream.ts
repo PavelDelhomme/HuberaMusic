@@ -1778,6 +1778,102 @@ function streamPathFor(req: Request, videoId: string): string {
   return `/api/stream/${videoId}${suffix ? `?${suffix}` : ''}`;
 }
 
+/**
+ * Relais VPS → maison : répondre tout de suite avec un Range audio obtenu
+ * depuis l’IP maison (MWEB itag 250). Le pipeline yt-dlp / proxies ne renvoie
+ * pas le premier octet avant l’abandon du VPS.
+ * Le corps suit le Range demandé et s’arrête si le client coupe.
+ */
+async function serveRelayFreshRange(req: Request, res: Response, videoId: string): Promise<boolean> {
+  const { attemptProductionFreshRoute } = await import('./freshAudioRoutesLive.js');
+  let url = '';
+  let mime: string | undefined;
+  try {
+    const hit = await attemptProductionFreshRoute(
+      { name: 'innertube:MWEB:250', kind: 'innertube', client: 'MWEB', itag: 250 },
+      videoId,
+    );
+    url = hit?.url || '';
+    mime = hit?.mimeType;
+  } catch {
+    return false;
+  }
+  if (!url) return false;
+  const range = String(req.headers.range || 'bytes=0-63');
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 12_000);
+  let upstream: globalThis.Response;
+  try {
+    upstream = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        Range: range,
+        Accept: '*/*',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Origin: 'https://www.youtube.com',
+        Referer: 'https://www.youtube.com/',
+      },
+      signal: ac.signal,
+    });
+  } catch {
+    clearTimeout(timer);
+    return false;
+  }
+  if ((upstream.status !== 200 && upstream.status !== 206) || !upstream.body) {
+    clearTimeout(timer);
+    try {
+      await upstream.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
+  clearTimeout(timer);
+  res.status(upstream.status);
+  res.setHeader('Content-Type', upstream.headers.get('content-type') || mime || 'audio/webm');
+  const cr = upstream.headers.get('content-range');
+  if (cr) res.setHeader('Content-Range', cr);
+  const cl = upstream.headers.get('content-length');
+  if (cl) res.setHeader('Content-Length', cl);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-PLM-Stream-Cache', 'relay-mweb');
+  const reader = upstream.body.getReader();
+  let cancelled = false;
+  const stop = () => {
+    if (cancelled) return;
+    cancelled = true;
+    reader.cancel().catch(() => {});
+  };
+  res.on('close', stop);
+  try {
+    while (!cancelled) {
+      const { done, value } = await reader.read();
+      if (done || !value?.byteLength) break;
+      if (!res.write(Buffer.from(value))) {
+        await new Promise((r) => res.once('drain', r));
+      }
+    }
+    if (!res.writableEnded) res.end();
+  } catch {
+    stop();
+    if (!res.headersSent) return false;
+    if (!res.writableEnded) {
+      try {
+        res.end();
+      } catch {
+        /* ignore */
+      }
+    }
+  } finally {
+    res.off('close', stop);
+    stop();
+  }
+  return true;
+}
+
 export async function handleStream(req: Request, res: Response) {
   const videoId = String(req.params.id || '');
   const warmHint =
@@ -1791,6 +1887,14 @@ export async function handleStream(req: Request, res: Response) {
   if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
     res.status(400).json({ error: 'ID invalide' });
     return;
+  }
+  if (
+    String(req.headers['x-ytm-stream-relay'] || '') === '1' &&
+    String(req.query.type || req.query.media || '') !== 'video'
+  ) {
+    const served = await serveRelayFreshRange(req, res, videoId);
+    if (served) return;
+    if (res.headersSent) return;
   }
   const wantUploadVideo = String(req.query.type || req.query.media || '') === 'video';
   const uploadUserId = (req as any).userId as string | undefined;
