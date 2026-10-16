@@ -45,7 +45,7 @@ import {
   preferCatalogAudio,
   sanitizeTrack,
 } from './mappers.js';
-import { getFullLibrary, getHistory } from '../library/library.js';
+import { getHistory } from '../library/library.js';
 import { listFollows, listSearchHistory } from '../library/prefs.js';
 import { getGlobalCard, setGlobalCard } from '../library/globalCardCache.js';
 import {
@@ -70,35 +70,16 @@ import {
   resolveSearchHit,
 } from '../reco/searchHits.js';
 import { localSearchSufficient, searchIndexed, upsertIndexedTracks } from '../library/searchIndex.js';
+import {
+  SEARCH_LIST_GRACE_MS,
+  SEARCH_LIST_HARD_CAP_MS,
+  SEARCH_WEB_EMPTY_BUDGET_MS,
+  collectSearchLanes,
+  listWithoutSlowPath,
+} from './searchLanes.js';
 import type { AlbumMeta, ArtistMeta, PlaylistMeta, Shelf, Track } from './types.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-
-/** Variantes d’ortho pour requêtes artiste courtes (FR / typos fréquentes). */
-function artistSpellingAlternates(query: string): string[] {
-  const q = foldText(query);
-  if (!q || tokenize(query).length > 2) return [];
-  const map: Record<string, string[]> = {
-    suzanne: ['suzane'],
-    suzane: ['suzanne'],
-    kevinn: ['kevin'],
-    amandine: ['amandin'],
-  };
-  const out = new Set<string>();
-  for (const alt of map[q] || []) {
-    if (alt && alt !== q) out.add(alt);
-  }
-  // Doublement / dédoublement d’une consonne médiane (n, s, l, t)
-  if (q.length >= 5 && q.length <= 12) {
-    const m = q.match(/^(.+?)([nsltrp])\2(.+)$/);
-    if (m) out.add(`${m[1]}${m[2]}${m[3]}`);
-    const m2 = q.match(/^(.+?)([nsltrp])([^nsltrp].*)$/);
-    if (m2 && !q.includes(m2[2] + m2[2])) {
-      out.add(`${m2[1]}${m2[2]}${m2[2]}${m2[3]}`);
-    }
-  }
-  return [...out].filter((a) => a !== q).slice(0, 2);
-}
 
 let yt: Innertube | null = null;
 let ytCookieFp: string | null = null;
@@ -173,6 +154,31 @@ export function peekCachedAudioFormat(
 export function clearAudioFormatCache() {
   audioFormatCache.clear();
   audioFormatInflight.clear();
+}
+
+/** Mémorise une URL obtenue par une route neuve, sans la journaliser. */
+export function rememberAudioFormat(
+  videoId: string,
+  entry: {
+    url: string;
+    mimeType?: string;
+    bitrate?: number;
+    contentLength?: number;
+    expiresAt?: number;
+    viaProxy?: string | null;
+  },
+): void {
+  if (!entry.url) return;
+  const packed: AudioFormat = {
+    url: entry.url,
+    mimeType: entry.mimeType,
+    bitrate: entry.bitrate,
+    contentLength: entry.contentLength,
+    expiresAt: entry.expiresAt ?? parseExpireMs(entry.url) ?? Date.now() + 3 * 60 * 60 * 1000,
+    viaProxy: entry.viaProxy ?? null,
+  };
+  const baseKey = audioCacheKey(videoId);
+  audioFormatCache.set(baseKey, packed);
 }
 
 function parseExpireMs(url: string): number | null {
@@ -765,20 +771,20 @@ function shouldWebFallback(q: string, songs: Track[], videos: Track[]): boolean 
   return false;
 }
 
-async function innertubeSearch(query: string, filter?: string) {
+async function innertubeSearch(query: string, filter?: string, timeoutMs = 8_000) {
   const innertube = await getYT();
   const filters =
     filter && filter !== 'all' ? ({ type: filter } as any) : undefined;
-  return withSearchTimeout(innertube.music.search(query, filters));
+  return withSearchTimeout(innertube.music.search(query, filters), timeoutMs);
 }
 
 /** YouTube (pas seulement le catalogue YTM) — reels / hard-techno Instagram. */
-async function youtubeWebVideoSearch(query: string): Promise<Track[]> {
+async function youtubeWebVideoSearch(query: string, timeoutMs = SEARCH_WEB_EMPTY_BUDGET_MS): Promise<Track[]> {
   try {
     const innertube = await getYT();
     const res: any = await withSearchTimeout(
       innertube.search(query, { type: 'video' } as any),
-      12_000,
+      timeoutMs,
     );
     const buckets = collectFromResult(res);
     const pool: Track[] = [...(buckets.videos || []), ...(buckets.songs || [])];
@@ -804,6 +810,24 @@ async function youtubeWebVideoSearch(query: string): Promise<Track[]> {
   }
 }
 
+/** Une ou deux variantes web, coupées par le budget. Le reste ne retient pas la liste. */
+async function takeWebHitsWithin(query: string, budgetMs: number): Promise<Track[]> {
+  const variants = searchQueryVariants(query).slice(0, 2);
+  const hits: Track[] = [];
+  const deadline = Date.now() + budgetMs;
+  for (const vq of variants) {
+    const left = deadline - Date.now();
+    if (left < 250) break;
+    const batch = await Promise.race([
+      youtubeWebVideoSearch(vq, left),
+      new Promise<Track[]>((resolve) => setTimeout(() => resolve([]), left)),
+    ]);
+    hits.push(...batch);
+    if (hits.length >= 8) break;
+  }
+  return hits;
+}
+
 function buildSearchPersonalization(userId: string): SearchPersonalization {
   const artistWeights = new Map<string, number>();
   const bump = (name: string | undefined | null, w: number) => {
@@ -813,7 +837,7 @@ function buildSearchPersonalization(userId: string): SearchPersonalization {
   };
 
   try {
-    for (const f of listFollows(userId)) {
+    for (const f of listFollows(userId, 40)) {
       bump(f.artist_name, 6);
       try {
         const p = JSON.parse(f.payload || '{}');
@@ -826,18 +850,12 @@ function buildSearchPersonalization(userId: string): SearchPersonalization {
     /* ignore */
   }
 
+  // Bibliothèque entière hors de ce chemin : des milliers de titres bloquaient la liste.
+  // Le goût récent (historique) suffit pour le soft-boost.
+  let recent: ReturnType<typeof getHistory> = [];
   try {
-    const lib = getFullLibrary(userId);
-    for (const t of lib.liked || []) {
-      for (const a of t.artists || []) bump(a.name, 4);
-    }
-    for (const a of lib.artists || []) bump(a.name || a.title, 5);
-  } catch {
-    /* ignore */
-  }
-
-  try {
-    for (const t of getHistory(userId, 60)) {
+    recent = getHistory(userId, 80);
+    for (const t of recent) {
       for (const a of t.artists || []) bump(a.name, 3);
     }
   } catch {
@@ -863,44 +881,162 @@ function buildSearchPersonalization(userId: string): SearchPersonalization {
     .slice(0, 10)
     .map(([n]) => n);
 
-  let trackIds: string[] = [];
-  try {
-    trackIds = getHistory(userId, 80).map((t) => t.id);
-  } catch {
-    trackIds = [];
-  }
+  const trackIds = recent.map((t) => t.id);
 
   return { artistNames, trackIds };
 }
 
-export async function search(
+type SearchOpts = { userId?: string; skipLocal?: boolean; skipCache?: boolean };
+
+type SearchPayload = {
+  topResult: Track | null;
+  songs: Track[];
+  videos: Track[];
+  albums: Track[];
+  artists: Track[];
+  playlists: Track[];
+  podcasts?: Track[];
+};
+
+const SEARCH_CACHE_TTL_MS = 3 * 60_000;
+const SEARCH_CACHE_MAX = 64;
+const SEARCH_REVALIDATE_AFTER_MS = 20_000;
+const searchResultCache = new Map<string, { at: number; payload: SearchPayload }>();
+const searchInflight = new Map<string, Promise<SearchPayload>>();
+const searchRevalidating = new Set<string>();
+const pendingHitPatches = new Map<string, Track>();
+
+function normalizeSearchFilter(filter?: string): string {
+  const rawFilter = String(filter || 'all').toLowerCase().trim();
+  if (!rawFilter || rawFilter === 'all') return 'all';
+  if (rawFilter === 'songs' || rawFilter === 'song') return 'song';
+  if (rawFilter === 'videos' || rawFilter === 'video') return 'video';
+  if (rawFilter === 'albums' || rawFilter === 'album') return 'album';
+  if (rawFilter === 'artists' || rawFilter === 'artist') return 'artist';
+  if (rawFilter === 'playlists' || rawFilter === 'playlist') return 'playlist';
+  if (rawFilter === 'podcasts' || rawFilter === 'podcast') return 'podcast';
+  if (
+    rawFilter === 'audiobooks' ||
+    rawFilter === 'audiobook' ||
+    rawFilter === 'livre-audio' ||
+    rawFilter === 'livre_audio'
+  ) {
+    return 'audiobook';
+  }
+  return rawFilter;
+}
+
+function searchCacheKey(userId: string | undefined, filterNorm: string, q: string) {
+  return `${userId || ''}:${filterNorm}:${foldText(q)}`;
+}
+
+function mergeTrackDetail(base: Track, detail: Track): Track {
+  return {
+    ...base,
+    ...detail,
+    type: base.type === 'artist' || base.type === 'album' || base.type === 'playlist' ? base.type : 'song',
+    artists: detail.artists?.length ? detail.artists : base.artists,
+    title: detail.title && detail.title !== 'Sans titre' ? detail.title : base.title,
+    thumbnails: detail.thumbnails?.length ? detail.thumbnails : base.thumbnails,
+    duration: detail.duration || base.duration,
+    durationSeconds: detail.durationSeconds ?? base.durationSeconds,
+    album: detail.album || base.album,
+  };
+}
+
+function patchCachedTrack(videoId: string, detail: Track) {
+  let applied = false;
+  for (const [key, entry] of searchResultCache) {
+    let changed = false;
+    const songs = entry.payload.songs.map((s) => {
+      if (s.id !== videoId) return s;
+      changed = true;
+      return mergeTrackDetail(s, detail);
+    });
+    let top = entry.payload.topResult;
+    if (top?.id === videoId && top.type !== 'artist') {
+      top = mergeTrackDetail(top, detail);
+      changed = true;
+    }
+    if (!changed) continue;
+    applied = true;
+    searchResultCache.set(key, {
+      at: entry.at,
+      payload: { ...entry.payload, songs, topResult: top },
+    });
+  }
+  if (!applied) {
+    pendingHitPatches.set(videoId, detail);
+    while (pendingHitPatches.size > 40) {
+      const first = pendingHitPatches.keys().next().value;
+      if (first === undefined) break;
+      pendingHitPatches.delete(first);
+    }
+  }
+}
+
+function applyPendingPatches(payload: SearchPayload): SearchPayload {
+  if (!pendingHitPatches.size) return payload;
+  let songs = payload.songs;
+  let top = payload.topResult;
+  let changed = false;
+  for (const [videoId, detail] of pendingHitPatches) {
+    if (songs.some((s) => s.id === videoId)) {
+      songs = songs.map((s) => (s.id === videoId ? mergeTrackDetail(s, detail) : s));
+      changed = true;
+      pendingHitPatches.delete(videoId);
+    }
+    if (top?.id === videoId && top.type !== 'artist') {
+      top = mergeTrackDetail(top, detail);
+      changed = true;
+    }
+  }
+  return changed ? { ...payload, songs, topResult: top } : payload;
+}
+
+function rememberSearch(key: string, payload: SearchPayload) {
+  const next = applyPendingPatches(payload);
+  const has =
+    next.topResult ||
+    next.songs?.length ||
+    next.videos?.length ||
+    next.albums?.length ||
+    next.artists?.length ||
+    next.playlists?.length;
+  if (!has) return;
+  searchResultCache.set(key, { at: Date.now(), payload: next });
+  while (searchResultCache.size > SEARCH_CACHE_MAX) {
+    const first = searchResultCache.keys().next().value;
+    if (first === undefined) break;
+    searchResultCache.delete(first);
+  }
+}
+
+function laneHasVisibleList(raw: unknown): boolean {
+  if (!raw) return false;
+  const b = collectFromResult(raw);
+  // Titres seulement : une fiche artiste seule ne doit pas couper la voie « chansons ».
+  return b.songs.length + b.videos.length > 0;
+}
+
+/** Titre canonique tout de suite. getTrack reste hors de la liste (comme les paroles). */
+function pinCanonicalHit(hit: NonNullable<ReturnType<typeof resolveSearchHit>>): Track {
+  const seed = hitToTrack(hit);
+  return listWithoutSlowPath(
+    seed,
+    getTrack(hit.videoId, { light: true }).then(({ track }) => {
+      if (track?.id) patchCachedTrack(hit.videoId, track);
+    }),
+  );
+}
+
+async function searchUncached(
   query: string,
   filter?: string,
-  opts?: { userId?: string; skipLocal?: boolean },
+  opts?: SearchOpts,
 ) {
   const q = String(query || '').trim().replace(/\s+/g, ' ');
-  const rawFilter = String(filter || 'all').toLowerCase().trim();
-  const filterNorm =
-    !rawFilter || rawFilter === 'all'
-      ? 'all'
-      : rawFilter === 'songs' || rawFilter === 'song'
-        ? 'song'
-        : rawFilter === 'videos' || rawFilter === 'video'
-          ? 'video'
-          : rawFilter === 'albums' || rawFilter === 'album'
-            ? 'album'
-            : rawFilter === 'artists' || rawFilter === 'artist'
-              ? 'artist'
-              : rawFilter === 'playlists' || rawFilter === 'playlist'
-                ? 'playlist'
-                : rawFilter === 'podcasts' || rawFilter === 'podcast'
-                  ? 'podcast'
-                  : rawFilter === 'audiobooks' ||
-                      rawFilter === 'audiobook' ||
-                      rawFilter === 'livre-audio' ||
-                      rawFilter === 'livre_audio'
-                    ? 'audiobook'
-                    : rawFilter;
+  const filterNorm = normalizeSearchFilter(filter);
   if (!q) return emptyBuckets();
 
   if (
@@ -913,7 +1049,7 @@ export async function search(
         const songs = local.filter((t) => t.type !== 'video');
         const videos = local.filter((t) => t.type === 'video');
         setImmediate(() => {
-          void search(q, filter, { ...opts, skipLocal: true })
+          void search(q, filter, { ...opts, skipLocal: true, skipCache: true })
             .then((full) => {
               upsertIndexedTracks([
                 ...(full.songs || []),
@@ -957,48 +1093,35 @@ export async function search(
   let songExtra: any = null;
   let artistExtra: any = null;
   let albumExtra: any = null;
+  let altArtists: Track[] = [];
 
   if (filterNorm === 'all') {
-    const spellingAlts = artistSpellingAlternates(q);
-    [primary, songExtra, artistExtra, albumExtra] = await Promise.all([
-      innertubeSearch(q).catch(() => null),
-      innertubeSearch(q, 'song').catch(() => null),
-      innertubeSearch(q, 'artist').catch(() => null),
-      innertubeSearch(q, 'album').catch(() => null),
-    ]);
-    // Orthographe proche (suzanne → suzane) : enrichit le bucket artistes
-    if (spellingAlts.length) {
-      const altArtists = await Promise.all(
-        spellingAlts.slice(0, 2).map((alt) => innertubeSearch(alt, 'artist').catch(() => null)),
-      );
-      for (const extra of altArtists) {
-        if (!extra) continue;
-        const bucket = collectFromResult(extra);
-        if (!artistExtra) artistExtra = extra;
-        else {
-          // merge later via fromArtists — stash on a synthetic collector
-          (artistExtra as any).__plmAltArtists = [
-            ...((artistExtra as any).__plmAltArtists || []),
-            ...bucket.artists,
-          ];
-        }
-      }
-    }
-    if (!primary && !songExtra && !artistExtra && !albumExtra) {
-      // Dernier essai soft : recherche sans filtre
-      primary = await innertubeSearch(q).catch(() => null);
-    }
+    // Un seul appel Innertube pour la liste. Album, orthographe, artiste filtré
+    // et repli web ne partent pas avec lui : sur un titre absent de la bibliothèque
+    // ils ajoutaient des secondes avant les premiers résultats.
+    const settled = await collectSearchLanes(
+      { primary: innertubeSearch(q).catch(() => null) },
+      {
+        listLanes: ['primary'],
+        hasList: laneHasVisibleList,
+        graceMs: SEARCH_LIST_GRACE_MS,
+        hardCapMs: SEARCH_LIST_HARD_CAP_MS,
+      },
+    );
+    primary = settled.values.primary ?? null;
   } else {
     primary = await innertubeSearch(q, filterNorm).catch(() => null);
     if (!primary) {
-      primary = await innertubeSearch(q).catch(() => null);
+      primary = await Promise.race([
+        innertubeSearch(q).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1_800)),
+      ]);
     }
   }
 
   const main = primary ? collectFromResult(primary) : emptyBuckets();
   const fromSongs = songExtra ? collectFromResult(songExtra) : emptyBuckets();
   const fromArtists = artistExtra ? collectFromResult(artistExtra) : emptyBuckets();
-  const altArtists = ((artistExtra as any)?.__plmAltArtists || []) as Track[];
   const fromAlbums = albumExtra ? collectFromResult(albumExtra) : emptyBuckets();
 
   // Pas d’injection « query + artiste favori » : ça polluait (Keny sur n’importe quoi).
@@ -1052,23 +1175,7 @@ export async function search(
     if (hit && (filterNorm === 'all' || filterNorm === 'song')) {
       let hitTrack: Track | null = songsOut.find((t) => t.id === hit.videoId) || null;
       if (!hitTrack) {
-        hitTrack = hitToTrack(hit);
-        // Enrichit via getTrack (titre/artistes/durée) — best effort
-        try {
-          const { track } = await getTrack(hit.videoId, { light: true });
-          if (track?.id) {
-            hitTrack = {
-              ...hitTrack,
-              ...track,
-              type: 'song',
-              artists:
-                track.artists?.length ? track.artists : hitTrack.artists?.length ? hitTrack.artists : hit.artist ? [{ name: hit.artist }] : [],
-              title: track.title && track.title !== 'Sans titre' ? track.title : hitTrack.title,
-            };
-          }
-        } catch {
-          /* seed metadata suffit */
-        }
+        hitTrack = pinCanonicalHit(hit);
       } else {
         hitTrack = { ...hitTrack, type: 'song' };
       }
@@ -1107,16 +1214,14 @@ export async function search(
     /* */
   }
 
+  const haveList = songsOut.length + videosOut.length > 0;
   if (
+    !haveList &&
     (filterNorm === 'all' || filterNorm === 'song' || filterNorm === 'video') &&
     shouldWebFallback(q, songsOut, videosOut)
   ) {
-    const webHits: Track[] = [];
-    for (const vq of searchQueryVariants(q)) {
-      const hits = await youtubeWebVideoSearch(vq);
-      webHits.push(...hits);
-      if (webHits.length >= 10) break;
-    }
+    // Catalogue Innertube vide : court essai web, jamais 12 s.
+    const webHits = await takeWebHitsWithin(q, SEARCH_WEB_EMPTY_BUDGET_MS);
     if (webHits.length) {
       const asSongs = webHits.map((t) => ({ ...t, type: 'song' as const }));
       songsOut = mergeTracks(
@@ -1155,28 +1260,7 @@ export async function search(
       if (hit) {
         let hitTrack: Track | null = only.find((t) => t.id === hit.videoId) || null;
         if (!hitTrack) {
-          hitTrack = hitToTrack(hit);
-          try {
-            const { track } = await getTrack(hit.videoId, { light: true });
-            if (track?.id) {
-              hitTrack = {
-                ...hitTrack,
-                ...track,
-                type: 'song',
-                artists:
-                  track.artists?.length
-                    ? track.artists
-                    : hitTrack.artists?.length
-                      ? hitTrack.artists
-                      : hit.artist
-                        ? [{ name: hit.artist }]
-                        : [],
-                title: track.title && track.title !== 'Sans titre' ? track.title : hitTrack.title,
-              };
-            }
-          } catch {
-            /* */
-          }
+          hitTrack = pinCanonicalHit(hit);
         }
         only = mergeTracks([hitTrack], only);
       }
@@ -1217,7 +1301,10 @@ export async function search(
     // Préférer les vrais artistes ; si YT renvoie peu, enrichir via topResult / all
     let only = filterByRelevance(rankByQuery(main.artists, q, personalization), q);
     if (only.length < 3) {
-      const all = await innertubeSearch(q).catch(() => null);
+      const all = await Promise.race([
+        innertubeSearch(q).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1_600)),
+      ]);
       if (all) {
         const extra = collectFromResult(all);
         const merged = mergeTracks(only, extra.artists);
@@ -1248,6 +1335,47 @@ export async function search(
   };
 }
 
+export async function search(
+  query: string,
+  filter?: string,
+  opts?: SearchOpts,
+): Promise<SearchPayload> {
+  const q = String(query || '').trim().replace(/\s+/g, ' ');
+  const filterNorm = normalizeSearchFilter(filter);
+  if (!q) return emptyBuckets();
+  const key = searchCacheKey(opts?.userId, filterNorm, q);
+  if (!opts?.skipCache) {
+    const cached = searchResultCache.get(key);
+    if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL_MS) {
+      if (
+        Date.now() - cached.at > SEARCH_REVALIDATE_AFTER_MS &&
+        !searchRevalidating.has(key)
+      ) {
+        searchRevalidating.add(key);
+        setImmediate(() => {
+          void search(query, filter, { ...opts, skipCache: true, skipLocal: true }).finally(() => {
+            searchRevalidating.delete(key);
+          });
+        });
+      }
+      return cached.payload;
+    }
+    const pending = searchInflight.get(key);
+    if (pending) return pending;
+  }
+  const job = searchUncached(query, filter, opts).then((payload) => {
+    rememberSearch(key, payload);
+    return payload;
+  });
+  if (!opts?.skipCache) {
+    searchInflight.set(key, job);
+    void job.finally(() => {
+      if (searchInflight.get(key) === job) searchInflight.delete(key);
+    });
+  }
+  return job;
+}
+
 /** Podcasts / livres audio : heuristique YTM (pas de filtre Innertube dédié fiable). */
 async function searchSpokenContent(
   q: string,
@@ -1267,8 +1395,8 @@ async function searchSpokenContent(
   ].slice(0, 3);
 
   const pool: Track[] = [];
-  for (const qq of queries) {
-    const raw = await innertubeSearch(qq).catch(() => null);
+  const raws = await Promise.all(queries.map((qq) => innertubeSearch(qq).catch(() => null)));
+  for (const raw of raws) {
     if (!raw) continue;
     const b = collectFromResult(raw);
     pool.push(...(b.songs || []), ...(b.videos || []));

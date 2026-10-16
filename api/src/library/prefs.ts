@@ -241,7 +241,15 @@ export function unfollowArtist(userId: string, artistId: string) {
   db.prepare('DELETE FROM artist_follows WHERE user_id = ? AND artist_id = ?').run(userId, artistId);
 }
 
-export function listFollows(userId: string) {
+export function listFollows(userId: string, limit?: number) {
+  const cap = Number(limit) || 0;
+  if (cap > 0) {
+    return db
+      .prepare(
+        'SELECT * FROM artist_follows WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+      )
+      .all(userId, cap) as any[];
+  }
   return db
     .prepare('SELECT * FROM artist_follows WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId) as any[];
