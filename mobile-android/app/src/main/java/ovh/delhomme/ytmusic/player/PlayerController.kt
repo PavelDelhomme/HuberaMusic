@@ -185,7 +185,8 @@ class PlayerController(
                 syncFrom(c)
                 pending?.let { (tracks, idx) ->
                     val seek = pendingSeekMs
-                    val auto = pendingAutoplay || userWantsPlaying == true
+                    val auto = (pendingAutoplay || userWantsPlaying == true) &&
+                        PlaybackResume.mayAutoPlay()
                     pending = null
                     pendingSeekMs = 0L
                     pendingAutoplay = true
@@ -316,6 +317,7 @@ class PlayerController(
         PlaybackService.Holder.queueTitle = queueTitle
         this.sourceId = sourceId
         this.sourceKind = sourceKind
+        PlaybackResume.noteUserPlay()
         healAfterBackground()
         if (controller != null && PlaybackService.Holder.service == null) {
             release()
@@ -526,7 +528,8 @@ class PlayerController(
                 p.mediaItemCount == 0 ||
                 p.playbackState == Player.STATE_IDLE
         if (exoEmpty && _state.value.queue.isNotEmpty()) {
-            if (p != null && p.isPlaying) {
+            if (p != null && (p.isPlaying || (p.playWhenReady && p.playbackState == Player.STATE_BUFFERING))) {
+                PlaybackResume.noteUserPause()
                 userWantsPlaying = false
                 pendingAutoplay = false
                 p.pause()
@@ -545,12 +548,24 @@ class PlayerController(
             }
             return
         }
-        if (p.isPlaying) {
+        val loadingOrPlaying =
+            p.isPlaying ||
+                (
+                    p.playWhenReady &&
+                        p.playerError == null &&
+                        (
+                            p.playbackState == Player.STATE_BUFFERING ||
+                                p.playbackState == Player.STATE_READY
+                            )
+                    )
+        if (loadingOrPlaying) {
+            PlaybackResume.noteUserPause()
             userWantsPlaying = false
             pendingAutoplay = false
             p.pause()
             StreamPrefetcher.cancelIdle()
         } else {
+            PlaybackResume.noteUserPlay()
             userWantsPlaying = true
             pendingAutoplay = true
             resumeOrPlay(p)
@@ -564,6 +579,7 @@ class PlayerController(
      * On hydrate pending + Holder puis [ensureServiceAndConnect] ; le bind flushe avec autoplay.
      */
     private fun startPlaybackFromUiState(): Boolean {
+        PlaybackResume.noteUserPlay()
         val fromPending = pending
         val tracks = fromPending?.first?.takeIf { it.isNotEmpty() } ?: _state.value.queue
         if (tracks.isEmpty()) return false
@@ -650,6 +666,7 @@ class PlayerController(
     }
 
     fun pause() {
+        PlaybackResume.noteUserPause()
         userWantsPlaying = false
         pendingAutoplay = false
         ovh.delhomme.ytmusic.data.NetworkMonitor.clearPausedForNetwork()
@@ -704,6 +721,7 @@ class PlayerController(
      * Déclenché typiquement par un swipe bas sur la barre réduite.
      */
     fun stopAndClear() {
+        PlaybackResume.noteUserPause()
         userWantsPlaying = false
         pendingAutoplay = false
         pending = null
@@ -751,6 +769,7 @@ class PlayerController(
     var onClearLocal: (() -> Unit)? = null
 
     fun playResume() {
+        PlaybackResume.noteUserPlay()
         healAfterBackground()
         userWantsPlaying = true
         pendingAutoplay = true
@@ -1214,6 +1233,7 @@ class PlayerController(
     }
 
     fun playAt(index: Int) {
+        PlaybackResume.noteUserPlay()
         ensureServiceAndConnect()
         val p = player() ?: PlaybackService.Holder.player ?: return
         val queue = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
@@ -2045,7 +2065,7 @@ class PlayerController(
         if (queue.isEmpty()) return
         val p = player() ?: PlaybackService.Holder.player
         val pos = p?.currentPosition?.coerceAtLeast(0L) ?: ui.positionMs
-        val playing = p?.let { it.isPlaying || it.playWhenReady } ?: ui.playing
+        val playing = p?.isEffectivePlayback() == true
         onPersistLocal?.invoke(
             LocalPlaybackSnapshot(
                 queue = queue,

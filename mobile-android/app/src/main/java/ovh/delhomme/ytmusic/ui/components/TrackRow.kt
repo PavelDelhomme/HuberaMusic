@@ -216,7 +216,7 @@ fun MiniPlayerBar(
     track: TrackDto,
     playing: Boolean,
     progress: Float,
-    /** Durée totale (ms) pour afficher le temps restant `-3:45`. */
+    /** Durée totale (ms) pour afficher le temps restant, toujours positif. */
     durationMs: Long = 0L,
     /** Fraction 0–1 déjà bufferisée (gris clair sous le rouge). */
     bufferedProgress: Float = 0f,
@@ -501,8 +501,8 @@ fun MiniPlayerBar(
                 onToggle()
             }) {
                 Icon(
-                    if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (playing) "Pause" else "Lecture",
+                    if (playing || buffering) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (playing || buffering) "Pause" else "Lecture",
                     tint = Color(0xFFF5F5F5),
                     modifier = Modifier.size(28.dp),
                 )
@@ -541,14 +541,13 @@ fun MiniPlayerBar(
     }
 }
 
-/** Temps restant compact : `-3:45` (progressRatio 0..1). */
+/** Temps restant compact, jamais négatif (progressRatio 0..1). */
 private fun formatRemainingMs(durationMs: Long, progressRatio: Float): String {
-    if (durationMs <= 0L) return "-0:00"
+    if (durationMs <= 0L) return "0:00"
     val leftMs = ((1f - progressRatio.coerceIn(0f, 1f)) * durationMs).toLong().coerceAtLeast(0L)
     val totalSec = (leftMs + 999) / 1000 // ceil secondes
     val h = totalSec / 3600
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
-    val clock = if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
-    return "-$clock"
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }

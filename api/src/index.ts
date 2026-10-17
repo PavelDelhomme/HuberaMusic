@@ -124,6 +124,8 @@ import {
   getApkJob,
   getApkPath,
   apkPublicInfo,
+  apkBetaPublicInfo,
+  getBetaApkPath,
   getBuildJob,
   publishApkBuffer,
   startApkBuild,
@@ -131,6 +133,7 @@ import {
   MUSIC_PKG_HUBERA,
 } from './platform/admin.js';
 import { huberaLegacyStatus, huberaNotice, pingFromRequest } from './platform/huberaLegacy.js';
+import { betaOfferBeatsProd, isBetaAccount } from './platform/betaChannel.js';
 import {
   allowPublicApkTicket,
   consumeApkTicket,
@@ -251,6 +254,7 @@ import {
   telemetryStats,
 } from './platform/platform.js';
 import { sendVerificationEmail, getAppEnv, smtpPublicConfig, testSmtp } from './platform/mail.js';
+import { postDocsTask } from './platform/docsTask.js';
 import {
   disableTotpForUser,
   enableTotpForUser,
@@ -416,17 +420,42 @@ app.get('/api/version', (req, res) => {
   let advertised = semver;
   if (apkNewerThanPhone && apkName && cmp(apkName, advertised) > 0) advertised = apkName;
   if (clientVer && cmp(clientVer, advertised) > 0) advertised = clientVer;
-  res.json({
+  const body: Record<string, unknown> = {
     version: advertised,
     appVersion: `p+${advertised}`,
     minVersion: '1.3.0',
     forceUpdate: false,
+    mandatory: false,
+    channel: 'prod',
     apkAvailable: apkNewerThanPhone && cmp(apkName || semver, clientVer || '0') > 0,
     apkUrl: apkNewerThanPhone ? apk.downloadPath : null,
     apkVersion: apkNewerThanPhone ? apk.versionName : null,
     apkVersionCode: apkNewerThanPhone ? apkCode : null,
     webUrl: 'https://music.hubera.cloud',
-  });
+  };
+  const betaUser = isBetaAccount(req.user?.email, process.env.HUBERA_BETA_EMAILS || '');
+  const beta = apkBetaPublicInfo();
+  const betaCode = Number(beta.versionCode || 0) || 0;
+  const betaName = String(beta.versionName || '').replace(/^[pbd]\+/, '').trim();
+  if (
+    betaUser &&
+    betaOfferBeatsProd({
+      betaReady: beta.ready,
+      betaCode,
+      prodCode: apkCode,
+      clientCode,
+    }) &&
+    (!clientVer || !betaName || cmp(betaName, clientVer) >= 0)
+  ) {
+    body.channel = 'beta';
+    body.version = betaName || advertised;
+    body.appVersion = `b+${body.version}`;
+    body.apkAvailable = cmp(betaName || String(body.version), clientVer || '0') > 0;
+    body.apkUrl = beta.downloadPath;
+    body.apkVersion = beta.versionName;
+    body.apkVersionCode = betaCode;
+  }
+  res.json(body);
 });
 
 app.get('/api/version-notes', (_req, res) => {
@@ -1453,6 +1482,32 @@ app.get('/api/admin/telemetry', requireAdmin, (req, res) => {
   });
 });
 
+/** Erreur groupée → tâche Hubera Docs (bug, colonne todo). Le jeton est celui de l’admin, pas un secret du dépôt. */
+app.post('/api/admin/docs-task', requireAdmin, async (req, res) => {
+  const header = req.headers.authorization;
+  const bearer = header?.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const cookie = String((req as { cookies?: { ytm_token?: string } }).cookies?.ytm_token || '').trim();
+  const result = await postDocsTask(
+    {
+      title: req.body?.title,
+      body: req.body?.body,
+      project: req.body?.project,
+      priority: req.body?.priority,
+    },
+    {
+      origin: process.env.DOCS_API_URL || 'https://docs.hubera.cloud',
+      accessToken: bearer || cookie,
+    },
+  );
+  res.status(result.ok ? 201 : 200).json({
+    ok: result.ok,
+    id: result.id,
+    error: result.error,
+    status: result.status,
+    task: result.task,
+  });
+});
+
 app.get('/api/admin/playback-trace', requireAdmin, (req, res) => {
   res.json({
     ok: true,
@@ -1870,7 +1925,12 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
   }
   let pkg = String(req.query.package || req.query.clientPackage || '');
   if (ticketReason === 'public' && !pkg) pkg = MUSIC_PKG_HUBERA;
-  const path = getApkPath(pkg);
+  const wantsBeta = String(req.query.channel || '') === 'beta';
+  if (wantsBeta && !isBetaAccount(req.user?.email, process.env.HUBERA_BETA_EMAILS || '')) {
+    res.status(404).json({ error: 'APK non publiée' });
+    return;
+  }
+  const path = wantsBeta ? getBetaApkPath() : getApkPath(pkg);
   if (!path) {
     res.status(404).json({
       error: 'APK non publiée',

@@ -339,7 +339,7 @@ fun TrackActionsSheet(
                 Text(
                     buildString {
                         append(enriched.artistLine())
-                        enriched.duration?.takeIf { it.isNotBlank() }?.let {
+                        enriched.durationLabel()?.let {
                             append(" · ")
                             append(it)
                         }

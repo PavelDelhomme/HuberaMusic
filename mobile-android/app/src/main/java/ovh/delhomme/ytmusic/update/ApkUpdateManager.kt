@@ -967,6 +967,24 @@ class ApkUpdateManager(
         return File(dir, "plm-update-$remoteCode.apk")
     }
 
+    private fun looksLikeZip(file: File): Boolean {
+        if (!file.isFile || file.length() < 4L) return false
+        return runCatching {
+            file.inputStream().use { input ->
+                val b = ByteArray(2)
+                input.read(b) == 2 && b[0] == 0x50.toByte() && b[1] == 0x4B.toByte()
+            }
+        }.getOrDefault(false)
+    }
+
+    /** Vrai seulement si l’archive se lit comme une APK et, si connue, a la taille publiée. */
+    private fun apkReady(file: File, expectedBytes: Long?): Boolean {
+        if (!looksLikeZip(file)) return false
+        if (file.length() < 1_000_000L) return false
+        if (expectedBytes != null && file.length() != expectedBytes) return false
+        return packageNameFromApk(file) != null
+    }
+
     private suspend fun launchInstall(file: File, remote: Int): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
@@ -1182,7 +1200,36 @@ class ApkUpdateManager(
             }
         }
         val out = apkFileFor(remote)
-        if (out.exists()) out.delete()
+        val expected = meta.sizeBytes?.toLong()?.takeIf { it > 1_000_000L }
+        if (apkReady(out, expected)) {
+            publish(
+                _ui.value.copy(
+                    phase = Phase.Installing,
+                    progress = 1f,
+                    message = "Fichier déjà téléchargé — installation, sans nouveau téléchargement",
+                    available = true,
+                ),
+            )
+            notifier.show(
+                "Mise à jour Hubera Music",
+                "Fichier déjà là — installation",
+                100,
+                indeterminate = false,
+            )
+            return@withContext launchInstall(out, remote)
+        }
+        if (out.exists()) {
+            AppLog.w("apk-update", "cache APK inutilisable ${out.length()} o — on le jette")
+            out.delete()
+            publish(
+                _ui.value.copy(
+                    phase = Phase.Downloading,
+                    progress = 0f,
+                    message = "Le fichier en cache n’est pas une APK valide. Nouveau téléchargement affiché.",
+                    available = true,
+                ),
+            )
+        }
 
         val path = meta.downloadPath?.takeIf { it.startsWith("/") } ?: "/api/deploy/apk"
         val pkgQ = meta.packageName?.takeIf { it.isNotBlank() } ?: context.packageName
@@ -1245,9 +1292,10 @@ class ApkUpdateManager(
             return@withContext lastHttp ?: "Téléchargement impossible"
         }
         onProgress?.invoke(1f)
-        if (out.length() < 1_000_000L) {
+        if (!apkReady(out, expected)) {
+            val why = if (!looksLikeZip(out)) "le serveur n’a pas envoyé une APK" else "fichier incomplet ou illisible"
             out.delete()
-            return@withContext "APK trop petite (${out.length()} o)"
+            return@withContext "Téléchargement rejeté ($why). Rien n’a été installé."
         }
         AppLog.i("apk-update", "downloaded ${out.length()} bytes → install v$remote")
         publish(

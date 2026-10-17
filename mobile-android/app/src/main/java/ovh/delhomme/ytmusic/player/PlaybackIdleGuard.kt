@@ -36,11 +36,13 @@ object PlaybackIdleGuard {
             override fun onStart(owner: LifecycleOwner) {
                 appInForeground = true
                 touch()
+                PlaybackService.Holder.service?.holdSilenceOnForeground("process-start")
             }
 
             override fun onStop(owner: LifecycleOwner) {
                 appInForeground = false
                 markIdleStart()
+                PlaybackService.Holder.service?.snapshotLeaveForeground()
             }
         })
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)

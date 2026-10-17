@@ -1809,7 +1809,7 @@ private fun NowPlayingSeekTransport(
             }
             val remainingMs = (ui.durationMs - scrubPos).coerceAtLeast(0L)
             Text(
-                "-${formatMs(remainingMs)}",
+                formatMs(remainingMs),
                 style = MaterialTheme.typography.labelSmall,
                 color = PlayerMuted,
             )
@@ -1853,7 +1853,7 @@ private fun NowPlayingSeekTransport(
                     }
                     PlayerChromeAction.PlayPause -> IconButton(onClick = player::toggle) {
                         Icon(
-                            if (ui.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            if (ui.playing || ui.buffering) Icons.Default.Pause else Icons.Default.PlayArrow,
                             slot.label,
                             tint = PlayerFg,
                             modifier = Modifier.size(if (landscape) 48.dp else 56.dp),

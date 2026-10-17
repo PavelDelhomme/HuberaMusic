@@ -345,10 +345,12 @@ fun YtMusicAppContent(
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
+                    PlaybackService.Holder.service?.holdSilenceOnForeground("activity-start")
                     player.healAfterBackground()
                     player.connect()
                 }
                 Lifecycle.Event.ON_STOP -> {
+                    PlaybackService.Holder.service?.snapshotLeaveForeground()
                     player.flushPersist()
                     // Ne PAS cancelIdle ici : en arrière-plan la lecture continue
                     // et le prefetch de la file doit rester actif (sinon coupures).
@@ -532,6 +534,9 @@ fun YtMusicAppContent(
 
     BackHandler(enabled = loggedIn == true && showNowPlaying) {
         showNowPlaying = false
+    }
+    BackHandler(enabled = loggedIn != true) {
+        (context as? android.app.Activity)?.moveTaskToBack(true)
     }
 
     when (loggedIn) {
@@ -1412,6 +1417,20 @@ private fun MainTabs(
         enabled = !playerExpanded && routeRoot != null && routeRoot !in mainTabRoutes,
     ) {
         if (!nav.popBackStack()) {
+            nav.navigate(Tab.Home.route) {
+                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+    // Accueil : mettre en arrière-plan. Recherche / Biblio : revenir à l’accueil.
+    BackHandler(
+        enabled = !playerExpanded && (routeRoot == null || routeRoot in mainTabRoutes),
+    ) {
+        if (routeRoot == null || routeRoot == Tab.Home.route) {
+            (context as? android.app.Activity)?.moveTaskToBack(true)
+        } else {
             nav.navigate(Tab.Home.route) {
                 popUpTo(nav.graph.startDestinationId) { saveState = true }
                 launchSingleTop = true

@@ -49,14 +49,48 @@ object HuberaAppLauncher {
     }
 
     fun openOrWeb(context: Context, spec: Spec) {
+        if (spec.slug.equals("id", ignoreCase = true)) {
+            openId(context, spec)
+            return
+        }
         for (pkg in spec.packages) {
             if (startInstalled(context, pkg)) return
         }
-        if (startScheme(context, spec.scheme)) return
+        if (startScheme(context, spec)) return
         openHttps(context, spec.host)
     }
 
+    /** ID installé : on l’ouvre. Sinon https://id.hubera.cloud, jamais un sideload. */
+    private fun openId(context: Context, spec: Spec) {
+        val installed = spec.packages.any { isInstalled(context, it) }
+        when (IdAbsentCta.choose(installed)) {
+            IdAbsentCta.Action.OPEN_APP -> {
+                for (pkg in spec.packages) {
+                    if (startInstalled(context, pkg)) return
+                }
+                openHttps(context, spec.host)
+            }
+            IdAbsentCta.Action.OFFER_OTA -> openHttps(context, IdAbsentCta.OTA_HOST)
+        }
+    }
+
+    private fun isInstalled(context: Context, pkg: String): Boolean {
+        val pm = context.packageManager
+        runCatching {
+            if (pm.getLaunchIntentForPackage(pkg)?.component != null) return true
+        }
+        runCatching {
+            val probe = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                setPackage(pkg)
+            }
+            if (resolveLauncher(pm, probe) != null) return true
+        }
+        return false
+    }
+
     private fun startInstalled(context: Context, pkg: String): Boolean {
+        if (isBlockedPackage(pkg)) return false
         val pm = context.packageManager
         runCatching {
             val launch = pm.getLaunchIntentForPackage(pkg)
@@ -97,8 +131,8 @@ object HuberaAppLauncher {
                 pm.queryIntentActivities(probe, 0).firstOrNull()
         }
 
-    private fun startScheme(context: Context, scheme: String): Boolean {
-        val uri = Uri.parse("$scheme://open")
+    private fun startScheme(context: Context, spec: Spec): Boolean {
+        val uri = Uri.parse("${spec.scheme}://open")
         val intent = Intent(Intent.ACTION_VIEW, uri).apply {
             addCategory(Intent.CATEGORY_BROWSABLE)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -111,13 +145,17 @@ object HuberaAppLauncher {
             pm.resolveActivity(intent, 0)
         } ?: return false
         val pkg = hit.activityInfo?.packageName.orEmpty()
-        if (pkg.isBlank() || isBrowserPackage(pkg)) return false
+        if (pkg.isBlank() || isBrowserPackage(pkg) || isBlockedPackage(pkg) || pkg !in spec.packages) return false
         intent.component = ComponentName(pkg, hit.activityInfo.name)
         return runCatching {
             context.startActivity(intent)
             true
         }.getOrDefault(false)
     }
+
+    /** Organic Maps n’est pas Hubera Maps. Jamais le lancer à la place. */
+    private fun isBlockedPackage(pkg: String): Boolean =
+        pkg == "app.organicmaps" || pkg.startsWith("app.organicmaps.")
 
     private fun isBrowserPackage(pkg: String): Boolean {
         val p = pkg.lowercase()

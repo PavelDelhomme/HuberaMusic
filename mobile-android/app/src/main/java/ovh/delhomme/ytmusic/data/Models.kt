@@ -177,10 +177,10 @@ data class TrackDto(
         return copy(durationSeconds = sec, duration = formatDurationLabel(ms))
     }
 
-    /** Durée en ms pour MediaSession / lockscreen (si connue). */
+    /** Durée en ms pour MediaSession / lockscreen (si connue). Jamais négative. */
     fun durationMsOrNull(): Long? {
-        durationSeconds?.takeIf { it > 0 }?.let { return it * 1000L }
-        val raw = duration?.trim().orEmpty()
+        durationSeconds?.takeIf { it != 0 }?.let { return kotlin.math.abs(it) * 1000L }
+        val raw = duration?.trim().orEmpty().removePrefix("-").removePrefix("−")
         if (raw.isEmpty()) return null
         raw.toLongOrNull()?.takeIf { it > 0 }?.let {
             return if (it < 10_000) it * 1000L else it // secondes vs déjà ms
