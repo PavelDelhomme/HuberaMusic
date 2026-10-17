@@ -290,13 +290,6 @@ fun HuberaScaffold(
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var waffleOpen by remember { mutableStateOf(false) }
-    if (waffleOpen) {
-        HuberaAppsDialog(
-            current = current,
-            onDismiss = { waffleOpen = false },
-        )
-    }
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -325,9 +318,6 @@ fun HuberaScaffold(
                         onAccountClick = onAccountClick,
                         extraActions = {
                             extraActions()
-                            IconButton(onClick = { waffleOpen = true }) {
-                                Icon(Icons.Default.Apps, contentDescription = "Apps Hubera")
-                            }
                             HuberaAccountButton(onClick = onAccountClick, userPicture = userPicture)
                         },
                         userPicture = userPicture,

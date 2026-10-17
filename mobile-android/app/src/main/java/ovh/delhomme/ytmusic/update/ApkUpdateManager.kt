@@ -778,6 +778,46 @@ class ApkUpdateManager(
      * Si une feuille Confirmer est déjà ouverte : on la rouvre — **jamais** une 2ᵉ session
      * (c’était la cause des multi-fenêtres quand on avait plusieurs versions de retard).
      */
+    /** Installe le fichier déjà en cache. Ne retélécharge pas. */
+    fun installCachedApkWithoutDownload(): Boolean {
+        val dir = File(context.cacheDir, "apk-updates")
+        val file = dir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".apk") && it.length() > 1_000_000L && looksLikeZip(it) }
+            ?.maxByOrNull { it.lastModified() }
+            ?: return false
+        val remote = Regex("plm-update-(\\d+)").find(file.name)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: return false
+        if (!busy.compareAndSet(false, true)) return true
+        updateJob?.cancel()
+        updateJob = scope.launch {
+            try {
+                publish(
+                    UiState(
+                        phase = Phase.Installing,
+                        message = "Installation du fichier déjà téléchargé…",
+                        remoteCode = remote,
+                        available = true,
+                        progress = 1f,
+                    ),
+                )
+                val msg = launchInstall(file, remote)
+                val ok = msg.startsWith("Installation")
+                publish(
+                    UiState(
+                        phase = if (ok) Phase.AwaitingConfirm else Phase.Error,
+                        message = msg,
+                        remoteCode = remote,
+                        available = true,
+                        progress = 1f,
+                    ),
+                )
+            } finally {
+                busy.set(false)
+            }
+        }
+        return true
+    }
+
     fun startManualUpdate() {
         val phase = _ui.value.phase
         if (phase == Phase.AwaitingConfirm) {

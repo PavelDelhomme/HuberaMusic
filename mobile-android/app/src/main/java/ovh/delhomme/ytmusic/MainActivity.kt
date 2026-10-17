@@ -485,8 +485,10 @@ fun YtMusicAppContent(
                 context.packageManager.canRequestPackageInstalls() &&
                 ovh.delhomme.ytmusic.update.UpdateRelaunch.consumePendingAfterPermission(context)
             ) {
-                Toast.makeText(context, "Permission OK — relance de la mise à jour…", Toast.LENGTH_SHORT).show()
-                apkUpdater.startManualUpdate()
+                Toast.makeText(context, "Permission OK — installation du fichier déjà téléchargé", Toast.LENGTH_SHORT).show()
+                if (!apkUpdater.installCachedApkWithoutDownload()) {
+                    apkUpdater.startManualUpdate()
+                }
                 return@LifecycleEventObserver
             }
             if (pendingUpdate?.available == true) return@LifecycleEventObserver
