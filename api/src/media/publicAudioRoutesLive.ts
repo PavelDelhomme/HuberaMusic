@@ -313,6 +313,7 @@ async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
     if (!egress) throw new Error('pas de sortie partagée');
     const fetchImpl = splitFetch(egress);
     const innertube = await iosSession(egress);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const res = await Promise.race([
       innertube.session.actions.execute('/player', {
         videoId,
@@ -323,8 +324,15 @@ async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
             signatureTimestamp: innertube.session.player?.signature_timestamp || 0,
           },
         },
+      }).finally(() => {
+        if (timer) clearTimeout(timer);
       }),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('ios-partage timeout')), 12_000)),
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => {
+          iosSessions.delete(egress);
+          rej(new Error('ios-partage timeout'));
+        }, 18_000);
+      }),
     ]);
     const data = (res as { data?: Record<string, any> }).data || {};
     const status = String(data.playabilityStatus?.status || '');

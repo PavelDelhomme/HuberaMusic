@@ -29,9 +29,10 @@ export function fingerprint(title: string, artist: string): string {
 }
 
 const VERSION_MARKERS: [RegExp, string][] = [
-  [/\bremix(e|ed)?\b|\bmix\b/i, 'remix'],
+  [/\bremix(e|ed)?\b|\bmix(?:ed)?\b/i, 'remix'],
   [/\blive\b|\ben concert\b|\bconcert\b|\bsession\b/i, 'live'],
   [/\bacoustic|\bacoustique|\bunplugged\b/i, 'acoustic'],
+  [/\borchestral\b|\bwedding\b|\bpiano version\b/i, 'alt'],
   [/\binstrumental\b|\bkaraok/i, 'instrumental'],
   [/\bextended\b|\bclub edit\b|\blong version\b/i, 'extended'],
   [/\bradio edit\b|\bshort version\b/i, 'radio'],
