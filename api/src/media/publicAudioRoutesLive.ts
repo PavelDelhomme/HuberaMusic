@@ -13,7 +13,7 @@ import {
   publicAudioRoutesForRetry,
 } from './publicAudioRoutes.js';
 import { installYoutubeJsEvaluator } from '../youtube/youtubeiEval.js';
-import { boundProxyFetch, loadHotPoolFromDisk, pickHotProxies } from '../youtube/youtubeProxy.js';
+import { boundProxyFetch, loadHotPoolFromDisk, pickHotProxies, reviveSharedEgress } from '../youtube/youtubeProxy.js';
 
 const ROUTE_MS = 6_000;
 const CACHE_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data', 'public-audio-url-cache.json');
@@ -309,7 +309,7 @@ function iosSession(egress: string): Promise<Innertube> {
 async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
   return oneAtATime(async () => {
     loadHotPoolFromDisk();
-    const egress = pickHotProxies(1)[0];
+    const egress = pickHotProxies(1)[0] || reviveSharedEgress();
     if (!egress) throw new Error('pas de sortie partagée');
     const fetchImpl = splitFetch(egress);
     const innertube = await iosSession(egress);
@@ -376,7 +376,10 @@ export async function resolvePublicAudioUrl(videoId: string, retryN = 0): Promis
   } catch (err) {
     last = String((err as Error)?.message || err).replace(/https?:\/\/\S+/gi, '[url]').slice(0, 140);
     console.info(`[public-audio] ${videoId} partage ${last}`);
-    if (/not available|unavailable|private video|removed/i.test(last)) {
+    if (
+      !/streaming data not available/i.test(last) &&
+      /this video is not available|video unavailable|private video|removed by the uploader/i.test(last)
+    ) {
       throw new Error(`${last} id=${videoId}`);
     }
   }

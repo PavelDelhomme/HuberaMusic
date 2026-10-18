@@ -288,6 +288,35 @@ let hotRr = 0;
 const recentResolveAt = new Map<string, number>();
 const RESOLVE_COOLDOWN_MS = 25_000;
 
+/** La seule sortie connue est parfois mise en quarantaine après des 403. On la rouvre. */
+export function reviveSharedEgress(): string | null {
+  hotLoaded = false;
+  try {
+    if (!existsSync(HOT_POOL_PATH)) return null;
+    const raw = JSON.parse(readFileSync(HOT_POOL_PATH, 'utf8')) as HotFileEntry[];
+    if (!Array.isArray(raw)) return null;
+    const now = Date.now();
+    let best: { url: string; last: number } | null = null;
+    for (const row of raw) {
+      const url = normalizeProxyUrl(String(row?.url || ''));
+      if (!url) continue;
+      const last = Number(row.lastSuccess206 || 0);
+      if (last && now - last > HOT_EXPIRE_MS) continue;
+      const e = ensureEntry(url);
+      e.gvHits = Math.max(e.gvHits || 0, Number(row.gvHits || 1) || 1);
+      e.lastOkAt = Math.max(e.lastOkAt || 0, last || now);
+      e.fails = 0;
+      e.gvMiss = 0;
+      e.deadUntil = 0;
+      if (!best || last >= best.last) best = { url, last };
+    }
+    hotLoaded = true;
+    return best?.url || null;
+  } catch {
+    return null;
+  }
+}
+
 export function pickHotProxies(
   n = 2,
   exclude: Set<string> = new Set(),
