@@ -1482,6 +1482,7 @@ async function spawnYtDlpMediaPipe(
   proxy: string | null = null,
   extractorArgs: string[] = [],
 ): Promise<void> {
+  if (playbackProbeExclusive()) throw new Error('balayage en cours');
   const { withYtDlpSlot } = await import('./ytDlpGate.js');
   // Proxy / IP alternate : on tente même si le direct VPS est en cooldown bot
   return withYtDlpSlot(
@@ -1650,6 +1651,7 @@ async function streamViaYtDlp(videoId: string, res: Response, preferProxies = fa
 
 /** Pipe progressif vidéo (fallback quand googlevideo 403 depuis le VPS). */
 async function streamViaYtDlpVideo(videoId: string, res: Response, preferProxies = false) {
+  if (playbackProbeExclusive()) throw new Error('balayage en cours');
   const { noteYtDlpFailure, isYtDlpCoolingDown } = await import('./ytDlpGate.js');
   const cookieSets = ytDlpCookieArgSets();
   const extractorSets = ytDlpExtractorArgSets();

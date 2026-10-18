@@ -13,7 +13,13 @@ import {
   publicAudioRoutesForRetry,
 } from './publicAudioRoutes.js';
 import { installYoutubeJsEvaluator } from '../youtube/youtubeiEval.js';
-import { boundProxyFetch, loadHotPoolFromDisk, pickHotProxies, reviveSharedEgress } from '../youtube/youtubeProxy.js';
+import {
+  boundProxyFetch,
+  loadHotPoolFromDisk,
+  markYoutubeProxyFailure,
+  pickHotProxies,
+  reviveSharedEgress,
+} from '../youtube/youtubeProxy.js';
 
 const ROUTE_MS = 6_000;
 const CACHE_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'data', 'public-audio-url-cache.json');
@@ -306,11 +312,7 @@ function iosSession(egress: string): Promise<Innertube> {
  * iOS via une sortie du pool commun. Le client anonyme du datacenter n’a pas
  * de streamingData ; cette sortie en a, avec une URL sur les itags 140/139.
  */
-async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
-  return oneAtATime(async () => {
-    loadHotPoolFromDisk();
-    const egress = pickHotProxies(1)[0] || reviveSharedEgress();
-    if (!egress) throw new Error('pas de sortie partagée');
+async function sharedIosOnce(videoId: string, egress: string): Promise<PublicAudioHit> {
     const fetchImpl = splitFetch(egress);
     const innertube = await iosSession(egress);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -364,6 +366,36 @@ async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
       route: 'public:IOS+partage',
       viaProxy: egress,
     };
+}
+
+async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
+  return oneAtATime(async () => {
+    const exclude = new Set<string>();
+    let last = 'pas de sortie partagée';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      loadHotPoolFromDisk();
+      const egress = pickHotProxies(1, exclude)[0] || (attempt === 0 ? reviveSharedEgress() : '');
+      if (!egress) break;
+      try {
+        return await sharedIosOnce(videoId, egress);
+      } catch (err) {
+        last = String((err as Error)?.message || err).replace(/https?:\/\/\S+/gi, '[url]').slice(0, 140);
+        exclude.add(egress);
+        iosSessions.delete(egress);
+        if (
+          !/streaming data not available/i.test(last) &&
+          /this video is not available|video unavailable|private video|removed by the uploader/i.test(last)
+        ) {
+          throw err;
+        }
+        if (/timeout|bot|sign in|403|429/i.test(last)) {
+          markYoutubeProxyFailure(egress, 'gv');
+          continue;
+        }
+        break;
+      }
+    }
+    throw new Error(last);
   });
 }
 

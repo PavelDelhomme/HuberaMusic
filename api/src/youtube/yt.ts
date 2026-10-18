@@ -3842,6 +3842,7 @@ export function invalidateVideoFormat(videoId: string) {
 }
 
 async function videoFormatViaYtDlp(videoId: string): Promise<AudioFormat> {
+  if (probeLocksYtDlp()) throw new Error('yt-dlp suspendu pendant le balayage');
   const { spawn } = await import('node:child_process');
   const { existsSync } = await import('node:fs');
   const ytdlp = join(ROOT, 'bin', 'yt-dlp');
