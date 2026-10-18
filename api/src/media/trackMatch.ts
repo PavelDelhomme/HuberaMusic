@@ -34,7 +34,7 @@ const VERSION_MARKERS: [RegExp, string][] = [
   [/\bacoustic|\bacoustique|\bunplugged\b/i, 'acoustic'],
   [/\borchestral\b|\bwedding\b|\bpiano version\b/i, 'alt'],
   [/\binstrumental\b|\bkaraok/i, 'instrumental'],
-  [/\bextended\b|\bclub edit\b|\blong version\b/i, 'extended'],
+  [/\bextended\b|\bclub edit\b|\blong version\b|\bversion longue\b/i, 'extended'],
   [/\bradio edit\b|\bshort version\b/i, 'radio'],
   [/\bsped ?up\b|\bnightcore\b|\bslowed\b|\breverb\b/i, 'speed'],
   [/\bcover\b|\breprise\b/i, 'cover'],
