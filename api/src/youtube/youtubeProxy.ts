@@ -321,6 +321,7 @@ export function pickHotProxies(
   n = 2,
   exclude: Set<string> = new Set(),
   purpose?: ProxyPurpose,
+  opts?: { hotOnly?: boolean },
 ): string[] {
   const now = Date.now();
   const stripeOk = (url: string) => !purpose || proxyStripe(url) === purpose;
@@ -336,16 +337,22 @@ export function pickHotProxies(
     )
     .sort((a, b) => (b.gvHits || 0) - (a.gvHits || 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0));
   const window = hot.slice(0, Math.min(hot.length, Math.max(12, n * 6)));
-  const extra = [...pool.values()]
-    .filter(
-      (e) =>
-        usable(e) &&
-        isHttpProxy(e.url) &&
-        stripeOk(e.url) &&
-        !exclude.has(e.url) &&
-        !window.some((h) => h.url === e.url),
-    )
-    .sort((a, b) => (b.connectOkUntil > now ? 1 : 0) - (a.connectOkUntil > now ? 1 : 0) || (b.lastOkAt || 0) - (a.lastOkAt || 0));
+  const extra = opts?.hotOnly
+    ? []
+    : [...pool.values()]
+        .filter(
+          (e) =>
+            usable(e) &&
+            isHttpProxy(e.url) &&
+            stripeOk(e.url) &&
+            !exclude.has(e.url) &&
+            !window.some((h) => h.url === e.url),
+        )
+        .sort(
+          (a, b) =>
+            (b.connectOkUntil > now ? 1 : 0) - (a.connectOkUntil > now ? 1 : 0) ||
+            (b.lastOkAt || 0) - (a.lastOkAt || 0),
+        );
   // Ne jamais réduire le pool à 1 gagnant gv — YouTube bannit cette IP.
   const poolList = [...window];
   for (const e of extra) {

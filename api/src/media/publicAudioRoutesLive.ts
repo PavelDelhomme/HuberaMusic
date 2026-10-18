@@ -374,7 +374,9 @@ async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
     let last = 'pas de sortie partagée';
     for (let attempt = 0; attempt < 2; attempt++) {
       loadHotPoolFromDisk();
-      const egress = pickHotProxies(1, exclude)[0] || (attempt === 0 ? reviveSharedEgress() : '');
+      const egress =
+        pickHotProxies(1, exclude, undefined, { hotOnly: true })[0] ||
+        (attempt === 0 ? reviveSharedEgress() : '');
       if (!egress) break;
       try {
         return await sharedIosOnce(videoId, egress);
@@ -388,7 +390,7 @@ async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
         ) {
           throw err;
         }
-        if (/timeout|bot|sign in|403|429/i.test(last)) {
+        if (/timeout|bot|sign in|403|429|ECONN|certificate|self-signed/i.test(last)) {
           markYoutubeProxyFailure(egress, 'gv');
           continue;
         }

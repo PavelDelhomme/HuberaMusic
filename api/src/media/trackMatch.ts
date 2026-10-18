@@ -38,6 +38,7 @@ const VERSION_MARKERS: [RegExp, string][] = [
   [/\bradio edit\b|\bshort version\b/i, 'radio'],
   [/\bsped ?up\b|\bnightcore\b|\bslowed\b|\breverb\b/i, 'speed'],
   [/\bcover\b|\breprise\b/i, 'cover'],
+  [/\bvip\b/i, 'vip'],
   [/\bdemo\b|\bwork in progress\b|\brehearsal\b|\bmaquette\b/i, 'demo'],
 ];
 
