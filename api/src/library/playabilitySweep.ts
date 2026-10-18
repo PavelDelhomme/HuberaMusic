@@ -992,7 +992,8 @@ export async function runScheduledPlayabilitySweep(opts: SweepOptions = {}): Pro
 async function runCronTick() {
   if (sweepRunning) return;
   try {
-    const { isPlaybackHot } = await import('../media/stream.js');
+    const { isPlaybackHot, playbackProbeExclusive } = await import('../media/stream.js');
+    if (playbackProbeExclusive()) return;
     if (isPlaybackHot(90_000)) {
       console.info('[playability] skip cron — lecture en cours');
       return;

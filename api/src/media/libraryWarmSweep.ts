@@ -13,7 +13,6 @@ import { getListHeads, pinSongIds, warmUserPinnedAndHeard } from '../library/lis
 import {
   enqueueStreamWarm,
   enqueueListHeadWarm,
-  enqueueLibraryPrefixWarm,
   isPlaybackHot,
   diskWarmQueueStats,
 } from './stream.js';
@@ -74,6 +73,12 @@ export async function runLibraryWarmSweepOnce(): Promise<{
   ids: number;
   likes: number;
 }> {
+  try {
+    const { playbackProbeExclusive } = await import('./stream.js');
+    if (playbackProbeExclusive()) return { users: 0, ids: 0, likes: 0 };
+  } catch {
+    /* ignore */
+  }
   const uids = allUserIds();
   for (const uid of uids) {
     try {
@@ -104,17 +109,14 @@ export async function runLibraryWarmSweepOnce(): Promise<{
           }
         }
         scheduleUserTasteWarm(uid);
-        enqueueListHeadWarm(pinSongIds(uid, 48), { front: true });
+        enqueueListHeadWarm(pinSongIds(uid, 1), { front: true });
       } catch {
         /* un compte KO n’arrête pas les autres */
       }
     }
     const all = allSharedLibraryIds();
-    enqueueListHeadWarm(front, { front: true });
-    enqueueStreamWarm(front.slice(0, 16));
-    for (let i = 0; i < all.length; i += 80) {
-      enqueueLibraryPrefixWarm(all.slice(i, i + 80));
-    }
+    enqueueListHeadWarm(front.slice(0, 1), { front: true });
+    enqueueStreamWarm(front.slice(0, 1));
     lastRunAt = Date.now();
     lastStats = { users: uids.length, ids: all.length, likes: 0, at: lastRunAt };
     const q = diskWarmQueueStats();

@@ -12,9 +12,9 @@ import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, getTrackPayload } from '../library/db.js';
-import { getAudioFormat, getTrack, search } from '../youtube/yt.js';
+import { getTrack, search } from '../youtube/yt.js';
 import type { Track } from '../youtube/types.js';
-import { artistLine, scoreCandidate } from './trackMatch.js';
+import { artistLine, sameVersion, scoreCandidate } from './trackMatch.js';
 import { foldText } from '../reco/searchRank.js';
 import { findAtlasEquivalent, rememberAtlasPlayable } from './trackAtlas.js';
 
@@ -28,9 +28,8 @@ const CACHE_DIR = join(
 );
 
 const VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/;
-const PROBE_MS = 8_000;
-/** Score minimal pour accepter un remplaçant — au-dessous, mieux vaut échouer que jouer un autre morceau. */
-const MIN_SCORE = 70;
+/** Score minimal : titre et artiste doivent coller. En dessous, on ne remplace pas. */
+const MIN_SCORE = 85;
 
 let schemaReady = false;
 const inflight = new Map<string, Promise<string | null>>();
@@ -118,8 +117,22 @@ function saveReplacement(
   }
 }
 
+/** Le titre affiché par YouTube, pas seulement le libellé court de la recherche. */
+async function listedTitle(id: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}&format=json`,
+      { signal: AbortSignal.timeout(5_000) },
+    );
+    if (!res.ok) return '';
+    const body = (await res.json()) as { title?: string };
+    return String(body.title || '');
+  } catch {
+    return '';
+  }
+}
+
 async function playable(id: string): Promise<boolean> {
-  // Déjà sur disque : inutile d'interroger YouTube.
   try {
     const file = join(CACHE_DIR, `${id}.m4a`);
     if (existsSync(file) && statSync(file).size > 256 * 1024) return true;
@@ -127,12 +140,14 @@ async function playable(id: string): Promise<boolean> {
     /* pas de cache lisible */
   }
   try {
-    const fmt = await Promise.race([
-      getAudioFormat(id, { live: true }),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), PROBE_MS)),
+    const { resolvePublicAudioUrl } = await import('./publicAudioRoutesLive.js');
+    const hit = await Promise.race([
+      resolvePublicAudioUrl(id),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 12_000)),
     ]);
-    return Boolean(fmt?.url);
-  } catch {
+    return Boolean(hit?.url);
+  } catch (err) {
+    if (looksUnavailable(String((err as Error)?.message || err))) return false;
     return false;
   }
 }
@@ -296,31 +311,23 @@ export async function findReplacementId(
     const seen = new Set<string>();
     const unique = ranked.filter(({ t }) => (seen.has(t.id) ? false : seen.add(t.id)));
 
-    for (const { t, s } of unique.slice(0, 6)) {
+    for (const { t, s } of unique.slice(0, 2)) {
       if (getReplacementId(t.id) === deadId) continue;
-      // Disque seulement — plus de getAudioFormat 8 s × 6 (ça saturait /api/health).
-      try {
-        const file = join(CACHE_DIR, `${t.id}.m4a`);
-        if (existsSync(file) && statSync(file).size > 256 * 1024) {
-          console.log(
-            `[replacement] ${deadId} → ${t.id} disque (score ${s}) « ${t.title} — ${artistLine(t)} »`,
-          );
-          saveReplacement(deadId, t.id, title, artist, s);
-          rememberAtlasPlayable(t.id, t.title || title, artistLine(t) || artist);
-          return t.id;
-        }
-      } catch {
-        /* suivant */
+      const listed = await listedTitle(t.id);
+      if (!listed || !sameVersion(title, listed)) {
+        console.info(`[replacement] ${deadId} candidat ${t.id} autre version « ${listed.slice(0, 80)} »`);
+        continue;
       }
-    }
-
-    const best = unique[0];
-    if (best) {
-      console.warn(
-        `[replacement] mémorise sans probe ${deadId} → ${best.t.id} score=${best.s}`,
+      if (!(await playable(t.id))) {
+        console.info(`[replacement] ${deadId} candidat ${t.id} score=${s} ne joue pas`);
+        continue;
+      }
+      console.log(
+        `[replacement] ${deadId} → ${t.id} (score ${s}) « ${t.title} — ${artistLine(t)} »`,
       );
-      saveReplacement(deadId, best.t.id, title, artist, best.s);
-      return best.t.id;
+      saveReplacement(deadId, t.id, title, artist, s);
+      rememberAtlasPlayable(t.id, t.title || title, artistLine(t) || artist);
+      return t.id;
     }
     return null;
     } finally {

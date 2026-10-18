@@ -197,14 +197,11 @@ function scheduleWarmHeads(userId: string, ids: string[]): void {
       const { isPlaybackHot } = await import('../media/stream.js');
       // Pendant une écoute : lead Aléatoire (#0–#8), pas tout le lot.
       const hot = isPlaybackHot(90_000);
-      const formatN = hot ? 8 : 64;
-      const diskN = hot ? 4 : 24;
-      enqueueStreamWarm(ids.slice(0, Math.min(16, formatN)), userId);
-      if (!hot && formatN > 16) enqueueStreamWarm(ids.slice(16, formatN), userId);
-      const disk = ids.filter(needsDisk).slice(0, diskN);
+      enqueueStreamWarm(ids.slice(0, 1), userId);
+      const disk = hot ? [] : ids.filter(needsDisk).slice(0, 1);
       if (disk.length) enqueueDiskWarm(disk);
       const { ensurePlayableQueueAhead } = await import('../media/ensurePlayable.js');
-      ensurePlayableQueueAhead(ids.slice(0, 20), { userId });
+      ensurePlayableQueueAhead(ids.slice(0, 1), { userId });
     } catch {
       /* ignore */
     }

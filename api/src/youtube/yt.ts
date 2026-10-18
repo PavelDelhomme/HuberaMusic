@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Innertube, UniversalCache, ClientType, YTNodes, Parser, Log } from 'youtubei.js';
@@ -81,6 +82,14 @@ import type { AlbumMeta, ArtistMeta, PlaylistMeta, Shelf, Track } from './types.
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
+function probeLocksYtDlp(): boolean {
+  try {
+    return existsSync(join(ROOT, 'data', 'playback-probe.lock'));
+  } catch {
+    return false;
+  }
+}
+
 let yt: Innertube | null = null;
 let ytCookieFp: string | null = null;
 
@@ -132,6 +141,9 @@ export function invalidateAudioFormat(videoId: string) {
   // Ancienne clé sans version (sessions hot-reload)
   audioFormatCache.delete(videoId);
   audioFormatInflight.delete(videoId);
+  void import('../media/publicAudioRoutesLive.js')
+    .then((m) => m.forgetPublicAudio(videoId))
+    .catch(() => {});
 }
 
 /** Format encore utilisable en mémoire (évite d’attendre yt-dlp / disque pour rien). */
@@ -3212,6 +3224,7 @@ async function ytDlpGetUrl(
   const { withYtDlpSlot } = await import('../media/ytDlpGate.js');
   const ytdlp = join(ROOT, 'bin', 'yt-dlp');
   if (signal?.aborted) throw new Error('aborted');
+  if (probeLocksYtDlp()) throw new Error('yt-dlp suspendu pendant le balayage');
   return withYtDlpSlot(
     () =>
       new Promise<string>((resolve, reject) => {
@@ -3729,68 +3742,18 @@ export async function getAudioFormat(
     // 9 s abortait le 1er proxy et relançait un 2e yt-dlp → timeout en cascade.
     const fastBudgetMs = live ? 18_000 : 9_000;
     const retryN = opts?.retryN ?? 0;
-    // Échec déjà vu : autre client / itag d’abord, pour tout compte, sans cookie.
-    let entry: AudioFormat | null =
-      retryN > 0 ? await tryPublicAudioFormat(videoId, retryN) : null;
+    // D’abord un autre client / itag, pour tout compte, sans cookie.
+    // Si l’adresse du serveur est refusée, une seule sortie partagée.
+    // Une seule sortie partagée, puis arrêt. Pas de rafale yt-dlp : elle coupait
+    // la sortie qui venait de renvoyer l’audio, et le cookie serveur n’est pas le chemin.
+    const entry = await tryPublicAudioFormat(videoId, retryN);
     if (!entry) {
-      entry = await Promise.race([
-        resolveFast(),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), fastBudgetMs)),
-      ]);
+      const missing = new Error(`Audio format indisponible id=${videoId}`);
+      (missing as Error & { trackId?: string }).trackId = videoId;
+      throw missing;
     }
-    if (!entry && retryN === 0) {
-      entry = await tryPublicAudioFormat(videoId, 0);
-    }
-    if (entry && /[?&]itag=(18|22)\b/.test(entry.url || '')) {
+    if (/[?&]itag=(18|22)\b/.test(entry.url || '')) {
       console.warn('[getAudioFormat] clip YouTube progressif (itag 18/22)', videoId);
-    }
-
-    if (!entry) {
-      // Chemin lent : yt-dlp complet (proxies, dont itag 18) puis Innertube élargi
-      try {
-        entry = await Promise.race([
-          audioFormatViaYtDlp(videoId, proxyRetry || { live, userId: opts?.userId }),
-          new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error('yt-dlp format timeout')), 14_000),
-          ),
-        ]);
-      } catch {
-        try {
-          entry = await tryInnertubeFast();
-        } catch {
-          entry = null;
-        }
-      }
-    }
-
-    if (!entry && forceFresh) {
-      try {
-        entry = await getAudioFormatViaYtDlpOnly(videoId, { userId: opts?.userId });
-      } catch {
-        /* dernier recours */
-      }
-    }
-
-    if (!entry) {
-      try {
-        const v = await Promise.race([
-          getVideoFormat(videoId),
-          new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error('video-fallback timeout')), 12_000),
-          ),
-        ]);
-        if (v?.url) {
-          console.warn('[getAudioFormat] fallback clip YouTube (progressif)', videoId);
-          entry = { ...v, mimeType: v.mimeType || 'video/mp4' };
-        }
-      } catch {
-        /* */
-      }
-    }
-
-    if (!entry) {
-      // Remonter unavailable explicite (Android 410 rapide) plutôt qu’un message générique.
-      throw new Error('Audio format indisponible (innertube/yt-dlp) — streaming data not available');
     }
 
     audioFormatCache.set(key, entry);
@@ -3839,15 +3802,15 @@ async function tryPublicAudioFormat(videoId: string, retryN: number): Promise<Au
       mimeType: hit.mimeType,
       bitrate: hit.bitrate,
       contentLength: hit.contentLength,
-      expiresAt: Date.now() + 3 * 60 * 60 * 1000,
+      expiresAt: parseExpireMs(hit.url) ?? Date.now() + 90 * 60_000,
+      viaProxy: hit.viaProxy || null,
     };
   } catch (err) {
-    console.warn(
-      '[getAudioFormat] route publique KO',
-      videoId,
-      String((err as Error).message || err).slice(0, 120),
-    );
-    return null;
+    const message = String((err as Error).message || err).slice(0, 160);
+    console.warn('[getAudioFormat] route publique KO', videoId, message);
+    const wrapped = err instanceof Error ? err : new Error(message);
+    (wrapped as Error & { trackId?: string }).trackId = videoId;
+    throw wrapped;
   }
 }
 
