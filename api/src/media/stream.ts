@@ -1367,30 +1367,40 @@ function endIfHeadersSent(res: Response): boolean {
   return true;
 }
 
-async function streamViaInnertube(videoId: string, res: Response) {
+async function streamViaInnertube(videoId: string, res: Response, retryN = 0) {
   if (res.headersSent) throw new Error('headers already sent');
 
-  const innertube = await getYT();
-  let lastErr: unknown;
-  let stream: ReadableStream<Uint8Array> | null = null;
-  for (const client of ['ANDROID_VR', 'TV', 'IOS', 'WEB_EMBEDDED'] as const) {
+  // Session par client, sans cookie : un compte n’a pas besoin du tunnel ni d’un cookie perso.
+  const { resolvePublicAudioUrl } = await import('./publicAudioRoutesLive.js');
+  const hit = await resolvePublicAudioUrl(videoId, retryN);
+  const ac = new AbortController();
+  const openTimer = setTimeout(() => ac.abort(), 12_000);
+  const range = res.req?.headers?.range ? String(res.req.headers.range) : '';
+  let upstream: globalThis.Response;
+  try {
+    upstream = await fetch(hit.url, {
+      method: 'GET',
+      redirect: 'follow',
+      headers: {
+        Accept: '*/*',
+        Origin: 'https://www.youtube.com',
+        Referer: 'https://www.youtube.com/',
+        ...(range ? { Range: range } : {}),
+      },
+      signal: ac.signal,
+    });
+  } finally {
+    clearTimeout(openTimer);
+  }
+  if ((upstream.status !== 200 && upstream.status !== 206) || !upstream.body) {
     try {
-      stream = await innertube.download(videoId, {
-        type: 'audio',
-        quality: 'best',
-        format: 'any',
-        client,
-      } as any);
-      break;
-    } catch (err) {
-      lastErr = err;
+      await upstream.body?.cancel();
+    } catch {
+      /* ignore */
     }
+    throw new Error(`public audio ${hit.route} http ${upstream.status}`);
   }
-  if (!stream) {
-    throw lastErr instanceof Error ? lastErr : new Error('Innertube download login/unavailable');
-  }
-
-  const reader = stream.getReader();
+  const reader = upstream.body.getReader();
   const first = await reader.read();
   if (first.done || !first.value?.byteLength) {
     throw new Error('Innertube stream vide');
@@ -1406,10 +1416,15 @@ async function streamViaInnertube(videoId: string, res: Response) {
   }
 
   if (res.headersSent) throw new Error('headers already sent');
-  res.status(200);
-  res.setHeader('Content-Type', 'audio/mp4');
+  res.status(upstream.status);
+  res.setHeader('Content-Type', upstream.headers.get('content-type') || hit.mimeType || 'audio/mp4');
+  const cr = upstream.headers.get('content-range');
+  if (cr) res.setHeader('Content-Range', cr);
+  const cl = upstream.headers.get('content-length');
+  if (cl) res.setHeader('Content-Length', cl);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('X-YTM-Audio-Route', hit.route);
 
   try {
     if (!res.write(firstBuf)) {
@@ -3353,8 +3368,8 @@ export async function handleStream(req: Request, res: Response) {
   }
 
   try {
-    noteStreamSource(res, 'Innertube (dernier recours)');
-    await streamViaInnertube(videoId, res);
+    noteStreamSource(res, 'Innertube (autre client, autre itag)');
+    await streamViaInnertube(videoId, res, retryN);
   } catch (err) {
     if (!res.headersSent) {
       const detail = String(err);
@@ -3589,7 +3604,10 @@ async function runNextWarmWorker() {
       nextDiskWarmQueued.delete(nextId);
       nextFullBusyCount += 1;
       try {
-        await downloadTrack(nextId, { progressiveOnly: true, preferProxies: true });
+        // En lecture : seulement la tête du prochain titre. Le fichier entier
+        // pendant l’aléatoire empilait yt-dlp et ralentissait la suite.
+        if (isPlaybackHot(90_000)) await warmTrackPrefix(nextId);
+        else await downloadTrack(nextId, { progressiveOnly: true, preferProxies: true });
       } catch {
         /* best-effort */
       } finally {
@@ -3682,8 +3700,14 @@ async function runDiskWarmWorker() {
 }
 
 export function enqueueNextDiskWarm(ids: string[]) {
+  const hot = isPlaybackHot(90_000);
+  const incoming = hot ? ids.slice(0, 1) : ids;
+  if (hot) {
+    for (const old of nextDiskWarmQueue) nextDiskWarmQueued.delete(old);
+    nextDiskWarmQueue.length = 0;
+  }
   const added: string[] = [];
-  for (const id of ids) {
+  for (const id of incoming) {
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) continue;
     if (nextDiskWarmQueued.has(id)) {
       added.push(id);
@@ -4039,9 +4063,10 @@ export async function handleStreamWarm(req: Request, res: Response) {
     );
     return;
   }
-  enqueueStreamWarm(ids.slice(0, 12), uid);
-  enqueueListHeadWarm(ids.slice(0, 24), { front: true });
-  enqueueNextDiskWarm(ids.slice(0, 4));
+  const hot = isPlaybackHot(90_000);
+  enqueueStreamWarm(ids.slice(0, hot ? 2 : 12), uid);
+  enqueueListHeadWarm(ids.slice(0, hot ? 2 : 8), { front: true });
+  enqueueNextDiskWarm(ids.slice(0, hot ? 1 : 2));
   try {
     const { ensurePlayableQueueAhead } = await import('./ensurePlayable.js');
     ensurePlayableQueueAhead(ids, { userId: uid });

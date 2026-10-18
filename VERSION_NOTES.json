@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-17",
   "versions": [
     {
+      "version": "1.3.375",
+      "date": "2026-10-18",
+      "time": "18:45",
+      "at": "2026-10-18T18:45:00+02:00",
+      "title": "Autre itag si la lecture échoue",
+      "notes": [
+        "Si un titre ne part pas, le serveur essaie un autre client et un autre format, pour chaque compte. La suite en aléatoire ne précharge plus qu’un titre à la fois pendant l’écoute. Mise à jour proposée, pas forcée."
+      ]
+    },
+    {
       "version": "1.3.373",
       "date": "2026-10-17",
       "time": "14:30",

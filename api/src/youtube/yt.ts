@@ -3728,10 +3728,19 @@ export async function getAudioFormat(
     // Live : Innertube (~5.5 s) puis 1–2 proxies à la suite (~8 s).
     // 9 s abortait le 1er proxy et relançait un 2e yt-dlp → timeout en cascade.
     const fastBudgetMs = live ? 18_000 : 9_000;
-    let entry = await Promise.race([
-      resolveFast(),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), fastBudgetMs)),
-    ]);
+    const retryN = opts?.retryN ?? 0;
+    // Échec déjà vu : autre client / itag d’abord, pour tout compte, sans cookie.
+    let entry: AudioFormat | null =
+      retryN > 0 ? await tryPublicAudioFormat(videoId, retryN) : null;
+    if (!entry) {
+      entry = await Promise.race([
+        resolveFast(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), fastBudgetMs)),
+      ]);
+    }
+    if (!entry && retryN === 0) {
+      entry = await tryPublicAudioFormat(videoId, 0);
+    }
     if (entry && /[?&]itag=(18|22)\b/.test(entry.url || '')) {
       console.warn('[getAudioFormat] clip YouTube progressif (itag 18/22)', videoId);
     }
@@ -3802,7 +3811,11 @@ export async function getAudioFormat(
   const capped = Promise.race([
     job,
     new Promise<AudioFormat>((_, rej) =>
-      setTimeout(() => rej(new Error('getAudioFormat deadline')), deadlineMs),
+      setTimeout(() => {
+        const late = new Error(`getAudioFormat deadline id=${videoId}`);
+        (late as Error & { trackId?: string }).trackId = videoId;
+        rej(late);
+      }, deadlineMs),
     ),
   ]).finally(() => {
     audioFormatInflight.delete(inflightKey);
@@ -3810,6 +3823,32 @@ export async function getAudioFormat(
 
   audioFormatInflight.set(inflightKey, capped);
   return capped;
+}
+
+/**
+ * Autre client Innertube et autre itag, sans cookie ni proxy ni tunnel.
+ * Le même chemin pour chaque compte connecté.
+ */
+async function tryPublicAudioFormat(videoId: string, retryN: number): Promise<AudioFormat | null> {
+  try {
+    const { resolvePublicAudioUrl } = await import('../media/publicAudioRoutesLive.js');
+    const hit = await resolvePublicAudioUrl(videoId, retryN);
+    if (!hit?.url) return null;
+    return {
+      url: hit.url,
+      mimeType: hit.mimeType,
+      bitrate: hit.bitrate,
+      contentLength: hit.contentLength,
+      expiresAt: Date.now() + 3 * 60 * 60 * 1000,
+    };
+  } catch (err) {
+    console.warn(
+      '[getAudioFormat] route publique KO',
+      videoId,
+      String((err as Error).message || err).slice(0, 120),
+    );
+    return null;
+  }
 }
 
 /** Force une URL via yt-dlp (après 403 Innertube / cache pourri). */
@@ -3972,7 +4011,7 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
         const msg = err instanceof AggregateError
           ? String(err.errors?.[0] || err).slice(0, 120)
           : String(err).slice(0, 120);
-        console.warn('[getVideoFormat] innertube', msg);
+        console.warn('[getVideoFormat] innertube', videoId, msg);
         return null;
       }
     };
@@ -4023,7 +4062,9 @@ export async function getVideoFormat(videoId: string): Promise<AudioFormat> {
       /* */
     }
 
-    throw new Error('Aucun format vidéo progressif');
+    const missing = new Error(`Aucun format vidéo progressif id=${videoId}`);
+    (missing as Error & { trackId?: string }).trackId = videoId;
+    throw missing;
   })().finally(() => {
     videoFormatInflight.delete(videoId);
   });

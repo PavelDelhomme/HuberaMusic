@@ -3726,9 +3726,8 @@ process.on('uncaughtException', (err) => {
   // Laisse le temps d’envoyer le mail avant exit
   setTimeout(() => process.exit(1), 1500);
 });
-process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason);
-  const err = reason instanceof Error ? reason : new Error(String(reason));
+process.on('unhandledRejection', (rejected) => {
+  const err = rejected instanceof Error ? rejected : new Error(String(rejected));
   // Client a coupé le flux (curl/tests/Exo abort) → yt-dlp SIGTERM → exit null : pas d’alerte mail
   // Range EOF disque déjà géré (416) — anciennes races / start===size ne doivent plus spammer.
   if (
@@ -3744,11 +3743,16 @@ process.on('unhandledRejection', (reason) => {
     const blob = `${err.message}\n${err.stack || ''}`;
     const m =
       /\[stream\s+([a-zA-Z0-9_-]{11})\]/.exec(blob) ||
-      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/.exec(blob);
+      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\bid=([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\bvideoId[=: ]([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\/cache\/([a-zA-Z0-9_-]{11})\.(?:m4a|mp4|part)\b/.exec(blob);
     return m?.[1];
   })();
+  const shortReason = err.message.replace(/\s+/g, ' ').trim().slice(0, 160);
+  console.error('[unhandledRejection]', trackIdFromErr || 'sans-id', shortReason);
   try {
-    const meta = trackIdFromErr ? { trackId: trackIdFromErr } : undefined;
+    const meta = { reason: shortReason, ...(trackIdFromErr ? { trackId: trackIdFromErr } : {}) };
     const id = insertTelemetry({
       env: getAppEnv(),
       level: 'error',

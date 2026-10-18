@@ -853,13 +853,20 @@ object StreamPrefetcher {
         val idx = fromIndex.coerceIn(0, queueIds.lastIndex)
         val current = queueIds[idx]
         val loading = PlaybackService.Holder.isCurrentStreamLoading()
-        val take = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(
-            ahead.coerceIn(1, AHEAD_BUFFER),
-        )
+        val playing = isPlaybackActive()
+        val take = if (playing) {
+            1
+        } else {
+            ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(
+                ahead.coerceIn(1, AHEAD_BUFFER),
+            )
+        }
         val upcoming = queueIds.drop(idx + 1).take(take)
             .filter { it.length == 11 && !isLocalOffline(it) }
         val behindN = if (isUnmetered()) BEHIND_WIFI else BEHIND_METERED
-        val behind = if (idx > 0) {
+        val behind = if (playing || idx <= 0) {
+            emptyList()
+        } else if (idx > 0) {
             queueIds.subList((idx - behindN).coerceAtLeast(0), idx)
                 .filter { it.length == 11 && !isLocalOffline(it) }
                 .reversed()
