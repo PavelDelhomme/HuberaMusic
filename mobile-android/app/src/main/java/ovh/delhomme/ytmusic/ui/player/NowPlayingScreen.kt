@@ -284,6 +284,8 @@ fun NowPlayingScreen(
     // (sinon setMediaItems+prepare → coupe l’audio). Clear seulement si le seed change.
     var lastAutoplaySeed by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(ui.track?.id, ui.sourceKind, ui.userQueueEnd, ui.queueIndex) {
+        // Accès rapide : pas de « À suivre » hors des titres épinglés.
+        if (ui.sourceKind == "pins") return@LaunchedEffect
         // Toujours remplir « À suivre » pour l’affichage — autoplay = auto-avance seulement
         val seed = ui.track?.id ?: return@LaunchedEffect
         val remainingUser = (ui.userQueueEnd - ui.queueIndex - 1).coerceAtLeast(0)
@@ -2892,7 +2894,7 @@ private fun QueueExpandedBody(
                                 color = PlayerMuted,
                             )
                         }
-                        if (similarTracks.isNotEmpty()) {
+                        if (similarTracks.isNotEmpty() && ui.sourceKind != "pins") {
                             TextButton(
                                 onClick = {
                                     similarTracks.take(30).forEach { player.addToQueue(it) }

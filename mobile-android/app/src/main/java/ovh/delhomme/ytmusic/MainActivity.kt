@@ -698,6 +698,7 @@ fun YtMusicAppContent(
                             }
                         }
                     }
+                    val pinsish = title.startsWith("Accès rapide")
                     if (radioish) {
                         player.playRadioOrEnqueue(tracks, title, sourceKind = "mix")
                     } else {
@@ -706,7 +707,11 @@ fun YtMusicAppContent(
                             idx,
                             title = title,
                             userQueueEnd = tracks.size,
-                            sourceKind = if (historyish) "history" else "library",
+                            sourceKind = when {
+                                pinsish -> "pins"
+                                historyish -> "history"
+                                else -> "library"
+                            },
                         )
                     }
                     showNowPlaying = false

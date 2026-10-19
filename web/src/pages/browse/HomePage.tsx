@@ -404,10 +404,19 @@ export function HomePage() {
                 onClick={() => {
                   if (pinPlayBusy) return;
                   setPinPlayBusy('play');
-                  void resolvePinTracks(quickAccessItems)
-                    .then((tracks) => {
-                      if (!tracks.length) return;
-                      void playQueue(tracks, 0);
+                  void Promise.resolve(
+                    quickAccessItems.filter(
+                      (t) =>
+                        isPlayableSongId(t.id) &&
+                        t.type !== 'album' &&
+                        t.type !== 'playlist' &&
+                        t.type !== 'artist' &&
+                        t.type !== 'mix',
+                    ),
+                  )
+                    .then((songs) => {
+                      if (!songs.length) return;
+                      void playQueue(songs, 0, { sourceKind: 'pins' });
                     })
                     .finally(() => setPinPlayBusy(null));
                 }}
@@ -422,10 +431,19 @@ export function HomePage() {
                 onClick={() => {
                   if (pinPlayBusy) return;
                   setPinPlayBusy('shuffle');
-                  void resolvePinTracks(quickAccessItems)
-                    .then((tracks) => {
-                      if (!tracks.length) return;
-                      void playQueue(shuffleTracks(tracks), 0);
+                  void Promise.resolve(
+                    quickAccessItems.filter(
+                      (t) =>
+                        isPlayableSongId(t.id) &&
+                        t.type !== 'album' &&
+                        t.type !== 'playlist' &&
+                        t.type !== 'artist' &&
+                        t.type !== 'mix',
+                    ),
+                  )
+                    .then((songs) => {
+                      if (!songs.length) return;
+                      void playQueue(shuffleTracks(songs), 0, { sourceKind: 'pins' });
                     })
                     .finally(() => setPinPlayBusy(null));
                 }}
@@ -492,7 +510,7 @@ export function HomePage() {
               ))}
             </ul>
           ) : (
-            <ShelfRow title="" items={quickAccessItems} />
+            <ShelfRow title="" items={quickAccessItems} sourceKind="pins" />
           )}
         </section>
       )}

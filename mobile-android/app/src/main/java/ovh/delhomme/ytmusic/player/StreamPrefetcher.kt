@@ -1055,6 +1055,10 @@ object StreamPrefetcher {
         if (isQuiet()) {
             val current = queueIds.getOrNull(idx) ?: return
             if (current.length == 11) warmBatch(baseApi, listOf(current))
+            val prev = queueIds.getOrNull(idx - 1)
+            if (prev != null && prev.length == 11 && !isLocalOffline(prev)) {
+                warmBatch(baseApi, listOf(prev))
+            }
             val upcoming = queueIds.drop(idx + 1).take(AHEAD_BUFFER)
                 .filter { it.length == 11 && !isLocalOffline(it) }
             upcoming.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }

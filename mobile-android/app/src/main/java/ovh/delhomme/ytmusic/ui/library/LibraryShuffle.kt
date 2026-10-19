@@ -11,7 +11,6 @@ import ovh.delhomme.ytmusic.YtMusicApp
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ShuffleHeadStore
 import ovh.delhomme.ytmusic.data.TrackDto
-import ovh.delhomme.ytmusic.data.resolvePinsPool
 import ovh.delhomme.ytmusic.player.PlayerCache
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.util.toastMain
@@ -67,9 +66,8 @@ suspend fun playLibraryShuffled(
                 PlayerCache.cachedBytes(ctx, id, StreamPrefetcher.HEAD_3S) >= MIN_HOT_BYTES
         }
     }
-    val biasWarm = hotWarm.ifEmpty { warmIds }
     val shuffled = withContext(Dispatchers.Default) {
-        trueShuffleQueue(playable, recent, biasWarm, offlineIds)
+        trueShuffleQueue(playable, recent, hotWarm, offlineIds)
     }
     val base = container.resolvedApiBase()
     val leadIds = shuffled.take(3).map { it.id }
@@ -114,8 +112,9 @@ suspend fun playLibraryShuffled(
 }
 
 /**
- * #0 : hors-ligne → warm/hot → pool. #1–#2 aussi tirés du warm (évite skip froid).
- * Reste : mélange partiel.
+ * Mélange complet du pool (pas toujours les mêmes têtes).
+ * Si un titre est déjà en cache, il passe en #0 pour un départ < 2 s.
+ * Le reste de la bibliothèque suit dans la même file.
  */
 internal fun trueShuffleQueue(
     playable: List<TrackDto>,
@@ -126,39 +125,22 @@ internal fun trueShuffleQueue(
     if (playable.size <= 1) return playable
     val fresh = playable.filter { it.id !in recent }
     val pool = if (fresh.size >= (playable.size / 4).coerceAtLeast(8)) fresh else playable
-    val byId = pool.associateBy { it.id }
-    val warmSet = warmIds.toHashSet()
-    val offlineInPool = pool.filter { it.id in offlineIds }
-    val warmOffline = offlineInPool.filter { it.id in warmSet }
-    val warmInPool = pool.filter { it.id in warmSet }
-    val startPool = when {
-        warmOffline.isNotEmpty() -> warmOffline
-        offlineInPool.isNotEmpty() -> offlineInPool
-        warmInPool.isNotEmpty() -> warmInPool
-        else -> pool
-    }
-    val start = startPool.random()
-    val used = linkedSetOf(start.id)
-    val head = mutableListOf(start)
-    // #1 puis #2 : rester dans le lot serveur warm (sinon BUFFERING au skip)
-    for (wid in warmIds) {
-        if (head.size >= 3) break
-        if (wid in used) continue
-        val t = byId[wid] ?: continue
-        head += t
-        used += wid
-    }
-    val restPool = pool.filter { it.id !in used }
-    if (restPool.isEmpty()) return head
-    val copy = restPool.toMutableList()
-    val mixN = minOf(240, copy.size)
-    for (i in 0 until mixN) {
-        val j = i + kotlin.random.Random.nextInt(copy.size - i)
+    val copy = pool.toMutableList()
+    for (i in copy.lastIndex downTo 1) {
+        val j = kotlin.random.Random.nextInt(i + 1)
         val tmp = copy[i]
         copy[i] = copy[j]
         copy[j] = tmp
     }
-    return head + copy
+    val hot = (offlineIds + warmIds).toHashSet()
+    if (hot.isNotEmpty() && copy.first().id !in hot) {
+        val hotIndex = copy.indexOfFirst { it.id in hot }
+        if (hotIndex > 0) {
+            val t = copy.removeAt(hotIndex)
+            copy.add(0, t)
+        }
+    }
+    return copy
 }
 
 /**
@@ -211,41 +193,20 @@ suspend fun playQueueWithLead(
 }
 
 /**
- * Aléatoire Accès rapide : résout les pins en parallèle puis [playLibraryShuffled].
+ * Aléatoire Accès rapide : mélange complet des titres épinglés seulement.
+ * Pas de repli bibliothèque, pas d’extension playlist.
  * @return false si aucun titre jouable (caller → Toast).
  */
 suspend fun playQuickAccessShuffled(
-    container: AppContainer,
+    @Suppress("UNUSED_PARAMETER") container: AppContainer,
     pins: List<TrackDto>,
     onPlay: (List<TrackDto>, Int) -> Unit,
 ): Boolean {
-    val uniq = if (pins.isEmpty()) {
-        emptyList()
-    } else {
-        withContext(Dispatchers.IO) {
-            resolvePinsPool(container.api, pins, container.mixCache)
-        }
-    }
-    val pool = if (uniq.isNotEmpty()) {
-        uniq
-    } else {
-        var lib = container.libraryRepo.library.value
-        if (lib == null || (lib.songs.isEmpty() && lib.liked.isEmpty())) {
-            runCatching { container.libraryRepo.refresh(force = false) }
-            lib = container.libraryRepo.library.value
-                ?: runCatching { container.api.library() }.getOrNull()
-        }
-        (lib?.songs.orEmpty() + lib?.liked.orEmpty() + lib?.history.orEmpty())
-            .filter { it.isPlayable() && it.id.length == 11 }
-            .distinctBy { it.id }
-    }
-    if (pool.isEmpty()) return false
-    playLibraryShuffled(
-        container,
-        pool,
-        onPlay,
-        sourceKey = if (uniq.isNotEmpty()) "home:pins" else "home:library",
-    )
+    val songs = pins
+        .filter { it.isPlayable() && it.id.length == 11 }
+        .distinctBy { it.id }
+    if (songs.isEmpty()) return false
+    onPlay(songs.shuffled(), 0)
     return true
 }
 

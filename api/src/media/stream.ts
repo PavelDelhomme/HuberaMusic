@@ -382,7 +382,8 @@ function writePrefixToDisk(videoId: string, buf: Buffer, total?: number): void {
 const FIRST_BYTES = 256 * 1024;
 const SWARM_CHUNK_BYTES = 256 * 1024;
 /** 8 tuait les proxies gratuits (403 après ~1 Mo). 4 Ranges = parallèle sans bloquer l’IP. */
-const SWARM_PARALLEL = 4;
+/** 2 suffisent pour remplir ; 4 ranges sur le même relais saturent le proxy audio. */
+const SWARM_PARALLEL = 2;
 
 type HedgeHead = { url: string; viaProxy: string; head: Buffer; total: number; at: number };
 const hedgeHeadsById = new Map<string, HedgeHead>();
@@ -469,6 +470,52 @@ async function pumpBodyToOffset(
     onBytes?.(written);
   }
   return written;
+}
+
+function itagOfUrl(raw: string): string {
+  try {
+    return new URL(raw).searchParams.get('itag') || '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Trou dans le fichier : une autre URL du MÊME itag (même audio, pas une autre
+ * chanson) reprend les octets manquants. Un itag différent n’est pas collé.
+ */
+async function resumeSameItagGaps(opts: {
+  videoId: string;
+  primaryUrl: string;
+  leftover: Array<{ start: number; end: number }>;
+  userId?: string;
+  boundProxy: string;
+  flush: (start: number, buf: Buffer) => void;
+}): Promise<boolean> {
+  const primaryItag = itagOfUrl(opts.primaryUrl);
+  if (!primaryItag || !opts.leftover.length) return false;
+  try {
+    const { getAudioFormat } = await import('../youtube/yt.js');
+    const fresh = await Promise.race([
+      getAudioFormat(opts.videoId, { userId: opts.userId, forceFresh: true }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
+    ]);
+    if (!fresh?.url || itagOfUrl(fresh.url) !== primaryItag) return false;
+    const proxy = fresh.viaProxy || opts.boundProxy;
+    const pending = [...opts.leftover];
+    opts.leftover.length = 0;
+    for (const part of pending) {
+      const buf = await fetchSwarmChunk(fresh.url, part.start, part.end, {
+        userId: opts.userId,
+        boundProxy: proxy,
+      });
+      if (!buf) opts.leftover.push(part);
+      else opts.flush(part.start, buf);
+    }
+    return opts.leftover.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 async function downloadViaProxyChunks(
@@ -573,7 +620,18 @@ async function downloadViaProxyChunks(
       if (!rest.length && firstPump) await firstPump;
       drain();
       if (leftover.length && contiguous < total * 0.92) {
-        throw new Error(`swarm incomplet ${contiguous}/${total} failed=${leftover.length}`);
+        const filled = await resumeSameItagGaps({
+          videoId,
+          primaryUrl: url,
+          leftover,
+          userId: opts?.userId,
+          boundProxy: bound,
+          flush,
+        });
+        drain();
+        if (!filled && contiguous < total * 0.92) {
+          throw new Error(`swarm incomplet ${contiguous}/${total} failed=${leftover.length}`);
+        }
       }
     } finally {
       closeSync(fd);

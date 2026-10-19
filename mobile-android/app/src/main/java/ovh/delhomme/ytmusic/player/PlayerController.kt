@@ -317,6 +317,7 @@ class PlayerController(
         PlaybackService.Holder.queueTitle = queueTitle
         this.sourceId = sourceId
         this.sourceKind = sourceKind
+        PlaybackService.Holder.pinLoop = sourceKind == "pins"
         PlaybackResume.noteUserPlay()
         healAfterBackground()
         if (controller != null && PlaybackService.Holder.service == null) {
@@ -427,6 +428,7 @@ class PlayerController(
 
     /** Ajoute des suggestions après la file utilisateur (zone auto) — toujours, pour affichage. */
     fun appendAutoTracks(tracks: List<TrackDto>, forSeedId: String? = null) {
+        if (PlaybackService.Holder.pinLoop || sourceKind == "pins") return
         if (forSeedId != null && _state.value.track?.id != forSeedId) return
         val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
@@ -461,6 +463,7 @@ class PlayerController(
      * après la fin de la file utilisateur.
      */
     fun ensureAutoplayAhead() {
+        if (PlaybackService.Holder.pinLoop || sourceKind == "pins") return
         if (fillJob?.isActive == true) return
         val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
@@ -853,6 +856,31 @@ class PlayerController(
 
     /** Appelé quand il n’y a plus de suivant (UI ou notif système). */
     private fun fillThenSkipFromEnd(fromUserSkip: Boolean = false) {
+        if (PlaybackService.Holder.pinLoop) {
+            val extended = PlaybackService.Holder.extendUserQueue()
+            val p = player() ?: PlaybackService.Holder.player
+            if (extended > 0 && p != null) {
+                userQueueEnd = PlaybackService.Holder.userQueueEnd
+                val cur = p.currentMediaItemIndex.coerceAtLeast(0)
+                if (p.mediaItemCount > cur + 1) {
+                    p.seekTo(cur + 1, 0L)
+                    p.playWhenReady = true
+                    p.play()
+                    syncFrom(p)
+                }
+                return
+            }
+            if (p != null && p.mediaItemCount > 0) {
+                p.seekTo(0, 0L)
+                if (p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED) {
+                    p.prepare()
+                }
+                p.playWhenReady = true
+                p.play()
+                syncFrom(p)
+                return
+            }
+        }
         if (pauseAtEndOfQueue || pauseAtEndOfTrack) {
             player()?.pause()
             clearSleepTimer()
@@ -1360,6 +1388,33 @@ class PlayerController(
         val turningOn = !shuffleEnabled
         shuffleEnabled = turningOn
         val c = player()
+        if (c != null && turningOn && sourceKind == "pins") {
+            val idx = c.currentMediaItemIndex.coerceAtLeast(0)
+            val queue = PlaybackService.Holder.queue
+            val end = userQueueEnd.coerceIn(0, queue.size).let { if (it <= 0) queue.size else it }
+            val safeIdx = idx.coerceAtMost((end - 1).coerceAtLeast(0))
+            val cur = queue.getOrNull(safeIdx)
+            if (cur != null && end > 1) {
+                val others = queue.take(end).filter { it.id != cur.id }.shuffled()
+                val newQ = listOf(cur) + others
+                if (safeIdx > 0 && safeIdx < c.mediaItemCount) {
+                    c.removeMediaItems(0, safeIdx.coerceAtMost(c.mediaItemCount))
+                }
+                if (c.mediaItemCount > 1) c.removeMediaItems(1, c.mediaItemCount)
+                if (others.isNotEmpty()) c.addMediaItems(others.map { mediaItem(it) })
+                userQueueEnd = newQ.size
+                PlaybackService.Holder.queue = newQ
+                PlaybackService.Holder.userQueueEnd = newQ.size
+                PlaybackService.Holder.fullQueue = newQ
+                PlaybackService.Holder.fullQueueCursor = newQ.size
+                PlaybackService.Holder.pinLoop = true
+                shuffleNatural = queue.take(end).toMutableList()
+                c.shuffleModeEnabled = false
+                syncFrom(c)
+                _state.value = _state.value.copy(shuffle = true)
+                return
+            }
+        }
         if (c != null && turningOn) {
             val idx = c.currentMediaItemIndex.coerceAtLeast(0)
             val queue = PlaybackService.Holder.queue.toMutableList()

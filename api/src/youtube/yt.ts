@@ -3426,7 +3426,7 @@ async function audioFormatViaYtDlp(
     includeDirect: true,
     shuffle: proxyOpts?.shuffle || live,
     directLast: proxyOpts?.directLast || live,
-    probe: Boolean(proxyOpts?.directLast || live),
+    probe: true,
     userId,
   });
 

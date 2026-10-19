@@ -977,7 +977,11 @@ class PlaybackService : MediaSessionService() {
                 // Stop en fin de file user si lecture auto OFF (suggestions restent dans la file)
                 val idx = exo.currentMediaItemIndex
                 val end = Holder.userQueueEnd
-                if (!Holder.autoplaySuggestions && end > 0 && idx >= end) {
+                if (Holder.pinLoop && end > 0 && idx >= end && exo.mediaItemCount > 0) {
+                    exo.seekTo(0, 0L)
+                    exo.playWhenReady = true
+                    exo.play()
+                } else if (!Holder.autoplaySuggestions && end > 0 && idx >= end) {
                     val back = (end - 1).coerceAtLeast(0)
                     exo.pause()
                     val dur = exo.duration
@@ -1059,6 +1063,12 @@ class PlaybackService : MediaSessionService() {
                 val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
                 val nextIdx = curIdx + 1
                 val end = userQueueEndAfterExtend(nextIdx)
+                if (Holder.pinLoop && end > 0 && nextIdx >= end && exo.mediaItemCount > 0) {
+                    exo.seekTo(0, 0L)
+                    exo.playWhenReady = true
+                    exo.play()
+                    return
+                }
                 if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
                     exo.playWhenReady = false
                     runCatching { exo.pause() }
@@ -2199,6 +2209,12 @@ class PlaybackService : MediaSessionService() {
         }
         StreamPrefetcher.markStreamOk()
         val end = userQueueEndAfterExtend(nextIdx)
+        if (Holder.pinLoop && end > 0 && nextIdx >= end && exo.mediaItemCount > 0) {
+            exo.seekTo(0, 0L)
+            exo.playWhenReady = true
+            exo.play()
+            return
+        }
         if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
             exo.playWhenReady = false
             runCatching { exo.pause() }
@@ -2376,6 +2392,15 @@ class PlaybackService : MediaSessionService() {
             "PlaybackService",
             "STATE_ENDED idx=$curIdx next=$nextIdx count=${exo.mediaItemCount} auto=${Holder.autoplaySuggestions} userEnd=$end",
         )
+        if (Holder.pinLoop && end > 0 && nextIdx >= end && exo.mediaItemCount > 0) {
+            exo.seekTo(0, 0L)
+            if (exo.playbackState == Player.STATE_IDLE || exo.playbackState == Player.STATE_ENDED) {
+                exo.prepare()
+            }
+            exo.playWhenReady = true
+            exo.play()
+            return
+        }
         if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
             exo.playWhenReady = false
             runCatching { exo.pause() }
@@ -2410,6 +2435,7 @@ class PlaybackService : MediaSessionService() {
 
     /** Précharge « À suivre » dans Exo — indépendant du toggle auto-avance. */
     private fun ensureServiceAutoplayAhead(exo: Player) {
+        if (Holder.pinLoop) return
         if (serviceFillInFlight) return
         val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
         val remaining = (exo.mediaItemCount - idx - 1).coerceAtLeast(0)
@@ -2426,6 +2452,18 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun fillAutoplayFromService(advanceAfterFill: Boolean) {
+        if (Holder.pinLoop) {
+            if (advanceAfterFill) {
+                val exo = player ?: return
+                if (Holder.extendUserQueue() > 0) return
+                if (exo.mediaItemCount > 0) {
+                    exo.seekTo(0, 0L)
+                    exo.playWhenReady = true
+                    exo.play()
+                }
+            }
+            return
+        }
         if (serviceFillInFlight) return
         val exo = player ?: return
         val seed = exo.currentMediaItem?.mediaId
@@ -3072,6 +3110,8 @@ class PlaybackService : MediaSessionService() {
         @Volatile var fullQueueCursor: Int = 0
         /** Auto-avance dans « À suivre » (sinon stop en fin de file user). */
         @Volatile var autoplaySuggestions: Boolean = true
+        /** Accès rapide : boucle uniquement les titres épinglés, sans « À suivre ». */
+        @Volatile var pinLoop: Boolean = false
         /** Service détruit (idle guard / OS) → invalider MediaController UI. */
         @Volatile var onServiceStopped: (() -> Unit)? = null
         /** Mis à jour sur le thread principal — lecture depuis IO sans toucher ExoPlayer. */
@@ -3192,6 +3232,7 @@ class PlaybackService : MediaSessionService() {
          * la file avance donc en fenêtre glissante.
          */
         private fun releasePlayedTail(p: ExoPlayer, keepBehind: Int = 40, maxSize: Int = 240) {
+            if (pinLoop && queue.size <= 240) return
             val current = queue
             if (current.size <= maxSize) return
             val drop = (p.currentMediaItemIndex - keepBehind).coerceAtMost(current.size - maxSize)

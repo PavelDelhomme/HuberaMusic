@@ -3055,17 +3055,18 @@ function librarySongIds(lib: { songs?: Array<{ id?: string }>; liked?: Array<{ i
 }
 
 /**
- * Têtes Aléatoire biblio (~100 ids) — rotation ~30 min / compte.
- * Warm serveur lancé en fond ; client Android = warm léger de ce batch seulement.
+ * Têtes Aléatoire biblio (plusieurs centaines) — rotation ~30 min, ou fresh=1.
+ * La liste part tout de suite ; le warm disque reste sériel.
  */
 app.get('/api/library/shuffle-heads', accountRequired, (req, res) => {
   try {
     const warm = String(req.query.warm || '1') !== '0';
     const scope = String(req.query.scope || 'all') === 'recent' ? 'recent' : 'all';
-    const result = getShuffleHeads(req.userId!, { warm, scope });
+    const fresh = String(req.query.fresh || '') === '1';
+    const result = getShuffleHeads(req.userId!, { warm, scope, fresh });
     res.json(result);
     if (warm && result.ids?.length) {
-      ensurePlayableQueueAhead(result.ids.slice(0, 20), { userId: req.userId! });
+      ensurePlayableQueueAhead(result.ids.slice(0, 8), { userId: req.userId! });
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -3079,7 +3080,7 @@ app.post('/api/library/shuffle-heads/refresh', accountRequired, (req, res) => {
     const result = getShuffleHeads(req.userId!, { warm: true, scope });
     res.json(result);
     if (result.ids?.length) {
-      ensurePlayableQueueAhead(result.ids.slice(0, 20), { userId: req.userId! });
+      ensurePlayableQueueAhead(result.ids.slice(0, 8), { userId: req.userId! });
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });

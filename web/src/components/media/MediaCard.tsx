@@ -26,10 +26,12 @@ export function MediaCard({
   item,
   queue,
   queueTitle,
+  queueSourceKind,
 }: {
   item: Track;
   queue?: Track[];
   queueTitle?: string;
+  queueSourceKind?: 'pins' | 'history' | null;
 }) {
   const play = usePlayer((s) => s.play);
   const playQueue = usePlayer((s) => s.playQueue);
@@ -80,6 +82,12 @@ export function MediaCard({
       void playQueue(queue, Math.max(0, queue.findIndex((t) => t.id === item.id)), {
         sourceKind: 'history',
       });
+      return;
+    }
+    if (queueSourceKind === 'pins' && queue?.length) {
+      const songs = queue.filter((t) => t.type !== 'album' && t.type !== 'playlist' && t.type !== 'artist' && t.type !== 'mix');
+      const list = songs.length ? songs : [item];
+      void playQueue(list, Math.max(0, list.findIndex((t) => t.id === item.id)), { sourceKind: 'pins' });
       return;
     }
     void play(item, queue, { forceRestart: true });
@@ -143,6 +151,12 @@ export function MediaCard({
     if (recentListenShelf && queue?.length) {
       const idx = Math.max(0, queue.findIndex((t) => t.id === item.id));
       void playQueue(queue, idx, { sourceKind: 'history' });
+      return;
+    }
+    if (queueSourceKind === 'pins' && queue?.length) {
+      const songs = queue.filter((t) => t.type !== 'album' && t.type !== 'playlist' && t.type !== 'artist' && t.type !== 'mix');
+      const list = songs.length ? songs : [item];
+      void playQueue(list, Math.max(0, list.findIndex((t) => t.id === item.id)), { sourceKind: 'pins' });
       return;
     }
     void play(item, queue, { forceRestart: true });
@@ -403,14 +417,28 @@ export function MediaCard({
   );
 }
 
-export function ShelfRow({ title, items }: { title: string; items: Track[] }) {
+export function ShelfRow({
+  title,
+  items,
+  sourceKind,
+}: {
+  title: string;
+  items: Track[];
+  sourceKind?: 'pins' | 'history' | null;
+}) {
   if (!items.length) return null;
   return (
     <section className="animate-fade-up mb-8">
       {title ? <h2 className="mb-3 font-display text-xl font-semibold tracking-tight">{title}</h2> : null}
       <div className="shelf-scroll">
         {items.map((item, i) => (
-          <MediaCard key={`${title}-${item.id}-${i}`} item={item} queue={items} queueTitle={title} />
+          <MediaCard
+            key={`${title}-${item.id}-${i}`}
+            item={item}
+            queue={items}
+            queueTitle={title}
+            queueSourceKind={sourceKind}
+          />
         ))}
       </div>
     </section>

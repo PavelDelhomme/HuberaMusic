@@ -16,7 +16,7 @@ const SLOT_MS = Math.max(
   10 * 60_000,
   Math.min(60 * 60_000, Number(process.env.SHUFFLE_HEAD_SLOT_MS || 30 * 60_000) || 30 * 60_000),
 );
-const HEAD_N = Math.max(40, Math.min(160, Number(process.env.SHUFFLE_HEAD_N || 100) || 100));
+const HEAD_N = Math.max(200, Math.min(480, Number(process.env.SHUFFLE_HEAD_N || 400) || 400));
 const RECENT_EXCLUDE = 400;
 const RECENT_POOL = Math.max(60, Math.min(200, Number(process.env.SHUFFLE_HEAD_RECENT_POOL || 120) || 120));
 
@@ -121,14 +121,20 @@ export type ShuffleHeadsResult = {
  * ~HEAD_N ids pour démarrer un aléatoire « prêt » (warm serveur).
  * Exclut les titres trop récents pour varier (sauf scope=recent : exclude plus léger).
  */
+let freshSpin = 0;
+
 export function getShuffleHeads(
   userId: string,
-  opts?: { warm?: boolean; scope?: 'all' | 'recent' },
+  opts?: { warm?: boolean; scope?: 'all' | 'recent'; fresh?: boolean },
 ): ShuffleHeadsResult {
   const now = Date.now();
   const slot = slotIndex(now);
   const scope = opts?.scope === 'recent' ? 'recent' : 'all';
   const cacheKey = `${userId}:${scope}`;
+  if (opts?.fresh) {
+    freshSpin = (freshSpin + 1) >>> 0;
+    mem.delete(cacheKey);
+  }
   const cached = mem.get(cacheKey);
   if (cached && cached.slot === slot && cached.ids.length) {
     if (opts?.warm !== false) scheduleWarmHeads(userId, cached.ids);
@@ -162,15 +168,10 @@ export function getShuffleHeads(
   if (pool.length < Math.min(HEAD_N, Math.floor(source.length / 4))) {
     pool = source;
   }
-  const seed = hashSeed(userId, slot, scope);
+  const seed = hashSeed(userId, slot + (opts?.fresh ? freshSpin : 0), scope);
   const headCap = scope === 'recent' ? Math.min(HEAD_N, 80) : HEAD_N;
-  let ids = seededShuffle(pool, seed).slice(0, headCap);
-  // Garantir une fraction d’aimés en tête du batch warm (démarrage Aléatoire chaud)
-  if (scope === 'all' && liked.length) {
-    const likedInPool = liked.filter((id) => pool.includes(id) || allLib.includes(id));
-    const inject = seededShuffle(likedInPool, seed ^ 0x9e3779b9).slice(0, likedBias);
-    ids = [...new Set([...inject, ...ids])].slice(0, headCap);
-  }
+  // Mélange complet du lot : pas les mêmes favoris collés en tête à chaque lecture.
+  const ids = seededShuffle(pool, seed ^ (opts?.fresh ? freshSpin : 0)).slice(0, headCap);
   const expiresAt = (slot + 1) * SLOT_MS;
   mem.set(cacheKey, { ids, slot, expiresAt, at: now });
   // Cap mémoire : ~200 users × 2 scopes
@@ -197,11 +198,12 @@ function scheduleWarmHeads(userId: string, ids: string[]): void {
       const { isPlaybackHot } = await import('../media/stream.js');
       // Pendant une écoute : lead Aléatoire (#0–#8), pas tout le lot.
       const hot = isPlaybackHot(90_000);
-      enqueueStreamWarm(ids.slice(0, 1), userId);
-      const disk = hot ? [] : ids.filter(needsDisk).slice(0, 1);
-      if (disk.length) enqueueDiskWarm(disk);
+      // File d’ids tout de suite ; le disque suit en série (pas une rafale).
+      const cap = hot ? 8 : 80;
+      const need = ids.filter(needsDisk).slice(0, cap);
+      if (need.length) enqueueStreamWarm(need, userId);
       const { ensurePlayableQueueAhead } = await import('../media/ensurePlayable.js');
-      ensurePlayableQueueAhead(ids.slice(0, 1), { userId });
+      ensurePlayableQueueAhead(ids.slice(0, hot ? 4 : 12), { userId });
     } catch {
       /* ignore */
     }

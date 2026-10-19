@@ -329,6 +329,7 @@ export function pickHotProxies(
     .filter(
       (e) =>
         usable(e) &&
+        !((e.gvMiss || 0) >= 3 && (e.lastOkAt || 0) < (e.lastFailAt || 0)) &&
         isHttpProxy(e.url) &&
         stripeOk(e.url) &&
         (e.gvHits || 0) > 0 &&
@@ -343,6 +344,7 @@ export function pickHotProxies(
         .filter(
           (e) =>
             usable(e) &&
+            !((e.gvMiss || 0) >= 3 && (e.lastOkAt || 0) < (e.lastFailAt || 0)) &&
             isHttpProxy(e.url) &&
             stripeOk(e.url) &&
             !exclude.has(e.url) &&
@@ -871,8 +873,6 @@ export async function youtubeProxyAttempts(opts?: {
       if (proxies.length >= max) break;
     }
   }
-
-  if (fixedN && !userId && !proxies.includes(fixedN)) proxies.unshift(fixedN);
 
   let ordered: (string | null)[];
   if (doProbe && proxies.length < 2 && youtubeProxyFreeEnabled() && Date.now() - lastForceRefreshAt > 8_000) {
