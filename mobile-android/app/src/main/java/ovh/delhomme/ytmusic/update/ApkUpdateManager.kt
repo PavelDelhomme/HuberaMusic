@@ -339,7 +339,7 @@ class ApkUpdateManager(
                     ?: remoteCode.takeIf { it > 0 }?.let { "build $it" }
                 val stored = prefs.getString(KEY_UI_MESSAGE, "")?.takeIf { it.isNotBlank() }
                 if (stored != null && !stored.startsWith("À jour")) stored
-                else "Nouvelle version ${remoteLabel ?: ""} — ${BuildConfig.VERSION_NAME} déjà installée. Mise à jour proposée, pas forcée.".trim()
+                else "Nouvelle version ${remoteLabel ?: ""} — ${BuildConfig.VERSION_NAME} déjà installée.".trim()
             }
             else -> prefs.getString(KEY_UI_MESSAGE, "") ?: ""
         }
