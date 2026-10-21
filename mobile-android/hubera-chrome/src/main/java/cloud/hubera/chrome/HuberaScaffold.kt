@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
@@ -19,7 +21,6 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -34,10 +35,14 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -267,6 +272,11 @@ fun HuberaAppsDialog(
 /**
  * Squelette Google-like : hamburger à gauche, titre, compte à droite, drawer suite, nav bas.
  */
+/** Bandeau natif du bord gauche : ouvre le tiroir Compose. */
+object HuberaDrawerEdge {
+    @Volatile var open: (() -> Unit)? = null
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HuberaScaffold(
@@ -290,6 +300,15 @@ fun HuberaScaffold(
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    DisposableEffect(drawerState) {
+        val previous = HuberaDrawerEdge.open
+        HuberaDrawerEdge.open = { scope.launch { drawerState.open() } }
+        onDispose {
+            if (HuberaDrawerEdge.open != previous) HuberaDrawerEdge.open = previous
+        }
+    }
+    var dragged by remember { mutableFloatStateOf(0f) }
+    Box(Modifier.fillMaxSize()) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -337,5 +356,26 @@ fun HuberaScaffold(
             snackbarHost = snackbarHost,
             content = content,
         )
+    }
+        if (drawerState.currentValue == DrawerValue.Closed) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .width(28.dp)
+                    .pointerInput(drawerState) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragged = 0f },
+                            onHorizontalDrag = { _, delta ->
+                                dragged += delta
+                                if (dragged > 28f && drawerState.currentValue == DrawerValue.Closed) {
+                                    dragged = 0f
+                                    scope.launch { drawerState.open() }
+                                }
+                            },
+                        )
+                    },
+            )
+        }
     }
 }

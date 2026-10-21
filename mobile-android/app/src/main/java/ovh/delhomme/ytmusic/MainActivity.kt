@@ -3,6 +3,7 @@ package ovh.delhomme.ytmusic
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.net.Uri
@@ -34,6 +35,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -46,7 +51,13 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.Toast
+import cloud.hubera.chrome.HuberaDrawerEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -73,6 +84,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -157,6 +169,64 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        window.decorView.post {
+            excludeLeftEdge()
+            attachEdgeStrip()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        window.decorView.post {
+            excludeLeftEdge()
+            attachEdgeStrip()
+        }
+    }
+
+    private var edgeDownX = 0f
+    private var edgeDownY = 0f
+
+    private fun attachEdgeStrip() {
+        val decor = window.decorView as? ViewGroup ?: return
+        if (decor.findViewWithTag<View>("hubera-edge") != null) return
+        val density = resources.displayMetrics.density
+        val edge = (28 * density).toInt().coerceAtLeast(1)
+        val strip = View(this)
+        strip.tag = "hubera-edge"
+        strip.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    edgeDownX = ev.rawX
+                    edgeDownY = ev.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - edgeDownX
+                    val dy = ev.rawY - edgeDownY
+                    if (edgeDownX <= edge && dx > 12f * density && kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                        HuberaDrawerEdge.open?.invoke()
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+        decor.addView(
+            strip,
+            FrameLayout.LayoutParams(edge, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START),
+        )
+    }
+
+    /** Le geste système laisse le bord gauche au tiroir. */
+    private fun excludeLeftEdge() {
+        if (Build.VERSION.SDK_INT < 29) return
+        val density = resources.displayMetrics.density
+        val width = (28 * density).toInt().coerceAtLeast(1)
+        val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+        ViewCompat.setSystemGestureExclusionRects(
+            window.decorView,
+            listOf(Rect(0, 0, width, height)),
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -266,6 +336,7 @@ fun YtMusicAppContent(
     val scope = rememberCoroutineScope()
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
     var showNowPlaying by remember { mutableStateOf(false) }
+    var suppressPlayerOpenUntil by remember { mutableLongStateOf(0L) }
     var playerFocusToken by remember { mutableIntStateOf(0) }
     var openLyricsToken by remember { mutableIntStateOf(0) }
     var pendingOpenAddPlaylist by remember { mutableStateOf(false) }
@@ -655,7 +726,15 @@ fun YtMusicAppContent(
                     apkUpdater.dismissAwaitingConfirm(snooze = true)
                     Toast.makeText(context, "Mise à jour reportée", Toast.LENGTH_SHORT).show()
                 },
-                onOpenPlayer = {
+                onOpenPlayer = open@{
+                    if (
+                        ovh.delhomme.ytmusic.player.DetailOpenPolicy.shouldIgnorePlayerReopen(
+                            android.os.SystemClock.elapsedRealtime(),
+                            suppressPlayerOpenUntil,
+                        )
+                    ) {
+                        return@open
+                    }
                     val ui = player.state.value
                     if (ui.track != null || ui.queueSize > 0) {
                         showNowPlaying = true
@@ -663,6 +742,11 @@ fun YtMusicAppContent(
                     }
                 },
                 onClosePlayer = { showNowPlaying = false },
+                onLeavePlayerForDetail = {
+                    suppressPlayerOpenUntil = android.os.SystemClock.elapsedRealtime() +
+                        ovh.delhomme.ytmusic.player.DetailOpenPolicy.PLAYER_REOPEN_SUPPRESS_MS
+                    showNowPlaying = false
+                },
                 onPlayTracks = { tracks, idx ->
                     val t = tracks.getOrNull(idx)
                     AppLog.breadcrumb("play", "${t?.id ?: "?"} idx=$idx n=${tracks.size}")
@@ -732,6 +816,7 @@ fun YtMusicAppContent(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainTabs(
     container: AppContainer,
@@ -750,6 +835,7 @@ private fun MainTabs(
     onUpdateBannerDismiss: () -> Unit = {},
     onOpenPlayer: () -> Unit,
     onClosePlayer: () -> Unit,
+    onLeavePlayerForDetail: () -> Unit = onClosePlayer,
     onPlayTracks: (List<TrackDto>, Int) -> Unit,
     onPlayNamed: (List<TrackDto>, Int, String) -> Unit = { tracks, idx, _ -> onPlayTracks(tracks, idx) },
     onLoggedOut: () -> Unit,
@@ -902,7 +988,7 @@ private fun MainTabs(
                 ).show()
                 return@launch
             }
-            onClosePlayer()
+            onLeavePlayerForDetail()
             nav.navigate("detail/artist/${Uri.encode(resolved)}")
         }
     }
@@ -1446,6 +1532,34 @@ private fun MainTabs(
         }
     }
 
+    val musicDrawerState = rememberDrawerState(DrawerValue.Closed)
+    val musicDrawerScope = rememberCoroutineScope()
+    DisposableEffect(musicDrawerState) {
+        val previous = HuberaDrawerEdge.open
+        HuberaDrawerEdge.open = { musicDrawerScope.launch { musicDrawerState.open() } }
+        onDispose {
+            if (HuberaDrawerEdge.open != previous) HuberaDrawerEdge.open = previous
+        }
+    }
+    BackHandler(enabled = musicDrawerState.isOpen) {
+        musicDrawerScope.launch { musicDrawerState.close() }
+    }
+    ModalNavigationDrawer(
+        drawerState = musicDrawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Text(
+                    "Menu Hubera Music",
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                Text(
+                    "Compte",
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+        },
+    ) {
     Scaffold(
         // Compte / Historique / Aide ont déjà un TopAppBar (status bar).
         // Si seul le mini-lecteur est visible, ne pas re-appliquer l’inset top
@@ -1843,6 +1957,7 @@ private fun MainTabs(
             }
         }
     }
+    }
 
     menuTrack?.let { track ->
         TrackActionsSheet(
@@ -1861,9 +1976,22 @@ private fun MainTabs(
                 menuTrack = null
                 menuPlaylistId = null
             },
-            onOpenAlbum = { id ->
-                onClosePlayer()
-                nav.navigate("detail/album/${Uri.encode(id)}")
+            onOpenAlbum = album@{ id ->
+                if (!ovh.delhomme.ytmusic.player.DetailOpenPolicy.closesPlayer("album")) return@album
+                onLeavePlayerForDetail()
+                playerSheetMounted = false
+                val albumId = id.trim()
+                if (albumId.isEmpty()) return@album
+                scope.launch {
+                    kotlinx.coroutines.delay(48)
+                    onLeavePlayerForDetail()
+                    playerSheetMounted = false
+                    runCatching {
+                        nav.navigate("detail/album/${Uri.encode(albumId)}") {
+                            launchSingleTop = true
+                        }
+                    }
+                }
             },
             onOpenArtist = { id ->
                 openArtist(id, "")
