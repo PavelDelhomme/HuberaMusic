@@ -180,16 +180,6 @@ class PlaybackService : MediaSessionService() {
         val base = resolvedApiBase()
         if (base.isNotBlank() && id.length == 11) {
             StreamPrefetcher.warmTrackFormatOnly(base, id)
-            StreamPrefetcher.requestServerDiskCache(base, id)
-            // Warm le suivant aussi (évite cold_next → BUFFERING au skip naturel).
-            val nextIdx = exo.currentMediaItemIndex + 1
-            if (nextIdx in 0 until exo.mediaItemCount) {
-                val nextId = exo.getMediaItemAt(nextIdx).mediaId.orEmpty()
-                if (nextId.length == 11) {
-                    StreamPrefetcher.warmTrackFormatOnly(base, nextId)
-                    StreamPrefetcher.requestServerDiskCache(base, nextId)
-                }
-            }
         }
     }
 
@@ -719,8 +709,8 @@ class PlaybackService : MediaSessionService() {
                     if (api.isNotBlank() && q.isNotEmpty() && idx in q.indices) {
                         Thread {
                             val ids = q.map { it.id }
-                            StreamPrefetcher.prefetchByProximity(api, ids, idx, ahead = 4, force = false)
-                            StreamPrefetcher.prefetchNextDuringPlayback(api, ids, idx, ignoreQuiet = true)
+                        StreamPrefetcher.prefetchByProximity(api, ids, idx, ahead = 1, force = false)
+                        StreamPrefetcher.prefetchNextDuringPlayback(api, ids, idx, ignoreQuiet = false)
                         }.apply {
                             name = "ytm-proximity-prefetch"
                             isDaemon = true
@@ -863,7 +853,7 @@ class PlaybackService : MediaSessionService() {
                             resolvedApiBase(),
                             ids,
                             idx,
-                            ahead = 4,
+                            ahead = 1,
                             force = false,
                         )
                         StreamPrefetcher.prefetchNextDuringPlayback(
@@ -2435,7 +2425,7 @@ class PlaybackService : MediaSessionService() {
 
     /** Précharge « À suivre » dans Exo — indépendant du toggle auto-avance. */
     private fun ensureServiceAutoplayAhead(exo: Player) {
-        if (Holder.pinLoop) return
+        if (QuickAccessLoopPolicy.blocksFollowing(null, Holder.pinLoop)) return
         if (serviceFillInFlight) return
         val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
         val remaining = (exo.mediaItemCount - idx - 1).coerceAtLeast(0)

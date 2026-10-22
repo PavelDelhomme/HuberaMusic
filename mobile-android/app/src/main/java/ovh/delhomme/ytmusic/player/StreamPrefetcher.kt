@@ -317,7 +317,7 @@ object StreamPrefetcher {
         if (trackIds.isEmpty() || isStreamDown()) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val base = baseApi.trimEnd('/')
-        val lead = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(3)
+        val lead = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(2)
         if (lead.isEmpty()) return
         quietPrefetch(520L)
         val app = YtMusicApp.instance
@@ -326,21 +326,17 @@ object StreamPrefetcher {
         warmCurrentBlocking(base, first, timeoutMs = 1_500L, wait = true)
         prefetchStartHeadBlocking(app, base, first, HEAD_NEXT_WIFI)
         markHeadReady(first)
-        // #1 : format wait (court) + tête FF — critique pour skip sans BUFFERING
+        // Un seul suivant, en préfixe, après la tête du titre lancé.
         lead.getOrNull(1)?.let { id ->
-            warmCurrentBlocking(base, id, timeoutMs = 900L, wait = true)
-            prefetchStartHead(base, id, HEAD_NEXT_WIFI, priorityNext = true)
+            if (!PlaybackService.Holder.isCurrentStreamLoading()) {
+                prefetchStartHead(base, id, HEAD_3S, priorityNext = true)
+            }
         }
-        lead.getOrNull(2)?.let { id ->
-            warmTrackFormatOnly(base, id)
-            prefetchStartHead(base, id, HEAD_3S)
-        }
-        warmFormatsLight(base, trackIds.drop(3).take(6), limit = 6)
     }
 
     /**
-     * Cold start / restore file : dès que l’UI a le titre courant, chauffe **en priorité**
-     * ~10–12 s de tête (format wait + CacheWriter), puis #1–2, puis formats légers.
+     * Cold start / restore file : le titre suivant reçoit d’abord une tête pour enchaîner,
+     * puis le titre courant. Un seul suivant, pas une rafale.
      * Le play utilisateur trouve alors déjà des octets en SimpleCache → moins de BUFFERING
      * / « Flux audio indisponible » (Samsung / titres Gims froids).
      */
@@ -352,14 +348,15 @@ object StreamPrefetcher {
     ) {
         if (currentId.length != 11 || isLocalOffline(currentId)) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
-        val reallyWarm = hasPlayableHead(currentId) && wasHeadReadyRecently(currentId, withinMs = 45_000L)
-        if (!force && reallyWarm) {
-            upcomingIds.filter { it.length == 11 && it != currentId && !isLocalOffline(it) }
-                .take(2)
-                .forEach { warmTrackFormatOnly(baseApi, it) }
-            return
-        }
         val base = baseApi.trimEnd('/')
+        val next = upcomingIds
+            .distinct()
+            .firstOrNull { it.length == 11 && it != currentId && !isLocalOffline(it) }
+        if (next != null && !hasPlayableHead(next, 400L * 1024L)) {
+            prefetchStartHead(base, next, HEAD_3S, priorityNext = true)
+        }
+        val reallyWarm = hasPlayableHead(currentId) && wasHeadReadyRecently(currentId, withinMs = 45_000L)
+        if (!force && reallyWarm) return
         quietPrefetch(500L)
         // Restore à froid : le courant d’abord (ne pas saturer +1, ça accélère le skip).
         cancelIdle(preserveNext = !force)
@@ -377,23 +374,6 @@ object StreamPrefetcher {
         if (hasPlayableHead(currentId, minBytes = 400L * 1024L)) {
             markHeadReady(currentId)
         }
-        // 2) +1 prioritaire (warm wait + tête) — transition sans BUFFERING
-        val next = upcomingIds
-            .distinct()
-            .filter { it.length == 11 && it != currentId && !isLocalOffline(it) }
-            .take(AHEAD_WIFI)
-        next.firstOrNull()?.let { id ->
-            PlayerCache.pinTrack(id)
-            warmCurrentBlocking(base, id, timeoutMs = 2_800L, wait = true)
-            prefetchStartHead(base, id, HEAD_NEXT_PLAYING, priorityNext = true)
-            markHeadReady(id)
-        }
-        next.drop(1).take(2).forEach { id ->
-            warmTrackFormatOnly(base, id)
-            prefetchStartHead(base, id, HEAD_NEAR_WIFI)
-        }
-        // 3) Formats lointains sans têtes lourdes
-        warmFormatsLight(base, next.drop(3) + upcomingIds.drop(AHEAD_WIFI).take(8), limit = 10)
     }
 
     private fun prefetchStartHeadBlocking(
@@ -636,13 +616,20 @@ object StreamPrefetcher {
         val ids = trackIds.filter { it.length == 11 && !isLocalOffline(it) }.distinct().take(24)
         if (ids.isEmpty() || isStreamDown()) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        if (isPlaybackActive() || PlaybackService.Holder.isCurrentStreamLoading() || isQuiet()) {
+            if (PlaybackService.Holder.isCurrentStreamLoading() || isQuiet()) return
+            val first = ids.firstOrNull() ?: return
+            prefetchUserQueuedHead(baseApi, first, asNext = true)
+            return
+        }
         warmBatch(baseApi, ids)
         ids.take(16).forEachIndexed { i, id ->
             prefetchUserQueuedHead(baseApi, id, asNext = asNext && i == 0)
         }
     }
 
-    /** Fenêtre glissante : maintient idx+1…idx+[window] à jour pendant la lecture. */
+    /** Pendant l'écoute : un seul prochain titre, une fois le courant prêt. */
+    @Suppress("UNUSED_PARAMETER")
     fun maintainRollingPrefetch(
         baseApi: String,
         queueIds: List<String>,
@@ -652,61 +639,12 @@ object StreamPrefetcher {
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         if (queueIds.isEmpty()) return
         val idx = fromIndex.coerceIn(0, queueIds.lastIndex)
-        if (isQuiet() || PlaybackService.Holder.isCurrentStreamLoading()) {
-            val current = queueIds.getOrNull(idx)
-            if (current != null && current.length == 11) warmTrackFormatOnly(baseApi, current)
-            val nxt = queueIds.drop(idx + 1).take(3).filter { it.length == 11 && !isLocalOffline(it) }
-            if (nxt.isNotEmpty()) warmBatch(baseApi, nxt)
-            prefetchQuietAheadHeads(baseApi, nxt)
+        val current = queueIds.getOrNull(idx)
+        if (!current.isNullOrBlank() && current.length == 11 && !mayPrefetchUpcoming(current)) {
+            warmTrackFormatOnly(baseApi, current)
             return
         }
-        val now = System.currentTimeMillis()
-        val nextOnly = idx == rollingAnchor && now - rollingLastAt < 4_000L
-        if (nextOnly) {
-            prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = true)
-            return
-        }
-        if (idx == rollingAnchor && now - rollingLastAt < 5_000L) return
-        rollingAnchor = idx
-        rollingLastAt = now
-        val win = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(window.coerceIn(6, 20))
-        val end = (idx + win).coerceAtMost(queueIds.lastIndex)
-        if (end <= idx) return
-        val slice = (idx + 1..end).mapNotNull { queueIds.getOrNull(it) }.filter {
-            it.length == 11 && !isLocalOffline(it)
-        }
-        if (slice.isEmpty()) return
-        val playing = isPlaybackActive()
-        val unmetered = isUnmetered()
-        val saver = ovh.delhomme.ytmusic.data.BatterySaver.isActive()
-        // Formats pour toute la fenêtre (serveur priorise via warm)
-        slice.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
-        // +1 toujours prioritaire
-        prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = true)
-        // Lecture : têtes Exo sur 10–16 suivants (10–20 %), pas seulement +1/+2.
-        slice.forEachIndexed { i, id ->
-            val dist = i + 1
-            val url = streamPrefetchUrl(baseApi, id)
-            val bytes = when {
-                saver -> HEAD_3S
-                !unmetered -> when {
-                    dist == 1 -> HEAD_NEXT_METERED
-                    dist <= 4 -> HEAD_3S
-                    else -> HEAD_PCT_FAR / 2
-                }
-                dist == 1 -> if (playing) HEAD_NEXT_PLAYING else HEAD_NEXT_WIFI
-                dist <= 4 -> HEAD_PCT_NEAR
-                dist <= 10 -> HEAD_PCT_FAR
-                else -> HEAD_3S
-            }
-            PlayerCache.prefetchHead(
-                YtMusicApp.instance,
-                url,
-                id,
-                bytes,
-                priorityNext = dist == 1,
-            )
-        }
+        prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = false)
     }
 
     /** Titre courant en BUFFERING : relance format + tête (ne pas attendre 40 s). */
@@ -742,25 +680,10 @@ object StreamPrefetcher {
             val last = recent[key]
             if (last != null && System.currentTimeMillis() - last < 3_500L) return
         }
-        queueIds.drop(fromIndex + 2).take(2)
-            .filter { it.length == 11 && !isLocalOffline(it) }
-            .forEachIndexed { i, id ->
-                PlayerCache.prefetchHead(
-                    YtMusicApp.instance,
-                    streamPrefetchUrl(baseApi, id),
-                    id,
-                    if (i == 0) HEAD_NEAR_WIFI else HEAD_3S,
-                    priorityNext = false,
-                )
-            }
+        if (!mayPrefetchUpcoming(queueIds.getOrNull(fromIndex).orEmpty())) return
         // Déjà assez d’octets → marque prêt, pas de re-download
         val saver = ovh.delhomme.ytmusic.data.BatterySaver.isActive()
-        val bytes = when {
-            saver -> HEAD_NEXT_METERED
-            !isUnmetered() -> HEAD_NEXT_METERED
-            isPlaybackActive() -> HEAD_NEAR_WIFI
-            else -> HEAD_NEXT_PLAYING
-        }
+        val bytes = HEAD_3S
         val already = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, bytes)
         // 220 Ko ≈ 1 s : trop peu pour enchaîner. On ne s’arrête que si ~¾ de la tête cible est là.
         if (already >= (bytes * 3 / 4).coerceAtLeast(700L * 1024L)) {
@@ -846,68 +769,31 @@ object StreamPrefetcher {
         queueIds: List<String>,
         fromIndex: Int,
         ahead: Int = AHEAD_WIFI,
-        force: Boolean = false,
+        @Suppress("UNUSED_PARAMETER") force: Boolean = false,
     ) {
         if (isStreamDown() || queueIds.isEmpty()) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val idx = fromIndex.coerceIn(0, queueIds.lastIndex)
         val current = queueIds[idx]
-        val loading = PlaybackService.Holder.isCurrentStreamLoading()
-        val playing = isPlaybackActive()
-        val take = if (playing) {
-            1
-        } else {
-            ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(
-                ahead.coerceIn(1, AHEAD_BUFFER),
-            )
-        }
-        val upcoming = queueIds.drop(idx + 1).take(take)
-            .filter { it.length == 11 && !isLocalOffline(it) }
-        val behindN = if (isUnmetered()) BEHIND_WIFI else BEHIND_METERED
-        val behind = if (playing || idx <= 0) {
-            emptyList()
-        } else if (idx > 0) {
-            queueIds.subList((idx - behindN).coerceAtLeast(0), idx)
-                .filter { it.length == 11 && !isLocalOffline(it) }
-                .reversed()
-        } else {
-            emptyList()
-        }
-        // Courant qui charge : serveur + têtes Exo des 3 suivants (skip 1–3 sans BUFFERING).
-        if (!force && (isQuiet() || loading)) {
+        val take = upcomingTake(current, ahead)
+        if (take <= 0) {
             if (current.length == 11) warmTrackFormatOnly(baseApi, current)
-            upcoming.take(3).let { nxt ->
-                if (nxt.isNotEmpty()) warmBatch(baseApi, nxt)
-                prefetchQuietAheadHeads(baseApi, nxt)
-            }
             return
         }
-        if (upcoming.isEmpty() && behind.isEmpty()) return
-        (upcoming + behind).chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
-        prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = true)
-        upcoming.forEachIndexed { i, id ->
-            val dist = i + 1
-            val url = streamPrefetchUrl(baseApi, id)
-            val bytes = when {
-                dist == 1 -> if (isUnmetered()) {
-                    if (isPlaybackActive()) HEAD_NEAR_WIFI else HEAD_NEXT_PLAYING
-                } else HEAD_NEXT_METERED
-                dist <= 3 -> HEAD_PCT_NEAR
-                dist <= 12 -> HEAD_3S
-                else -> HEAD_FAR_WIFI
-            }
+        val upcoming = queueIds.drop(idx + 1)
+            .filter { it.length == 11 && !isLocalOffline(it) }
+            .take(take)
+        if (upcoming.isEmpty()) return
+        warmBatch(baseApi, upcoming)
+        prefetchNextDuringPlayback(baseApi, queueIds, idx, ignoreQuiet = false)
+        upcoming.forEach { id ->
             PlayerCache.prefetchHead(
                 YtMusicApp.instance,
-                url,
+                streamPrefetchUrl(baseApi, id),
                 id,
-                bytes,
-                priorityNext = dist == 1,
+                HEAD_3S,
+                priorityNext = true,
             )
-        }
-        behind.forEachIndexed { i, id ->
-            val url = streamPrefetchUrl(baseApi, id)
-            val bytes = if (i == 0) HEAD_NEAR_WIFI else HEAD_3S
-            PlayerCache.prefetchHead(YtMusicApp.instance, url, id, bytes)
         }
     }
 
@@ -921,8 +807,24 @@ object StreamPrefetcher {
         if (isStreamDown() || queueIds.isEmpty()) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val c = centerIndex.coerceIn(0, queueIds.lastIndex)
+        val current = queueIds.getOrNull(c).orEmpty()
+        if (isPlaybackActive() || PlaybackService.Holder.isCurrentStreamLoading() || isQuiet()) {
+            if (current.length == 11) warmTrackFormatOnly(baseApi, current)
+            if (mayPrefetchUpcoming(current)) {
+                val next = queueIds.getOrNull(c + 1)
+                if (next != null && next.length == 11 && !isLocalOffline(next)) {
+                    PlayerCache.prefetchHead(
+                        YtMusicApp.instance,
+                        streamPrefetchUrl(baseApi, next),
+                        next,
+                        HEAD_3S,
+                        priorityNext = true,
+                    )
+                }
+            }
+            return
+        }
         val r = radius.coerceIn(0, 4)
-        val playing = isPlaybackActive()
         val targets = ((c - r)..(c + r)).filter { it in queueIds.indices }
         val ids = targets.mapNotNull { queueIds.getOrNull(it) }.filter { it.length == 11 && !isLocalOffline(it) }
         if (ids.isEmpty()) return
@@ -944,7 +846,7 @@ object StreamPrefetcher {
 
     /** Liste arbitraire (similaires, biblio visible) — chauffe les têtes sans attendre quiet. */
     fun prefetchTrackIds(baseApi: String, trackIds: List<String>, limit: Int = 16) {
-        if (isQuiet() || PlaybackService.Holder.isCurrentStreamLoading()) return
+        if (isQuiet() || PlaybackService.Holder.isCurrentStreamLoading() || isPlaybackActive()) return
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(limit)
         if (ids.isEmpty()) return
@@ -959,6 +861,28 @@ object StreamPrefetcher {
             PlayerCache.prefetchHead(YtMusicApp.instance, url, id, bytes)
         }
     }
+
+    private fun currentReadyForUpcoming(currentId: String): Boolean {
+        if (currentId.length != 11) return false
+        if (isLocalOffline(currentId)) return true
+        return hasPlayableHead(currentId)
+    }
+
+    private fun mayPrefetchUpcoming(currentId: String): Boolean =
+        StreamLaunchPolicy.mayStartUpcoming(
+            currentReady = currentReadyForUpcoming(currentId),
+            currentLoading = PlaybackService.Holder.isCurrentStreamLoading(),
+            quiet = isQuiet(),
+        )
+
+    private fun upcomingTake(currentId: String, requested: Int): Int =
+        StreamLaunchPolicy.upcomingCount(
+            requestedAhead = requested,
+            currentReady = currentReadyForUpcoming(currentId),
+            currentLoading = PlaybackService.Holder.isCurrentStreamLoading(),
+            playbackActive = isPlaybackActive(),
+            quiet = isQuiet(),
+        )
 
     private fun isPlaybackActive(): Boolean =
         PlaybackService.Holder.isPlaybackActiveSafe()
@@ -989,6 +913,7 @@ object StreamPrefetcher {
     fun warmHeads3s(baseApi: String, trackIds: List<String>, limit: Int = 12, ignoreQuiet: Boolean = false) {
         if (!ignoreQuiet && isQuiet()) return
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        if (isPlaybackActive() || PlaybackService.Holder.isCurrentStreamLoading()) return
         val capped = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(limit.coerceIn(1, 16))
         val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(capped)
         if (ids.isEmpty()) return
@@ -1006,6 +931,7 @@ object StreamPrefetcher {
     fun prefetchLibraryHeads(baseApi: String, trackIds: List<String>, limit: Int = 8) {
         if (isQuiet()) return
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
+        if (PlaybackService.Holder.isPlaybackActiveSafe() || PlaybackService.Holder.isCurrentStreamLoading()) return
         val capped = ovh.delhomme.ytmusic.data.BatterySaver.streamPrefetchAhead(limit.coerceIn(1, 14))
         val ids = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(capped)
         if (ids.isEmpty()) return
@@ -1043,7 +969,7 @@ object StreamPrefetcher {
         queueIds: List<String>,
         index: Int,
         ahead: Int = AHEAD_WIFI,
-        behind: Int = BEHIND_WIFI,
+        @Suppress("UNUSED_PARAMETER") behind: Int = BEHIND_WIFI,
     ) {
         if (queueIds.isEmpty() || isStreamDown()) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) {
@@ -1051,76 +977,22 @@ object StreamPrefetcher {
             return
         }
         val idx = index.coerceIn(0, queueIds.lastIndex)
-        // 1er play : format courant + 3 suivants (têtes Exo, pas seulement POST warm).
-        if (isQuiet()) {
-            val current = queueIds.getOrNull(idx) ?: return
+        val current = queueIds.getOrNull(idx) ?: return
+        val take = upcomingTake(current, ahead)
+        if (take <= 0) {
             if (current.length == 11) warmBatch(baseApi, listOf(current))
-            val prev = queueIds.getOrNull(idx - 1)
-            if (prev != null && prev.length == 11 && !isLocalOffline(prev)) {
-                warmBatch(baseApi, listOf(prev))
-            }
-            val upcoming = queueIds.drop(idx + 1).take(AHEAD_BUFFER)
-                .filter { it.length == 11 && !isLocalOffline(it) }
-            upcoming.chunked(MAX_WARM).forEach { block -> warmBatch(baseApi, block) }
-            prefetchQuietAheadHeads(baseApi, upcoming.take(3))
             return
         }
-        val unmetered = isUnmetered()
-        val aheadN = if (unmetered) ahead.coerceAtMost(AHEAD_BUFFER) else ahead.coerceAtMost(AHEAD_METERED)
-        // Toujours ≥1 derrière : sinon « précédent » après un skip repart à froid.
-        val behindN = if (unmetered) behind.coerceAtLeast(BEHIND_WIFI) else behind.coerceAtLeast(BEHIND_METERED)
-
-        // Libère le cache Exo des titres déjà écoutés (garde [behindN] derrière)
-        evictPlayed(queueIds, idx, keepBehind = behindN)
-
-        val nextIds = buildList {
-            for (i in 1..aheadN) {
-                val t = queueIds.getOrNull(idx + i) ?: break
-                if (t.length == 11) add(t)
-            }
-        }
-        val behindIds = buildList {
-            for (i in 1..behindN) {
-                val t = queueIds.getOrNull(idx - i) ?: break
-                if (t.length == 11) add(t)
-            }
-        }
-        val current = queueIds[idx]
-        (listOf(current) + nextIds + behindIds).chunked(MAX_WARM).forEach { block ->
-            warmBatch(baseApi, block)
-        }
-        if (isPlaybackActive()) {
-            prefetchUpcomingHeadsTiered(baseApi, queueIds, idx, count = aheadN)
-            // Tête du précédent aussi (même pendant lecture) — retour instantané.
-            behindIds.firstOrNull()?.let { exoPrefetch(baseApi, it, distance = 1) }
-        } else {
-            nextIds.forEachIndexed { i, id ->
-                exoPrefetch(baseApi, id, distance = i + 1)
-            }
-            behindIds.forEachIndexed { i, id ->
-                exoPrefetch(baseApi, id, distance = i + 1)
-            }
-        }
-    }
-
-    /** Têtes Exo des 3 suivants même pendant quiet (skip sans trou). */
-    private fun prefetchQuietAheadHeads(baseApi: String, upcoming: List<String>) {
-        upcoming.take(3).forEachIndexed { i, id ->
-            if (id.length != 11 || isLocalOffline(id)) return@forEachIndexed
-            PlayerCache.pinTrack(id)
-            val bytes = when (i) {
-                0 -> if (isUnmetered()) HEAD_NEXT_WIFI else HEAD_NEXT_METERED
-                1 -> HEAD_NEAR_WIFI
-                else -> HEAD_3S
-            }
-            PlayerCache.prefetchHead(
-                YtMusicApp.instance,
-                streamPrefetchUrl(baseApi, id),
-                id,
-                bytes,
-                priorityNext = i == 0,
-            )
-        }
+        val nextId = queueIds.drop(idx + 1).firstOrNull { it.length == 11 && !isLocalOffline(it) }
+            ?: return
+        warmBatch(baseApi, listOf(nextId))
+        PlayerCache.prefetchHead(
+            YtMusicApp.instance,
+            streamPrefetchUrl(baseApi, nextId),
+            nextId,
+            HEAD_3S,
+            priorityNext = true,
+        )
     }
 
     /** Supprime du SimpleCache les titres avant l’index (sauf keepBehind). */

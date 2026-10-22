@@ -273,9 +273,16 @@ class PlayerController(
                 StreamPrefetcher.markStreamOk()
                 val upcoming = PlaybackService.Holder.queue
                     .drop(PlaybackService.Holder.index + 1)
-                    .take(3)
+                    .take(1)
                     .map { it.id }
-                StreamPrefetcher.prepareRestoredCurrent(base, curId, upcoming)
+                // Hors du fil UI : warm bloquant (format + tête) sinon Suivant / reprise figent l'écran.
+                Thread {
+                    StreamPrefetcher.prepareRestoredCurrent(base, curId, upcoming)
+                }.apply {
+                    name = "ytm-restore-current"
+                    isDaemon = true
+                    start()
+                }
             }
         }
     }
@@ -348,25 +355,15 @@ class PlayerController(
             scope.launch {
                 delay(if (offlineReady || headReady) 40L else 80L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
-                playable.drop(idx + 1).take(3).forEach { t ->
-                    StreamPrefetcher.warmTrackFormatOnly(base, t.id)
-                    StreamPrefetcher.requestServerDiskCache(base, t.id)
+                withContext(Dispatchers.IO) {
+                    StreamPrefetcher.prefetchByProximity(
+                        base,
+                        playable.map { it.id },
+                        idx,
+                        ahead = StreamLaunchPolicy.WARM_PREFIX_AHEAD,
+                        force = false,
+                    )
                 }
-                warmAround(playable, idx)
-                StreamPrefetcher.prefetchByProximity(
-                    base,
-                    playable.map { it.id },
-                    idx,
-                    ahead = 4,
-                    force = true,
-                )
-                StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                    base,
-                    playable.map { it.id },
-                    idx,
-                    count = 3,
-                    ignoreQuiet = true,
-                )
             }
         }
         val c = controller ?: PlaybackService.Holder.player
@@ -428,7 +425,7 @@ class PlayerController(
 
     /** Ajoute des suggestions après la file utilisateur (zone auto) — toujours, pour affichage. */
     fun appendAutoTracks(tracks: List<TrackDto>, forSeedId: String? = null) {
-        if (PlaybackService.Holder.pinLoop || sourceKind == "pins") return
+        if (QuickAccessLoopPolicy.blocksFollowing(sourceKind, PlaybackService.Holder.pinLoop)) return
         if (forSeedId != null && _state.value.track?.id != forSeedId) return
         val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
@@ -463,7 +460,7 @@ class PlayerController(
      * après la fin de la file utilisateur.
      */
     fun ensureAutoplayAhead() {
-        if (PlaybackService.Holder.pinLoop || sourceKind == "pins") return
+        if (QuickAccessLoopPolicy.blocksFollowing(sourceKind, PlaybackService.Holder.pinLoop)) return
         if (fillJob?.isActive == true) return
         val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
@@ -1971,18 +1968,18 @@ class PlayerController(
                 StreamPrefetcher.prepareRestoredCurrent(
                     base,
                     currentId,
-                    window.drop(idx + 1).map { it.id },
+                    window.drop(idx + 1).take(1).map { it.id },
                     force = false,
                 )
-                window.drop(idx + 1).take(3).forEachIndexed { i, t ->
-                    StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
-                }
             }
         } else if (!currentId.isNullOrBlank() && headReady) {
             scope.launch(Dispatchers.IO) {
-                window.drop(idx + 1).take(3).forEachIndexed { i, t ->
-                    StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
-                }
+                StreamPrefetcher.prepareRestoredCurrent(
+                    base,
+                    currentId,
+                    window.drop(idx + 1).take(1).map { it.id },
+                    force = false,
+                )
             }
         }
         if (autoplay) {
@@ -1990,22 +1987,14 @@ class PlayerController(
             scope.launch {
                 delay(if (headReady && !coldResume) 80L else 120L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
-                warmAround(window, idx)
-                StreamPrefetcher.prefetchByProximity(
-                    base,
-                    window.map { it.id },
-                    idx,
-                    ahead = 4,
-                    force = true,
-                )
-                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 4)
-                if (!ovh.delhomme.ytmusic.data.BatterySaver.isActive()) {
-                    runCatching {
-                        YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
-                            window.drop(idx + 1),
-                            limit = 3,
-                        )
-                    }
+                withContext(Dispatchers.IO) {
+                    StreamPrefetcher.prefetchByProximity(
+                        base,
+                        window.map { it.id },
+                        idx,
+                        ahead = StreamLaunchPolicy.WARM_PREFIX_AHEAD,
+                        force = false,
+                    )
                 }
             }
         }

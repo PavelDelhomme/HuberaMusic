@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.390",
+      "date": "2026-10-22",
+      "time": "23:58",
+      "at": "2026-10-22T23:58:00+02:00",
+      "title": "Le titre suivant est déjà prêt",
+      "notes": [
+        "En radio, en mix ou en aléatoire, seul le titre suivant prépare son début, pour enchaîner sans trou."
+      ]
+    },
+    {
       "version": "1.3.389",
       "date": "2026-10-22",
       "time": "23:55",
