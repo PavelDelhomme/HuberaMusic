@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.389",
+      "date": "2026-10-22",
+      "time": "23:55",
+      "at": "2026-10-22T23:55:00+02:00",
+      "title": "La bio suit la langue du téléphone",
+      "notes": [
+        "Sur une page d’artiste, le texte déjà reçu s’affiche tout de suite. S’il existe une version dans la langue du téléphone, elle la remplace ensuite."
+      ]
+    },
+    {
       "version": "1.3.388",
       "date": "2026-10-22",
       "time": "23:50",

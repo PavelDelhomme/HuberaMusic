@@ -161,6 +161,18 @@ fun ArtistDetailScreen(
             similar = r.similar.orEmpty().map { it.copy(type = "artist") }
             playlists = r.playlists.orEmpty().map { it.copy(type = it.type ?: "playlist") }
             loading = false
+            val bioNow = description
+            val artistName = name
+            if (!bioNow.isNullOrBlank() && artistName.isNotBlank()) {
+                launch {
+                    val translated = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        ArtistBioLocale.localized(artistName, bioNow)
+                    }
+                    if (name == artistName && !translated.isNullOrBlank()) {
+                        description = translated
+                    }
+                }
+            }
 
             val libGenBefore = libGen
             val followGenBefore = followGen
