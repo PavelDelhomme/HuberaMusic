@@ -106,8 +106,10 @@ fun ArtistDetailScreen(
     var libAlbumIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var inLib by remember { mutableStateOf(false) }
     var following by remember { mutableStateOf(false) }
+    /** Incrémenté à chaque tap : un chargement plus lent ne réécrit pas l’état choisi. */
+    var libGen by remember { mutableStateOf(0) }
+    var followGen by remember { mutableStateOf(0) }
     var radioBusy by remember { mutableStateOf(false) }
-    var libBusy by remember { mutableStateOf(false) }
     var dlBusy by remember { mutableStateOf(false) }
     var showFullBio by remember { mutableStateOf(false) }
     val listState = rememberSaveable(artistId, saver = LazyListState.Saver) {
@@ -160,8 +162,12 @@ fun ArtistDetailScreen(
             playlists = r.playlists.orEmpty().map { it.copy(type = it.type ?: "playlist") }
             loading = false
 
+            val libGenBefore = libGen
+            val followGenBefore = followGen
             val lib = container.api.library()
-            inLib = lib.artists.any { it.id == artistId }
+            if (libGen == libGenBefore) {
+                inLib = lib.artists.any { it.id == artistId }
+            }
             val nameLc = name.lowercase()
             fun matches(t: TrackDto): Boolean =
                 t.artists.orEmpty().any { a ->
@@ -171,11 +177,12 @@ fun ArtistDetailScreen(
             libAlbums = lib.albums.filter { matches(it) || it.id == artistId }.take(12)
             libAlbumIds = lib.albums.map { it.id }.toHashSet()
 
-            following = runCatching {
+            val serverFollowing = runCatching {
                 container.api.prefs().follows.any {
                     it.artistId() == artistId
                 }
-            }.getOrDefault(false)
+            }.getOrDefault(following)
+            if (followGen == followGenBefore) following = serverFollowing
         }.onFailure {
             error = it.message ?: "Impossible de charger l'artiste"
         }
@@ -377,14 +384,17 @@ fun ArtistDetailScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = {
-                                        if (libBusy) return@OutlinedButton
-                                        libBusy = true
+                                        val previous = inLib
+                                        val next = !previous
+                                        inLib = next
+                                        val gen = ++libGen
                                         scope.launch {
                                             runCatching {
-                                                if (inLib) {
+                                                if (!next) {
                                                     container.api.removeArtist(artistId)
-                                                    inLib = false
-                                                    Toast.makeText(context, "Retiré de la bibliothèque", Toast.LENGTH_SHORT).show()
+                                                    if (libGen == gen) {
+                                                        Toast.makeText(context, "Retiré de la bibliothèque", Toast.LENGTH_SHORT).show()
+                                                    }
                                                 } else {
                                                     val catalog = runCatching {
                                                         container.api.artistSongs(artistId, limit = 800).tracks
@@ -400,7 +410,7 @@ fun ArtistDetailScreen(
                                                             thumbnails = cover?.thumbnails,
                                                         ),
                                                     )
-                                                    inLib = true
+                                                    if (libGen != gen) return@runCatching
                                                     val added = (saved["tracksAdded"] as? Number)?.toInt()
                                                         ?: catalog.size
                                                     Toast.makeText(
@@ -422,12 +432,13 @@ fun ArtistDetailScreen(
                                                     }
                                                 }
                                             }.onFailure {
-                                                Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                                                if (libGen == gen) {
+                                                    inLib = previous
+                                                    Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                                                }
                                             }
-                                            libBusy = false
                                         }
                                     },
-                                    enabled = !libBusy,
                                     modifier = Modifier.weight(1f),
                                 ) {
                                     Icon(
@@ -445,20 +456,25 @@ fun ArtistDetailScreen(
                                 }
                                 OutlinedButton(
                                     onClick = {
+                                        val previous = following
+                                        val next = !previous
+                                        following = next
+                                        val gen = ++followGen
                                         scope.launch {
                                             runCatching {
-                                                if (following) {
-                                                    container.api.unfollowArtist(artistId)
-                                                    following = false
-                                                } else {
+                                                if (next) {
                                                     container.api.followArtist(
                                                         artistId,
                                                         FollowArtistBody(artistId, name),
                                                     )
-                                                    following = true
+                                                } else {
+                                                    container.api.unfollowArtist(artistId)
                                                 }
                                             }.onFailure {
-                                                Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                                                if (followGen == gen) {
+                                                    following = previous
+                                                    Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                                                }
                                             }
                                         }
                                     },

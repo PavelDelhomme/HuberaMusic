@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.388",
+      "date": "2026-10-22",
+      "time": "23:50",
+      "at": "2026-10-22T23:50:00+02:00",
+      "title": "Suivre change tout de suite",
+      "notes": [
+        "Sur une page d’artiste, Suivre et Biblio changent d’état tout de suite. L’enregistrement se fait ensuite. En cas d’échec, le bouton revient à l’état précédent."
+      ]
+    },
+    {
       "version": "1.3.387",
       "date": "2026-10-22",
       "time": "23:45",
