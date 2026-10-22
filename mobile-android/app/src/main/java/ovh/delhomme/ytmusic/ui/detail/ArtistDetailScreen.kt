@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,9 +63,11 @@ import ovh.delhomme.ytmusic.data.FollowArtistBody
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.buildRadioQueue
 import ovh.delhomme.ytmusic.player.PlayerController
+import ovh.delhomme.ytmusic.data.resolvePlayableTracks
 import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.PinnedBadge
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.ui.components.VignetteChrome
 import ovh.delhomme.ytmusic.ui.util.isLandscape
 
 /** Page artiste style YouTube Music : tops, albums, singles, biblio, similaires. */
@@ -567,11 +570,13 @@ fun ArtistDetailScreen(
                             item {
                                 HorizontalShelf(
                                     items = libAlbums,
+                                    container = container,
                                     pinIds = pinIds,
                                     onTogglePin = { t ->
                                         scope.launch { container.quickAccess.toggle(t, container.api) }
                                     },
                                     onOpen = onOpenDetail,
+                                    onMore = onMore,
                                     onPlaySong = { onPlay(listOf(it), 0) },
                                 )
                             }
@@ -594,12 +599,14 @@ fun ArtistDetailScreen(
                         item {
                                 HorizontalShelf(
                                     items = albums,
+                                    container = container,
                                     pinIds = pinIds,
                                     libraryIds = libAlbumIds,
                                     onTogglePin = { t ->
                                         scope.launch { container.quickAccess.toggle(t, container.api) }
                                     },
                                     onOpen = onOpenDetail,
+                                    onMore = onMore,
                                     onPlaySong = { onPlay(listOf(it), 0) },
                                 )
                         }
@@ -609,11 +616,13 @@ fun ArtistDetailScreen(
                         item {
                             HorizontalShelf(
                                 items = singles,
+                                container = container,
                                 pinIds = pinIds,
                                 onTogglePin = { t ->
                                     scope.launch { container.quickAccess.toggle(t, container.api) }
                                 },
                                 onOpen = onOpenDetail,
+                                onMore = onMore,
                                 onPlaySong = { onPlay(listOf(it), 0) },
                             )
                         }
@@ -623,11 +632,13 @@ fun ArtistDetailScreen(
                         item {
                             HorizontalShelf(
                                 items = featured,
+                                container = container,
                                 pinIds = pinIds,
                                 onTogglePin = { t ->
                                     scope.launch { container.quickAccess.toggle(t, container.api) }
                                 },
                                 onOpen = onOpenDetail,
+                                onMore = onMore,
                                 onPlaySong = { onPlay(listOf(it), 0) },
                             )
                         }
@@ -654,11 +665,13 @@ fun ArtistDetailScreen(
                         item {
                             HorizontalShelf(
                                 items = playlists,
+                                container = container,
                                 pinIds = pinIds,
                                 onTogglePin = { t ->
                                     scope.launch { container.quickAccess.toggle(t, container.api) }
                                 },
                                 onOpen = onOpenDetail,
+                                onMore = onMore,
                                 onPlaySong = { onOpenDetail(it) },
                             )
                         }
@@ -668,12 +681,14 @@ fun ArtistDetailScreen(
                         item {
                             HorizontalShelf(
                                 items = similar,
+                                container = container,
                                 circle = true,
                                 pinIds = pinIds,
                                 onTogglePin = { t ->
                                     scope.launch { container.quickAccess.toggle(t, container.api) }
                                 },
                                 onOpen = onOpenDetail,
+                                onMore = onMore,
                                 onPlaySong = { onOpenDetail(it) },
                             )
                         }
@@ -697,8 +712,10 @@ private fun SectionTitle(title: String) {
 @Composable
 private fun HorizontalShelf(
     items: List<TrackDto>,
+    container: AppContainer,
     onOpen: (TrackDto) -> Unit,
     onPlaySong: (TrackDto) -> Unit,
+    onMore: (TrackDto) -> Unit,
     circle: Boolean = false,
     pinIds: Set<String> = emptySet(),
     libraryIds: Set<String> = emptySet(),
@@ -711,6 +728,7 @@ private fun HorizontalShelf(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items.take(16).forEach { item ->
+          key(item.id) {
             Column(
                 Modifier
                     .width(120.dp)
@@ -723,6 +741,9 @@ private fun HorizontalShelf(
                     }
                     .padding(4.dp),
             ) {
+                val scope = rememberCoroutineScope()
+                val context = LocalContext.current
+                var saved by remember(item.id) { mutableStateOf(item.id in libraryIds) }
                 Box {
                     MediaCover(item, 112.dp, circle = circle || item.isArtist())
                     if (item.id in pinIds) {
@@ -734,25 +755,52 @@ private fun HorizontalShelf(
                             onClick = onTogglePin?.let { { it(item) } },
                         )
                     }
-                    if (item.id in libraryIds) {
-                        Icon(
-                            Icons.Default.LibraryAddCheck,
-                            contentDescription = "Dans la bibliothèque",
-                            tint = Color(0xFFFF0033),
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(4.dp)
-                                .size(22.dp),
-                        )
-                    } else if (item.isAlbum() || item.isPlaylist()) {
-                        Icon(
-                            Icons.Outlined.LibraryAdd,
-                            contentDescription = "Pas dans la bibliothèque",
-                            tint = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(4.dp)
-                                .size(20.dp),
+                    if (!item.isArtist() && (item.isPlayable() || item.isPlaylist() || item.isMix() || item.isAlbum())) {
+                        VignetteChrome(
+                            saved = saved,
+                            onPlay = {
+                                if (item.isPlayable()) onPlaySong(item)
+                                else {
+                                    scope.launch {
+                                        val tracks = runCatching {
+                                            container.ensureFreshToken()
+                                            resolvePlayableTracks(container.api, item)
+                                        }.getOrDefault(emptyList())
+                                        if (tracks.isNotEmpty()) onPlaySong(tracks.first())
+                                        else onOpen(item)
+                                    }
+                                }
+                            },
+                            onAdd = {
+                                scope.launch {
+                                    runCatching {
+                                        container.ensureFreshToken()
+                                        val next = when {
+                                            item.isAlbum() -> {
+                                                if (saved) {
+                                                    container.api.removeAlbum(item.id)
+                                                    false
+                                                } else {
+                                                    container.api.saveAlbum(item)
+                                                    true
+                                                }
+                                            }
+                                            item.isPlaylist() -> {
+                                                container.api.likePlaylist(item.copy(type = "playlist"))
+                                                true
+                                            }
+                                            else -> container.api.toggleLibrarySong(item).saved
+                                        }
+                                        saved = next
+                                        Toast.makeText(
+                                            context,
+                                            if (next) "Dans la bibliothèque" else "Retiré de la bibliothèque",
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+                            },
+                            onMore = { onMore(item) },
                         )
                     }
                 }
@@ -774,6 +822,7 @@ private fun HorizontalShelf(
                     )
                 }
             }
+          }
         }
     }
 }

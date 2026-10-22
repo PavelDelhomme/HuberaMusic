@@ -34,12 +34,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.LibraryAddCheck
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Reorder
 import androidx.compose.material.icons.filled.Shuffle
@@ -95,6 +91,8 @@ import ovh.delhomme.ytmusic.ui.components.dragReorderLongPress
 import ovh.delhomme.ytmusic.ui.components.rememberDragReorderState
 import ovh.delhomme.ytmusic.ui.components.PinnedBadge
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.ui.components.VignetteChrome
+import ovh.delhomme.ytmusic.data.resolvePlayableTracks
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -113,6 +111,7 @@ fun HomeScreen(
     val state by vm.state.collectAsState()
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
     val pinIds = remember(pins) { pins.map { it.id }.toHashSet() }
+    var shelfSaved by remember { mutableStateOf(emptySet<String>()) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -315,28 +314,27 @@ fun HomeScreen(
                                             titleFallback = radio.title,
                                             mixId = radio.id,
                                         )
-                                        // Play toujours visible (mobile)
-                                        Box(
-                                            Modifier
-                                                .align(Alignment.BottomEnd)
-                                                .padding(6.dp)
-                                                .size(36.dp)
-                                                .clip(RoundedCornerShape(18.dp))
-                                                .background(MaterialTheme.colorScheme.error)
-                                                .clickable(enabled = !loading) {
-                                                    vm.playRadio(radio.id) { tracks, title ->
-                                                        onPlayNamed(tracks, 0, title)
-                                                    }
-                                                },
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                Icons.Default.PlayArrow,
-                                                contentDescription = "Lire",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(22.dp),
-                                            )
-                                        }
+                                        VignetteChrome(
+                                            saved = saved,
+                                            playEnabled = !loading,
+                                            onPlay = {
+                                                vm.playRadio(radio.id) { tracks, title ->
+                                                    onPlayNamed(tracks, 0, title)
+                                                }
+                                            },
+                                            onAdd = {
+                                                scope.launch {
+                                                    vm.toggleMixSaved(
+                                                        radio.id,
+                                                        radio.title,
+                                                        preview,
+                                                    )
+                                                }
+                                            },
+                                            onMore = {
+                                                onMoreMix?.invoke(radio.id, radio.title, preview)
+                                            },
+                                        )
                                         if (radio.id in pinIds) {
                                             PinnedBadge(
                                                 modifier = Modifier
@@ -356,58 +354,6 @@ fun HomeScreen(
                                                         )
                                                     }
                                                 },
-                                            )
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .padding(6.dp)
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(20.dp))
-                                                .background(Color.Black.copy(alpha = 0.72f))
-                                                .clickable {
-                                                    onMoreMix?.invoke(radio.id, radio.title, preview)
-                                                },
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                Icons.Default.MoreVert,
-                                                contentDescription = "Options",
-                                                tint = Color.White,
-                                                modifier = Modifier.size(22.dp),
-                                            )
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .align(Alignment.BottomStart)
-                                                .padding(6.dp)
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(20.dp))
-                                                .background(Color.Black.copy(alpha = 0.72f))
-                                                .clickable {
-                                                    scope.launch {
-                                                        vm.toggleMixSaved(
-                                                            radio.id,
-                                                            radio.title,
-                                                            preview,
-                                                        )
-                                                    }
-                                                },
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                if (saved) Icons.Default.LibraryAddCheck else Icons.Default.Add,
-                                                contentDescription = if (saved) {
-                                                    "Retirer le mix de la bibliothèque"
-                                                } else {
-                                                    "Enregistrer le mix"
-                                                },
-                                                tint = if (saved) {
-                                                    MaterialTheme.colorScheme.error
-                                                } else {
-                                                    Color.White
-                                                },
-                                                modifier = Modifier.size(22.dp),
                                             )
                                         }
                                         if (loading) {
@@ -491,7 +437,10 @@ fun HomeScreen(
                         return@items
                     }
 
-                    if (mostlyCards || items.size > 5) {
+                    val vignetteShelf = items.any {
+                        it.isPlayable() || it.isPlaylist() || it.isMix() || it.isAlbum()
+                    }
+                    if (mostlyCards || items.size > 5 || vignetteShelf) {
                         LazyRow(
                             contentPadding = PaddingValues(horizontal = 12.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -517,6 +466,84 @@ fun HomeScreen(
                                             tile,
                                             circle = track.isArtist(),
                                         )
+                                        if (track.isPlayable() || track.isPlaylist() || track.isMix() || track.isAlbum()) {
+                                            val saved = if (track.isMix()) {
+                                                track.id in state.savedMixIds
+                                            } else {
+                                                track.id in shelfSaved
+                                            }
+                                            VignetteChrome(
+                                                saved = saved,
+                                                onPlay = {
+                                                    if (track.isMix()) {
+                                                        vm.playRadio(track.id) { tracks, title ->
+                                                            onPlayNamed(tracks, 0, title.ifBlank { track.title })
+                                                        }
+                                                    } else if (track.isPlayable()) {
+                                                        playItem(track, items, shelf.title)
+                                                    } else {
+                                                        scope.launch {
+                                                            val tracks = runCatching {
+                                                                container.ensureFreshToken()
+                                                                resolvePlayableTracks(container.api, track)
+                                                            }.getOrDefault(emptyList())
+                                                            if (tracks.isNotEmpty()) {
+                                                                onPlayNamed(tracks, 0, track.title)
+                                                            } else {
+                                                                onOpenDetail(track)
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                onAdd = {
+                                                    if (track.isMix()) {
+                                                        scope.launch {
+                                                            vm.toggleMixSaved(
+                                                                track.id,
+                                                                track.title,
+                                                                listOf(track),
+                                                            )
+                                                        }
+                                                    } else {
+                                                        scope.launch {
+                                                            val now = track.id in shelfSaved
+                                                            runCatching {
+                                                                container.ensureFreshToken()
+                                                                val next = when {
+                                                                    track.isAlbum() -> {
+                                                                        if (now) {
+                                                                            container.api.removeAlbum(track.id)
+                                                                            false
+                                                                        } else {
+                                                                            container.api.saveAlbum(track)
+                                                                            true
+                                                                        }
+                                                                    }
+                                                                    track.isPlaylist() -> {
+                                                                        container.api.likePlaylist(
+                                                                            track.copy(type = "playlist"),
+                                                                        )
+                                                                        true
+                                                                    }
+                                                                    else -> container.api.toggleLibrarySong(track).saved
+                                                                }
+                                                                shelfSaved = if (next) {
+                                                                    shelfSaved + track.id
+                                                                } else {
+                                                                    shelfSaved - track.id
+                                                                }
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    if (next) "Dans la bibliothèque" else "Retiré de la bibliothèque",
+                                                                    Toast.LENGTH_SHORT,
+                                                                ).show()
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                onMore = { onMore(track) },
+                                            )
+                                        }
                                         if (isPinned) {
                                             PinnedBadge(
                                                 modifier = Modifier

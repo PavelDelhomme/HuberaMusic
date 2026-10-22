@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.381",
+      "date": "2026-10-22",
+      "time": "22:40",
+      "at": "2026-10-22T22:40:00+02:00",
+      "title": "Boutons des vignettes",
+      "notes": [
+        "Sur une vignette de titre, de mix ou de playlist : lire en bas à droite, ajouter à la bibliothèque en bas à gauche, trois points en haut à droite."
+      ]
+    },
+    {
       "version": "1.3.380",
       "date": "2026-10-22",
       "time": "20:45",
