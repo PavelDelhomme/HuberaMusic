@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.386",
+      "date": "2026-10-22",
+      "time": "23:35",
+      "at": "2026-10-22T23:35:00+02:00",
+      "title": "La recherche ne montre plus Réessayer pendant la frappe",
+      "notes": [
+        "Pendant qu’on tape, le champ reste. Réessayer n’apparaît qu’une fois la recherche terminée, et seulement si elle a vraiment échoué."
+      ]
+    },
+    {
       "version": "1.3.385",
       "date": "2026-10-22",
       "time": "23:25",

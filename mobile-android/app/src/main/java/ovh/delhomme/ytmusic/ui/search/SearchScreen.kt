@@ -236,9 +236,12 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         job?.cancel()
         val q = _state.value.query
         if (q.trim().length < 2) {
-            _state.value = _state.value.copy(sections = emptyList(), loading = false)
+            _state.value = _state.value.copy(sections = emptyList(), loading = false, error = null)
             return
         }
+        // Tout de suite : la frappe ne doit pas tomber sur l’écran « Réessayer »
+        // le temps du délai. L’erreur n’est posée qu’à la fin, si ça a vraiment échoué.
+        _state.value = _state.value.copy(loading = true, error = null)
         val filter = _state.value.filter
         job = viewModelScope.launch {
             delay(380)
@@ -320,7 +323,15 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (_state.value.query.trim() != currentQ) return@launch
+                if (_state.value.query.trim() != currentQ || _state.value.filter != currentFilter) return@launch
+                val rawEarly = e.message.orEmpty()
+                if (
+                    rawEarly.contains("canceled", ignoreCase = true) ||
+                    rawEarly.contains("cancelled", ignoreCase = true) ||
+                    rawEarly.contains("Job was", ignoreCase = true)
+                ) {
+                    return@launch
+                }
                 // Hors-ligne / API KO : on expose quand même les DL locaux
                 if (offlineHits.isNotEmpty()) {
                     _state.value = _state.value.copy(
@@ -538,7 +549,7 @@ fun SearchScreen(
                     SearchLoadingSkeleton()
                 }
             }
-            state.error != null -> {
+            !state.loading && state.error != null && state.query.trim().length >= 2 -> {
                 Column(
                     Modifier
                         .fillMaxSize()
@@ -620,15 +631,11 @@ fun SearchScreen(
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                     )
                     Text(
-                        "Essaie un autre filtre, orthographe, ou réessaie.",
+                        "Essaie un autre filtre ou une autre orthographe.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(horizontal = 24.dp),
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Button(onClick = vm::retrySearch) {
-                        Text("Réessayer")
-                    }
                 }
             }
             else -> {
