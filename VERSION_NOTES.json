@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.384",
+      "date": "2026-10-22",
+      "time": "23:15",
+      "at": "2026-10-22T23:15:00+02:00",
+      "title": "Tout voir sous la barre d’état",
+      "notes": [
+        "Tout voir ouvre l’accès rapide dans la zone sûre. Le titre et le retour restent visibles sous la barre d’état."
+      ]
+    },
+    {
       "version": "1.3.383",
       "date": "2026-10-22",
       "time": "23:05",
