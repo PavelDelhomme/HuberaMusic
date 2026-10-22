@@ -833,6 +833,11 @@ private fun QuickAccessHomeCard(
                     container.quickAccess.reorder(ids, container.api)
                 }
             },
+            onRemove = { track ->
+                scope.launch {
+                    container.quickAccess.toggle(track, container.api)
+                }
+            },
         )
     }
 }
@@ -843,6 +848,7 @@ private fun QuickAccessReorderSheet(
     pins: List<TrackDto>,
     onDismiss: () -> Unit,
     onCommitOrder: (List<String>) -> Unit,
+    onRemove: (TrackDto) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var order by remember(pins) { mutableStateOf(pins) }
@@ -858,6 +864,7 @@ private fun QuickAccessReorderSheet(
         },
         onDragEnd = { onCommitOrder(order.map { it.id }) },
     )
+    var pendingRemove by remember { mutableStateOf<TrackDto?>(null) }
     val keys = remember(order) { order.map { it.id }.toSet() }
     val keyToIndex = remember(order) { order.mapIndexed { i, t -> t.id to i }.toMap() }
     androidx.compose.runtime.LaunchedEffect(keys, keyToIndex) {
@@ -908,7 +915,7 @@ private fun QuickAccessReorderSheet(
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
-                            track.title,
+                            track.title.ifBlank { "Sans titre" },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             fontWeight = FontWeight.Medium,
@@ -921,9 +928,37 @@ private fun QuickAccessReorderSheet(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    IconButton(onClick = { pendingRemove = track }) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "Retirer de l’accès rapide",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
+    }
+    pendingRemove?.let { track ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text("Retirer de l’accès rapide ?") },
+            text = {
+                Text(
+                    "${track.title.ifBlank { "Ce titre" }} reste dans la bibliothèque.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRemove = null
+                    order = order.filter { it.id != track.id }
+                    onRemove(track)
+                }) { Text("Retirer") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemove = null }) { Text("Annuler") }
+            },
+        )
     }
 }
 

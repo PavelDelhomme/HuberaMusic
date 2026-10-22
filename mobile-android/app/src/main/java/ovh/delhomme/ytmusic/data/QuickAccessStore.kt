@@ -227,13 +227,14 @@ class QuickAccessStore(
                 }
             }
         }
-        // Sync serveur en fond — l’UI ne doit pas attendre addPin + biblio.
+        // L’ajout peut finir en fond. Le retrait attend le serveur : sinon
+        // rouvrir l’app ramène le titre dans l’accès rapide. La bibliothèque n’est pas touchée.
         if (api != null) {
             val pinnedSnapshot = nowPinned
             val pinType = track.type?.takeIf { it != "video" && it.isNotBlank() } ?: "song"
-            ovh.delhomme.ytmusic.YtMusicApp.instance.container.appScope().launch {
-                runCatching {
-                    if (pinnedSnapshot) {
+            if (pinnedSnapshot) {
+                ovh.delhomme.ytmusic.YtMusicApp.instance.container.appScope().launch {
+                    runCatching {
                         api.addPin(trackToPinBody(track.copy(type = pinType)))
                         pendingAdds.remove(track.id)
                         when (pinType) {
@@ -248,11 +249,11 @@ class QuickAccessStore(
                                 }
                             }
                         }
-                    } else {
-                        api.removePin(track.id)
-                        pendingRemoves.remove(track.id)
                     }
                 }
+            } else {
+                runCatching { api.removePin(track.id) }
+                    .onSuccess { pendingRemoves.remove(track.id) }
             }
         }
         return nowPinned
@@ -274,6 +275,7 @@ class QuickAccessStore(
             val byId = current.associateBy { it.id }
             val reordered = idSet.mapNotNull { byId[it] }.toMutableList()
             for (t in current) {
+                if (t.id in pendingRemoves) continue
                 if (reordered.none { it.id == t.id }) reordered.add(t)
             }
             prefs[key] = adapter.toJson(reordered.take(48))
@@ -283,7 +285,10 @@ class QuickAccessStore(
             runCatching {
                 val resp = api.reorderPins(mapOf("ids" to idSet))
                 replaceAll(
-                    resp.pins.mapNotNull { pinToTrack(it) }.distinctBy { it.id }.take(48),
+                    resp.pins.mapNotNull { pinToTrack(it) }
+                        .filter { it.id !in pendingRemoves }
+                        .distinctBy { it.id }
+                        .take(48),
                     boundEmail = email.ifBlank { null },
                 )
             }.onFailure {

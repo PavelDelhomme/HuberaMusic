@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.383",
+      "date": "2026-10-22",
+      "time": "23:05",
+      "at": "2026-10-22T23:05:00+02:00",
+      "title": "Corbeille de l’accès rapide",
+      "notes": [
+        "Chaque ligne de l’accès rapide a une corbeille. Confirmer retire le titre de l’accès rapide. Il reste dans la bibliothèque."
+      ]
+    },
+    {
       "version": "1.3.382",
       "date": "2026-10-22",
       "time": "22:50",
