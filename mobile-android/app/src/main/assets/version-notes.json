@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.385",
+      "date": "2026-10-22",
+      "time": "23:25",
+      "at": "2026-10-22T23:25:00+02:00",
+      "title": "Lecteur en pause reste en barre",
+      "notes": [
+        "Si la lecture est en pause, rouvrir l’application laisse le lecteur en barre. Le plein écran ne revient pas tout seul et le son ne reprend pas."
+      ]
+    },
+    {
       "version": "1.3.384",
       "date": "2026-10-22",
       "time": "23:15",

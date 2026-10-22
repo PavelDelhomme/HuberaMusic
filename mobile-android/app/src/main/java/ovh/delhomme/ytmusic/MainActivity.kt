@@ -75,6 +75,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -415,6 +416,8 @@ fun YtMusicAppContent(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    var leftWhilePaused by remember { mutableStateOf(false) }
+    val nowPlayingOpen = rememberUpdatedState(showNowPlaying)
     DisposableEffect(lifecycleOwner, player) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
@@ -422,9 +425,18 @@ fun YtMusicAppContent(
                     PlaybackService.Holder.service?.holdSilenceOnForeground("activity-start")
                     player.healAfterBackground()
                     player.connect()
+                    // Pause + retour dans l’app : rester sur la barre, ne pas rouvrir le plein écran
+                    // et ne pas relancer le son. Un titre qui joue vraiment reste où il était.
+                    if (leftWhilePaused && !player.state.value.playing) {
+                        showNowPlaying = false
+                    }
+                    leftWhilePaused = false
                 }
                 Lifecycle.Event.ON_STOP -> {
                     PlaybackService.Holder.service?.snapshotLeaveForeground()
+                    if (nowPlayingOpen.value && !player.state.value.playing) {
+                        leftWhilePaused = true
+                    }
                     player.flushPersist()
                     // Ne PAS cancelIdle ici : en arrière-plan la lecture continue
                     // et le prefetch de la file doit rester actif (sinon coupures).
@@ -1029,7 +1041,7 @@ private fun MainTabs(
     LaunchedEffect(sessionHydrated, hasPlayback, openPlayerFromIntent) {
         if (!openPlayerFromIntent || openPlayerIntentHandled || !sessionHydrated) return@LaunchedEffect
         openPlayerIntentHandled = true
-        if (hasPlayback) onOpenPlayer()
+        if (hasPlayback && player.state.value.playing) onOpenPlayer()
     }
 
     // Sync J’aime ↔ notification média (cœur dans le panneau système)
