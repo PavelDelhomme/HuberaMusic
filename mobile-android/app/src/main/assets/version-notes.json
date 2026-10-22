@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.382",
+      "date": "2026-10-22",
+      "time": "22:50",
+      "at": "2026-10-22T22:50:00+02:00",
+      "title": "Pochettes gardées",
+      "notes": [
+        "Une pochette de titre, d’album ou d’artiste déjà vue reste sur l’appareil. Rouvrir l’accueil la réaffiche sans attendre le réseau."
+      ]
+    },
+    {
       "version": "1.3.381",
       "date": "2026-10-22",
       "time": "22:40",

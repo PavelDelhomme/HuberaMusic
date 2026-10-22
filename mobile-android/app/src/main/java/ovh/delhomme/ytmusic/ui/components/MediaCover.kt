@@ -17,7 +17,6 @@ import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,10 +24,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.SubcomposeAsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import ovh.delhomme.ytmusic.data.BatterySaver
+import ovh.delhomme.ytmusic.data.CoverStore
 import ovh.delhomme.ytmusic.data.TrackDto
 
 @Composable
@@ -68,8 +73,10 @@ fun MediaCover(
         else -> 14.dp
     }
     val thumbPx = BatterySaver.coverSizeHint(size.value.toInt().coerceAtLeast(120))
-    // Économiseur : listes / grilles → placeholder (sauf titre en lecture)
-    val skipNetworkImage = saverOn && !active && size < 140.dp
+    val context = LocalContext.current
+    val onDisk = remember(track.id) { CoverStore.peek(context, track.id) != null }
+    // Économiseur : pas de réseau pour une grille, mais une pochette déjà vue reste affichée.
+    val skipNetworkImage = saverOn && !active && size < 140.dp && !onDisk
     Box(
         modifier = modifier
             .size(size)
@@ -85,10 +92,10 @@ fun MediaCover(
                 modifier = Modifier.size((size.value * 0.42f).dp.coerceAtLeast(18.dp)),
             )
         } else {
-            SubcomposeAsyncImage(
-                model = track.coverUrl(thumbPx),
+            CachedCoverImage(
+                track = track,
+                sizeHint = thumbPx,
                 contentDescription = track.title,
-                contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
                 loading = {
                     Icon(
@@ -154,10 +161,9 @@ fun MixCollageCover(
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     covers.take(2).forEach { t ->
                         Box(Modifier.weight(1f).fillMaxSize()) {
-                            SubcomposeAsyncImage(
-                                model = t.coverUrl(200),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
+                            CachedCoverImage(
+                                track = t,
+                                sizeHint = 200,
                                 modifier = Modifier.fillMaxSize(),
                                 error = {
                                     Box(
@@ -173,10 +179,9 @@ fun MixCollageCover(
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     covers.drop(2).take(2).forEach { t ->
                         Box(Modifier.weight(1f).fillMaxSize()) {
-                            SubcomposeAsyncImage(
-                                model = t.coverUrl(200),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
+                            CachedCoverImage(
+                                track = t,
+                                sizeHint = 200,
                                 modifier = Modifier.fillMaxSize(),
                                 error = {
                                     Box(
@@ -197,4 +202,51 @@ fun MixCollageCover(
             barHeight = if (size >= 120.dp) 22.dp else 14.dp,
         )
     }
+}
+
+@Composable
+fun CachedCoverImage(
+    track: TrackDto,
+    modifier: Modifier = Modifier,
+    sizeHint: Int = 320,
+    contentDescription: String? = null,
+    contentScale: ContentScale = ContentScale.Crop,
+    loading: @Composable () -> Unit = {},
+    error: @Composable () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val local = remember(track.id) { CoverStore.peek(context, track.id) }
+    val remote = if (local == null) track.coverUrl(sizeHint) else null
+    if (local == null && remote == null) {
+        error()
+        return
+    }
+    val request = if (local != null) {
+        ImageRequest.Builder(context)
+            .data(local)
+            .memoryCacheKey("cover-file:${track.id}")
+            .diskCachePolicy(CachePolicy.DISABLED)
+            .networkCachePolicy(CachePolicy.DISABLED)
+            .build()
+    } else {
+        ImageRequest.Builder(context)
+            .data(remote)
+            .memoryCacheKey("cover:${track.id}")
+            .diskCacheKey("cover:${track.id}")
+            .listener(
+                onSuccess = { _, result ->
+                    CoverStore.saveDrawable(context, track.id, result.drawable)
+                    CoverStore.importCoilDisk(context, track.id)
+                },
+            )
+            .build()
+    }
+    SubcomposeAsyncImage(
+        model = request,
+        contentDescription = contentDescription,
+        contentScale = contentScale,
+        modifier = modifier,
+        loading = { loading() },
+        error = { error() },
+    )
 }

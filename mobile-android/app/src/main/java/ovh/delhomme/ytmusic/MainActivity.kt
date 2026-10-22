@@ -514,13 +514,16 @@ fun YtMusicAppContent(
             val hasTokens =
                 !container.tokenStore.peekAccess().isNullOrBlank() ||
                     !container.tokenStore.getRefresh().isNullOrBlank()
+            // Session déjà sur l’appareil : l’accueil s’ouvre tout de suite.
+            // La vérif réseau continue derrière, sans bloquer les pochettes en cache.
+            if (hasTokens) loggedIn = true
             val validated = withTimeoutOrNull(15_000L) {
                 container.validateSession()
             }
             loggedIn = when (validated) {
                 true -> true
                 false -> false
-                null -> hasTokens // API lente / timeout → rester connecté si tokens
+                null -> hasTokens
             }
         }
     }

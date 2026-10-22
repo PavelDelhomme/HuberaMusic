@@ -83,6 +83,7 @@ import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.ui.components.AppTopBar
 import ovh.delhomme.ytmusic.ui.components.HistorySheet
+import ovh.delhomme.ytmusic.ui.components.CachedCoverImage
 import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.MixCollageCover
 import ovh.delhomme.ytmusic.ui.components.dragReorderHandle
@@ -965,10 +966,10 @@ private fun QuickAccessPinCard(
             .clip(RoundedCornerShape(12.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
-        coil.compose.SubcomposeAsyncImage(
-            model = track.coverUrl(320),
+        CachedCoverImage(
+            track = track,
+            sizeHint = 320,
             contentDescription = track.title,
-            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
             loading = {
                 Box(
