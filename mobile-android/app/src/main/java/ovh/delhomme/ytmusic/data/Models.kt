@@ -132,6 +132,7 @@ data class TrackDto(
             val raw = pick?.url?.takeIf { it.isNotBlank() }
             if (raw != null) {
                 val upsized = resizeGoogleThumb(raw, sizeHint)
+                ThumbLedger.remember(id, upsized)
                 CoverUrlProxy.remote(upsized, s)?.let { return it }
                 return upsized
             }
@@ -143,7 +144,7 @@ data class TrackDto(
                 else -> "https://i.ytimg.com/vi/$id/hqdefault.jpg"
             }
         }
-        return null
+        return ThumbLedger.get(id)
     }
 
     private fun resizeGoogleThumb(url: String, sizeHint: Int): String {

@@ -35,6 +35,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.LibraryAddCheck
 import androidx.compose.material.icons.filled.MoreVert
@@ -317,7 +318,7 @@ fun HomeScreen(
                                         // Play toujours visible (mobile)
                                         Box(
                                             Modifier
-                                                .align(Alignment.TopEnd)
+                                                .align(Alignment.BottomEnd)
                                                 .padding(6.dp)
                                                 .size(36.dp)
                                                 .clip(RoundedCornerShape(18.dp))
@@ -357,61 +358,57 @@ fun HomeScreen(
                                                 },
                                             )
                                         }
-                                        Row(
-                                            Modifier
+                                        Box(
+                                            modifier = Modifier
                                                 .align(Alignment.TopEnd)
-                                                .padding(end = 48.dp, top = 6.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
+                                                .padding(6.dp)
+                                                .size(40.dp)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Color.Black.copy(alpha = 0.72f))
+                                                .clickable {
+                                                    onMoreMix?.invoke(radio.id, radio.title, preview)
+                                                },
+                                            contentAlignment = Alignment.Center,
                                         ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(40.dp)
-                                                    .clip(RoundedCornerShape(20.dp))
-                                                    .background(Color.Black.copy(alpha = 0.72f))
-                                                    .clickable {
-                                                        onMoreMix?.invoke(radio.id, radio.title, preview)
-                                                    },
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.MoreVert,
-                                                    contentDescription = "Options",
-                                                    tint = Color.White,
-                                                    modifier = Modifier.size(22.dp),
-                                                )
-                                            }
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(40.dp)
-                                                    .clip(RoundedCornerShape(20.dp))
-                                                    .background(Color.Black.copy(alpha = 0.72f))
-                                                    .clickable {
-                                                        scope.launch {
-                                                            vm.toggleMixSaved(
-                                                                radio.id,
-                                                                radio.title,
-                                                                preview,
-                                                            )
-                                                        }
-                                                    },
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                Icon(
-                                                    if (saved) Icons.Default.LibraryAddCheck else Icons.Default.Add,
-                                                    contentDescription = if (saved) {
-                                                        "Retirer le mix de la bibliothèque"
-                                                    } else {
-                                                        "Enregistrer le mix"
-                                                    },
-                                                    tint = if (saved) {
-                                                        MaterialTheme.colorScheme.error
-                                                    } else {
-                                                        Color.White
-                                                    },
-                                                    modifier = Modifier.size(22.dp),
-                                                )
-                                            }
+                                            Icon(
+                                                Icons.Default.MoreVert,
+                                                contentDescription = "Options",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(22.dp),
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .padding(6.dp)
+                                                .size(40.dp)
+                                                .clip(RoundedCornerShape(20.dp))
+                                                .background(Color.Black.copy(alpha = 0.72f))
+                                                .clickable {
+                                                    scope.launch {
+                                                        vm.toggleMixSaved(
+                                                            radio.id,
+                                                            radio.title,
+                                                            preview,
+                                                        )
+                                                    }
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                if (saved) Icons.Default.LibraryAddCheck else Icons.Default.Add,
+                                                contentDescription = if (saved) {
+                                                    "Retirer le mix de la bibliothèque"
+                                                } else {
+                                                    "Enregistrer le mix"
+                                                },
+                                                tint = if (saved) {
+                                                    MaterialTheme.colorScheme.error
+                                                } else {
+                                                    Color.White
+                                                },
+                                                modifier = Modifier.size(22.dp),
+                                            )
                                         }
                                         if (loading) {
                                             Box(
@@ -930,6 +927,7 @@ private fun QuickAccessPinCard(
     onUnpin: () -> Unit,
 ) {
     val landscape = isLandscape()
+    var confirmUnpin by remember { mutableStateOf(false) }
     Box(
         Modifier
             .fillMaxWidth()
@@ -978,13 +976,39 @@ private fun QuickAccessPinCard(
                     ),
                 ),
         )
-        PinnedBadge(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(6.dp),
-            size = 26.dp,
-            onClick = onUnpin,
-        )
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp)
+                .size(32.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color.Black.copy(alpha = 0.55f))
+                .clickable { confirmUnpin = true },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Retirer de l’accès rapide",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        if (confirmUnpin) {
+            AlertDialog(
+                onDismissRequest = { confirmUnpin = false },
+                title = { Text("Retirer de l’accès rapide ?") },
+                text = { Text(track.title.ifBlank { "Ce titre" }) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmUnpin = false
+                        onUnpin()
+                    }) { Text("Retirer") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmUnpin = false }) { Text("Annuler") }
+                },
+            )
+        }
         Text(
             track.title.ifBlank { "Sans titre" },
             maxLines = 1,

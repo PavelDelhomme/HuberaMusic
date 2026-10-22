@@ -147,9 +147,23 @@ class QuickAccessStore(
             .toMutableList()
         val local = pins.first()
         for (t in local) {
+            t.thumbnails?.firstOrNull()?.url?.let { ThumbLedger.remember(t.id, it) }
+        }
+        val localById = local.associateBy { it.id }
+        for (t in local) {
             if (t.id in pendingAdds && tracks.none { it.id == t.id }) tracks.add(t)
         }
-        val kept = tracks.filter { it.id !in pendingRemoves }.distinctBy { it.id }.take(48)
+        val kept = tracks
+            .filter { it.id !in pendingRemoves }
+            .distinctBy { it.id }
+            .take(48)
+            .map { remote ->
+                if (!remote.thumbnails.isNullOrEmpty()) remote
+                else {
+                    val thumbs = localById[remote.id]?.thumbnails
+                    if (thumbs.isNullOrEmpty()) remote else remote.copy(thumbnails = thumbs)
+                }
+            }
         replaceAll(kept, boundEmail = email.ifBlank { null })
     }
 
