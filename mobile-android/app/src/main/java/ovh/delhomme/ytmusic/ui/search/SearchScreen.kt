@@ -222,10 +222,9 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             val list = runCatching {
                 container.ensureFreshToken()
                 val raw = container.api.searchSuggestions(q)["suggestions"]
-                (raw as? List<*>)?.mapNotNull { it?.toString()?.trim()?.takeIf { s -> s.isNotEmpty() } }
-                    ?.distinct()
-                    ?.take(10)
+                val parsed = (raw as? List<*>)?.mapNotNull { it?.toString()?.trim()?.takeIf { s -> s.isNotEmpty() } }
                     .orEmpty()
+                suggestionsMatchingQuery(q, parsed)
             }.getOrDefault(emptyList())
             if (_state.value.query.trim() != q) return@launch
             _state.value = _state.value.copy(suggestions = list)
@@ -318,7 +317,12 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                         }
                     }
                 }
-                _state.value = _state.value.copy(loading = false, sections = sections, error = null, slowHint = null)
+                _state.value = _state.value.copy(
+                    loading = false,
+                    sections = sectionsForQuery(currentQ, sections),
+                    error = null,
+                    slowHint = null,
+                )
                 // Ne pas préchauffer 8 titres : ça noie yt-dlp pendant que tu lances un résultat.
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -746,6 +750,61 @@ fun SearchScreen(
     }
 }
 
+/** 0 = hors sujet (Madonna pour « stromae »). Plus c’est haut, plus ça colle à la frappe. */
+private fun queryMatchScore(query: String, name: String): Int {
+    val q = query.trim().lowercase()
+    val n = name.trim().lowercase()
+    if (q.length < 2 || n.isEmpty()) return 0
+    if (n == q) return 400
+    if (n.startsWith(q)) return 300
+    if (n.split(Regex("[\\s·\\-–—'’]+")).any { it.startsWith(q) }) return 200
+    if (q.length >= 4 && n.contains(q)) return 100
+    return 0
+}
+
+private fun trackQueryScore(query: String, track: TrackDto): Int {
+    val names = listOf(track.title) + track.artists.orEmpty().map { it.name }
+    return names.maxOf { queryMatchScore(query, it) }
+}
+
+/** Hors-sujet écarté. Le nom tapé reste en tête s’il est proposé. */
+private fun suggestionsMatchingQuery(query: String, raw: List<String>): List<String> {
+    val q = query.trim().lowercase()
+    return raw
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && it.lowercase() != q && queryMatchScore(query, it) > 0 }
+        .distinctBy { it.lowercase() }
+        .sortedByDescending { queryMatchScore(query, it) }
+        .take(10)
+}
+
+/**
+ * L’artiste qui correspond à la frappe passe devant un résultat sans rapport
+ * (ex. Madonna en tête pour « stromae »).
+ */
+private fun sectionsForQuery(query: String, sections: List<SearchSection>): List<SearchSection> {
+    val ranked = sections.map { sec ->
+        if (!sec.title.equals("Artistes", ignoreCase = true)) sec
+        else {
+            val items = sec.items.withIndex()
+                .sortedWith(
+                    compareByDescending<IndexedValue<TrackDto>> { trackQueryScore(query, it.value) }
+                        .thenBy { it.index },
+                )
+                .map { it.value }
+            sec.copy(items = items)
+        }
+    }
+    val artist = ranked.firstOrNull { it.title.equals("Artistes", ignoreCase = true) }
+    val artistLeads = artist?.items?.firstOrNull()?.let { trackQueryScore(query, it) >= 300 } == true
+    if (!artistLeads) return ranked
+    val head = ranked.firstOrNull { !it.title.equals("Artistes", ignoreCase = true) }?.items?.firstOrNull()
+    if (head != null && trackQueryScore(query, head) > 0) return ranked
+    val artists = ranked.filter { it.title.equals("Artistes", ignoreCase = true) }
+    val rest = ranked.filter { !it.title.equals("Artistes", ignoreCase = true) }
+    return artists + rest
+}
+
 @Composable
 private fun SearchSuggestionsBlock(
     draft: String,
@@ -757,9 +816,7 @@ private fun SearchSuggestionsBlock(
     if (draftNorm.isEmpty() && suggestions.isEmpty()) return
     val opts = buildList {
         if (draftNorm.isNotEmpty()) add(draftNorm to true)
-        suggestions
-            .filter { it.trim().lowercase() != draftNorm.lowercase() }
-            .forEach { add(it to false) }
+        suggestionsMatchingQuery(draftNorm, suggestions).forEach { add(it to false) }
     }
     if (opts.isEmpty()) return
     Column(

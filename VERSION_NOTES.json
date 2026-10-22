@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-22",
   "versions": [
     {
+      "version": "1.3.387",
+      "date": "2026-10-22",
+      "time": "23:45",
+      "at": "2026-10-22T23:45:00+02:00",
+      "title": "La suggestion suit le nom tapé",
+      "notes": [
+        "Une recherche d’artiste en minuscules propose ce nom, pas un artiste sans rapport. « stromae » ne met plus Madonna en premier."
+      ]
+    },
+    {
       "version": "1.3.386",
       "date": "2026-10-22",
       "time": "23:35",
