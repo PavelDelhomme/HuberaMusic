@@ -265,16 +265,34 @@ async function oneRoute(videoId: string, route: PublicAudioRoute): Promise<Publi
 
 const AUDIO_ITAGS = [140, 139, 141, 251, 250, 249];
 const iosSessions = new Map<string, Promise<Innertube>>();
-let sharedGate: Promise<void> = Promise.resolve();
+let sharedGateRunning = false;
+const sharedLiveQueue: Array<() => void> = [];
+const sharedWarmQueue: Array<() => void> = [];
 
-/** Un seul appel à la fois : une rafale vide la seule sortie qui renvoie encore une URL. */
-function oneAtATime<T>(job: () => Promise<T>): Promise<T> {
-  const run = sharedGate.then(job, job);
-  sharedGate = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
+function pumpSharedGate() {
+  if (sharedGateRunning) return;
+  const next = sharedLiveQueue.shift() || sharedWarmQueue.shift();
+  if (!next) return;
+  sharedGateRunning = true;
+  next();
+}
+
+/**
+ * Un seul appel à la fois : une rafale vide la seule sortie qui renvoie encore une URL.
+ * L’écoute en cours passe devant le préchauffage, sinon le titre demandé attend
+ * toute la file (souvent plus de 45 s) alors qu’une autre URL du même morceau répond.
+ */
+function oneAtATime<T>(job: () => Promise<T>, live = false): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const run = () => {
+      job().then(resolve, reject).finally(() => {
+        sharedGateRunning = false;
+        pumpSharedGate();
+      });
+    };
+    (live ? sharedLiveQueue : sharedWarmQueue).push(run);
+    pumpSharedGate();
+  });
 }
 
 /**
@@ -368,7 +386,7 @@ async function sharedIosOnce(videoId: string, egress: string): Promise<PublicAud
     };
 }
 
-async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
+async function sharedIosAudio(videoId: string, live = false): Promise<PublicAudioHit> {
   return oneAtATime(async () => {
     const exclude = new Set<string>();
     let last = 'pas de sortie partagée';
@@ -398,11 +416,15 @@ async function sharedIosAudio(videoId: string): Promise<PublicAudioHit> {
       }
     }
     throw new Error(last);
-  });
+  }, live);
 }
 
 /** Sortie partagée d’abord (elle a une URL), puis deux clients directs. */
-export async function resolvePublicAudioUrl(videoId: string, retryN = 0): Promise<PublicAudioHit> {
+export async function resolvePublicAudioUrl(
+  videoId: string,
+  retryN = 0,
+  live = false,
+): Promise<PublicAudioHit> {
   if (retryN <= 0) {
     const cached = peekPublicAudio(videoId);
     if (cached) return cached;
@@ -411,7 +433,7 @@ export async function resolvePublicAudioUrl(videoId: string, retryN = 0): Promis
   }
   let last = 'aucune route publique';
   try {
-    const hit = await sharedIosAudio(videoId);
+    const hit = await sharedIosAudio(videoId, live);
     rememberPublicAudio(videoId, hit);
     console.info(`[public-audio] ${videoId} ${hit.route} itag=${hit.itag}`);
     return hit;

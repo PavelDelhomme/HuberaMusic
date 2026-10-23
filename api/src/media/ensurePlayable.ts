@@ -260,11 +260,13 @@ async function runPreflightQueue() {
 }
 
 async function runPreflightTwenty(ids: string[], userId?: string) {
+  if (isPlaybackHot(90_000)) return;
   const hot = isPlaybackHot(90_000);
   const conc = hot ? 2 : 3;
   let cursor = 0;
   const worker = async () => {
     while (cursor < ids.length) {
+      if (isPlaybackHot(90_000)) return;
       const idx = cursor++;
       const id = ids[idx];
       if (!id) continue;

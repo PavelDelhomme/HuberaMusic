@@ -3411,11 +3411,13 @@ async function audioFormatViaYtDlpFast(
   opts?: { live?: boolean; userId?: string; boundProxy?: string; signal?: AbortSignal },
 ): Promise<AudioFormat> {
   const { isYtDlpCoolingDown } = await import('../media/ytDlpGate.js');
-  if (isYtDlpCoolingDown(opts?.userId)) throw new Error('yt-dlp cooling');
+  const live = opts?.live === true;
+  // Le cooldown vise l’IP du serveur. Une écoute passe quand même par les relais :
+  // sinon le téléphone reste muet alors qu’une autre URL du même titre répond.
+  if (!live && isYtDlpCoolingDown(opts?.userId)) throw new Error('yt-dlp cooling');
   const format = YTDLP_AUDIO_FORMAT_CANDIDATES[0] || 'bestaudio[ext=m4a]/bestaudio/best';
   const extractorSets = ytDlpExtractorArgSets();
   let lastErr: Error | null = null;
-  const live = opts?.live === true;
   const userId = opts?.userId;
   const asFormat = (url: string, proxy: string | null): AudioFormat => ({
     url,
@@ -3845,11 +3847,38 @@ export async function getAudioFormat(
     // 9 s abortait le 1er proxy et relançait un 2e yt-dlp → timeout en cascade.
     const fastBudgetMs = live ? 18_000 : 9_000;
     const retryN = opts?.retryN ?? 0;
-    // D’abord un autre client / itag, pour tout compte, sans cookie.
-    // Si l’adresse du serveur est refusée, une seule sortie partagée.
-    // Une seule sortie partagée, puis arrêt. Pas de rafale yt-dlp : elle coupait
-    // la sortie qui venait de renvoyer l’audio, et le cookie serveur n’est pas le chemin.
-    const entry = await tryPublicAudioFormat(videoId, retryN);
+    // Écoute : la route publique et une autre URL du même titre partent ensemble.
+    // Avant, une route morte était attendue jusqu’au bout, puis le fichier entier,
+    // et l’URL qui répondait n’était essayée qu’après (~45 s de silence).
+    const publicTry = tryPublicAudioFormat(videoId, retryN, live).then((hit) => {
+      if (!hit?.url) throw new Error('public vide');
+      return hit;
+    });
+    const entry = live
+      ? await Promise.any([
+          publicTry,
+          resolveFast().then((hit) => {
+            if (!hit?.url) throw new Error('url vide');
+            return hit;
+          }),
+        ]).catch((err: unknown) => {
+          const agg = err as { errors?: unknown[]; message?: string };
+          const msgs = [
+            String(agg?.message || err),
+            ...(agg.errors || []).map((e) => String((e as Error)?.message || e)),
+          ];
+          if (
+            msgs.some((m) =>
+              /video unavailable|this video is unavailable|private video|removed by the uploader|no longer available/i.test(
+                m,
+              ),
+            )
+          ) {
+            throw err instanceof Error ? err : new Error(msgs[0] || 'unavailable');
+          }
+          return null;
+        })
+      : await publicTry;
     if (!entry) {
       const missing = new Error(`Audio format indisponible id=${videoId}`);
       (missing as Error & { trackId?: string }).trackId = videoId;
@@ -3895,10 +3924,14 @@ export async function getAudioFormat(
  * Autre client Innertube et autre itag, sans cookie ni proxy ni tunnel.
  * Le même chemin pour chaque compte connecté.
  */
-async function tryPublicAudioFormat(videoId: string, retryN: number): Promise<AudioFormat | null> {
+async function tryPublicAudioFormat(
+  videoId: string,
+  retryN: number,
+  live = false,
+): Promise<AudioFormat | null> {
   try {
     const { resolvePublicAudioUrl } = await import('../media/publicAudioRoutesLive.js');
-    const hit = await resolvePublicAudioUrl(videoId, retryN);
+    const hit = await resolvePublicAudioUrl(videoId, retryN, live);
     if (!hit?.url) return null;
     return {
       url: hit.url,

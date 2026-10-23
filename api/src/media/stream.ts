@@ -2076,17 +2076,9 @@ export async function handleStream(req: Request, res: Response) {
           sendStreamRetryLater(res, videoId, blocked.msg);
           return;
         }
-        downloadTrack(videoId, {
-          progressiveOnly: true,
-          preferProxies: true,
-          userId,
-          signal: userSignal,
-          live: true,
-        }).catch(() => {});
-        // yt-dlp à froid ~28–40 s. 350 ms → 503 immédiat → BUFFERING 0:00.
-        const waitMs = ANDROID_COLD_DISK_WAIT_MS;
-        const ready = await waitUntilDiskServable(videoId, waitMs);
-        if (ready) noteFormatOk(videoId);
+        // Pas de fichier entier ici. L’attendre 28 s laissait le téléphone muet
+        // avant même d’essayer une URL du même titre. Le téléchargement ne part
+        // qu’en repli, plus bas, si aucune URL ne répond.
       } else if (already.path.endsWith('.mp4') || isMuxedVideoFile(already.path)) {
         void ensureTitleAudio(videoId);
       }
@@ -3429,6 +3421,12 @@ export async function handleStreamUrl(req: Request, res: Response) {
     return;
   }
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
+  if (!wantVideo) {
+    // /url est le chemin du téléphone. Sans ça, le préchauffage garde la seule
+    // sortie audio et cette requête n’essayait que la route publique (pas live).
+    lastStreamAtMs = Date.now();
+    suspendBackgroundDiskWarm(videoId);
+  }
   const uploadUid = (req as any).userId as string | undefined;
   if (!wantVideo && uploadUid) {
     const owned = getOwnedUpload(uploadUid, videoId);
@@ -3498,12 +3496,12 @@ export async function handleStreamUrl(req: Request, res: Response) {
     }
     const format = wantVideo
       ? await getVideoFormat(videoId)
-      : await getAudioFormat(videoId, { userId: uid, forceFresh: retryN > 0, retryN }).catch(
-          async (err) => {
-            console.warn('[stream-url] audio KO, fallback vidéo YouTube', String(err).slice(0, 120));
-            return getVideoFormat(videoId);
-          },
-        );
+      : await getAudioFormat(videoId, {
+          userId: uid,
+          forceFresh: retryN > 0,
+          retryN,
+          live: true,
+        });
     res.json({
       url: format.url,
       expiresAt: format.expiresAt,
