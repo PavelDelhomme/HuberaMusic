@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Innertube, UniversalCache, ClientType, YTNodes, Parser, Log } from 'youtubei.js';
@@ -57,10 +57,12 @@ import {
   mergeTracks,
   pickTopResult,
   rankByQuery,
+  repairQuery,
   scoreSearchItem,
   shelfBucketFromTitle,
   tokenize,
   artistNameAliasMatch,
+  damerauWithin,
   type SearchPersonalization,
 } from '../reco/searchRank.js';
 import {
@@ -602,6 +604,52 @@ function withSearchTimeout<T>(p: Promise<T>, ms = 12_000): Promise<T> {
   });
 }
 
+let cachedSeedTokens: string[] | null = null;
+
+/** Mots des tubes connus (artistes, titres, alias) pour corriger une faute, pas pour chercher au hasard. */
+function seedTypoTokens(): string[] {
+  if (cachedSeedTokens) return cachedSeedTokens;
+  cachedSeedTokens = [];
+  try {
+    const p = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'search-hits.json');
+    if (!existsSync(p)) return cachedSeedTokens;
+    const raw = JSON.parse(readFileSync(p, 'utf8')) as Array<{
+      title?: string;
+      artist?: string;
+      aliases?: string[];
+    }>;
+    const set = new Set<string>();
+    for (const h of raw || []) {
+      for (const t of tokenize(`${h?.title || ''} ${h?.artist || ''} ${(h?.aliases || []).join(' ')}`)) {
+        if (t.length >= 3) set.add(t);
+      }
+    }
+    cachedSeedTokens = [...set];
+  } catch {
+    cachedSeedTokens = [];
+  }
+  return cachedSeedTokens;
+}
+
+/** Une fiche artiste hors sujet (Madonna pour « stromae ») ne reste pas dans la liste. */
+function artistsMatchingQuery(items: Track[], query: string): Track[] {
+  const qf = foldText(query);
+  const qTokens = tokenize(query).filter((t) => t.length >= 4);
+  if (!items.length || !qf || !qTokens.length) return items;
+  const fits = (name: string) => {
+    const n = foldText(name);
+    if (!n) return false;
+    if (n === qf || artistNameAliasMatch(n, qf) || n.includes(qf) || qf.includes(n)) return true;
+    const nameTokens = tokenize(n);
+    return qTokens.some((t) => {
+      const max = t.length >= 8 ? 2 : 1;
+      return nameTokens.some((h) => h.length >= 4 && damerauWithin(t, h, max) <= max);
+    });
+  };
+  const matched = items.filter((a) => fits(a.title || a.artists?.[0]?.name || ''));
+  return matched;
+}
+
 /** Variantes : apostrophes Instagram, « Artiste - Titre ». */
 function searchQueryVariants(q: string): string[] {
   const out: string[] = [];
@@ -1057,7 +1105,14 @@ async function searchUncached(
   ) {
     try {
       const local = searchIndexed(q, 24);
-      if (localSearchSufficient(q, local)) {
+      const typo = repairQuery(
+        q,
+        local.flatMap((t) =>
+          tokenize(`${t.title || ''} ${(t.artists || []).map((a) => a.name || '').join(' ')}`),
+        ),
+        seedTypoTokens(),
+      );
+      if (!typo && localSearchSufficient(q, local)) {
         const songs = local.filter((t) => t.type !== 'video');
         const videos = local.filter((t) => t.type === 'video');
         setImmediate(() => {
@@ -1139,12 +1194,12 @@ async function searchUncached(
   // Pas d’injection « query + artiste favori » : ça polluait (Keny sur n’importe quoi).
   // La perso reste un soft-boost sur des résultats déjà pertinents (voir personalizeBoost).
 
-  const songs = filterByRelevance(
+  let songs = filterByRelevance(
     rankByQuery(mergeTracks(fromSongs.songs, main.songs), q, personalization),
     q,
   );
   // Alt orthographe (suzane) en tête du merge → mieux classé si scores proches
-  const artists = dedupeArtists(
+  let artists = dedupeArtists(
     filterByRelevance(
       rankByQuery(
         mergeTracks(altArtists, fromArtists.artists, main.artists),
@@ -1159,11 +1214,59 @@ async function searchUncached(
     rankByQuery(mergeTracks(fromAlbums.albums, main.albums), q, personalization),
     q,
   );
-  const videos = filterByRelevance(
+  let videos = filterByRelevance(
     rankByQuery(mergeTracks(main.videos, fromSongs.videos), q, personalization),
     q,
   );
   const playlists = filterByRelevance(rankByQuery(main.playlists, q, personalization), q);
+
+  // Une seule recherche corrigée si un token est une faute (« bine », « ostromae »).
+  // Le classement reste sur la requête tapée : « je vais bien » d’un autre artiste
+  // ne passe pas devant le morceau qui colle aussi au nom d’artiste.
+  try {
+    const pool = [...songs, ...videos, ...artists, ...albums];
+    const resultLex = pool.flatMap((t) =>
+      tokenize(`${t.title || ''} ${(t.artists || []).map((a) => a.name || '').join(' ')}`),
+    );
+    const repairedFirst = repairQuery(q, resultLex, seedTypoTokens());
+    let repaired = repairedFirst;
+    if (repairedFirst) {
+      const sugg = await withSearchTimeout(searchSuggestions(q), 2_500).catch(() => [] as string[]);
+      if (sugg.length) {
+        const lex2 = [...resultLex, ...sugg.flatMap((s) => tokenize(s))];
+        repaired = repairQuery(q, lex2, seedTypoTokens()) || repaired;
+      }
+    }
+    if (repaired && foldText(repaired) !== foldText(q)) {
+      console.info('[search] typo', q, '->', repaired);
+      const extra = await innertubeSearch(repaired, undefined, 2_500).catch(() => null);
+      if (extra) {
+        const bucket = collectFromResult(extra);
+        const extraSongs = (bucket.videos || []).map((t) => ({ ...t, type: 'song' as const }));
+        songs = filterByRelevance(
+          rankByQuery(mergeTracks(songs, bucket.songs, extraSongs), q, personalization),
+          q,
+          80,
+        );
+        videos = filterByRelevance(
+          rankByQuery(mergeTracks(videos, bucket.videos), q, personalization),
+          q,
+          80,
+        );
+        artists = dedupeArtists(
+          filterByRelevance(
+            rankByQuery(mergeTracks(artists, bucket.artists), q, personalization),
+            q,
+            80,
+          ),
+          q,
+        );
+      }
+    }
+    artists = artistsMatchingQuery(artists, q);
+  } catch (err) {
+    console.warn('[search] typo repair failed', err);
+  }
 
   let topResult = pickTopResult(
     q,

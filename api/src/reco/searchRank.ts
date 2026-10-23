@@ -57,6 +57,54 @@ export function artistNameAliasMatch(a: string, b: string): boolean {
   return edits <= 1;
 }
 
+/**
+ * Distance de Damerau-Levenshtein bornée.
+ * « bine » / « bien » (transposition) et « ostromae » / « stromae » (lettre en trop) = 1.
+ * Au-delà de `max`, renvoie `max + 1` sans finir le tableau.
+ */
+export function damerauWithin(a: string, b: string, max: number): number {
+  if (a === b) return 0;
+  const la = a.length;
+  const lb = b.length;
+  if (!la || !lb || Math.abs(la - lb) > max || la > 32 || lb > 32) return max + 1;
+  const dp: number[][] = Array.from({ length: la + 1 }, () => new Array<number>(lb + 1).fill(0));
+  for (let i = 0; i <= la; i++) dp[i][0] = i;
+  for (let j = 0; j <= lb; j++) dp[0][j] = j;
+  for (let i = 1; i <= la; i++) {
+    let rowMin = max + 1;
+    for (let j = 1; j <= lb; j++) {
+      const sub = dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1);
+      let v = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, sub);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        v = Math.min(v, dp[i - 2][j - 2] + 1);
+      }
+      dp[i][j] = v;
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+  }
+  return dp[la][lb];
+}
+
+/** 1 = égal, 0.85 = une édition, 0 = trop loin. Jamais sur les mots de moins de 4 lettres. */
+function fuzzyTokenScore(hayTokens: Set<string>, token: string): number {
+  if (!token) return 0;
+  if (hayTokens.has(token)) return 1;
+  if (token.length < 4) return 0;
+  const max = token.length >= 8 ? 2 : 1;
+  let best = max + 1;
+  for (const h of hayTokens) {
+    if (h.length < 4 || Math.abs(h.length - token.length) > max) continue;
+    const d = damerauWithin(token, h, max);
+    if (d < best) best = d;
+    if (best === 0) break;
+  }
+  if (best === 0) return 1;
+  if (best === 1) return 0.85;
+  if (best === 2 && max >= 2) return 0.7;
+  return 0;
+}
+
 /** Préfixe de mot entier : « poto » matche « poto remix », pas « potomac ». */
 function startsWithWord(hay: string, needle: string): boolean {
   if (!needle || !hay.startsWith(needle)) return false;
@@ -68,11 +116,86 @@ function tokenCoverage(hayTokens: Set<string>, queryTokens: string[]): number {
   if (!queryTokens.length) return 0;
   let hit = 0;
   for (const t of queryTokens) {
-    if (hayTokens.has(t)) hit += 1;
+    const fuzzy = fuzzyTokenScore(hayTokens, t);
+    if (fuzzy >= 1) hit += 1;
+    else if (fuzzy > 0) hit += fuzzy;
     else if ([...hayTokens].some((h) => h === t || (t.length >= 3 && (h.startsWith(t) || t.startsWith(h)))))
       hit += 0.45;
   }
   return hit / queryTokens.length;
+}
+
+/**
+ * Réécrit les tokens fautifs s’ils sont à une édition d’un mot du lexique
+ * (titres / artistes déjà connus ou renvoyés). Ne change rien si tout est déjà juste.
+ */
+/**
+ * Réécrit les tokens fautifs s’ils sont à une édition d’un mot du lexique.
+ * `looseLexicon` (tubes connus) n’accepte qu’un ajout, un retrait ou une transposition :
+ * pas « bine » → « mine » juste parce que « mine » est dans un alias.
+ * Le lexique principal (résultats déjà là, suggestions) accepte aussi une lettre changée.
+ */
+export function repairQuery(query: string, lexicon: string[], looseLexicon: string[] = []): string | null {
+  const tokens = tokenize(query);
+  if (tokens.length < 2) return null;
+  const primary = [...new Set(lexicon.map((t) => foldText(t)).filter((t) => t.length >= 3))];
+  const loose = [...new Set(looseLexicon.map((t) => foldText(t)).filter((t) => t.length >= 3))];
+  if (!primary.length && !loose.length) return null;
+  const primarySet = new Set(primary);
+  const overlap = (a: string, b: string) => {
+    const bag = new Map<string, number>();
+    for (const ch of a) bag.set(ch, (bag.get(ch) || 0) + 1);
+    let n = 0;
+    for (const ch of b) {
+      const c = bag.get(ch) || 0;
+      if (c > 0) {
+        bag.set(ch, c - 1);
+        n += 1;
+      }
+    }
+    return n;
+  };
+  const looseOk = (token: string, cand: string, dist: number) => {
+    if (token.length !== cand.length) return dist === Math.abs(token.length - cand.length);
+    return overlap(token, cand) === token.length;
+  };
+  let changed = false;
+  const next = tokens.map((t) => {
+    if (t.length < 4 || primarySet.has(t)) return t;
+    const max = t.length >= 8 ? 2 : 1;
+    let best = '';
+    let bestD = max + 1;
+    let bestOverlap = -1;
+    const consider = (cand: string, fromLoose: boolean) => {
+      if (Math.abs(cand.length - t.length) > max || cand === t) return;
+      const d = damerauWithin(t, cand, max);
+      if (d > max || d === 0) return;
+      if (fromLoose && !looseOk(t, cand, d)) return;
+      const shared = overlap(t, cand);
+      const better =
+        d < bestD ||
+        (d === bestD && shared > bestOverlap) ||
+        (d === bestD &&
+          shared === bestOverlap &&
+          !!best &&
+          Math.abs(cand.length - t.length) < Math.abs(best.length - t.length));
+      if (!best || better) {
+        bestD = d;
+        best = cand;
+        bestOverlap = shared;
+      }
+    };
+    for (const cand of primary) consider(cand, false);
+    for (const cand of loose) {
+      if (!primarySet.has(cand)) consider(cand, true);
+    }
+    if (!best || best === t) return t;
+    changed = true;
+    return best;
+  });
+  if (!changed) return null;
+  const repaired = next.join(' ');
+  return repaired === foldText(query) ? null : repaired;
 }
 
 /** Chaînes / titres bruit : réactions, lyrics, karaoke, podcasts… */
@@ -167,14 +290,21 @@ function artistMatchesSpan(artistNames: string[], span: string): boolean {
     if (!f) return false;
     // Un seul token : égalité stricte du nom d’artiste (évite « internet » ∈ « Internet du Village »)
     if (spanTokens.length === 1) return f === s;
-    return f === s || startsWithWord(f, s) || includesWord(f, s);
+    return f === s || startsWithWord(f, s) || includesWord(f, s) || tokensAlign(f, s);
   });
+}
+
+function tokensAlign(hay: string, span: string): boolean {
+  const st = tokenize(span);
+  if (!st.length) return false;
+  const set = new Set(tokenize(hay));
+  return st.every((t) => (t.length < 4 ? set.has(t) : fuzzyTokenScore(set, t) > 0));
 }
 
 function titleMatchesSpan(title: string, span: string): boolean {
   const s = foldText(span);
   if (!s) return false;
-  return title === s || startsWithWord(title, s) || includesWord(title, s);
+  return title === s || startsWithWord(title, s) || includesWord(title, s) || tokensAlign(title, s);
 }
 
 /**
@@ -306,6 +436,27 @@ export function scoreSearchItem(track: Track, query: string): number {
       score += 1800;
     }
     if (/\btes triste\b/.test(title) || title === 'tes triste') score += 900;
+  }
+
+  // Fautes : « bine » ≈ « bien », « ostromae » ≈ « stromae ».
+  // La phrase du titre (dans le titre, même si l’artiste catalogue est une chaîne)
+  // passe devant un autre morceau du même artiste qui n’a pas ces mots.
+  // « Je vais bien » d’un autre artiste ne couvre pas le nom mal tapé.
+  if (type !== 'artist' && qTokens.length >= 2) {
+    const long = qTokens.filter((t) => t.length >= 4);
+    let onTitle = 0;
+    let onArtistOnly = 0;
+    let missed = 0;
+    for (const t of long) {
+      const artistHit = fuzzyTokenScore(artistTokens, t) >= 0.7;
+      const titleHit = fuzzyTokenScore(titleTokens, t) >= 0.7;
+      if (titleHit) onTitle += 1;
+      else if (artistHit) onArtistOnly += 1;
+      else missed += 1;
+    }
+    if (long.length > 0 && missed === 0 && onTitle >= 2) score += 1900;
+    else if (onArtistOnly > 0 && onTitle === 0 && long.length >= 2) score -= 500;
+    if (missed > 0 && onArtistOnly === 0) score -= 700 * missed;
   }
 
   // Couverture globale des tokens

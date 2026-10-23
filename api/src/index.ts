@@ -1155,6 +1155,37 @@ app.post(
           trackId: typeof e.trackId === 'string' ? e.trackId : undefined,
           http: typeof e.http === 'number' ? e.http : undefined,
         });
+        // Un crash fatal tamponné (POST sync trop court pendant l’OOM) ne doit pas
+        // sortir seulement comme « erreurs cumulées hors-ligne ».
+        if (level === 'fatal' || String(kind).includes('crash')) {
+          const crashStack = e.stack ? trunc(e.stack, 24_000) : undefined;
+          const crashMeta = {
+            batch: true,
+            count: typeof e.count === 'number' ? e.count : 1,
+            appVersion: e.appVersion,
+            model: e.model,
+            manufacturer: e.manufacturer,
+            sdk: e.sdk,
+            breadcrumbs: e.breadcrumbs,
+            recentLogs: typeof e.recentLogs === 'string' ? trunc(e.recentLogs, 24_000) : undefined,
+          };
+          void import('./platform/telemetryAlert.js')
+            .then(({ maybeAlertTelemetryError }) =>
+              maybeAlertTelemetryError({
+                id,
+                env,
+                level,
+                kind,
+                message,
+                stack: crashStack,
+                userAgent,
+                userId,
+                deviceId,
+                meta: crashMeta,
+              }),
+            )
+            .catch((err) => console.error('[telemetry] crash alert', err));
+        }
       }
       void import('./platform/telemetryAlert.js')
         .then(({ maybeAlertTelemetryDigest }) =>
