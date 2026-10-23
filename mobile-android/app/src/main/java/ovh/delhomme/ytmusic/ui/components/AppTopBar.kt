@@ -4,7 +4,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +27,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import cloud.hubera.chrome.HuberaAccountButton
 import coil.compose.AsyncImage
 import ovh.delhomme.ytmusic.R
 
@@ -98,31 +97,22 @@ fun AppTopBar(
                 )
             }
         }
-        IconButton(onClick = onAccountClick) {
-            if (!userPictureUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = userPictureUrl,
-                    contentDescription = "Compte",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape),
-                )
-            } else {
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.Person,
+        HuberaAccountButton(
+            onClick = onAccountClick,
+            userPicture = if (!userPictureUrl.isNullOrBlank()) {
+                {
+                    AsyncImage(
+                        model = userPictureUrl,
                         contentDescription = "Compte",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape),
                     )
                 }
-            }
-        }
+            } else {
+                null
+            },
+        )
     }
 }
