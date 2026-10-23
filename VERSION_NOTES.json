@@ -2,6 +2,16 @@
   "updatedAt": "2026-10-23",
   "versions": [
     {
+      "version": "1.3.394",
+      "date": "2026-10-23",
+      "time": "22:05",
+      "at": "2026-10-23T22:05:00+02:00",
+      "title": "La ligne de paroles remonte encore",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour laisser voir les paroles qui suivent."
+      ]
+    },
+    {
       "version": "1.3.393",
       "date": "2026-10-23",
       "time": "21:40",

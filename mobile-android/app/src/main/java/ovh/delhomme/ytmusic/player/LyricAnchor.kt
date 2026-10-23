@@ -4,8 +4,8 @@ import kotlin.math.abs
 
 /** Place la ligne en cours dans le bloc de paroles, au-dessus du milieu. */
 object LyricAnchor {
-    /** Centre visé de la ligne. Au-dessus du milieu : la suite reste visible. */
-    const val CENTER_FRACTION = 0.38f
+    /** Centre visé de la ligne. Haut du bloc : la suite reste visible. */
+    const val CENTER_FRACTION = 0.30f
     const val COMFORT_FRACTION = 0.07f
 
     fun desiredTopPx(viewportH: Int, lineH: Int): Int {

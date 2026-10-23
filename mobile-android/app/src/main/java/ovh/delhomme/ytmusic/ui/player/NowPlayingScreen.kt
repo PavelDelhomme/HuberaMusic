@@ -3636,37 +3636,33 @@ private fun InlineSyncedLyrics(
                     }
                 }
 
-                LaunchedEffect(active, followLyrics, timed.size, track.id) {
-                    if (!followLyrics || timed.isEmpty()) return@LaunchedEffect
+                val lyricViewH = (
+                    lyricsListState.layoutInfo.viewportEndOffset -
+                        lyricsListState.layoutInfo.viewportStartOffset
+                    ).coerceAtLeast(0)
+                LaunchedEffect(active, followLyrics, timed.size, track.id, lyricViewH) {
+                    if (!followLyrics || timed.isEmpty() || lyricViewH <= 0) return@LaunchedEffect
                     val target = active.coerceAtLeast(0).coerceAtMost(timed.lastIndex)
-                    val info = lyricsListState.layoutInfo
-                    val viewportH = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
-                    val currentItem = info.visibleItemsInfo.firstOrNull { it.index == target }
-                    val lineH = currentItem?.size ?: (viewportH / 5).coerceAtLeast(1)
-                    if (
-                        currentItem != null &&
-                        !ovh.delhomme.ytmusic.player.LyricAnchor.shouldRecenter(
-                            currentItem.offset,
-                            lineH,
-                            viewportH,
-                        )
-                    ) {
-                        return@LaunchedEffect
-                    }
                     programmaticScroll = true
                     runCatching {
-                        if (currentItem == null) {
-                            lyricsListState.scrollToItem(target)
-                        }
+                        val info = lyricsListState.layoutInfo
+                        val viewH = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
+                        val known = info.visibleItemsInfo.firstOrNull { it.index == target }?.size
+                        val lineH = (known ?: (viewH / 4)).coerceAtLeast(1)
+                        val top = ovh.delhomme.ytmusic.player.LyricAnchor.desiredTopPx(viewH, lineH)
+                        lyricsListState.scrollToItem(target, scrollOffset = -top)
                         val placed = lyricsListState.layoutInfo
-                        val viewH = (placed.viewportEndOffset - placed.viewportStartOffset).coerceAtLeast(1)
+                        val view2 = (placed.viewportEndOffset - placed.viewportStartOffset).coerceAtLeast(1)
                         val item = placed.visibleItemsInfo.firstOrNull { it.index == target }
                         val size = item?.size ?: lineH
-                        val top = ovh.delhomme.ytmusic.player.LyricAnchor.desiredTopPx(viewH, size)
+                        val top2 = ovh.delhomme.ytmusic.player.LyricAnchor.desiredTopPx(view2, size)
                         val offsetNow = item?.offset
-                        if (offsetNow != null && ovh.delhomme.ytmusic.player.LyricAnchor.shouldRecenter(offsetNow, size, viewH)) {
+                        if (
+                            offsetNow != null &&
+                            ovh.delhomme.ytmusic.player.LyricAnchor.shouldRecenter(offsetNow, size, view2)
+                        ) {
                             lyricsListState.scroll {
-                                scrollBy((offsetNow - top).toFloat())
+                                scrollBy((offsetNow - top2).toFloat())
                             }
                         }
                     }
@@ -3674,7 +3670,7 @@ private fun InlineSyncedLyrics(
                     programmaticScroll = false
                 }
 
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
                         state = lyricsListState,
                         modifier = Modifier.fillMaxSize(),
@@ -3703,7 +3699,7 @@ private fun InlineSyncedLyrics(
                 }
             }
             !text.isNullOrBlank() -> {
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         item {
                             Text(
