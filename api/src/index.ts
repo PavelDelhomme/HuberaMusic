@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installConsoleTimestamps } from './platform/log.js';
+import { fitClientJson } from './platform/jsonBound.js';
 import { installYoutubeJsEvaluator } from './youtube/youtubeiEval.js';
 
 installConsoleTimestamps();
@@ -384,6 +385,16 @@ app.use('/api/admin/apk/upload', express.raw({ type: () => true, limit: '120mb' 
 /** MP3 importé sur le compte utilisateur (binaire audio, pas JSON). */
 app.use('/api/import/file', express.raw({ type: () => true, limit: '40mb' }));
 app.use(express.json({ limit: '6mb' }));
+// Plafonne le JSON renvoyé : Moshi lit tout le corps, un trop gros corps sature le tas 256 Mo.
+app.use((req, res, next) => {
+  const orig = res.json.bind(res);
+  res.json = (body?: unknown) => {
+    const fitted = fitClientJson(body);
+    if (fitted.clipped) console.warn('[json] bounded', req.path);
+    return orig(fitted.body);
+  };
+  next();
+});
 app.use(cookieParser());
 app.use(authOptional);
 
