@@ -290,6 +290,14 @@ export function isDerivativeSearchHit(track: Track, query?: string): boolean {
   const raw = `${titleRaw} ${artistRaw}`;
   if (DERIVATIVE_HANGUL.test(raw)) return true;
   if (/踊ってみた|歌ってみた/.test(raw)) return true;
+  // « SokolBeats » : instrumental / type beat, pas « Beatles ».
+  const artistFold = foldText(artistRaw);
+  if (
+    tokenize(artistFold).some((t) => /beats$/.test(t) && t !== 'beatles') &&
+    !tokenize(q).some((t) => /beats?$/.test(t))
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -401,13 +409,21 @@ export function scoreSearchItem(track: Track, query: string): number {
     } else if (startsWithWord(name, q) || includesWord(name, q)) score += 500;
     score += tokenCoverage(new Set(tokenize(name)), qTokens) * 120;
   } else {
-    if (artists === q) score += 1100;
-    else if (artistNames.some((n) => foldText(n) === q)) score += 1050;
-    else if (artistNames.some((n) => artistNameAliasMatch(foldText(n), q))) {
-      const aliased = artistNames.map((n) => foldText(n)).find((n) => artistNameAliasMatch(n, q));
-      score += aliased && aliased.length < q.length ? 1120 : 980;
-    } else if (startsWithWord(artists, q) || includesWord(artists, q)) score += 700;
-    score += tokenCoverage(artistTokens, qTokens) * 220;
+    // Le nom d’artiste = la requête (recherche d’un artiste).
+    // Pas quand le titre est déjà cette requête : un groupe qui s’appelle
+    // comme le morceau (« Second Souffle ») ne doit pas passer devant
+    // le même titre par un autre artiste.
+    const selfTitled =
+      title === q && (artists === q || artistNames.some((n) => foldText(n) === q));
+    if (!selfTitled) {
+      if (artists === q) score += 1100;
+      else if (artistNames.some((n) => foldText(n) === q)) score += 1050;
+      else if (artistNames.some((n) => artistNameAliasMatch(foldText(n), q))) {
+        const aliased = artistNames.map((n) => foldText(n)).find((n) => artistNameAliasMatch(n, q));
+        score += aliased && aliased.length < q.length ? 1120 : 980;
+      } else if (startsWithWord(artists, q) || includesWord(artists, q)) score += 700;
+      score += tokenCoverage(artistTokens, qTokens) * 220;
+    }
   }
 
   // Combien de tokens query matchent vraiment le champ artiste (pas seulement le titre « Artist - Song »)
@@ -442,14 +458,17 @@ export function scoreSearchItem(track: Track, query: string): number {
   }
 
   // Titre descriptif « ARTISTE - TITRE » sur une chaîne tierce (lyrics/reaction) :
-  // tous les tokens dans le titre mais aucun dans le vrai champ artiste → fortement pénalisé
+  // tous les tokens dans le titre mais aucun dans le vrai champ artiste → fortement pénalisé.
+  // Sauf si la requête entière est dans le titre (« Parliament - What Comes Funky ») :
+  // ce morceau doit rester devant un titre qui ne partage qu’un mot (« Funky Little Baby »).
+  const phraseInTitle = title === q || includesWord(title, q) || startsWithWord(title, q);
   const allTokensInTitle =
     type !== 'artist' &&
     qTokens.length > 1 &&
     qTokens.every((t) => titleTokens.has(t) || includesWord(title, t));
-  if (allTokensInTitle && artistTokenHits === 0 && qTokens.length >= 2 && !splitMatch) {
+  if (allTokensInTitle && artistTokenHits === 0 && qTokens.length >= 2 && !splitMatch && !phraseInTitle) {
     score -= 720;
-  } else if (allTokensInTitle && artistTokenHits === 0 && qTokens.length >= 2) {
+  } else if (allTokensInTitle && artistTokenHits === 0 && qTokens.length >= 2 && !phraseInTitle) {
     score -= 280;
   }
 
@@ -563,6 +582,27 @@ export function scoreSearchItem(track: Track, query: string): number {
   return score;
 }
 
+/**
+ * Un artiste qui porte le nom du morceau (« Second Souffle » par Second Souffle)
+ * ne passe pas devant le même titre catalogue d’un autre artiste.
+ */
+function preferDistinctExactTitle<T extends Track>(items: T[], query: string): T[] {
+  const q = foldText(query);
+  if (!q || items.length < 2) return items;
+  if (!items.some((t) => t.type !== 'artist' && (t.artists || []).some((a) => foldText(a.name) === q))) {
+    return items;
+  }
+  const exactOther = items.filter((t) => {
+    if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') return false;
+    if ((t.artists || []).some((a) => foldText(a.name) === q)) return false;
+    if (isDerivativeSearchHit(t, query)) return false;
+    return foldText(t.title) === q || catalogTitleMatches(String(t.title || ''), query);
+  });
+  if (!exactOther.length) return items;
+  const exactIds = new Set(exactOther.map((t) => t.id));
+  return [...exactOther, ...items.filter((t) => !exactIds.has(t.id))];
+}
+
 export function rankByQuery<T extends Track>(
   items: T[],
   query: string,
@@ -582,7 +622,7 @@ export function rankByQuery<T extends Track>(
     // Écarte le bruit perso sans match lexical (reste disponible plus bas si vraiment vide)
     .sort((a, b) => b.score - a.score || b.relevance - a.relevance || a.index - b.index)
     .map((x) => x.item);
-  return promoteCanonicalRelease(ranked, query);
+  return preferDistinctExactTitle(promoteCanonicalRelease(ranked, query), query);
 }
 
 /**
@@ -603,15 +643,23 @@ export function promoteCanonicalRelease<T extends Track>(items: T[], query: stri
   const q = foldText(query);
   if (!q || items.length < 2) return items;
   const mentions = new Map<string, number>();
+  const seenCredit = new Set<string>();
   for (const t of items) {
     if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') continue;
     if (!titleMentionsQuery(t, query)) continue;
+    const titleKey = foldText(t.title);
     const names = new Set(
       (t.artists || [])
         .map((a) => foldText(a.name))
         .filter((n) => n.length >= 2),
     );
-    for (const n of names) mentions.set(n, (mentions.get(n) || 0) + 1);
+    for (const n of names) {
+      // Deux copies du même titre par le même nom ne comptent pas comme deux preuves.
+      const key = `${n}|${titleKey}`;
+      if (seenCredit.has(key)) continue;
+      seenCredit.add(key);
+      mentions.set(n, (mentions.get(n) || 0) + 1);
+    }
   }
   let canonical = '';
   let best = 1;
@@ -622,6 +670,15 @@ export function promoteCanonicalRelease<T extends Track>(items: T[], query: stri
     }
   }
   if (!canonical) return items;
+  if (canonical === q) {
+    const otherExact = items.some((t) => {
+      if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') return false;
+      const names = (t.artists || []).map((a) => foldText(a.name));
+      if (names.some((n) => n === q || includesWord(n, canonical))) return false;
+      return catalogTitleMatches(String(t.title || ''), query) || foldText(t.title) === q;
+    });
+    if (otherExact) return items;
+  }
   const tier = (t: T) => {
     if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') return 1;
     const artistHit = (t.artists || []).some((a) => {
@@ -887,9 +944,12 @@ export function pickTopResult(
     }
   }
 
-  // Titre exact trouvé → prioriser le morceau (sauf conflit artiste géré au-dessus)
+  // Titre exact trouvé → le prendre dans l’ordre du classement complet.
+  // Un sous-ensemble « exact » seul laissait deux copies d’une réupload
+  // passer devant l’unique crédit du morceau (Моя игра).
   if (exactSongs.length >= 1) {
-    const bestExact = rankByQuery(exactSongs, query, personalization)[0];
+    const ordered = rankByQuery(cleanSongs.slice(0, 12), query, personalization);
+    const bestExact = ordered.find((t) => exactSongs.some((e) => e.id === t.id));
     if (bestExact && scoreSearchItem(bestExact, query) >= 200) {
       return bestExact;
     }
@@ -908,6 +968,21 @@ export function pickTopResult(
   if (!best) return null;
   const bestRel = scoreSearchItem(best, query);
   const bestScore = bestRel + personalizeBoost(best, personalization, query);
+  const songCarriesQuery = (t: Track | null | undefined) =>
+    !!t &&
+    t.type !== 'album' &&
+    t.type !== 'artist' &&
+    t.type !== 'playlist' &&
+    !isDerivativeSearchHit(t, query) &&
+    (foldText(t.title) === q ||
+      includesWord(foldText(t.title), q) ||
+      catalogTitleMatches(String(t.title || ''), query));
+
+  // Un album homonyme (ou un homonyme d’un seul mot) ne passe pas devant
+  // le morceau dont le titre contient déjà toute la requête.
+  if (best.type === 'album' && bestSong && songCarriesQuery(bestSong)) {
+    return bestSong;
+  }
 
   if (bestSong && bestSongScore >= 600) {
     // Ne pas laisser une vidéo / lyrics channel battre un vrai titre
@@ -932,8 +1007,11 @@ export function pickTopResult(
     if (ytTop.type === 'video' && bestSong && bestSongScore >= ytScore - 40) {
       return bestSong;
     }
+    if (ytTop.type === 'album' && bestSong && songCarriesQuery(bestSong)) {
+      return bestSong;
+    }
     if (bestScore >= ytScore + 40) return best;
-    if (ytRel >= 400 && ytRel >= bestRel - 20 && ytTop.type !== 'video') return ytTop;
+    if (ytRel >= 400 && ytRel >= bestRel - 20 && ytTop.type !== 'video' && ytTop.type !== 'album') return ytTop;
     if (ytRel >= 400 && ytRel >= bestRel - 20 && !bestSong) return ytTop;
   }
 

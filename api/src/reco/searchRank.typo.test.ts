@@ -86,6 +86,70 @@ describe('fautes de frappe recherche', () => {
     assert.ok(ranked.findIndex((t) => t.id === perf.id) > 0);
   });
 
+  it('une phrase entière bat un titre qui ne partage qu’un mot', () => {
+    const q = 'What Comes Funky';
+    const vrai = song('Parliament - What Comes Funky', 'gebjgbtl571', 'parl000001');
+    const autre = song('Funky Little Baby', 'Here Come the Mummies', 'mummy00001');
+    assert.ok(scoreSearchItem(vrai, q) > scoreSearchItem(autre, q));
+  });
+
+  it('deux copies du même titre ne passent pas devant le crédit unique', () => {
+    const q = 'Моя игра';
+    const basta = song(q, 'Баста', 'basta000001');
+    const coleA = song(q, 'Cole Walker', 'cole0000001');
+    const coleB = song(q, 'Cole Walker', 'cole0000002');
+    const top = pickTopResult(q, {
+      topResult: coleA,
+      songs: [basta, coleA, coleB],
+      artists: [],
+      albums: [],
+      videos: [],
+      playlists: [],
+    });
+    assert.equal(top?.id, basta.id);
+  });
+
+  it('un album homonyme ne passe pas devant le morceau', () => {
+    const q = 'Trois heures vingt';
+    const album = { ...song(q, 'Sylvain Alary', 'album000001'), type: 'album' as const };
+    const celine = song('Trois heures vingt (Remasterisée)', 'Céline Dion', 'celine00001');
+    const top = pickTopResult(q, {
+      topResult: album,
+      songs: [celine],
+      artists: [],
+      albums: [album],
+      videos: [],
+      playlists: [],
+    });
+    assert.equal(top?.id, celine.id);
+  });
+
+  it('un groupe homonyme ne passe pas devant le même titre', () => {
+    const q = 'Second souffle';
+    const groupe = song('Second Souffle', 'Second Souffle', 'groupe0001');
+    const iam = song('Second souffle', 'IAM', 'iam00000001');
+    assert.ok(scoreSearchItem(iam, q) >= scoreSearchItem(groupe, q));
+    const groupe2 = song('Second Souffle Oblivion', 'Second Souffle', 'groupe0002');
+    const ranked = rankByQuery([groupe, groupe2, iam], q);
+    assert.equal(ranked[0]?.id, iam.id);
+  });
+
+  it('un artiste Beats passe après le même titre sans beats', () => {
+    const q = 'Мокрые кроссы';
+    const beat = song(q, 'SokolBeats', 'beat0000001');
+    const tima = song(q, 'Тима Белорусских', 'tima0000001');
+    assert.ok(scoreSearchItem(tima, q) > scoreSearchItem(beat, q));
+    const top = pickTopResult(q, {
+      topResult: beat,
+      songs: [beat, tima],
+      artists: [],
+      albums: [],
+      videos: [],
+      playlists: [],
+    });
+    assert.equal(top?.id, tima.id);
+  });
+
   it('stromae ne met pas Madonna en meilleur résultat', () => {
     const madonna = song('Like a Prayer', 'Madonna', 'madonnason1');
     const artist = {

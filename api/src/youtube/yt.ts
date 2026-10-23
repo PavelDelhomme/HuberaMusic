@@ -1417,10 +1417,25 @@ async function searchUncached(
       .filter((t) => t?.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id))
       .map((t) => ({ ...t, type: 'song' as const }));
     if (promoted.length) {
-      songsOut = mergeTracks(songsOut, promoted);
-      if (!topOut || topOut.type === 'unknown' || topOut.type === 'video') {
-        topOut = songsOut[0] || topOut;
-      }
+      // Un clip qui porte toute la requête (« Parliament - What Comes Funky »)
+      // doit être classé avec les titres, pas collé après un homonyme d’un mot.
+      songsOut = filterByRelevance(
+        rankByQuery(mergeTracks(songsOut, promoted), q, personalization),
+        q,
+      );
+      const reranked = pickTopResult(
+        q,
+        {
+          topResult: topOut,
+          songs: songsOut,
+          artists,
+          albums,
+          videos: [],
+          playlists,
+        },
+        personalization,
+      );
+      if (reranked) topOut = reranked;
     }
   }
 
