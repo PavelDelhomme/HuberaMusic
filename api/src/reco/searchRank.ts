@@ -267,6 +267,45 @@ export function isLowQualitySearchHit(track: Track): boolean {
   return false;
 }
 
+/**
+ * Reprise, fan-made, exclu, live, lyrics, piano… — pas le titre officiel.
+ * Si la requête demande elle-même cette version (« dingga piano »), on ne la pénalise pas.
+ */
+const DERIVATIVE_LATIN =
+  /\b(covers?|piano|guitar|drums?|ukulele|karaoke|remix(?:es)?|bootleg|mashups?|nightcore|sped\s*up|slowed|reverb|fitness|bpm|performances?|choreograph\w*|dance\s*practice|practices?|making\s*(?:film|of)|stage\s*mix|fancams?|face\s*cams?|focus\s*cams?|line\s*distributions?|color\s*coded|killing\s*voice|lyrics?|lives?|exclusives?|exclus?|fan\s*made|fanmade|dance\s*covers?|acoustics?|instrumentals?|reactions?|8d|tiktok|shorts|unofficial|visuali[sz]ers?)\b/i;
+const DERIVATIVE_HANGUL = /안무|라이브|직캠|교차편집|사복|팬캠|연습|페이스캠/;
+
+export function isDerivativeSearchHit(track: Track, query?: string): boolean {
+  const q = foldText(query || '');
+  const titleRaw = String(track.title || '');
+  const artistRaw = (track.artists || []).map((a) => String(a.name || '')).join(' ');
+  let hay = foldText(`${titleRaw} ${artistRaw}`);
+  if (q) {
+    for (const t of tokenize(q)) {
+      if (t.length < 3) continue;
+      hay = hay.replace(new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'), ' ');
+    }
+  }
+  if (DERIVATIVE_LATIN.test(hay)) return true;
+  const raw = `${titleRaw} ${artistRaw}`;
+  if (DERIVATIVE_HANGUL.test(raw)) return true;
+  if (/踊ってみた|歌ってみた/.test(raw)) return true;
+  return false;
+}
+
+/** « Dingga » ou « 딩가딩가 (Dingga) » : le nom demandé est le titre, pas une description. */
+export function catalogTitleMatches(rawTitle: string, query: string): boolean {
+  const q = foldText(query);
+  if (!q) return false;
+  const title = foldText(rawTitle);
+  if (title === q) return true;
+  const parens = [...String(rawTitle).matchAll(/[(\[【]([^)\]】]+)[)\]】]/g)].map((m) => foldText(m[1]));
+  if (!parens.some((p) => p === q)) return false;
+  const rest = foldText(String(rawTitle).replace(/[(\[【][^)\]】]+[)\]】]/g, ' '));
+  if (DERIVATIVE_LATIN.test(rest) || DERIVATIVE_HANGUL.test(rawTitle)) return false;
+  return true;
+}
+
 /** Titre jouable musique (pas album / artiste / podcast / hors-musique). */
 export function isMusicPlayableHit(track: Track): boolean {
   if (!track?.id || !/^[a-zA-Z0-9_-]{11}$/.test(track.id)) return false;
@@ -489,6 +528,16 @@ export function scoreSearchItem(track: Track, query: string): number {
     score -= type === 'song' || type === 'video' ? 900 : 400;
   }
 
+  // Titre catalogue (nom exact ou « 원제 (Dingga) ») devant les homonymes d’un mot.
+  if (type !== 'artist' && catalogTitleMatches(String(track.title || ''), query) && !isDerivativeSearchHit(track, query)) {
+    score += 700;
+  }
+
+  // Reprise, fan-made, exclu, performance, lyrics : après l’officiel.
+  if (type !== 'artist' && isDerivativeSearchHit(track, query)) {
+    score -= 1600;
+  }
+
   // Remix / cover / karaoke : derrière l’original
   if (/\b(remix|bootleg|mashup|nightcore|sped up|slowed|karaoke)\b/.test(title)) {
     score -= 700;
@@ -520,7 +569,7 @@ export function rankByQuery<T extends Track>(
   personalization?: SearchPersonalization,
 ): T[] {
   if (!items.length) return items;
-  return items
+  const ranked = items
     .map((item, index) => {
       const relevance = scoreSearchItem(item, query);
       return {
@@ -532,6 +581,65 @@ export function rankByQuery<T extends Track>(
     })
     // Écarte le bruit perso sans match lexical (reste disponible plus bas si vraiment vide)
     .sort((a, b) => b.score - a.score || b.relevance - a.relevance || a.index - b.index)
+    .map((x) => x.item);
+  return promoteCanonicalRelease(ranked, query);
+}
+
+/**
+ * L’artiste cité le plus souvent sur ce titre est celui du morceau connu.
+ * Son titre catalogue passe devant les reprises, perfs, lives et fan-made.
+ */
+function titleMentionsQuery(track: Track, query: string): boolean {
+  const q = foldText(query);
+  const title = foldText(track.title);
+  if (!q || !title) return false;
+  if (title === q || includesWord(title, q) || catalogTitleMatches(String(track.title || ''), query)) {
+    return true;
+  }
+  return tokenize(query).some((t) => t.length >= 3 && (includesWord(title, t) || title.includes(t)));
+}
+
+export function promoteCanonicalRelease<T extends Track>(items: T[], query: string): T[] {
+  const q = foldText(query);
+  if (!q || items.length < 2) return items;
+  const mentions = new Map<string, number>();
+  for (const t of items) {
+    if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') continue;
+    if (!titleMentionsQuery(t, query)) continue;
+    const names = new Set(
+      (t.artists || [])
+        .map((a) => foldText(a.name))
+        .filter((n) => n.length >= 2),
+    );
+    for (const n of names) mentions.set(n, (mentions.get(n) || 0) + 1);
+  }
+  let canonical = '';
+  let best = 1;
+  for (const [name, count] of mentions) {
+    if (count > best) {
+      best = count;
+      canonical = name;
+    }
+  }
+  if (!canonical) return items;
+  const tier = (t: T) => {
+    if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') return 1;
+    const artistHit = (t.artists || []).some((a) => {
+      const n = foldText(a.name);
+      return n === canonical || includesWord(n, canonical);
+    });
+    if (
+      artistHit &&
+      !isDerivativeSearchHit(t, query) &&
+      catalogTitleMatches(String(t.title || ''), query)
+    ) {
+      return 0;
+    }
+    return 1;
+  };
+  return items
+    .map((item, index) => ({ item, index, tier: tier(item) }))
+    .sort((a, b) => a.tier - b.tier || a.index - b.index)
     .map((x) => x.item);
 }
 
@@ -710,6 +818,8 @@ export function pickTopResult(
   const qTokens = tokenize(query);
 
   const exactSongs = cleanSongs.filter((t) => {
+    if (isDerivativeSearchHit(t, query)) return false;
+    if (catalogTitleMatches(String(t.title || ''), query)) return true;
     if (foldText(t.title) !== q) return false;
     const raw = String(t.title || '');
     // « Daft Punk - Get Lucky » / « (Adele) Hello » se foldent en la query sans être le titre catalogue
@@ -746,7 +856,9 @@ export function pickTopResult(
       : null;
     const songScore = bestExactSong ? scoreSearchItem(bestExactSong, query) : 0;
     const songTitleExact =
-      !!bestExactSong && foldText(bestExactSong.title || '') === q;
+      !!bestExactSong &&
+      (foldText(bestExactSong.title || '') === q ||
+        catalogTitleMatches(String(bestExactSong.title || ''), query));
     // Tube dont le titre = la requête → avant l’artiste (Bella, Despacito, …)
     if (bestExactSong && songTitleExact && songScore >= 500) {
       return bestExactSong;

@@ -62,7 +62,9 @@ import {
   shelfBucketFromTitle,
   tokenize,
   artistNameAliasMatch,
+  catalogTitleMatches,
   damerauWithin,
+  isDerivativeSearchHit,
   type SearchPersonalization,
 } from '../reco/searchRank.js';
 import {
@@ -1113,8 +1115,63 @@ async function searchUncached(
         seedTypoTokens(),
       );
       if (!typo && localSearchSufficient(q, local)) {
-        const songs = local.filter((t) => t.type !== 'video');
-        const videos = local.filter((t) => t.type === 'video');
+        const songs = filterByRelevance(
+          rankByQuery(
+            local.filter((t) => t.type !== 'video'),
+            q,
+          ),
+          q,
+        );
+        const videos = filterByRelevance(
+          rankByQuery(
+            local.filter((t) => t.type === 'video'),
+            q,
+          ),
+          q,
+        );
+        const topResult = pickTopResult(q, {
+          songs,
+          artists: [],
+          albums: [],
+          videos,
+          playlists: [],
+        });
+        const topTitle = String(topResult?.title || '');
+        const mentions = new Map<string, number>();
+        for (const t of local) {
+          if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') continue;
+          const title = foldText(t.title);
+          const qFold = foldText(q);
+          const mentioned =
+            title === qFold ||
+            catalogTitleMatches(String(t.title || ''), q) ||
+            (qFold.length >= 3 && title.includes(qFold));
+          if (!mentioned) continue;
+          for (const a of t.artists || []) {
+            const name = foldText(a.name);
+            if (name.length < 2) continue;
+            mentions.set(name, (mentions.get(name) || 0) + 1);
+          }
+        }
+        let canonical = '';
+        let canonicalCount = 1;
+        for (const [name, count] of mentions) {
+          if (count > canonicalCount) {
+            canonicalCount = count;
+            canonical = name;
+          }
+        }
+        const topArtist = foldText(topResult?.artists?.[0]?.name || topResult?.title || '');
+        const topByCanonical =
+          !!canonical &&
+          (topArtist === canonical || (canonical.length >= 3 && topArtist.includes(canonical)));
+        const localTopIsCanonical =
+          !!topResult &&
+          !isDerivativeSearchHit(topResult, q) &&
+          (topResult.type === 'artist' ||
+            (catalogTitleMatches(topTitle, q) && topByCanonical));
+        // Index local incomplet : ne pas afficher une reprise à la place du titre.
+        if (localTopIsCanonical) {
         setImmediate(() => {
           void search(q, filter, { ...opts, skipLocal: true, skipCache: true })
             .then((full) => {
@@ -1126,13 +1183,14 @@ async function searchUncached(
             .catch(() => {});
         });
         return {
-          topResult: songs[0] || videos[0] || local[0] || null,
+          topResult: topResult || songs[0] || videos[0] || local[0] || null,
           songs: filterNorm === 'video' ? [] : songs,
           videos: filterNorm === 'song' ? [] : videos.length ? videos : local.filter((t) => t.type === 'video'),
           albums: [],
           artists: [],
           playlists: [],
         };
+        }
       }
     } catch {
       /* index FTS optionnel */

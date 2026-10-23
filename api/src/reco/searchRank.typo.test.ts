@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   damerauWithin,
   pickTopResult,
+  rankByQuery,
   repairQuery,
   scoreSearchItem,
 } from './searchRank.js';
@@ -58,6 +59,31 @@ describe('fautes de frappe recherche', () => {
       playlists: [],
     });
     assert.equal(phraseTop?.id, phrase.id);
+  });
+
+  it('dingga met le titre Mamamoo devant cover, performance et fan-made', () => {
+    const q = 'dingga';
+    const officiel = song('딩가딩가 (Dingga)', 'MAMAMOO', 'FQI9B9TcSTI');
+    const piano = song('Dingga', 'Pianella Piano', 'piano000001');
+    const perf = song("[마마무] '딩가딩가 (Dingga)' Performance Video", 'MAMAMOO', 'perf0000001');
+    const killing = song('딩가딩가 (Dingga)', 'KillingVoice MAMAMOO', 'kill0000001');
+    const fitness = song('Dingga (Fitness Version 120 Bpm)', 'Girlzz', 'fit00000001');
+    assert.ok(scoreSearchItem(officiel, q) > scoreSearchItem(piano, q));
+    assert.ok(scoreSearchItem(officiel, q) > scoreSearchItem(perf, q));
+    assert.ok(scoreSearchItem(officiel, q) > scoreSearchItem(killing, q));
+    const top = pickTopResult(q, {
+      topResult: perf,
+      songs: [piano, perf, killing, fitness, officiel],
+      artists: [],
+      albums: [],
+      videos: [],
+      playlists: [],
+    });
+    assert.equal(top?.id, officiel.id);
+    const ranked = rankByQuery([piano, perf, killing, fitness, officiel], q);
+    assert.equal(ranked[0]?.id, officiel.id);
+    assert.ok(ranked.findIndex((t) => t.id === piano.id) > 0);
+    assert.ok(ranked.findIndex((t) => t.id === perf.id) > 0);
   });
 
   it('stromae ne met pas Madonna en meilleur résultat', () => {
