@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import coil.compose.SubcomposeAsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import java.io.File
 import ovh.delhomme.ytmusic.data.BatterySaver
 import ovh.delhomme.ytmusic.data.CoverStore
 import ovh.delhomme.ytmusic.data.TrackDto
@@ -204,6 +205,52 @@ fun MixCollageCover(
     }
 }
 
+/**
+ * Requête Coil stable : une nouvelle instance à chaque recomposition annulait
+ * le chargement (le listener entre dans equals) et la pochette restait vide.
+ * Fichier déjà vu d’abord, sinon une seule URL.
+ */
+@Composable
+fun rememberCoverRequest(track: TrackDto, sizeHint: Int): ImageRequest? {
+    val context = LocalContext.current
+    val localPath = remember(track.id, track.canonicalId) {
+        val direct = CoverStore.peek(context, track.id)
+        val canon = track.canonicalId
+            ?.takeIf { it.isNotBlank() && it != track.id }
+            ?.let { CoverStore.peek(context, it) }
+        (direct ?: canon)?.absolutePath
+    }
+    val remote = if (localPath == null) track.coverUrl(sizeHint) else null
+    if (localPath == null && remote == null) return null
+    val px = sizeHint.coerceIn(60, 800)
+    return remember(track.id, localPath, remote, px) {
+        if (localPath != null) {
+            ImageRequest.Builder(context)
+                .data(File(localPath))
+                .size(px)
+                .allowHardware(false)
+                .memoryCacheKey("cover-file:${track.id}")
+                .diskCachePolicy(CachePolicy.DISABLED)
+                .networkCachePolicy(CachePolicy.DISABLED)
+                .build()
+        } else {
+            ImageRequest.Builder(context)
+                .data(remote)
+                .size(px)
+                .allowHardware(false)
+                .memoryCacheKey("cover:${track.id}")
+                .diskCacheKey("cover:${track.id}")
+                .listener(
+                    onSuccess = { _, result ->
+                        CoverStore.saveDrawable(context, track.id, result.drawable)
+                        CoverStore.importCoilDisk(context, track.id)
+                    },
+                )
+                .build()
+        }
+    }
+}
+
 @Composable
 fun CachedCoverImage(
     track: TrackDto,
@@ -214,32 +261,10 @@ fun CachedCoverImage(
     loading: @Composable () -> Unit = {},
     error: @Composable () -> Unit = {},
 ) {
-    val context = LocalContext.current
-    val local = remember(track.id) { CoverStore.peek(context, track.id) }
-    val remote = if (local == null) track.coverUrl(sizeHint) else null
-    if (local == null && remote == null) {
+    val request = rememberCoverRequest(track, sizeHint)
+    if (request == null) {
         error()
         return
-    }
-    val request = if (local != null) {
-        ImageRequest.Builder(context)
-            .data(local)
-            .memoryCacheKey("cover-file:${track.id}")
-            .diskCachePolicy(CachePolicy.DISABLED)
-            .networkCachePolicy(CachePolicy.DISABLED)
-            .build()
-    } else {
-        ImageRequest.Builder(context)
-            .data(remote)
-            .memoryCacheKey("cover:${track.id}")
-            .diskCacheKey("cover:${track.id}")
-            .listener(
-                onSuccess = { _, result ->
-                    CoverStore.saveDrawable(context, track.id, result.drawable)
-                    CoverStore.importCoilDisk(context, track.id)
-                },
-            )
-            .build()
     }
     SubcomposeAsyncImage(
         model = request,

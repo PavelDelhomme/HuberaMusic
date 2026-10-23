@@ -89,12 +89,8 @@ object CoverStore {
     private fun raster(drawable: Drawable): Bitmap? {
         val source = (drawable as? BitmapDrawable)?.bitmap
         if (source != null && !source.isRecycled) {
-            if (source.config != Bitmap.Config.HARDWARE) {
-                return source.copy(Bitmap.Config.ARGB_8888, false)
-            }
-            val copy = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
-            Canvas(copy).drawBitmap(source, 0f, 0f, null)
-            return copy
+            // copy() sait convertir un bitmap matériel. Un Canvas logiciel, non.
+            return source.copy(Bitmap.Config.ARGB_8888, false)
         }
         val width = drawable.intrinsicWidth.takeIf { it > 1 } ?: 320
         val height = drawable.intrinsicHeight.takeIf { it > 1 } ?: 320
