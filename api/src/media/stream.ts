@@ -1962,9 +1962,16 @@ async function serveRelayFreshRange(req: Request, res: Response, videoId: string
 
 export async function handleStream(req: Request, res: Response) {
   const videoId = String(req.params.id || '');
+  const warmRange = (() => {
+    const m = /^bytes=(\d+)-(\d+)$/i.exec(String(req.headers.range || '').trim());
+    if (!m) return false;
+    // Tête préchargée (1,6 Mo / 3,8 Mo). Le lecteur envoie bytes=0- ouvert.
+    return Number(m[2]) - Number(m[1]) >= 64 * 1024;
+  })();
   const warmHint =
     String(req.query.warm || '') === '1' ||
-    String(req.headers['x-ytm-warm'] || '') === '1';
+    String(req.headers['x-ytm-warm'] || '') === '1' ||
+    warmRange;
   if (!warmHint) {
     lastStreamAtMs = Date.now();
     // Libère yt-dlp : le warm de fond ne doit pas timeout l’écoute en cours.
@@ -2025,7 +2032,8 @@ export async function handleStream(req: Request, res: Response) {
   const userId = (req as any).userId as string | undefined;
   const isWarmPrefetch =
     String(req.query.warm || '') === '1' ||
-    String(req.headers['x-ytm-warm'] || '') === '1';
+    String(req.headers['x-ytm-warm'] || '') === '1' ||
+    warmRange;
   const userSignal = isWarmPrefetch ? undefined : beginUserResolution(userId);
   const consumerKey = isWarmPrefetch ? `warm:next:${videoId}` : userId ? `user:${userId}` : `anon:${videoId}`;
   addDownloadConsumer(videoId, consumerKey);
@@ -2857,6 +2865,10 @@ export async function handleStream(req: Request, res: Response) {
 
   // (cache disque déjà traité plus haut)
 
+  // Préchargement (X-YTM-Warm) : pas le slot live. Sinon les têtes des
+  // autres titres de la recherche prennent la sortie et l’<audio> reste à 0
+  // jusqu’au « getAudioFormat deadline » (502 sur /url, pas d’octet sur /stream).
+  const formatLive = !isWarmPrefetch;
   try {
     ensureTime('format');
     let format = wantVideo
@@ -2866,7 +2878,7 @@ export async function handleStream(req: Request, res: Response) {
             userId: (req as any).userId,
             forceFresh: retryN > 0,
             retryN,
-            live: true,
+            live: formatLive,
           });
           const diskP = waitUntilDiskServable(
             videoId,
@@ -2912,7 +2924,7 @@ export async function handleStream(req: Request, res: Response) {
           : await withDeadline(
               'getAudioFormat2e',
               getAudioFormatViaYtDlpOnly(videoId, {
-                live: true,
+                live: formatLive,
                 preferProxies: true,
                 userId: streamUserId,
               }),
@@ -2938,8 +2950,8 @@ export async function handleStream(req: Request, res: Response) {
           : await withDeadline(
               'getAudioFormat2',
               preferProxies
-                ? getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId })
-                : getAudioFormat(videoId, { userId: (req as any).userId, live: true }),
+                ? getAudioFormatViaYtDlpOnly(videoId, { live: formatLive, preferProxies: true, userId: streamUserId })
+                : getAudioFormat(videoId, { userId: (req as any).userId, live: formatLive }),
               12_000,
             );
         if (!format.url) throw new Error(`upstream ${wantVideo ? 'video' : 'audio'} ${upstream.status}`);
@@ -2956,7 +2968,7 @@ export async function handleStream(req: Request, res: Response) {
         try {
           format = await withDeadline(
             'ytDlpUrl',
-            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies, userId: streamUserId }),
+            getAudioFormatViaYtDlpOnly(videoId, { live: formatLive, preferProxies, userId: streamUserId }),
             12_000,
           );
           upstream = await withDeadline(
@@ -2974,7 +2986,7 @@ export async function handleStream(req: Request, res: Response) {
         try {
           format = await withDeadline(
             'getAudioFormat5xx',
-            getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true, userId: streamUserId }),
+            getAudioFormatViaYtDlpOnly(videoId, { live: formatLive, preferProxies: true, userId: streamUserId }),
             12_000,
           );
           if (format.url) {
@@ -3421,9 +3433,13 @@ export async function handleStreamUrl(req: Request, res: Response) {
     return;
   }
   const wantVideo = String(req.query.type || req.query.media || '') === 'video';
-  if (!wantVideo) {
+  const warmUrl =
+    String(req.query.warm || '') === '1' ||
+    String(req.headers['x-ytm-warm'] || '') === '1';
+  if (!wantVideo && !warmUrl) {
     // /url est le chemin du téléphone. Sans ça, le préchauffage garde la seule
     // sortie audio et cette requête n’essayait que la route publique (pas live).
+    // Le préchargement web envoie X-YTM-Warm : il ne doit pas compter comme l’écoute.
     lastStreamAtMs = Date.now();
     suspendBackgroundDiskWarm(videoId);
   }
@@ -3500,7 +3516,7 @@ export async function handleStreamUrl(req: Request, res: Response) {
           userId: uid,
           forceFresh: retryN > 0,
           retryN,
-          live: true,
+          live: !warmUrl,
         });
     res.json({
       url: format.url,

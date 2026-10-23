@@ -143,7 +143,10 @@ export async function warmFormat(id: string): Promise<void> {
   try {
     const res = await fetch(apiUrl(`/api/stream/${id}/url`), {
       credentials: 'include',
-      headers: await authHeaders(),
+      headers: {
+        ...(await authHeaders()),
+        'X-YTM-Warm': '1',
+      },
     });
     // Warm arrière-plan : ne pas tripper le circuit-breaker (évite pause lecture)
     notePrefetchResult(res);
@@ -207,6 +210,7 @@ export async function warmHead(id: string, gen?: number, bytes = HEAD_BYTES): Pr
       credentials: 'include',
       headers: {
         ...(await authHeaders()),
+        'X-YTM-Warm': '1',
         Range: `bytes=0-${bytes - 1}`,
       },
     });
@@ -248,7 +252,10 @@ export async function warmFull(id: string, gen?: number): Promise<void> {
     if (gen !== undefined && gen !== prefetchGeneration || isStreamDown()) return;
     const res = await fetch(url, {
       credentials: 'include',
-      headers: await authHeaders(),
+      headers: {
+        ...(await authHeaders()),
+        'X-YTM-Warm': '1',
+      },
     });
     notePrefetchResult(res);
     if (gen !== undefined && gen !== prefetchGeneration) return;
