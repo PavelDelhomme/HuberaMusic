@@ -1153,6 +1153,18 @@ async function searchUncached(
             mentions.set(name, (mentions.get(name) || 0) + 1);
           }
         }
+        const exactArtists = new Set<string>();
+        for (const t of local) {
+          if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') continue;
+          const title = foldText(t.title);
+          const exact =
+            title === foldText(q) || catalogTitleMatches(String(t.title || ''), q);
+          if (!exact) continue;
+          for (const a of t.artists || []) {
+            const name = foldText(a.name);
+            if (name.length >= 2) exactArtists.add(name);
+          }
+        }
         let canonical = '';
         let canonicalCount = 1;
         for (const [name, count] of mentions) {
@@ -1161,6 +1173,8 @@ async function searchUncached(
             canonical = name;
           }
         }
+        // « Intro », « Toi » : plusieurs artistes ont ce titre. Le cache ne choisit pas à leur place.
+        if (exactArtists.size >= 4) canonical = '';
         const topArtist = foldText(topResult?.artists?.[0]?.name || topResult?.title || '');
         const topByCanonical =
           !!canonical &&

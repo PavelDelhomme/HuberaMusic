@@ -670,6 +670,18 @@ export function promoteCanonicalRelease<T extends Track>(items: T[], query: stri
     }
   }
   if (!canonical) return items;
+  const exactNames = new Set<string>();
+  for (const t of items) {
+    if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') continue;
+    if (isDerivativeSearchHit(t, query)) continue;
+    if (!(catalogTitleMatches(String(t.title || ''), query) || foldText(t.title) === q)) continue;
+    for (const a of t.artists || []) {
+      const n = foldText(a.name);
+      if (n.length >= 2) exactNames.add(n);
+    }
+  }
+  // Titre partagé (Intro, Toi) : pas d’artiste « officiel » unique.
+  if (exactNames.size >= 4) return items;
   if (canonical === q) {
     const otherExact = items.some((t) => {
       if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') return false;

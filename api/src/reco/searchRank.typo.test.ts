@@ -150,6 +150,22 @@ describe('fautes de frappe recherche', () => {
     assert.equal(top?.id, tima.id);
   });
 
+  it('un titre partagé ne couronne pas l’artiste le plus copié', () => {
+    const q = 'Intro';
+    const gims = song('Intro', 'GIMS', 'gimsintro1');
+    const ranked = rankByQuery(
+      [
+        gims,
+        song('Intro', 'Suprême NTM', 'ntmintro01'),
+        song('Intro (Live)', 'Suprême NTM', 'ntmintro02'),
+        song('Intro', 'Eminem', 'eminemint1'),
+        song('Intro', 'Sniper', 'sniperint1'),
+      ],
+      q,
+    );
+    assert.equal(ranked[0]?.id, gims.id);
+  });
+
   it('stromae ne met pas Madonna en meilleur résultat', () => {
     const madonna = song('Like a Prayer', 'Madonna', 'madonnason1');
     const artist = {
