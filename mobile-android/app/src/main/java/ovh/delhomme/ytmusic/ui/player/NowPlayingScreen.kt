@@ -165,6 +165,7 @@ import ovh.delhomme.ytmusic.ui.components.DownloadStatusIcon
 import ovh.delhomme.ytmusic.ui.components.EqualizerSheet
 import ovh.delhomme.ytmusic.ui.components.HoldSeekIconButton
 import ovh.delhomme.ytmusic.ui.components.MediaCover
+import ovh.delhomme.ytmusic.ui.components.rememberCoverRequest
 import ovh.delhomme.ytmusic.ui.components.dragReorderHandle
 import ovh.delhomme.ytmusic.ui.components.dragReorderItem
 import ovh.delhomme.ytmusic.ui.components.dragReorderLongPress
@@ -628,7 +629,7 @@ fun NowPlayingScreen(
         // Ambient blur — fond unifié sous cover + chrome (sheet visible uniquement)
         if (sheetVisible) {
             AsyncImage(
-                model = track.coverUrl(160),
+                model = rememberCoverRequest(track, 160),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -935,7 +936,7 @@ fun NowPlayingScreen(
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             AsyncImage(
-                                                model = track.coverUrl(400),
+                                                model = rememberCoverRequest(track, 400),
                                                 contentDescription = track.title,
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier
@@ -961,7 +962,7 @@ fun NowPlayingScreen(
                                         ) {
                                             // Pochette tout de suite — plus d’écran « Recherche du clip… »
                                             AsyncImage(
-                                                model = track.coverUrl(400),
+                                                model = rememberCoverRequest(track, 400),
                                                 contentDescription = track.title,
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier
@@ -3639,16 +3640,35 @@ private fun InlineSyncedLyrics(
                     if (!followLyrics || timed.isEmpty()) return@LaunchedEffect
                     val target = active.coerceAtLeast(0).coerceAtMost(timed.lastIndex)
                     val info = lyricsListState.layoutInfo
-                    val vis = info.visibleItemsInfo
-                    val currentItem = vis.firstOrNull { it.index == target }
                     val viewportH = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
-                    val inComfort = currentItem != null &&
-                        currentItem.offset > viewportH * 0.16f &&
-                        (currentItem.offset + currentItem.size) < viewportH * 0.84f
-                    if (inComfort) return@LaunchedEffect
+                    val currentItem = info.visibleItemsInfo.firstOrNull { it.index == target }
+                    val lineH = currentItem?.size ?: (viewportH / 5).coerceAtLeast(1)
+                    if (
+                        currentItem != null &&
+                        !ovh.delhomme.ytmusic.player.LyricAnchor.shouldRecenter(
+                            currentItem.offset,
+                            lineH,
+                            viewportH,
+                        )
+                    ) {
+                        return@LaunchedEffect
+                    }
                     programmaticScroll = true
                     runCatching {
-                        lyricsListState.animateScrollToItem((target - 2).coerceAtLeast(0))
+                        if (currentItem == null) {
+                            lyricsListState.scrollToItem(target)
+                        }
+                        val placed = lyricsListState.layoutInfo
+                        val viewH = (placed.viewportEndOffset - placed.viewportStartOffset).coerceAtLeast(1)
+                        val item = placed.visibleItemsInfo.firstOrNull { it.index == target }
+                        val size = item?.size ?: lineH
+                        val top = ovh.delhomme.ytmusic.player.LyricAnchor.desiredTopPx(viewH, size)
+                        val offsetNow = item?.offset
+                        if (offsetNow != null && ovh.delhomme.ytmusic.player.LyricAnchor.shouldRecenter(offsetNow, size, viewH)) {
+                            lyricsListState.scroll {
+                                scrollBy((offsetNow - top).toFloat())
+                            }
+                        }
                     }
                     delay(40)
                     programmaticScroll = false
@@ -4202,17 +4222,8 @@ private fun NowPlayingHeroCover(
     landscape: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val fullPx = if (landscape) 720 else 900
-    val fullUrl = track.coverUrl(fullPx)
-    val thumbUrl = track.coverUrl(520)
-    val cacheTag = if (landscape) "np-l" else "np-hero-v5"
-    fun coverRequest(url: String?, px: Int) = ImageRequest.Builder(context)
-        .data(url)
-        .size(px)
-        .memoryCacheKey("$cacheTag:$url")
-        .diskCacheKey("$cacheTag:$url")
-        .build()
+    val request = rememberCoverRequest(track, fullPx)
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
@@ -4229,13 +4240,7 @@ private fun NowPlayingHeroCover(
             else -> 1f
         }
         SubcomposeAsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(fullUrl)
-                .size(fullPx)
-                .memoryCacheKey("$cacheTag:$fullUrl")
-                .diskCacheKey("$cacheTag:$fullUrl")
-                .crossfade(80)
-                .build(),
+            model = request,
             contentDescription = track.title,
             contentScale = ContentScale.Crop,
             alignment = Alignment.Center,
@@ -4251,46 +4256,8 @@ private fun NowPlayingHeroCover(
                         Modifier
                     },
                 ),
-            loading = {
-                AsyncImage(
-                    model = coverRequest(thumbUrl, 520),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.Center,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .then(
-                            if (zoom > 1.01f) {
-                                Modifier.graphicsLayer {
-                                    scaleX = zoom
-                                    scaleY = zoom
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                )
-            },
-            error = {
-                AsyncImage(
-                    model = coverRequest(thumbUrl, 520),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.Center,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .then(
-                            if (zoom > 1.01f) {
-                                Modifier.graphicsLayer {
-                                    scaleX = zoom
-                                    scaleY = zoom
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                )
-            },
+            loading = {},
+            error = {},
         )
     }
 }
