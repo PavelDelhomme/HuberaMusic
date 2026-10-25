@@ -573,7 +573,10 @@ fun HomeScreen(
                                             track.isPlaylist() -> "Playlist"
                                             track.isAlbum() -> "Album"
                                             track.isArtist() -> "Artiste"
-                                            else -> track.artistLine()
+                                            else -> {
+                                                val dur = track.durationLabel()
+                                                if (dur != null) "${track.artistLine()} · $dur" else track.artistLine()
+                                            }
                                         },
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,

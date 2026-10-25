@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { warmFormats } from '../../lib/audio/streamPrefetch';
 import { perfStart } from '../../lib/util/perf';
 import { getCachedMix, mixCacheKey, setCachedMix } from '../../lib/util/mixCache';
+import { formatTrackDuration } from '../../lib/util/time';
 
 const HOME_CACHE_KEY = 'ytm_home_v1';
 
@@ -473,7 +474,12 @@ export function HomePage() {
                   className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/5"
                 >
                   <GripVertical className="h-4 w-4 shrink-0 text-yt-muted" />
-                  <span className="min-w-0 flex-1 truncate text-sm">{item.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {item.title}
+                    {formatTrackDuration(item) ? (
+                      <span className="text-yt-muted"> · {formatTrackDuration(item)}</span>
+                    ) : null}
+                  </span>
                   <button
                     type="button"
                     className="rounded p-1 text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-30"

@@ -1196,10 +1196,15 @@ async function searchUncached(
             })
             .catch(() => {});
         });
+        const localSongs = applyCachedDurations(filterNorm === 'video' ? [] : songs);
+        const localVideos = applyCachedDurations(
+          filterNorm === 'song' ? [] : videos.length ? videos : local.filter((t) => t.type === 'video'),
+        );
+        const localTop = topResult || localSongs[0] || localVideos[0] || local[0] || null;
         return {
-          topResult: topResult || songs[0] || videos[0] || local[0] || null,
-          songs: filterNorm === 'video' ? [] : songs,
-          videos: filterNorm === 'song' ? [] : videos.length ? videos : local.filter((t) => t.type === 'video'),
+          topResult: localTop ? applyCachedDurations([localTop])[0] : null,
+          songs: localSongs,
+          videos: localVideos,
           albums: [],
           artists: [],
           playlists: [],
@@ -1527,10 +1532,13 @@ async function searchUncached(
 
   const triste = applyTesTristeFix(q, songsOut, videosOut, topOut);
   const fixed = applyLaisseNousRaverFix(q, triste.songs, triste.videos, triste.top);
+  const songsTimed = applyCachedDurations(fixed.songs);
+  const videosTimed = applyCachedDurations(fixed.videos);
+  const topTimed = fixed.top ? applyCachedDurations([fixed.top])[0] : fixed.top;
   return {
-    topResult: fixed.top,
-    songs: fixed.songs,
-    videos: fixed.videos,
+    topResult: topTimed,
+    songs: songsTimed,
+    videos: videosTimed,
     albums,
     artists,
     playlists,

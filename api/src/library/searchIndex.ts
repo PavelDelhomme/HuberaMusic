@@ -130,16 +130,50 @@ export function searchIndexed(q: string, limit = 24): Track[] {
   }
   const ms = Date.now() - t0;
   if (ms > 80) console.warn('[search-fts] slow', ms, 'ms', q);
-  return rows.map((r) => ({
-    id: r.video_id,
-    title: r.title,
-    artists: r.artist ? r.artist.split(', ').map((name) => ({ name })) : [],
-    album: r.album ? { name: r.album } : undefined,
-    duration: r.duration || undefined,
-    thumbnails: r.thumb ? [{ url: r.thumb }] : [],
-    type: r.type === 'video' ? 'video' : 'song',
-    source: 'youtube' as const,
-  }));
+  return rows.map((r) => {
+    const duration = r.duration || undefined;
+    const durationSeconds = secondsFromClock(duration);
+    return {
+      id: r.video_id,
+      title: r.title,
+      artists: r.artist ? r.artist.split(', ').map((name) => ({ name })) : [],
+      album: r.album ? { name: r.album } : undefined,
+      duration,
+      durationSeconds,
+      thumbnails: r.thumb ? [{ url: r.thumb }] : [],
+      type: r.type === 'video' ? 'video' : 'song',
+      source: 'youtube' as const,
+    };
+  });
+}
+
+function secondsFromClock(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const parts = raw.trim().split(':').map((p) => Number(p));
+  if (!parts.length || parts.some((n) => !Number.isFinite(n) || n < 0)) return undefined;
+  if (parts.length === 2 && parts[1] < 60) return parts[0] * 60 + parts[1];
+  if (parts.length === 3 && parts[1] < 60 && parts[2] < 60) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  return undefined;
+}
+
+/** Durées déjà connues de la bibliothèque, sans appel réseau. */
+export function durationsByIds(ids: string[]): Map<string, string> {
+  const unique = [...new Set(ids.filter((id) => /^[a-zA-Z0-9_-]{11}$/.test(id)))].slice(0, 80);
+  if (!unique.length) return new Map();
+  const marks = unique.map(() => '?').join(',');
+  try {
+    const rows = openSearchIndex()
+      .prepare(
+        `SELECT video_id, duration FROM music_meta
+         WHERE video_id IN (${marks}) AND duration IS NOT NULL AND trim(duration) != ''`,
+      )
+      .all(...unique) as Array<{ video_id: string; duration: string }>;
+    return new Map(rows.map((r) => [r.video_id, r.duration.trim()]));
+  } catch {
+    return new Map();
+  }
 }
 
 export function indexedCount(): number {

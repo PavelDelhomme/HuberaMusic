@@ -11,6 +11,7 @@ import { useState, type MouseEvent } from 'react';
 import { useItemActions } from '../../store/itemActions';
 import { PlayingCoverOverlay } from '../player/PlayingBars';
 import { useNowPlayingMatch } from '../../lib/player/nowPlaying';
+import { formatTrackDuration } from '../../lib/util/time';
 
 function isLocalPlaylist(item: Track) {
   return item.id.startsWith('local:') || item.album?.id?.startsWith('local:');
@@ -402,6 +403,10 @@ export function MediaCard({
                       : item.type === 'song' || item.type === 'video'
                         ? 'Titre'
                         : item.type}
+            {(item.type === 'song' || item.type === 'video' || item.type === 'unknown') &&
+            formatTrackDuration(item) ? (
+              <span> · {formatTrackDuration(item)}</span>
+            ) : null}
           </div>
         </div>
         <button
