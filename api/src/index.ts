@@ -1225,13 +1225,28 @@ app.post(
           trackId: typeof e.trackId === 'string' ? e.trackId : undefined,
           http: typeof e.http === 'number' ? e.http : undefined,
         });
-        // Un crash fatal tamponné (POST sync trop court pendant l’OOM) ne doit pas
-        // sortir seulement comme « erreurs cumulées hors-ligne ».
-        if (level === 'fatal' || String(kind).includes('crash')) {
-          const crashStack = e.stack ? trunc(e.stack, 24_000) : undefined;
-          const crashMeta = {
+        // Crash / erreur player tamponnés : mail individuel (throttle) avec crumbs+logs
+        // — le digest seul listait les titres sans breadcrumbs → mails « vides ».
+        const lv = String(level || '').toLowerCase();
+        const kindStr = String(kind || '');
+        if (
+          lv === 'fatal' ||
+          kindStr.includes('crash') ||
+          (lv === 'error' && (kindStr.includes('android.player') || kindStr.includes('android.user_report')))
+        ) {
+          const alertStack = e.stack ? trunc(e.stack, 24_000) : undefined;
+          const alertMeta = {
             batch: true,
             count: typeof e.count === 'number' ? e.count : 1,
+            trackId: e.trackId,
+            title: e.title,
+            artist: e.artist,
+            diagnosis: e.diagnosis,
+            http: e.http,
+            code: e.code,
+            streak: e.streak,
+            network: e.network ?? e.networkish,
+            local: e.local,
             appVersion: e.appVersion,
             model: e.model,
             manufacturer: e.manufacturer,
@@ -1247,14 +1262,14 @@ app.post(
                 level,
                 kind,
                 message,
-                stack: crashStack,
+                stack: alertStack,
                 userAgent,
                 userId,
                 deviceId,
-                meta: crashMeta,
+                meta: alertMeta,
               }),
             )
-            .catch((err) => console.error('[telemetry] crash alert', err));
+            .catch((err) => console.error('[telemetry] batch alert', err));
         }
       }
       void import('./platform/telemetryAlert.js')

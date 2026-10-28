@@ -99,18 +99,35 @@ function asRecord(meta: unknown): Record<string, unknown> {
   return {};
 }
 
-function extractLogs(meta: unknown): string {
+/** Extraire un bloc « --- label --- » depuis une stack fabriquée côté Android. */
+function sectionFromStack(stack: string | undefined, label: string): string {
+  if (!stack) return '';
+  const re = new RegExp(
+    `---\\s*${label}\\s*---\\s*\\n([\\s\\S]*?)(?=\\n---\\s|$)`,
+    'i',
+  );
+  const m = re.exec(stack);
+  return m?.[1]?.trim() || '';
+}
+
+function extractLogs(meta: unknown, stack?: string): string {
   const m = asRecord(meta);
   const logs = m.recentLogs;
   if (typeof logs === 'string' && logs.trim()) return logs;
+  if (Array.isArray(logs) && logs.length) return logs.map(String).join('\n');
+  // Fallback : stack synthétique « (pas de Throwable — diagnostic AppLog) »
+  const fromStack = sectionFromStack(stack, 'recent logs');
+  if (fromStack) return fromStack;
   return '';
 }
 
-function extractBreadcrumbs(meta: unknown): string {
+function extractBreadcrumbs(meta: unknown, stack?: string): string {
   const m = asRecord(meta);
   const b = m.breadcrumbs;
-  if (Array.isArray(b)) return b.map((x) => String(x)).join('\n');
-  if (typeof b === 'string') return b;
+  if (Array.isArray(b) && b.length) return b.map((x) => String(x)).join('\n');
+  if (typeof b === 'string' && b.trim()) return b;
+  const fromStack = sectionFromStack(stack, 'breadcrumbs');
+  if (fromStack) return fromStack;
   return '';
 }
 
@@ -236,8 +253,8 @@ export async function maybeAlertTelemetryError(ev: {
   }
 
   const env = ev.env || getAppEnv();
-  const logsRaw = extractLogs(ev.meta);
-  const crumbsRaw = extractBreadcrumbs(ev.meta);
+  const logsRaw = extractLogs(ev.meta, ev.stack);
+  const crumbsRaw = extractBreadcrumbs(ev.meta, ev.stack);
   const logs = tidyRecentLogs(logsRaw);
   const crumbs = tidyBreadcrumbs(crumbsRaw);
   const stack = tidyStack((ev.stack || '').trim() || '(aucune stack Throwable — voir logs / breadcrumbs)');

@@ -255,6 +255,9 @@ object TelemetryReporter {
                 "durationMs" to runCatching {
                     ovh.delhomme.ytmusic.player.PlaybackService.Holder.player?.duration?.takeIf { it > 0 }
                 }.getOrNull(),
+                // Toujours joindre crumbs + logs : sinon le mail admin affiche « (aucun) »
+                // quand le tampon hors-ligne / digest ne reconstruit pas la meta.
+                "breadcrumbs" to AppLog.breadcrumbSnapshot().takeLast(40),
                 "recentLogs" to AppLog.recentLogText(12_000),
             ),
             force = level == "error",

@@ -55,6 +55,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -185,6 +186,50 @@ class MainActivity : ComponentActivity() {
             excludeLeftEdge()
             attachEdgeStrip()
         }
+    }
+
+    /**
+     * Quand Music est au premier plan, les KEYCODE_MEDIA_* arrivent ici (IME)
+     * et ne passent pas par MediaSession — Next/Prev semblaient « cassés » via
+     * casque / adb / certains OEM. On forward vers le même chemin que la notif.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_MEDIA_NEXT,
+                KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD,
+                -> {
+                    PlaybackService.Holder.service?.skipToNextFromExternal()
+                        ?: PlaybackService.Holder.onSkipNext?.invoke()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+                KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD,
+                -> {
+                    PlaybackService.Holder.service?.skipToPreviousFromExternal()
+                        ?: PlaybackService.Holder.onSkipPrev?.invoke()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                KeyEvent.KEYCODE_HEADSETHOOK,
+                -> {
+                    val p = PlaybackService.Holder.player
+                    if (p != null) {
+                        if (p.isPlaying) p.pause() else p.play()
+                        return true
+                    }
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                    PlaybackService.Holder.player?.play()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                    PlaybackService.Holder.player?.pause()
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private var edgeDownX = 0f
@@ -501,15 +546,7 @@ fun YtMusicAppContent(
     LaunchedEffect(Unit) {
         val intent = activity?.intent
         val injected = intent?.getStringExtra(MainActivity.EXTRA_ACCESS_TOKEN)?.trim().orEmpty()
-        // Toujours tenter LAN→prod (émulateur, hors Wi‑Fi maison) avant session debug ou stockée.
-        val switched = container.ensureReachableApiOrFallbackToProd()
-        if (switched) {
-            Toast.makeText(
-                context,
-                "API locale injoignable — bascule PROD",
-                Toast.LENGTH_LONG,
-            ).show()
-        }
+        // Peindre l’accueil dès qu’il y a des tokens locaux — ne pas bloquer sur le probe API.
         if (BuildConfig.DEBUG && injected.isNotEmpty()) {
             container.tokenStore.saveSession(
                 injected,
@@ -526,17 +563,33 @@ fun YtMusicAppContent(
             val hasTokens =
                 !container.tokenStore.peekAccess().isNullOrBlank() ||
                     !container.tokenStore.getRefresh().isNullOrBlank()
-            // Session déjà sur l’appareil : l’accueil s’ouvre tout de suite.
-            // La vérif réseau continue derrière, sans bloquer les pochettes en cache.
             if (hasTokens) loggedIn = true
-            val validated = withTimeoutOrNull(15_000L) {
-                container.validateSession()
-            }
-            loggedIn = when (validated) {
-                true -> true
-                false -> false
-                null -> hasTokens
-            }
+        }
+        val switched = container.ensureReachableApiOrFallbackToProd()
+        if (switched) {
+            Toast.makeText(
+                context,
+                "API locale injoignable — bascule PROD",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        if (loggedIn != true && !(BuildConfig.DEBUG && injected.isNotEmpty())) {
+            container.tokenStore.warmCache()
+            val hasTokens =
+                !container.tokenStore.peekAccess().isNullOrBlank() ||
+                    !container.tokenStore.getRefresh().isNullOrBlank()
+            if (hasTokens) loggedIn = true
+        }
+        val validated = withTimeoutOrNull(15_000L) {
+            container.validateSession()
+        }
+        val hasTokensNow =
+            !container.tokenStore.peekAccess().isNullOrBlank() ||
+                !container.tokenStore.getRefresh().isNullOrBlank()
+        loggedIn = when (validated) {
+            true -> true
+            false -> false
+            null -> hasTokensNow || loggedIn == true
         }
     }
 
