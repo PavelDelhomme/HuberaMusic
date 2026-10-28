@@ -54,6 +54,7 @@ import {
   filterByRelevance,
   foldText,
   isSpokenWordHit,
+  isLowQualitySearchHit,
   mergeTracks,
   pickTopResult,
   rankByQuery,
@@ -65,6 +66,7 @@ import {
   catalogTitleMatches,
   damerauWithin,
   isDerivativeSearchHit,
+  synthesizeArtistsFromSongs,
   type SearchPersonalization,
 } from '../reco/searchRank.js';
 import {
@@ -1114,7 +1116,10 @@ async function searchUncached(
         ),
         seedTypoTokens(),
       );
-      if (!typo && localSearchSufficient(q, local)) {
+      // Index local : OK pour un préfixe artiste court. Un titre multi-mots
+      // (« la maison brûle ») doit toujours passer par YouTube (tendances / nouvelles versions).
+      const localOnlyOk = tokenize(q).length <= 1;
+      if (!typo && localOnlyOk && localSearchSufficient(q, local)) {
         const songs = filterByRelevance(
           rankByQuery(
             local.filter((t) => t.type !== 'video'),
@@ -1240,19 +1245,25 @@ async function searchUncached(
   let altArtists: Track[] = [];
 
   if (filterNorm === 'all') {
-    // Un seul appel Innertube pour la liste. Album, orthographe, artiste filtré
-    // et repli web ne partent pas avec lui : sur un titre absent de la bibliothèque
-    // ils ajoutaient des secondes avant les premiers résultats.
+    // Titre multi-mots : lane « song » en parallèle (court) pour les versions catalogue
+    // récentes (Lorette…) que le shelf « all » rate parfois.
+    const wantSongLane = tokenize(q).length >= 2;
     const settled = await collectSearchLanes(
-      { primary: innertubeSearch(q).catch(() => null) },
       {
-        listLanes: ['primary'],
+        primary: innertubeSearch(q).catch(() => null),
+        ...(wantSongLane
+          ? { song: innertubeSearch(q, 'song').catch(() => null) }
+          : {}),
+      },
+      {
+        listLanes: wantSongLane ? ['primary', 'song'] : ['primary'],
         hasList: laneHasVisibleList,
         graceMs: SEARCH_LIST_GRACE_MS,
         hardCapMs: SEARCH_LIST_HARD_CAP_MS,
       },
     );
     primary = settled.values.primary ?? null;
+    songExtra = wantSongLane ? settled.values.song ?? null : null;
   } else {
     primary = await innertubeSearch(q, filterNorm).catch(() => null);
     if (!primary) {
@@ -1275,6 +1286,11 @@ async function searchUncached(
     rankByQuery(mergeTracks(fromSongs.songs, main.songs), q, personalization),
     q,
   );
+  // Pubs / reels junk : ne pas les laisser remplir la page si un vrai titre existe.
+  {
+    const clean = songs.filter((t) => !isLowQualitySearchHit(t));
+    if (clean.length) songs = clean;
+  }
   // Alt orthographe (suzane) en tête du merge → mieux classé si scores proches
   let artists = dedupeArtists(
     filterByRelevance(
@@ -1296,6 +1312,56 @@ async function searchUncached(
     q,
   );
   const playlists = filterByRelevance(rankByQuery(main.playlists, q, personalization), q);
+
+  // Innertube « all » omet souvent les fiches artiste : on les reconstruit depuis les titres.
+  artists = dedupeArtists(
+    mergeTracks(artists, synthesizeArtistsFromSongs(mergeTracks(songs, videos), q)),
+    q,
+  );
+
+  // Que du junk (pubs « est dispo ») → 2ᵉ passe (ordre des mots / filtre song).
+  if (
+    songs.filter((t) => !isLowQualitySearchHit(t)).length === 0 &&
+    tokenize(q).length >= 2
+  ) {
+    const stop = new Set(['le', 'la', 'les', 'de', 'du', 'des', 'un', 'une', 'et', 'en', 'a', 'à']);
+    const core = tokenize(q).filter((t) => t.length >= 3 && !stop.has(t));
+    const altQs = [
+      core.join(' '),
+      [...core].reverse().join(' '),
+    ].filter((s) => s && foldText(s) !== foldText(q));
+    for (const aq of [...altQs, q].slice(0, 3)) {
+      const extra = await innertubeSearch(aq, 'song', 2_400).catch(() => null);
+      if (!extra) continue;
+      const bucket = collectFromResult(extra);
+      const extraSongs = mergeTracks(
+        bucket.songs,
+        (bucket.videos || []).map((t) => ({ ...t, type: 'song' as const })),
+      );
+      const ranked = filterByRelevance(
+        rankByQuery(mergeTracks(songs, extraSongs), q, personalization),
+        q,
+        80,
+      ).filter((t) => !isLowQualitySearchHit(t));
+      if (ranked.length) {
+        songs = ranked;
+        videos = filterByRelevance(
+          rankByQuery(mergeTracks(videos, bucket.videos), q, personalization),
+          q,
+          80,
+        );
+        artists = dedupeArtists(
+          mergeTracks(artists, synthesizeArtistsFromSongs(songs, q), bucket.artists),
+          q,
+        );
+        break;
+      }
+    }
+    // Toujours pas de vrai titre : ne pas afficher que des pubs.
+    if (songs.every((t) => isLowQualitySearchHit(t))) {
+      songs = [];
+    }
+  }
 
   // Une seule recherche corrigée si un token est une faute (« bine », « ostromae »).
   // Le classement reste sur la requête tapée : « je vais bien » d’un autre artiste
@@ -1341,6 +1407,10 @@ async function searchUncached(
       }
     }
     artists = artistsMatchingQuery(artists, q);
+    artists = dedupeArtists(
+      mergeTracks(artists, synthesizeArtistsFromSongs(mergeTracks(songs, videos), q)),
+      q,
+    );
   } catch (err) {
     console.warn('[search] typo repair failed', err);
   }
@@ -1433,7 +1503,7 @@ async function searchUncached(
   // Clip YouTube = aussi un titre (Laisse Nous Raver, reels Instagram…).
   if (filterNorm === 'all' || filterNorm === 'song') {
     const promoted = (videosOut || [])
-      .filter((t) => t?.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id))
+      .filter((t) => t?.id && /^[a-zA-Z0-9_-]{11}$/.test(t.id) && !isLowQualitySearchHit(t))
       .map((t) => ({ ...t, type: 'song' as const }));
     if (promoted.length) {
       // Un clip qui porte toute la requête (« Parliament - What Comes Funky »)
@@ -1456,6 +1526,13 @@ async function searchUncached(
       );
       if (reranked) topOut = reranked;
     }
+  }
+  // Filet final : jamais une page remplie uniquement de pubs / hashtags.
+  {
+    const clean = songsOut.filter((t) => !isLowQualitySearchHit(t));
+    if (clean.length) songsOut = clean;
+    else songsOut = [];
+    videosOut = videosOut.filter((t) => !isLowQualitySearchHit(t));
   }
 
   if (filterNorm === 'song') {
@@ -1534,13 +1611,53 @@ async function searchUncached(
   const fixed = applyLaisseNousRaverFix(q, triste.songs, triste.videos, triste.top);
   const songsTimed = applyCachedDurations(fixed.songs);
   const videosTimed = applyCachedDurations(fixed.videos);
-  const topTimed = fixed.top ? applyCachedDurations([fixed.top])[0] : fixed.top;
+  let artistsOut = dedupeArtists(
+    mergeTracks(artists, synthesizeArtistsFromSongs(songsTimed, q)),
+    q,
+  );
+  artistsOut = artistsMatchingQuery(artistsOut, q);
+  // Top album homonyme (« Lenaïg » d’un autre) → vraie fiche artiste si on l’a.
+  let topTimed = fixed.top ? applyCachedDurations([fixed.top])[0] : fixed.top;
+  if (
+    topTimed?.type === 'album' &&
+    artistsOut.length &&
+    tokenize(q).length <= 2 &&
+    foldText(topTimed.title || '') === foldText(q)
+  ) {
+    const albumArtist = foldText(topTimed.artists?.[0]?.name || '');
+    const qf = foldText(q);
+    if (albumArtist !== qf && !artistNameAliasMatch(albumArtist, qf)) {
+      topTimed = artistsOut[0];
+    }
+  } else if (
+    !topTimed ||
+    (topTimed.type !== 'artist' &&
+      artistsOut.length &&
+      tokenize(q).length <= 2 &&
+      !catalogTitleMatches(String(topTimed.title || ''), q) &&
+      foldText(topTimed.title || '') !== foldText(q))
+  ) {
+    const artistHit = artistsOut.find((a) => {
+      const n = foldText(a.title || a.artists?.[0]?.name || '');
+      return n === foldText(q) || artistNameAliasMatch(n, foldText(q));
+    });
+    if (artistHit && scoreSearchItem(artistHit, q) >= 200) {
+      // Requête « Lenaïg » / « Lorette » / « Bo Burnham » → fiche artiste, pas un clip random
+      const songTitleIsQuery =
+        topTimed &&
+        (foldText(topTimed.title || '') === foldText(q) ||
+          catalogTitleMatches(String(topTimed.title || ''), q));
+      if (!songTitleIsQuery || topTimed?.type === 'video') {
+        topTimed = artistHit;
+      }
+    }
+  }
   return {
     topResult: topTimed,
     songs: songsTimed,
     videos: videosTimed,
     albums,
-    artists,
+    artists: artistsOut,
     playlists,
   };
 }

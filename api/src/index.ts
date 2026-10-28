@@ -401,6 +401,15 @@ app.use(authOptional);
 const authBurst = rateLimit({ windowMs: 60_000, max: 20 });
 const authStrict = rateLimit({ windowMs: 15 * 60_000, max: 40 });
 
+/** Chemins OTA relatifs → URL absolue (évite « no protocol » côté clients naïfs). */
+function absolutePublicUrl(pathOrUrl: string | null | undefined, origin: string): string | null {
+  const raw = String(pathOrUrl || '').trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const base = origin.replace(/\/$/, '');
+  return raw.startsWith('/') ? `${base}${raw}` : `${base}/${raw}`;
+}
+
 /** Notes de version (Compte / Profil) — source : VERSION_NOTES.json à la racine. */
 app.get('/api/version', (req, res) => {
   let semver = '';
@@ -439,7 +448,9 @@ app.get('/api/version', (req, res) => {
     mandatory: false,
     channel: 'prod',
     apkAvailable: apkNewerThanPhone && cmp(apkName || semver, clientVer || '0') > 0,
-    apkUrl: apkNewerThanPhone ? apk.downloadPath : null,
+    apkUrl: apkNewerThanPhone
+      ? absolutePublicUrl(apk.downloadPath, 'https://music.hubera.cloud')
+      : null,
     apkVersion: apkNewerThanPhone ? apk.versionName : null,
     apkVersionCode: apkNewerThanPhone ? apkCode : null,
     webUrl: 'https://music.hubera.cloud',
@@ -462,7 +473,7 @@ app.get('/api/version', (req, res) => {
     body.version = betaName || advertised;
     body.appVersion = `b+${body.version}`;
     body.apkAvailable = cmp(betaName || String(body.version), clientVer || '0') > 0;
-    body.apkUrl = beta.downloadPath;
+    body.apkUrl = absolutePublicUrl(beta.downloadPath, 'https://music.hubera.cloud');
     body.apkVersion = beta.versionName;
     body.apkVersionCode = betaCode;
   }
@@ -603,6 +614,54 @@ app.post('/api/auth/login', authBurst, authStrict, async (req, res) => {
       return;
     }
     res.status(401).json({ error: msg });
+  }
+});
+
+/** Incident client (ex. iOS page noire / login cassé) → mail ops. */
+const authIncidentLast = new Map<string, number>();
+app.post('/api/client/auth-incident', authBurst, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 120);
+    const kind = String(req.body?.kind || 'auth').trim().slice(0, 64);
+    const message = String(req.body?.message || 'incident auth').trim().slice(0, 800);
+    const ua = String(req.headers['user-agent'] || req.body?.ua || '').slice(0, 240);
+    const href = String(req.body?.href || '').slice(0, 240);
+    const isIos = /iphone|ipad|ipod|ios/i.test(ua) || !!req.body?.ios;
+    const fp = `${kind}|${email}|${message.slice(0, 80)}`;
+    const now = Date.now();
+    if ((authIncidentLast.get(fp) || 0) + 120_000 > now) {
+      res.json({ ok: true, throttled: true });
+      return;
+    }
+    authIncidentLast.set(fp, now);
+    const { sendMail, mailBrand } = await import('./platform/mail.js');
+    const to =
+      process.env.TELEMETRY_ALERT_TO ||
+      process.env.ADMIN_EMAILS ||
+      process.env.SEED_EMAIL ||
+      'paul@delhomme.ovh';
+    const brand = mailBrand();
+    const subject = `[${brand}] Auth / écran noir${isIos ? ' · iOS' : ''} — ${email || 'anonyme'}`;
+    const text =
+      `Incident connexion Hubera Music\n` +
+      `kind: ${kind}\n` +
+      `email: ${email || '(vide)'}\n` +
+      `ios: ${isIos}\n` +
+      `message: ${message}\n` +
+      `href: ${href}\n` +
+      `ua: ${ua}\n` +
+      `at: ${new Date().toISOString()}\n`;
+    await sendMail({
+      to,
+      subject,
+      text,
+      html: `<pre style="font-family:ui-monospace,monospace;font-size:13px">${text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')}</pre>`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String((err as Error).message || err) });
   }
 });
 

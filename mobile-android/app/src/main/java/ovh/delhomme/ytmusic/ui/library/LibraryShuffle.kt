@@ -12,6 +12,7 @@ import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ShuffleHeadStore
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.player.PlayerCache
+import ovh.delhomme.ytmusic.player.QuickAccessLoopPolicy
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.util.toastMain
 
@@ -202,9 +203,9 @@ suspend fun playQuickAccessShuffled(
     pins: List<TrackDto>,
     onPlay: (List<TrackDto>, Int) -> Unit,
 ): Boolean {
-    val songs = pins
-        .filter { it.isPlayable() && it.id.length == 11 }
-        .distinctBy { it.id }
+    val songs = QuickAccessLoopPolicy.playbackIds(
+        pins.map { it.id to it.isPlayable() },
+    ).mapNotNull { id -> pins.find { it.id == id } }
     if (songs.isEmpty()) return false
     onPlay(songs.shuffled(), 0)
     return true

@@ -1034,12 +1034,17 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
 
   const targetVol = Math.max(0, Math.min(1, state.volume > 0 ? state.volume : 0.9));
 
-  // Si le même titre est déjà chargé sur le primary → seek 0 + play (skip/loop rapide)
+  // Si le même titre est déjà chargé sur le primary → seek 0 + play (skip/loop rapide).
+  // Ne pas comparer à location.pathname (casse la reprise après navigation SPA).
+  const srcLooksPlayable =
+    Boolean(audio.src) &&
+    (audio.src.includes('/api/stream/') ||
+      audio.src.startsWith('blob:') ||
+      /^https?:\/\//i.test(audio.src));
   if (
     audio.dataset.trackId === track.id &&
-    audio.src &&
-    audio.readyState >= 2 &&
-    !audio.src.endsWith(window.location.pathname)
+    srcLooksPlayable &&
+    audio.readyState >= 2
   ) {
     try {
       audio.muted = false;

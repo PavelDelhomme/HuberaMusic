@@ -147,7 +147,8 @@ describe('recherche — la liste n’attend pas le chemin lent', () => {
     assert.match(body, /primary: innertubeSearch\(q\)/);
     assert.match(body, /!haveList/);
     assert.match(body, /SEARCH_WEB_EMPTY_BUDGET_MS/);
-    assert.equal(body.includes("innertubeSearch(q, 'song')"), false);
+    // Lane « song » en parallèle pour les titres multi-mots (versions tendances).
+    assert.match(body, /innertubeSearch\(q, 'song'\)/);
     assert.equal(body.includes("innertubeSearch(q, 'album')"), false);
     assert.equal(body.includes("innertubeSearch(q, 'artist')"), false);
     assert.equal(body.includes('artistSpellingAlternates'), false);

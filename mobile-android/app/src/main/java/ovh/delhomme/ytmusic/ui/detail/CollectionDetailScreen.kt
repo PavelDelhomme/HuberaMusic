@@ -69,6 +69,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -484,7 +486,10 @@ fun CollectionDetailScreen(
                 Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(24.dp))
             }
             kind == DetailKind.Album -> {
-                LazyColumn(contentPadding = PaddingValues(bottom = 28.dp)) {
+                LazyColumn(
+                    contentPadding = PaddingValues(bottom = 28.dp),
+                    modifier = Modifier.semantics { contentDescription = "Page album" },
+                ) {
                     item {
                         AlbumHeroHeader(
                             title = title,

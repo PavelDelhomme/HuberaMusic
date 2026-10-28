@@ -1,6 +1,43 @@
 {
-  "updatedAt": "2026-10-23",
+  "updatedAt": "2026-10-26",
   "versions": [
+    {
+      "version": "1.3.398",
+      "date": "2026-10-26",
+      "time": "21:27",
+      "at": "2026-10-26T21:27:06+02:00",
+      "title": "Artiste/titre + reprise flux après navigation",
+      "notes": [
+        "Les noms collés type AronChupa s’affichent correctement (Aron Chupa).",
+        "Titres « Artiste - Morceau » sans artiste sont séparés.",
+        "La lecture ne se cale plus sur l’URL de page après une navigation dans l’app.",
+        "Recherche : un titre exact d’un autre artiste ne passe plus devant Stromae quand la requête nomme Stromae (typo ostromae)."
+      ]
+    },
+    {
+      "version": "1.3.397",
+      "date": "2026-10-26",
+      "time": "19:41",
+      "at": "2026-10-26T19:41:45+02:00",
+      "title": "Recherche : artistes récents et versions tendances",
+      "notes": [
+        "La recherche trouve mieux les artistes récents (Lenaïg, Lorette…) même sans fiche YouTube Music.",
+        "Pour un même titre (« la maison brûle »), plusieurs versions / artistes apparaissent en tête.",
+        "Les pubs « bientôt dispo sur les plateformes » sont écartées.",
+        "Les titres multi-mots passent toujours par YouTube (plus seulement l’index local figé)."
+      ]
+    },
+    {
+      "version": "1.3.396",
+      "date": "2026-10-26",
+      "time": "14:00",
+      "at": "2026-10-26T14:00:00+02:00",
+      "title": "Aléatoire : moins de titres morts",
+      "notes": [
+        "La file aléatoire écarte les titres déjà marqués morts ou remplacés.",
+        "Le serveur chauffe plus de têtes pour limiter les trous au démarrage."
+      ]
+    },
     {
       "version": "1.3.394",
       "date": "2026-10-23",

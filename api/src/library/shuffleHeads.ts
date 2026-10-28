@@ -107,6 +107,52 @@ function needsDisk(id: string): boolean {
   }
 }
 
+/** Titres connus morts / remplacés — exclus de l’aléatoire pour éviter les trous. */
+function deadOrReplacedIds(): Set<string> {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT track_id AS id FROM track_health
+         WHERE state IN ('dead', 'replaced')`,
+      )
+      .all() as { id: string }[];
+    return new Set(rows.map((r) => r.id).filter(validId));
+  } catch {
+    return new Set();
+  }
+}
+
+/** Si un id mort a un remplaçant sain, on le substitue dans la file. */
+function applyReplacements(ids: string[]): string[] {
+  let map = new Map<string, string>();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT dead_id AS dead, replacement_id AS live
+         FROM track_id_replacements
+         WHERE replacement_id IS NOT NULL AND replacement_id != ''`,
+      )
+      .all() as { dead: string; live: string }[];
+    map = new Map(
+      rows
+        .filter((r) => validId(r.dead) && validId(r.live) && r.dead !== r.live)
+        .map((r) => [r.dead, r.live]),
+    );
+  } catch {
+    /* table absente */
+  }
+  if (!map.size) return ids;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const id of ids) {
+    const next = map.get(id) || id;
+    if (seen.has(next)) continue;
+    seen.add(next);
+    out.push(next);
+  }
+  return out;
+}
+
 export type ShuffleHeadsResult = {
   ids: string[];
   slot: number;
@@ -137,6 +183,9 @@ export function getShuffleHeads(
   }
   const cached = mem.get(cacheKey);
   if (cached && cached.slot === slot && cached.ids.length) {
+    const deadCached = deadOrReplacedIds();
+    const idsCached = applyReplacements(cached.ids).filter((id) => !deadCached.has(id));
+    if (idsCached.length) cached.ids = idsCached;
     if (opts?.warm !== false) scheduleWarmHeads(userId, cached.ids);
     return {
       ids: cached.ids,
@@ -164,14 +213,24 @@ export function getShuffleHeads(
       .map((t) => t.id)
       .filter(validId),
   );
-  let pool = source.filter((id) => !recent.has(id));
+  const dead = deadOrReplacedIds();
+  let pool = source.filter((id) => !recent.has(id) && !dead.has(id));
   if (pool.length < Math.min(HEAD_N, Math.floor(source.length / 4))) {
+    pool = source.filter((id) => !dead.has(id));
+  }
+  if (pool.length < Math.min(40, source.length / 8)) {
+    // Dernier recours : garder le pool brut (mieux que file vide).
     pool = source;
   }
   const seed = hashSeed(userId, slot + (opts?.fresh ? freshSpin : 0), scope);
   const headCap = scope === 'recent' ? Math.min(HEAD_N, 80) : HEAD_N;
   // Mélange complet du lot : pas les mêmes favoris collés en tête à chaque lecture.
-  const ids = seededShuffle(pool, seed ^ (opts?.fresh ? freshSpin : 0)).slice(0, headCap);
+  // Remplacements + exclusion des morts restants → moins de skips / trous en aléatoire.
+  const ids = applyReplacements(
+    seededShuffle(pool, seed ^ (opts?.fresh ? freshSpin : 0)).slice(0, Math.ceil(headCap * 1.15)),
+  )
+    .filter((id) => !dead.has(id))
+    .slice(0, headCap);
   const expiresAt = (slot + 1) * SLOT_MS;
   mem.set(cacheKey, { ids, slot, expiresAt, at: now });
   // Cap mémoire : ~200 users × 2 scopes
@@ -199,11 +258,12 @@ function scheduleWarmHeads(userId: string, ids: string[]): void {
       // Pendant une écoute : lead Aléatoire (#0–#8), pas tout le lot.
       const hot = isPlaybackHot(90_000);
       // File d’ids tout de suite ; le disque suit en série (pas une rafale).
-      const cap = hot ? 8 : 80;
+      // Aléatoire : chauffe un peu plus large pour limiter les titres qui « galèrent ».
+      const cap = hot ? 12 : 100;
       const need = ids.filter(needsDisk).slice(0, cap);
       if (need.length) enqueueStreamWarm(need, userId);
       const { ensurePlayableQueueAhead } = await import('../media/ensurePlayable.js');
-      ensurePlayableQueueAhead(ids.slice(0, hot ? 4 : 12), { userId });
+      ensurePlayableQueueAhead(ids.slice(0, hot ? 8 : 20), { userId });
     } catch {
       /* ignore */
     }

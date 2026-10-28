@@ -1,6 +1,157 @@
 {
-  "updatedAt": "2026-10-22",
+  "updatedAt": "2026-10-26",
   "versions": [
+    {
+      "version": "1.3.396",
+      "date": "2026-10-26",
+      "time": "14:00",
+      "at": "2026-10-26T14:00:00+02:00",
+      "title": "Aléatoire : moins de titres morts",
+      "notes": [
+        "La file aléatoire écarte les titres déjà marqués morts ou remplacés.",
+        "Le serveur chauffe plus de têtes pour limiter les trous au démarrage."
+      ]
+    },
+    {
+      "version": "1.3.394",
+      "date": "2026-10-23",
+      "time": "22:05",
+      "at": "2026-10-23T22:05:00+02:00",
+      "title": "La ligne de paroles remonte encore",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour laisser voir les paroles qui suivent."
+      ]
+    },
+    {
+      "version": "1.3.393",
+      "date": "2026-10-23",
+      "time": "21:40",
+      "at": "2026-10-23T21:40:00+02:00",
+      "title": "La ligne de paroles remonte",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour voir tout de suite les paroles suivantes."
+      ]
+    },
+    {
+      "version": "1.3.392",
+      "date": "2026-10-23",
+      "time": "09:10",
+      "at": "2026-10-23T09:10:00+02:00",
+      "title": "Les pochettes reviennent",
+      "notes": [
+        "Album, titre et file réaffichent la pochette déjà vue, et une vignette ne reste plus bloquée au chargement."
+      ]
+    },
+    {
+      "version": "1.3.391",
+      "date": "2026-10-23",
+      "time": "02:40",
+      "at": "2026-10-23T02:40:00+02:00",
+      "title": "L’icône de compte liste les adresses",
+      "notes": [
+        "L’icône en haut à droite liste les adresses Hubera ID connectées."
+      ]
+    },
+    {
+      "version": "1.3.390",
+      "date": "2026-10-22",
+      "time": "23:58",
+      "at": "2026-10-22T23:58:00+02:00",
+      "title": "Le titre suivant est déjà prêt",
+      "notes": [
+        "En radio, en mix ou en aléatoire, seul le titre suivant prépare son début, pour enchaîner sans trou."
+      ]
+    },
+    {
+      "version": "1.3.389",
+      "date": "2026-10-22",
+      "time": "23:55",
+      "at": "2026-10-22T23:55:00+02:00",
+      "title": "La bio suit la langue du téléphone",
+      "notes": [
+        "Sur une page d’artiste, le texte déjà reçu s’affiche tout de suite. S’il existe une version dans la langue du téléphone, elle la remplace ensuite."
+      ]
+    },
+    {
+      "version": "1.3.388",
+      "date": "2026-10-22",
+      "time": "23:50",
+      "at": "2026-10-22T23:50:00+02:00",
+      "title": "Suivre change tout de suite",
+      "notes": [
+        "Sur une page d’artiste, Suivre et Biblio changent d’état tout de suite. L’enregistrement se fait ensuite. En cas d’échec, le bouton revient à l’état précédent."
+      ]
+    },
+    {
+      "version": "1.3.387",
+      "date": "2026-10-22",
+      "time": "23:45",
+      "at": "2026-10-22T23:45:00+02:00",
+      "title": "La suggestion suit le nom tapé",
+      "notes": [
+        "Une recherche d’artiste en minuscules propose ce nom, pas un artiste sans rapport. « stromae » ne met plus Madonna en premier."
+      ]
+    },
+    {
+      "version": "1.3.386",
+      "date": "2026-10-22",
+      "time": "23:35",
+      "at": "2026-10-22T23:35:00+02:00",
+      "title": "La recherche ne montre plus Réessayer pendant la frappe",
+      "notes": [
+        "Pendant qu’on tape, le champ reste. Réessayer n’apparaît qu’une fois la recherche terminée, et seulement si elle a vraiment échoué."
+      ]
+    },
+    {
+      "version": "1.3.385",
+      "date": "2026-10-22",
+      "time": "23:25",
+      "at": "2026-10-22T23:25:00+02:00",
+      "title": "Lecteur en pause reste en barre",
+      "notes": [
+        "Si la lecture est en pause, rouvrir l’application laisse le lecteur en barre. Le plein écran ne revient pas tout seul et le son ne reprend pas."
+      ]
+    },
+    {
+      "version": "1.3.384",
+      "date": "2026-10-22",
+      "time": "23:15",
+      "at": "2026-10-22T23:15:00+02:00",
+      "title": "Tout voir sous la barre d’état",
+      "notes": [
+        "Tout voir ouvre l’accès rapide dans la zone sûre. Le titre et le retour restent visibles sous la barre d’état."
+      ]
+    },
+    {
+      "version": "1.3.383",
+      "date": "2026-10-22",
+      "time": "23:05",
+      "at": "2026-10-22T23:05:00+02:00",
+      "title": "Corbeille de l’accès rapide",
+      "notes": [
+        "Chaque ligne de l’accès rapide a une corbeille. Confirmer retire le titre de l’accès rapide. Il reste dans la bibliothèque."
+      ]
+    },
+    {
+      "version": "1.3.382",
+      "date": "2026-10-22",
+      "time": "22:50",
+      "at": "2026-10-22T22:50:00+02:00",
+      "title": "Pochettes gardées",
+      "notes": [
+        "Une pochette de titre, d’album ou d’artiste déjà vue reste sur l’appareil. Rouvrir l’accueil la réaffiche sans attendre le réseau."
+      ]
+    },
+    {
+      "version": "1.3.381",
+      "date": "2026-10-22",
+      "time": "22:40",
+      "at": "2026-10-22T22:40:00+02:00",
+      "title": "Boutons des vignettes",
+      "notes": [
+        "Sur une vignette de titre, de mix ou de playlist : lire en bas à droite, ajouter à la bibliothèque en bas à gauche, trois points en haut à droite."
+      ]
+    },
     {
       "version": "1.3.380",
       "date": "2026-10-22",

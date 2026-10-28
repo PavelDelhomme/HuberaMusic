@@ -1,6 +1,37 @@
 {
-  "updatedAt": "2026-10-23",
+  "updatedAt": "2026-10-26",
   "versions": [
+    {
+      "version": "1.3.396",
+      "date": "2026-10-26",
+      "time": "14:00",
+      "at": "2026-10-26T14:00:00+02:00",
+      "title": "Aléatoire : moins de titres morts",
+      "notes": [
+        "La file aléatoire écarte les titres déjà marqués morts ou remplacés.",
+        "Le serveur chauffe plus de têtes pour limiter les trous au démarrage."
+      ]
+    },
+    {
+      "version": "1.3.394",
+      "date": "2026-10-23",
+      "time": "22:05",
+      "at": "2026-10-23T22:05:00+02:00",
+      "title": "La ligne de paroles remonte encore",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour laisser voir les paroles qui suivent."
+      ]
+    },
+    {
+      "version": "1.3.393",
+      "date": "2026-10-23",
+      "time": "21:40",
+      "at": "2026-10-23T21:40:00+02:00",
+      "title": "La ligne de paroles remonte",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour voir tout de suite les paroles suivantes."
+      ]
+    },
     {
       "version": "1.3.392",
       "date": "2026-10-23",

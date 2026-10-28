@@ -222,7 +222,7 @@ def main() -> None:
     pending = [tid for tid in sample if tid not in done]
     lock = threading.Lock()
     finished = len(done)
-    print(f'resume done={finished} pending={len(pending)} workers=2', flush=True)
+    print(f'resume done={finished} pending={len(pending)} workers=1', flush=True)
     with log.open('a') as fh:
         def one(tid: str) -> None:
             nonlocal finished
@@ -239,7 +239,7 @@ def main() -> None:
                 if finished % 10 == 0 or finished == len(sample):
                     print(f'lib {finished}/{len(sample)} {counts}', flush=True)
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=1) as pool:
             list(pool.map(one, pending))
         foreign: list[str] = []
         try:

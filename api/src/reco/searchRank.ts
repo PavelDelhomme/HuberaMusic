@@ -264,6 +264,24 @@ export function isLowQualitySearchHit(track: Track): boolean {
   if (/\b(comedy\s*special|sketch\s*comedy|funny\s*moments|best\s*of\s*fails)\b/.test(title)) {
     return true;
   }
+  // Pubs / reels « bientôt dispo » — pas le morceau (ex. Lorette « la maison brûle est dispo… »)
+  if (
+    /\b(est\s+dispo|bientot\s+dispo|disponible\s+(sur|partout|partout)|toutes\s+les\s+plateformes|plateformes?\b|new\s*music|version\s+complete|#newmusic)\b/.test(
+      title,
+    )
+  ) {
+    return true;
+  }
+  const rawTitle = String(track.title || '');
+  if (/[❤️🥹🫂🔥✨]/.test(rawTitle) && /\b(dispo|disponible|partout|plateforme|sorti)/.test(title)) {
+    return true;
+  }
+  // Reels / Shorts bourrés de hashtags (#Cover #chanteuse…) — pas le titre catalogue
+  const hashCount = (rawTitle.match(/#/g) || []).length;
+  if (hashCount >= 2) return true;
+  if (hashCount >= 1 && /\b(cover|covers|piano|voix|chanteuse|chansonfrancaise)\b/.test(title)) {
+    return true;
+  }
   return false;
 }
 
@@ -515,6 +533,13 @@ export function scoreSearchItem(track: Track, query: string): number {
     if (long.length > 0 && missed === 0 && onTitle >= 2) score += 1900;
     else if (onArtistOnly > 0 && onTitle === 0 && long.length >= 2) score -= 500;
     if (missed > 0 && onArtistOnly === 0) score -= 700 * missed;
+    // « je vais bien » Ridsa ne doit pas battre Stromae quand la requête nomme Stromae
+    // (typo ostromae) mais qu’aucun titre Stromae exact n’est dans le lot.
+    if (onTitle >= 1 && missed >= 1 && onArtistOnly === 0) {
+      score -= 1100 * missed;
+    }
+    // Artiste nommé dans la requête → bonus même si le titre exact manque.
+    if (onArtistOnly >= 1 && missed <= 1) score += 650 * onArtistOnly;
   }
 
   // Couverture globale des tokens
@@ -603,12 +628,102 @@ function preferDistinctExactTitle<T extends Track>(items: T[], query: string): T
   return [...exactOther, ...items.filter((t) => !exactIds.has(t.id))];
 }
 
+/**
+ * Même titre catalogue, plusieurs artistes (Diane / Lorette / Séguin…) :
+ * un artiste par « tour » en tête pour ne pas noyer les versions récentes.
+ */
+export function diversifyExactTitleArtists<T extends Track>(items: T[], query: string): T[] {
+  const q = foldText(query);
+  if (!q || items.length < 3) return items;
+  const isExact = (t: T) => {
+    if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') return false;
+    if (isDerivativeSearchHit(t, query) || isLowQualitySearchHit(t)) return false;
+    return foldText(t.title) === q || catalogTitleMatches(String(t.title || ''), query);
+  };
+  const exact = items.filter(isExact);
+  const artistKeys = new Set(
+    exact.map((t) => foldText((t.artists || [])[0]?.name || '')).filter((n) => n.length >= 2),
+  );
+  if (artistKeys.size < 2) return items;
+  const seen = new Set<string>();
+  const head: T[] = [];
+  for (const t of items) {
+    if (!isExact(t)) continue;
+    const an = foldText((t.artists || [])[0]?.name || '');
+    if (!an || seen.has(an)) continue;
+    seen.add(an);
+    head.push(t);
+    if (seen.size >= 8) break;
+  }
+  if (head.length < 2) return items;
+  const headIds = new Set(head.map((t) => t.id));
+  return [...head, ...items.filter((t) => !headIds.has(t.id))];
+}
+
+/**
+ * Fiches artiste absentes d’Innertube : on les reconstruit depuis les crédits des titres.
+ * « Lenaïg », « Lorette » → artiste en tête, pas seulement des clips / albums homonymes.
+ */
+export function synthesizeArtistsFromSongs(songs: Track[], query: string): Track[] {
+  const q = foldText(query);
+  if (!q || q.length < 2 || !songs.length) return [];
+  type Acc = { name: string; id?: string; thumb?: { url: string; width?: number; height?: number }; n: number };
+  const counts = new Map<string, Acc>();
+  for (const t of songs) {
+    if (!t || isLowQualitySearchHit(t)) continue;
+    for (const a of t.artists || []) {
+      const name = String(a.name || '').trim();
+      const nf = foldText(name);
+      if (nf.length < 2 || isJunkArtistName(name)) continue;
+      const matches =
+        nf === q ||
+        artistNameAliasMatch(nf, q) ||
+        (q.length >= 4 && nf.length >= 4 && (nf.startsWith(q) || q.startsWith(nf)));
+      if (!matches) continue;
+      const cur = counts.get(nf) || {
+        name,
+        id: a.id,
+        thumb: t.thumbnails?.[0],
+        n: 0,
+      };
+      cur.n += 1;
+      if (!cur.id && a.id) cur.id = a.id;
+      if (!cur.thumb && t.thumbnails?.[0]) cur.thumb = t.thumbnails[0];
+      // Préférer le libellé avec accents si on l’a (Lenaïg > lenaig)
+      if (/[àâäéèêëïîôùûüç]/i.test(name) && !/[àâäéèêëïîôùûüç]/i.test(cur.name)) {
+        cur.name = name;
+      }
+      counts.set(nf, cur);
+    }
+  }
+  return [...counts.values()]
+    .filter((c) => c.n >= 1)
+    .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, 'fr'))
+    .slice(0, 8)
+    .map((c) => ({
+      id: c.id || `synth:${foldText(c.name)}`,
+      title: c.name,
+      artists: [{ name: c.name, ...(c.id ? { id: c.id } : {}) }],
+      type: 'artist' as const,
+      thumbnails: c.thumb ? [c.thumb] : [],
+      source: 'youtube' as const,
+    }));
+}
+
 export function rankByQuery<T extends Track>(
   items: T[],
   query: string,
   personalization?: SearchPersonalization,
 ): T[] {
   if (!items.length) return items;
+  const isExactPeer = (t: T) =>
+    t.type !== 'artist' &&
+    t.type !== 'album' &&
+    t.type !== 'playlist' &&
+    !isDerivativeSearchHit(t, query) &&
+    !isLowQualitySearchHit(t) &&
+    (foldText(t.title) === foldText(query) || catalogTitleMatches(String(t.title || ''), query));
+  const exactPeerCount = items.filter(isExactPeer).length;
   const ranked = items
     .map((item, index) => {
       const relevance = scoreSearchItem(item, query);
@@ -617,12 +732,22 @@ export function rankByQuery<T extends Track>(
         index,
         relevance,
         score: relevance + personalizeBoost(item, personalization, query),
+        exact: isExactPeer(item),
       };
     })
-    // Écarte le bruit perso sans match lexical (reste disponible plus bas si vraiment vide)
-    .sort((a, b) => b.score - a.score || b.relevance - a.relevance || a.index - b.index)
+    // Entre versions catalogue du même titre (Diane vs Lorette), la perso biblio
+    // ne doit pas écraser l’ordre YouTube / tendances (index d’arrivée).
+    .sort((a, b) => {
+      if (exactPeerCount >= 2 && a.exact && b.exact) {
+        return b.relevance - a.relevance || a.index - b.index;
+      }
+      return b.score - a.score || b.relevance - a.relevance || a.index - b.index;
+    })
     .map((x) => x.item);
-  return preferDistinctExactTitle(promoteCanonicalRelease(ranked, query), query);
+  return diversifyExactTitleArtists(
+    preferDistinctExactTitle(promoteCanonicalRelease(ranked, query), query),
+    query,
+  );
 }
 
 /**
@@ -680,8 +805,8 @@ export function promoteCanonicalRelease<T extends Track>(items: T[], query: stri
       if (n.length >= 2) exactNames.add(n);
     }
   }
-  // Titre partagé (Intro, Toi) : pas d’artiste « officiel » unique.
-  if (exactNames.size >= 4) return items;
+  // Titre partagé (Intro, Toi, La maison brûle) : plusieurs versions catalogue → garder la diversité.
+  if (exactNames.size >= 2) return items;
   if (canonical === q) {
     const otherExact = items.some((t) => {
       if (t.type === 'artist' || t.type === 'album' || t.type === 'playlist') return false;
@@ -994,6 +1119,14 @@ export function pickTopResult(
   // le morceau dont le titre contient déjà toute la requête.
   if (best.type === 'album' && bestSong && songCarriesQuery(bestSong)) {
     return bestSong;
+  }
+  // « Lenaïg » album d’un autre artiste vs vraie artiste synthétisée depuis ses titres
+  if (best.type === 'album' && exactArtists.length >= 1 && qTokens.length <= 2) {
+    const albumArtist = foldText(best.artists?.[0]?.name || '');
+    const albumTitle = foldText(best.title || '');
+    if (albumTitle === q && albumArtist !== q && !artistNameAliasMatch(albumArtist, q)) {
+      return exactArtists[0];
+    }
   }
 
   if (bestSong && bestSongScore >= 600) {

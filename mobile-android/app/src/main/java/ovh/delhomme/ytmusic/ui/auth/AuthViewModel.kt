@@ -3,8 +3,10 @@ package ovh.delhomme.ytmusic.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -92,13 +94,25 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
     fun continueWithAccount(account: HuberaIdAccount) {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null, email = account.email)
+            val fresh = withContext(Dispatchers.IO) {
+                HuberaIdAccounts.freshFromId(YtMusicApp.instance, account.email)
+            }
+            val session = if (
+                fresh != null &&
+                HuberaIdAccounts.jwtEmail(fresh.accessToken)
+                    .equals(account.email.trim(), ignoreCase = true)
+            ) {
+                fresh
+            } else {
+                account
+            }
             try {
-                if (account.isMusicIssuer && account.accessToken.isNotBlank()) {
+                if (session.isMusicIssuer && session.accessToken.isNotBlank()) {
                     container.tokenStore.saveSession(
-                        account.accessToken,
-                        account.refreshToken.ifBlank { null },
-                        account.email,
-                        account.displayName.ifBlank { null },
+                        session.accessToken,
+                        session.refreshToken.ifBlank { null },
+                        session.email,
+                        session.displayName.ifBlank { null },
                     )
                     if (container.validateSession()) {
                         authPrefs.edit().putString(KEY_LAST_EMAIL, account.email).apply()
@@ -108,11 +122,11 @@ class AuthViewModel(private val container: AppContainer) : ViewModel() {
                     }
                     runCatching { container.tokenStore.clear() }
                 }
-                if (account.accessToken.isNotBlank()) {
+                if (session.accessToken.isNotBlank()) {
                     val res = container.api.loginHuberaSso(
                         HuberaSsoBody(
-                            accessToken = account.accessToken,
-                            refreshToken = account.refreshToken.ifBlank { null },
+                            accessToken = session.accessToken,
+                            refreshToken = session.refreshToken.ifBlank { null },
                         ),
                     )
                     container.tokenStore.saveSession(
