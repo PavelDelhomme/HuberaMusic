@@ -2128,27 +2128,31 @@ class PlaybackService : MediaSessionService() {
             val exo = player ?: return@Runnable
             PlaybackResume.noteUserPlay()
             val cur = exo.currentMediaItemIndex.coerceAtLeast(0)
-            val prev = when {
-                cur > 0 -> cur - 1
-                exo.mediaItemCount > 1 -> exo.mediaItemCount - 1
-                Holder.queue.size > 1 && Holder.index > 0 -> Holder.index - 1
-                Holder.queue.size > 1 -> Holder.queue.lastIndex
-                else -> {
-                    runCatching { exo.seekTo(0L) }
-                    return@Runnable
-                }
+            val prev = resolvePreviousQueueIndex(
+                curExo = cur,
+                exoCount = exo.mediaItemCount,
+                holderIndex = Holder.index,
+                holderQueueSize = Holder.queue.size,
+            )
+            if (prev == null) {
+                // Un seul titre : restart début (comportement attendu).
+                runCatching { exo.seekTo(0L) }
+                return@Runnable
             }
             StreamPrefetcher.markStreamOk()
             val api = resolvedApiBase()
             val q = Holder.queue.map { it.id }
+            // Préférer une tête chaude derrière, mais **jamais** rester sur cur
+            // ni restart à 0 si un vrai précédent existe (régression « Prev cassé »).
             val target0 = StreamPrefetcher.pickReadySkipTarget(
-                api, q, prev, direction = -1, window = 2, timeoutMs = 0L,
+                api, q, prev, direction = -1, window = 3, timeoutMs = 0L,
             )
-            val target = if (target0 == cur && prev != cur) prev else target0
+            val target = resolvePrevSkipTarget(cur = cur, askedPrev = prev, pickReady = target0)
             if (target == cur) {
                 runCatching { exo.seekTo(0L) }
                 return@Runnable
             }
+            AppLog.i("PlaybackService", "skipPrev cur=$cur → target=$target (asked=$prev)")
             runCatching { advanceToQueueIndex(exo, target) }
             scope.launch(Dispatchers.IO) {
                 StreamPrefetcher.prefetchByProximity(api, q, target, ahead = 4, force = true)
