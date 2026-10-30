@@ -56,9 +56,9 @@ class StreamLaunchPolicyTest {
     }
 
     @Test
-    fun warmPlaybackPrefetchesOnePrefixNotABurst() {
+    fun warmPlaybackPrefetchesTwoPrefixNotABurst() {
         assertEquals(
-            1,
+            2,
             StreamLaunchPolicy.upcomingCount(
                 requestedAhead = 8,
                 currentReady = true,
@@ -66,7 +66,16 @@ class StreamLaunchPolicyTest {
                 playbackActive = true,
             ),
         )
-        assertEquals(StreamLaunchPolicy.WARM_PREFIX_AHEAD, 1)
+        assertEquals(
+            1,
+            StreamLaunchPolicy.upcomingCount(
+                requestedAhead = 1,
+                currentReady = true,
+                currentLoading = false,
+                playbackActive = true,
+            ),
+        )
+        assertEquals(StreamLaunchPolicy.WARM_PREFIX_AHEAD, 2)
         assertFalse(StreamLaunchPolicy.allowFullFileDownload(playbackActive = true))
         assertTrue(StreamLaunchPolicy.allowFullFileDownload(playbackActive = false))
     }
