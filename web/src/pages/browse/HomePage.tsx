@@ -30,41 +30,6 @@ function isPlayableSongId(id: string) {
   return /^[a-zA-Z0-9_-]{11}$/.test(id) || id.startsWith('local:');
 }
 
-async function resolvePinTracks(items: Track[]): Promise<Track[]> {
-  const chunks = await Promise.all(
-    items.map(async (item) => {
-      const type = String(item.type || '').toLowerCase();
-      try {
-        if (type === 'album') {
-          const r = await api.album(item.id);
-          return r.tracks || [];
-        }
-        if (type === 'playlist') {
-          const r = await api.playlist(item.id);
-          return r.tracks || [];
-        }
-        if (type === 'mix' || type === 'radio' || item.id.startsWith('mood:')) {
-          const r = await api.recoRadio(item.id.replace(/^mood:/, ''));
-          return r.tracks || [];
-        }
-      } catch {
-        /* pin seul */
-      }
-      return [item];
-    }),
-  );
-  const out: Track[] = [];
-  const seen = new Set<string>();
-  for (const chunk of chunks) {
-    for (const t of chunk) {
-      if (!t?.id || seen.has(t.id) || !isPlayableSongId(t.id)) continue;
-      seen.add(t.id);
-      out.push(t);
-    }
-  }
-  return out;
-}
-
 type HomeCache = {
   shelves: Shelf[];
   radios: { id: string; title: string }[];
