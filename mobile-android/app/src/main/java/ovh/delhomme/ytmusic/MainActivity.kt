@@ -1649,15 +1649,12 @@ private fun MainTabs(
     ) {
     Scaffold(
         // Compte / Historique / Aide ont déjà un TopAppBar (status bar).
-        // Si seul le mini-lecteur est visible, ne pas re-appliquer l’inset top
-        // sinon la flèche retour est trop basse.
+        // Si bottomBar (mini-lecteur / nav) est affiché, NE PAS réappliquer l’inset
+        // bas sur le contenu : sinon bande noire vide entre le texte et le lecteur
+        // (double safeDrawing.Bottom — surtout visible sur Compte).
         contentWindowInsets = when {
-            showNavBar -> WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+            showBottomChrome -> WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
             isDetailRoute -> WindowInsets.safeDrawing
-            showMiniPlayer ->
-                WindowInsets.safeDrawing.only(
-                    WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
-                )
             else -> WindowInsets(0, 0, 0, 0)
         },
         bottomBar = {
