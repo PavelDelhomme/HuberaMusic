@@ -127,6 +127,28 @@ export function getReplacementId(deadId: string): string | null {
   }
 }
 
+/** IDs à tester ensemble (mort + remplacé) — like / biblio / pins / membership. */
+export function aliasIdsFor(trackId: string): string[] {
+  if (!VIDEO_ID.test(trackId)) return trackId ? [trackId] : [];
+  const out = [trackId];
+  const repl = getReplacementId(trackId);
+  if (repl && !out.includes(repl)) out.push(repl);
+  return out;
+}
+
+/**
+ * Remappe un titre vers l’ID jouable connu (seed / cache).
+ * Les actions biblio (j’aime, enregistrer, pin, DL) doivent cibler cet ID —
+ * sinon Extended mort (abVA…) échoue / reste orphelin pendant qu’on lit PcpOc….
+ */
+export function withPlayableTrackId<T extends { id: string }>(track: T): T {
+  if (!track?.id || !VIDEO_ID.test(track.id)) return track;
+  ensureTrackReplacementSchema();
+  const repl = getReplacementId(track.id);
+  if (!repl) return track;
+  return { ...track, id: repl };
+}
+
 export function recordReplacement(
   deadId: string,
   replacementId: string,
