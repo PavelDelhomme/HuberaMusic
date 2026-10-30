@@ -135,6 +135,15 @@ data class ApkInfoResponse(
 data class LibrarySongResponse(val saved: Boolean, val library: LibraryResponse? = null)
 
 @JsonClass(generateAdapter = false)
+data class TrackReplacementResponse(
+    val ok: Boolean? = null,
+    val deadId: String? = null,
+    val replacementId: String? = null,
+    val cached: Boolean? = null,
+    val error: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class ImportFileResponse(
     val kind: String? = null,
     val id: String? = null,
@@ -683,6 +692,14 @@ interface YtMusicApi {
 
     @GET("api/track/{id}")
     suspend fun track(@Path("id") id: String): TrackInfoResponse
+
+    /** ID mort → original jouable (seed / recherche titre+artiste). */
+    @GET("api/track/{id}/replacement")
+    suspend fun trackReplacement(
+        @Path("id") id: String,
+        @Query("title") title: String? = null,
+        @Query("artist") artist: String? = null,
+    ): TrackReplacementResponse
 
     @GET("api/track/{id}/related")
     suspend fun related(
