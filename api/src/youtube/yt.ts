@@ -1152,9 +1152,18 @@ async function searchUncached(
         ),
         seedTypoTokens(),
       );
-      // Index local : OK pour un préfixe artiste court. Un titre multi-mots
-      // (« la maison brûle ») doit toujours passer par YouTube (tendances / nouvelles versions).
-      const localOnlyOk = tokenize(q).length <= 1;
+      // Index local : préfixe artiste court, OU titre biblio exact (multi-mots OK).
+      // Sinon YouTube pour tendances / nouvelles versions.
+      const hasExactLocal = local.some((t) => {
+        const title = foldText(t.title);
+        const qf = foldText(q);
+        return (
+          title === qf ||
+          catalogTitleMatches(String(t.title || ''), q) ||
+          (title.length >= 4 && qf.startsWith(title.replace(/\s*\(.*$/, '').trim()))
+        );
+      });
+      const localOnlyOk = tokenize(q).length <= 1 || hasExactLocal;
       if (!typo && localOnlyOk && localSearchSufficient(q, local)) {
         const songs = filterByRelevance(
           rankByQuery(
@@ -1322,6 +1331,20 @@ async function searchUncached(
     rankByQuery(mergeTracks(fromSongs.songs, main.songs), q, personalization),
     q,
   );
+  // Biblio FTS : injecte les titres déjà connus (likes / index) devant le bruit YT.
+  if (!opts?.skipLocal) {
+    try {
+      const local = searchIndexed(q, 24);
+      if (local.length) {
+        songs = filterByRelevance(
+          rankByQuery(mergeTracks(local, songs), q, personalization),
+          q,
+        );
+      }
+    } catch {
+      /* */
+    }
+  }
   // Pubs / reels junk : ne pas les laisser remplir la page si un vrai titre existe.
   {
     const clean = songs.filter((t) => !isLowQualitySearchHit(t));

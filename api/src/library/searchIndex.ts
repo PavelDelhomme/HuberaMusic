@@ -187,5 +187,27 @@ export function indexedCount(): number {
 
 /** Assez de hits locaux pour répondre sans attendre Innertube. */
 export function localSearchSufficient(q: string, hits: Track[]): boolean {
-  return String(q).trim().length >= 2 && hits.length >= 5;
+  const needle = String(q || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  if (needle.length < 2) return false;
+  // Match exact / quasi-exact biblio → suffisant même avec 1 titre
+  if (
+    hits.some((t) => {
+      const title = String(t.title || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '');
+      if (!title) return false;
+      if (title === needle) return true;
+      if (needle.length >= 6 && (title.startsWith(needle) || needle.startsWith(title))) return true;
+      const bare = title.replace(/\s*[\(\[\{].*$/, '').trim();
+      return bare.length >= 4 && (bare === needle || needle.startsWith(bare));
+    })
+  ) {
+    return true;
+  }
+  return hits.length >= 5;
 }
