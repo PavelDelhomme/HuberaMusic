@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -281,7 +283,11 @@ fun AccountScreen(
     }
 
     Scaffold(
-        contentWindowInsets = WindowInsets.safeDrawing,
+        // Pas d’inset bas : le mini-lecteur / nav du Scaffold parent gère déjà le bas.
+        // Sinon bande noire illisible entre le contenu Compte et le lecteur.
+        contentWindowInsets = WindowInsets.safeDrawing.only(
+            WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+        ),
         topBar = {
             TopAppBar(
                 title = { Text("Compte") },
@@ -298,7 +304,7 @@ fun AccountScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(top = 4.dp),
-            contentPadding = PaddingValues(bottom = 32.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
         ) {
             item {
                 Column(
