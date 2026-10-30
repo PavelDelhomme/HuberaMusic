@@ -705,7 +705,9 @@ function isMuxedVideoFile(path: string): boolean {
 const extractAudioInflight = new Map<string, Promise<string | null>>();
 
 async function extractAudioFromMuxed(src: string, dest: string): Promise<void> {
-  const tmp = `${dest}.extract.tmp`;
+  // ffmpeg déduit le muxer de l’extension : `.m4a.extract.tmp` est refusé
+  // (« Unable to find a suitable output format »). Toujours terminer en `.m4a`.
+  const tmp = `${dest}.extract.tmp.m4a`;
   const run = (args: string[]) =>
     new Promise<void>((resolve, reject) => {
       const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -722,6 +724,13 @@ async function extractAudioFromMuxed(src: string, dest: string): Promise<void> {
     });
   try {
     if (existsSync(tmp)) unlinkSync(tmp);
+  } catch {
+    /* */
+  }
+  // Nettoie l’ancien pattern cassé `*.m4a.extract.tmp` s’il traîne.
+  try {
+    const legacy = `${dest}.extract.tmp`;
+    if (existsSync(legacy)) unlinkSync(legacy);
   } catch {
     /* */
   }
