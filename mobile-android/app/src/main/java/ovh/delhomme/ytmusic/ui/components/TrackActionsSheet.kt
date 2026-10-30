@@ -96,6 +96,7 @@ import ovh.delhomme.ytmusic.data.ArtistRef
 import ovh.delhomme.ytmusic.data.CreatePlaylistBody
 import ovh.delhomme.ytmusic.data.PlaylistDto
 import ovh.delhomme.ytmusic.data.RecoFeedbackBody
+import ovh.delhomme.ytmusic.data.TrackCanonical
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.apiMessage
 import ovh.delhomme.ytmusic.data.buildRadioQueue
@@ -129,7 +130,8 @@ fun TrackActionsSheet(
     val pins by container.quickAccess.pins.collectAsState(initial = emptyList())
     var pinned by remember(track.id) { mutableStateOf(false) }
     LaunchedEffect(pins, enriched.id) {
-        pinned = pins.any { it.id == enriched.id }
+        val aliases = TrackCanonical.aliasIds(enriched.id)
+        pinned = pins.any { it.id in aliases }
     }
     var showSleep by remember { mutableStateOf(false) }
     var downloaded by remember { mutableStateOf(false) }
@@ -152,15 +154,19 @@ fun TrackActionsSheet(
     var albumTracks by remember(track.id) { mutableStateOf<List<TrackDto>>(emptyList()) }
     var albumAllLiked by remember(track.id) { mutableStateOf(false) }
     var playlistContainedIds by remember(track.id) { mutableStateOf<Set<String>>(emptySet()) }
+    val trackAliases = remember(track.id) { TrackCanonical.aliasIds(track.id) }
     var liked by remember(track.id) {
         mutableStateOf(
-            track.id in likedIds || localLib?.liked?.any { it.id == track.id } == true,
+            trackAliases.any { it in likedIds } ||
+                localLib?.liked?.any { it.id in trackAliases } == true,
         )
     }
     var receiveRemoteSync by remember { mutableStateOf(container.receiveRemoteSync()) }
     val playerUi by player.state.collectAsState()
     val dlProgressMap by container.downloadManager.progress.collectAsState()
-    val downloadProgress = dlProgressMap[enriched.id]
+    val downloadProgress = remember(dlProgressMap, enriched.id) {
+        TrackCanonical.aliasIds(enriched.id).firstNotNullOfOrNull { dlProgressMap[it] }
+    }
     val offlineRev by container.offlineStore.revision.collectAsState()
     val dlErrors by container.downloadManager.errors.collectAsState()
     val queueIndex = playerUi.queue.indexOfFirst { it.id == enriched.id }
@@ -173,7 +179,7 @@ fun TrackActionsSheet(
 
     LaunchedEffect(track.id, likedIds) {
         // Sync cœur uniquement — ne pas re-fetch library (écrasait l’optimiste)
-        liked = track.id in likedIds
+        liked = trackAliases.any { it in likedIds }
     }
 
     LaunchedEffect(downloadProgress) {
@@ -181,7 +187,8 @@ fun TrackActionsSheet(
     }
 
     LaunchedEffect(enriched.id, offlineRev, downloadProgress) {
-        val has = container.offlineStore.has(enriched.id)
+        val aliases = TrackCanonical.aliasIds(enriched.id)
+        val has = aliases.any { container.offlineStore.has(it) }
         if (has && wasDownloading && downloadProgress == null) {
             downloaded = true
             wasDownloading = false
@@ -191,43 +198,51 @@ fun TrackActionsSheet(
         }
     }
 
-    LaunchedEffect(enriched.id, dlErrors[enriched.id]) {
-        val err = container.downloadManager.consumeError(enriched.id) ?: return@LaunchedEffect
+    LaunchedEffect(enriched.id, dlErrors) {
+        val aliases = TrackCanonical.aliasIds(enriched.id)
+        val err = aliases.firstNotNullOfOrNull { container.downloadManager.consumeError(it) }
+            ?: return@LaunchedEffect
         context.toastMain(err)
     }
 
     LaunchedEffect(track.id) {
-        enriched = track
+        // Seed local immédiat (Extended → original) avant enrichissement réseau.
+        enriched = TrackCanonical.applyLocal(track)
         val lib = container.libraryRepo.library.value
         val albumIdHint = track.album?.id ?: track.id.takeIf { track.isAlbum() }
-        liked = track.id in likedIds || lib?.liked?.any { it.id == track.id } == true
+        val aliases = TrackCanonical.aliasIds(track.id)
+        liked = aliases.any { it in likedIds } ||
+            lib?.liked?.any { it.id in aliases } == true
         songInLibrary = when {
             track.type?.equals("mix", ignoreCase = true) == true ->
-                lib?.mixes?.any { it.id == track.id } == true
-            else -> lib?.songs?.any { it.id == track.id } == true
+                lib?.mixes?.any { it.id in aliases } == true
+            else -> lib?.songs?.any { it.id in aliases } == true
         }
         albumInLibrary = albumIdHint != null && lib?.albums?.any { it.id == albumIdHint } == true
-        downloaded = container.offlineStore.has(track.id)
+        downloaded = aliases.any { container.offlineStore.has(it) }
 
         // Membership SQL (rapide) — ne bloque pas l’UI
         launch {
             playlistContainedIds = runCatching {
-                container.api.playlistsContaining(track.id).playlistIds.toSet()
+                container.api.playlistsContaining(enriched.id).playlistIds.toSet()
             }.getOrDefault(emptySet())
         }
         launch {
             val c = runCatching {
-                container.api.libraryContains(track.id, albumIdHint)
+                container.api.libraryContains(enriched.id, albumIdHint)
             }.getOrNull() ?: return@launch
             liked = c.liked
             if (track.type?.equals("mix", ignoreCase = true) != true) {
-                if (System.currentTimeMillis() - songLibUserOverrideAt > 2_500L) {
+                // Fenêtre plus large : un DL actif peut retarder la réponse membership.
+                if (System.currentTimeMillis() - songLibUserOverrideAt > 8_000L) {
                     songInLibrary = c.inLibrary
                 }
             }
             albumInLibrary = c.albumInLibrary
-            if (c.liked != (track.id in likedIds)) {
-                onLikedChanged(if (c.liked) likedIds + track.id else likedIds - track.id)
+            if (c.liked != aliases.any { it in likedIds }) {
+                onLikedChanged(
+                    if (c.liked) likedIds + aliases else likedIds - aliases,
+                )
             }
         }
         launch {
@@ -350,25 +365,30 @@ fun TrackActionsSheet(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (enriched.isPlayable()) {
+            // J’aime aussi sur ID soft-mort (remappé côté API / TrackCanonical).
+            if (enriched.isPlayable() || TrackCanonical.aliasIds(enriched.id).any { it.length == 11 }) {
                 IconButton(
                     onClick = {
                         val was = liked
                         liked = !was
+                        val aliases = TrackCanonical.aliasIds(enriched.id)
                         onLikedChanged(
-                            if (!was) likedIds + enriched.id else likedIds - enriched.id,
+                            if (!was) likedIds + aliases else likedIds - aliases,
                         )
                         container.appScope().launch {
                             runCatching {
-                                AppLog.breadcrumb("like", enriched.id)
-                                val r = container.api.like(enriched)
+                                val target = TrackCanonical.resolveForActions(container, enriched)
+                                enriched = target
+                                AppLog.breadcrumb("like", target.id)
+                                val r = container.api.like(target)
                                 liked = r.liked
+                                val ids = TrackCanonical.aliasIds(target.id) + aliases
                                 onLikedChanged(
-                                    if (r.liked) likedIds + enriched.id else likedIds - enriched.id,
+                                    if (r.liked) likedIds + ids else likedIds - ids,
                                 )
                                 container.api.recoFeedback(
                                     RecoFeedbackBody(
-                                        enriched.id,
+                                        target.id,
                                         if (r.liked) "good" else "bad",
                                         "actions_like",
                                     ),
@@ -377,9 +397,10 @@ fun TrackActionsSheet(
                                 if (e is kotlinx.coroutines.CancellationException) throw e
                                 liked = was
                                 onLikedChanged(
-                                    if (was) likedIds + enriched.id else likedIds - enriched.id,
+                                    if (was) likedIds + aliases else likedIds - aliases,
                                 )
                                 AppLog.e("like", "échec like ${enriched.id}", e)
+                                context.toastMain(e.apiMessage().ifBlank { "Impossible d’aimer ce titre" })
                             }
                         }
                     },
@@ -505,7 +526,8 @@ fun TrackActionsSheet(
             )
         }
 
-        if (enriched.isPlayable()) {
+        // Bibliothèque / DL / pin : OK même si playable=false (remplacement seed/API).
+        if (enriched.isPlayable() || enriched.id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))) {
             // ① Bibliothèque | Télécharger | Accès rapide
             Row(
                 Modifier
@@ -524,14 +546,16 @@ fun TrackActionsSheet(
                     container.appScope().launch {
                         runCatching {
                             container.ensureFreshToken()
-                            val r = container.api.toggleLibrarySong(enriched)
+                            val target = TrackCanonical.resolveForActions(container, enriched)
+                            enriched = target
+                            val r = container.api.toggleLibrarySong(target)
                             songInLibrary = r.saved
                             songLibUserOverrideAt = System.currentTimeMillis()
                             container.bumpLibraryEpoch()
                             runCatching {
                                 ovh.delhomme.ytmusic.debug.PlaybackTrace.libraryToggle(
-                                    trackId = enriched.id,
-                                    title = enriched.title,
+                                    trackId = target.id,
+                                    title = target.title,
                                     wantSaved = next,
                                     ok = true,
                                 )
@@ -568,26 +592,36 @@ fun TrackActionsSheet(
                         downloaded = false
                         context.toastMain("Supprimé de l'appareil")
                         onDismiss()
-                        scope.launch {
+                        container.appScope().launch {
+                            val aliases = TrackCanonical.aliasIds(enriched.id)
                             runCatching {
-                                container.downloadManager.cancel(enriched.id)
-                                container.offlineStore.remove(enriched.id)
+                                for (id in aliases) {
+                                    container.downloadManager.cancel(id)
+                                    container.offlineStore.remove(id)
+                                }
                             }
                             container.bumpLibraryEpoch()
                         }
                         return@QuickAction
                     }
                     if (downloadProgress != null) {
-                        container.downloadManager.cancel(enriched.id)
+                        for (id in TrackCanonical.aliasIds(enriched.id)) {
+                            container.downloadManager.cancel(id)
+                        }
                         context.toastMain("Téléchargement annulé — partiel supprimé")
                         return@QuickAction
                     }
-                    val started = container.downloadManager.enqueue(enriched)
-                    if (!started && container.offlineStore.has(enriched.id)) {
-                        downloaded = true
-                        context.toastMain("Déjà sur l'appareil (lisible hors-ligne)")
-                    } else if (started) {
-                        context.toastMain("Téléchargement… tu peux fermer ce menu")
+                    // Remap avant enqueue (évite DL bloqué sur ID mort pendant j’aime/biblio).
+                    container.appScope().launch {
+                        val target = TrackCanonical.resolveForActions(container, enriched)
+                        enriched = target
+                        val started = container.downloadManager.enqueue(target)
+                        if (!started && container.offlineStore.has(target.id)) {
+                            downloaded = true
+                            context.toastMain("Déjà sur l'appareil (lisible hors-ligne)")
+                        } else if (started) {
+                            context.toastMain("Téléchargement… tu peux fermer ce menu")
+                        }
                     }
                 }
                 QuickAction(
@@ -598,12 +632,19 @@ fun TrackActionsSheet(
                     // Optimistic rouge immédiat (DataStore peut mettre 1–2 frames)
                     val next = !pinned
                     pinned = next
-                    scope.launch {
+                    // appScope : survit à la fermeture du sheet + DL en cours
+                    container.appScope().launch {
+                        val target = runCatching {
+                            TrackCanonical.resolveForActions(container, enriched)
+                        }.getOrDefault(TrackCanonical.applyLocal(enriched))
+                        enriched = target
                         val nowPinned = runCatching {
-                            container.quickAccess.toggle(enriched, container.api)
+                            container.quickAccess.toggle(target, container.api)
                         }.getOrElse {
                             pinned = !next
-                            context.toastMain("Impossible d’épingler")
+                            context.toastMain(
+                                it.apiMessage().ifBlank { "Impossible d’épingler" },
+                            )
                             return@launch
                         }
                         pinned = nowPinned

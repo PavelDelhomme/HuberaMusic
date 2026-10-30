@@ -3,6 +3,7 @@ import { db, getTrackPayload, upsertTrack } from './db.js';
 import { sanitizeTrack, sanitizeLibraryItem, isWeakTitle } from '../youtube/mappers.js';
 import type { Track } from '../youtube/types.js';
 import { presentLibraryTracks } from './playabilitySweep.js';
+import { aliasIdsFor, withPlayableTrackId } from '../media/trackReplacement.js';
 
 export type LibraryPlaylist = {
   id: string;
@@ -252,28 +253,33 @@ export function libraryCounts(userId: string) {
 }
 
 export function toggleLikeTrack(userId: string, track: Track) {
-  upsertTrack(track);
-  const existing = db
-    .prepare('SELECT 1 FROM liked_tracks WHERE user_id = ? AND track_id = ?')
-    .get(userId, track.id);
-  if (existing) {
-    db.prepare('DELETE FROM liked_tracks WHERE user_id = ? AND track_id = ?').run(userId, track.id);
-    unlinkLikedPlaylistTrack(userId, track.id);
-    return { liked: false };
+  // ID mort (Extended Rekkt…) → original jouable : sinon j’aime / biblio orphelins.
+  const canonical = withPlayableTrackId(track);
+  upsertTrack(canonical);
+  const aliases = aliasIdsFor(track.id);
+  const likedAny = aliases.some((id) =>
+    Boolean(db.prepare('SELECT 1 FROM liked_tracks WHERE user_id = ? AND track_id = ?').get(userId, id)),
+  );
+  if (likedAny) {
+    for (const id of aliases) {
+      db.prepare('DELETE FROM liked_tracks WHERE user_id = ? AND track_id = ?').run(userId, id);
+      unlinkLikedPlaylistTrack(userId, id);
+    }
+    return { liked: false, trackId: canonical.id };
   }
   db.prepare('INSERT INTO liked_tracks (user_id, track_id, created_at) VALUES (?, ?, ?)').run(
     userId,
-    track.id,
+    canonical.id,
     Date.now(),
   );
   // Playlist système « Titres J'aime » — pas de doublon dans library_tracks
-  linkLikedPlaylistTrack(userId, track);
-  return { liked: true };
+  linkLikedPlaylistTrack(userId, canonical);
+  return { liked: true, trackId: canonical.id };
 }
 
 export function isTrackLiked(userId: string, trackId: string) {
-  return Boolean(
-    db.prepare('SELECT 1 FROM liked_tracks WHERE user_id = ? AND track_id = ?').get(userId, trackId),
+  return aliasIdsFor(trackId).some((id) =>
+    Boolean(db.prepare('SELECT 1 FROM liked_tracks WHERE user_id = ? AND track_id = ?').get(userId, id)),
   );
 }
 
@@ -282,23 +288,29 @@ export function toggleLibraryTrack(userId: string, track: Track) {
   if (!track?.id || !/^[a-zA-Z0-9_-]{11}$/.test(track.id)) {
     throw new Error('id titre invalide');
   }
-  upsertTrack(sanitizeTrack(track));
-  const existing = db
-    .prepare('SELECT 1 FROM library_tracks WHERE user_id = ? AND track_id = ?')
-    .get(userId, track.id);
-  if (existing) {
+  const canonical = withPlayableTrackId(track);
+  upsertTrack(sanitizeTrack(canonical));
+  const aliases = aliasIdsFor(track.id);
+  const existingAny = aliases.some((id) =>
+    Boolean(
+      db.prepare('SELECT 1 FROM library_tracks WHERE user_id = ? AND track_id = ?').get(userId, id),
+    ),
+  );
+  if (existingAny) {
     // Retrait manuel : coupe aussi les liaisons album (l’user retire explicitement le titre)
-    db.prepare('DELETE FROM library_album_tracks WHERE user_id = ? AND track_id = ?').run(
-      userId,
-      track.id,
-    );
-    db.prepare('DELETE FROM library_tracks WHERE user_id = ? AND track_id = ?').run(userId, track.id);
-    return { saved: false };
+    for (const id of aliases) {
+      db.prepare('DELETE FROM library_album_tracks WHERE user_id = ? AND track_id = ?').run(
+        userId,
+        id,
+      );
+      db.prepare('DELETE FROM library_tracks WHERE user_id = ? AND track_id = ?').run(userId, id);
+    }
+    return { saved: false, trackId: canonical.id };
   }
   db.prepare(
     'INSERT INTO library_tracks (user_id, track_id, created_at, manual) VALUES (?, ?, ?, 1)',
-  ).run(userId, track.id, Date.now());
-  return { saved: true };
+  ).run(userId, canonical.id, Date.now());
+  return { saved: true, trackId: canonical.id };
 }
 
 /** Ajoute un titre en biblio sans toggle (idempotent). `manual=false` = via album. */
@@ -328,10 +340,12 @@ export function ensureLibraryTrack(
 }
 
 export function isTrackInLibrary(userId: string, trackId: string) {
-  return Boolean(
-    db
-      .prepare('SELECT 1 FROM library_tracks WHERE user_id = ? AND track_id = ?')
-      .get(userId, trackId),
+  return aliasIdsFor(trackId).some((id) =>
+    Boolean(
+      db
+        .prepare('SELECT 1 FROM library_tracks WHERE user_id = ? AND track_id = ?')
+        .get(userId, id),
+    ),
   );
 }
 
@@ -1484,24 +1498,30 @@ export function reorderPlaylist(userId: string, playlistId: string, trackIds: st
 }
 
 export function markDownloaded(userId: string, trackId: string, path?: string) {
+  const id = withPlayableTrackId({ id: trackId }).id;
   db.prepare(
     `INSERT INTO downloads (user_id, track_id, status, path, created_at) VALUES (?, ?, 'ready', ?, ?)
      ON CONFLICT(user_id, track_id) DO UPDATE SET status = 'ready', path = excluded.path`,
-  ).run(userId, trackId, path || null, Date.now());
+  ).run(userId, id, path || null, Date.now());
 }
 
 /** IDs des playlists locales qui contiennent déjà ce titre (requête SQL rapide). */
 export function playlistIdsContainingTrack(userId: string, trackId: string): string[] {
   if (!trackId?.trim()) return [];
-  const rows = db
-    .prepare(
-      `SELECT pt.playlist_id AS id
-       FROM playlist_tracks pt
-       JOIN playlists p ON p.id = pt.playlist_id
-       WHERE p.user_id = ? AND pt.track_id = ?`,
-    )
-    .all(userId, trackId) as { id: string }[];
-  return rows.map((r) => r.id);
+  const aliases = aliasIdsFor(trackId);
+  const seen = new Set<string>();
+  for (const tid of aliases) {
+    const rows = db
+      .prepare(
+        `SELECT pt.playlist_id AS id
+         FROM playlist_tracks pt
+         JOIN playlists p ON p.id = pt.playlist_id
+         WHERE p.user_id = ? AND pt.track_id = ?`,
+      )
+      .all(userId, tid) as { id: string }[];
+    for (const r of rows) seen.add(r.id);
+  }
+  return [...seen];
 }
 
 export function listDownloads(userId: string) {

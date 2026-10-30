@@ -241,8 +241,9 @@ class QuickAccessStore(
                             "album" -> runCatching { api.saveAlbum(track.copy(type = "album")) }
                             "artist" -> runCatching { api.saveArtist(track.copy(type = "artist")) }
                             else -> {
+                                // libraryContains (léger) — jamais getFullLibrary pendant un DL.
                                 val already = runCatching {
-                                    api.library().songs.any { it.id == track.id }
+                                    api.libraryContains(track.id, null).inLibrary
                                 }.getOrDefault(false)
                                 if (!already) {
                                     runCatching { api.toggleLibrarySong(track.copy(type = "song")) }

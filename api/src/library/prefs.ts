@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
 import { isJunkArtistName } from '../youtube/mappers.js';
 import { recordSearchHitClick } from '../reco/searchHits.js';
+import { aliasIdsFor, getReplacementId } from '../media/trackReplacement.js';
 
 export function ensureRecoSchema() {
   db.exec(`
@@ -553,8 +554,11 @@ export function addPin(
   targetId: string,
   payload: unknown,
 ) {
-  const tid = String(targetId || '').trim();
+  let tid = String(targetId || '').trim();
   if (!tid) return listPins(userId);
+  // Extended / Radio morts → original jouable (même seed que stream).
+  const repl = getReplacementId(tid);
+  if (repl) tid = repl;
   const kindNorm = normalizePinKind(kind, tid);
   const enriched = enrichPinPayload(
     userId,
@@ -682,7 +686,9 @@ export function removePin(userId: string, pinId: string) {
 }
 
 export function removePinByTarget(userId: string, targetId: string) {
-  db.prepare('DELETE FROM pins WHERE user_id = ? AND target_id = ?').run(userId, targetId);
+  for (const id of aliasIdsFor(String(targetId || ''))) {
+    db.prepare('DELETE FROM pins WHERE user_id = ? AND target_id = ?').run(userId, id);
+  }
   return listPins(userId);
 }
 

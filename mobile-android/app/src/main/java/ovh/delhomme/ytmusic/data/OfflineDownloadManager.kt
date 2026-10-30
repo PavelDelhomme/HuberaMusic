@@ -169,6 +169,8 @@ class OfflineDownloadManager(
         priority: Priority,
         duringPlaybackSafe: Boolean = false,
     ): Boolean {
+        // Extended/Radio morts → original jouable (sinon DL bloque sur un ID soft-404).
+        val track = TrackCanonical.applyLocal(track)
         if (offlineStore.has(track.id)) return false
         if (permanentFail.contains(track.id)) return false
         val already = jobs[track.id]?.job?.isActive == true

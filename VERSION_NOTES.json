@@ -1,6 +1,18 @@
 {
-  "updatedAt": "2026-10-30T09:31:14+01:00",
+  "updatedAt": "2026-10-30T13:37:25+01:00",
   "versions": [
+    {
+      "version": "1.3.409",
+      "date": "2026-10-30",
+      "time": "13:37",
+      "at": "2026-10-30T13:37:25+01:00",
+      "title": "Like / biblio / pin / DL sur IDs remplacés",
+      "notes": [
+        "Extended Mix Rekkt (et tout ID mort seed) : j’aime, bibliothèque, accès rapide et téléchargement ciblent l’original jouable.",
+        "Pin n’appelle plus getFullLibrary (timeout pendant un DL) — libraryContains léger.",
+        "Actions survivent à la fermeture du menu et à un téléchargement en cours."
+      ]
+    },
     {
       "version": "1.3.404",
       "date": "2026-10-30",
@@ -2762,5 +2774,17 @@
   "1.3.401": "Mails erreur : breadcrumbs+logs toujours (buffer hors-ligne + batch alert) · heal android.player 5xx · Next media keys 1.3.400.",
   "1.3.402": "Précédent : seuil hold 520ms (tap lent n’avale plus le skip) · politique prev testée (SkipQueuePolicy) · jamais restart si titre d’avant existe.",
   "1.3.403": "Laisse Nous Raver Extended/Radio → original jouable · soft version fallback · heal 5xx lance remplacement · seeds Rekkt.",
-  "1.3.404": "Préfixe chaud 2 suivants · preflight serveur ×3 · .m4a×2 au repos · roadmap cache+heal (pas YT direct à chaque lecture)."
+  "1.3.404": "Préfixe chaud 2 suivants · preflight serveur ×3 · .m4a×2 au repos · roadmap cache+heal (pas YT direct à chaque lecture).",
+  "1.3.409": {
+    "version": "1.3.409",
+    "date": "2026-10-30",
+    "time": "13:37",
+    "at": "2026-10-30T13:37:25+01:00",
+    "title": "Like / biblio / pin / DL sur IDs remplacés",
+    "notes": [
+      "Extended Mix Rekkt (et tout ID mort seed) : j’aime, bibliothèque, accès rapide et téléchargement ciblent l’original jouable.",
+      "Pin n’appelle plus getFullLibrary (timeout pendant un DL) — libraryContains léger.",
+      "Actions survivent à la fermeture du menu et à un téléchargement en cours."
+    ]
+  }
 }

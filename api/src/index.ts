@@ -3188,24 +3188,32 @@ app.get('/api/stream/:id', (req, res, next) => {
 
 app.post('/api/download/:id', accountRequired, async (req, res) => {
   try {
-    const id = p(req.params.id);
+    let id = p(req.params.id);
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) {
       res.status(400).json({ error: 'ID invalide' });
       return;
     }
+    // Extended mort → original (même seed que like/biblio) pour warm + ack.
+    try {
+      const { getReplacementId } = await import('./media/trackReplacement.js');
+      const repl = getReplacementId(id);
+      if (repl) id = repl;
+    } catch {
+      /* ignore */
+    }
     // Client mobile a déjà le fichier local : ack rapide sans re-télécharger via yt-dlp
     if (String(req.query.ack || req.body?.ack || '') === '1') {
       markDownloaded(req.userId!, id);
-      res.json({ ok: true, ack: true });
+      res.json({ ok: true, ack: true, trackId: id });
       return;
     }
     enqueueListHeadWarm([id], { front: true });
     if (isPlaybackHot(90_000)) {
-      res.json({ ok: true, queued: 'prefix', streamUrl: `/api/stream/${id}` });
+      res.json({ ok: true, queued: 'prefix', streamUrl: `/api/stream/${id}`, trackId: id });
       return;
     }
     enqueueNextDiskWarm([id]);
-    res.json({ ok: true, queued: true, streamUrl: `/api/stream/${id}` });
+    res.json({ ok: true, queued: true, streamUrl: `/api/stream/${id}`, trackId: id });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

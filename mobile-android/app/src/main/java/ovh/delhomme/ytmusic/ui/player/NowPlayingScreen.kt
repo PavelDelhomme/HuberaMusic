@@ -1101,20 +1101,24 @@ fun NowPlayingScreen(
                                             showLabel = false,
                                         ) {
                                             val was = liked
+                                            val aliases = ovh.delhomme.ytmusic.data.TrackCanonical.aliasIds(track.id)
                                             onLikedChanged(
-                                                if (was) likedIds - track.id else likedIds + track.id,
+                                                if (was) likedIds - aliases else likedIds + aliases,
                                             )
                                             container.appScope().launch {
                                                 runCatching {
-                                                    AppLog.breadcrumb("like", track.id)
-                                                    val r = container.api.like(track)
+                                                    val target = ovh.delhomme.ytmusic.data.TrackCanonical
+                                                        .resolveForActions(container, track)
+                                                    AppLog.breadcrumb("like", target.id)
+                                                    val r = container.api.like(target)
+                                                    val ids = ovh.delhomme.ytmusic.data.TrackCanonical
+                                                        .aliasIds(target.id) + aliases
                                                     onLikedChanged(
-                                                        if (r.liked) likedIds + track.id
-                                                        else likedIds - track.id,
+                                                        if (r.liked) likedIds + ids else likedIds - ids,
                                                     )
                                                     container.api.recoFeedback(
                                                         RecoFeedbackBody(
-                                                            track.id,
+                                                            target.id,
                                                             if (r.liked) "good" else "bad",
                                                             "now_playing_like",
                                                         ),
@@ -1122,7 +1126,7 @@ fun NowPlayingScreen(
                                                 }.onFailure { e ->
                                                     if (e is kotlinx.coroutines.CancellationException) throw e
                                                     onLikedChanged(
-                                                        if (was) likedIds + track.id else likedIds - track.id,
+                                                        if (was) likedIds + aliases else likedIds - aliases,
                                                     )
                                                     AppLog.e("like", "échec like ${track.id}", e)
                                                 }
