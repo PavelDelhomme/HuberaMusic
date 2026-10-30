@@ -684,6 +684,18 @@ function searchQueryVariants(q: string): string[] {
     add("Koni Tes triste");
   }
   if (/\brekkt\b/.test(folded) && !folded.includes('nivk')) add(`${q} NIVK`);
+  // Faute fréquente FR : « amants » pour « Les Amis d'ta femme » (Cayenne).
+  if (/\bamants\b/.test(folded)) {
+    add(q.replace(/\bamants\b/gi, 'amis'));
+    add(q.replace(/\bamants\b/gi, "amis d'ta"));
+  }
+  if (/\bcayenne\b/.test(folded) && /\b(amis|amants|femme|adtf)\b/.test(folded)) {
+    add('Cayenne Les Amis d ta femme');
+    add("Les Amis d'ta femme Cayenne");
+    add('Cayenne Les Amis D ta Femme');
+  } else if (/\bcayenne\b/.test(folded) && tokenize(q).length <= 2) {
+    add('Cayenne Les Amis d ta femme');
+  }
   return out.slice(0, 8);
 }
 
@@ -789,6 +801,42 @@ function applyLaisseNousRaverFix(
   const topOut =
     top && top.id !== 'te6K9qC6Sxg' ? songsOut[0] || top : songsOut[0] || videosOut[0] || top;
   return { songs: songsOut, videos: videosOut, top: topOut };
+}
+
+function isCayenneAmisQuery(q: string): boolean {
+  const folded = foldText(q);
+  if (!/\bcayenne\b/.test(folded)) return false;
+  // « cayenne » seul, ou avec amis/amants/femme/adtf
+  const tokens = tokenize(q);
+  if (tokens.length <= 2) return true;
+  return /\b(amis|amants|femme|adtf)\b/.test(folded);
+}
+
+function cayenneAmisTracks(): Track[] {
+  return [
+    hitToTrack({
+      videoId: 'XVy4kIIdmbo',
+      title: 'Cayenne',
+      artist: "Les Amis D'ta Femme",
+      score: 1000,
+      source: 'seed',
+    }),
+  ].map((t) => ({ ...t, type: 'song' as const }));
+}
+
+function applyCayenneAmisFix(
+  q: string,
+  songs: Track[],
+  videos: Track[],
+  top: Track | null,
+): { songs: Track[]; videos: Track[]; top: Track | null } {
+  if (!isCayenneAmisQuery(q)) return { songs, videos, top };
+  const songsOut = mergeTracks(cayenneAmisTracks(), songs);
+  const videosOut = mergeTracks(
+    cayenneAmisTracks().map((t) => ({ ...t, type: 'video' as const })),
+    videos,
+  );
+  return { songs: songsOut, videos: videosOut, top: songsOut[0] || top };
 }
 
 /** YTM a souvent 8 homonymes (« Triste » Nick Monteiro) : ça ne doit pas bloquer YouTube web. */
@@ -1541,7 +1589,8 @@ async function searchUncached(
     }
     only = applyCachedDurations(only);
     const triste = applyTesTristeFix(q, only, [], topOut);
-    const fixed = applyLaisseNousRaverFix(q, triste.songs, triste.videos, triste.top);
+    const raver = applyLaisseNousRaverFix(q, triste.songs, triste.videos, triste.top);
+    const fixed = applyCayenneAmisFix(q, raver.songs, raver.videos, raver.top);
     return {
       topResult: fixed.top || fixed.songs[0] || topOut,
       songs: fixed.songs,
@@ -1596,7 +1645,8 @@ async function searchUncached(
   }
 
   const triste = applyTesTristeFix(q, songsOut, videosOut, topOut);
-  const fixed = applyLaisseNousRaverFix(q, triste.songs, triste.videos, triste.top);
+  const raver = applyLaisseNousRaverFix(q, triste.songs, triste.videos, triste.top);
+  const fixed = applyCayenneAmisFix(q, raver.songs, raver.videos, raver.top);
   const songsTimed = applyCachedDurations(fixed.songs);
   const videosTimed = applyCachedDurations(fixed.videos);
   let artistsOut = dedupeArtists(

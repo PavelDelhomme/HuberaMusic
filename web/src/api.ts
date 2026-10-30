@@ -608,7 +608,8 @@ export const api = {
       albums: Track[];
       artists: Track[];
       playlists: Track[];
-    }>(`/api/search?${params.toString()}`);
+      // YT + typo repair peut dépasser 25s ; ne pas couper avant le gateway.
+    }>(`/api/search?${params.toString()}`, { timeoutMs: 90_000 });
   },
   suggestions: (q: string) =>
     req<{ suggestions: string[] }>(`/api/search/suggestions?q=${encodeURIComponent(q)}`),
