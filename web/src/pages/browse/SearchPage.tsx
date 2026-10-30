@@ -6,6 +6,10 @@ import { MediaCard } from '../../components/media/MediaCard';
 import { HomeShelfSkeleton } from '../../components/media/HomeShelfSkeleton';
 import { listCachedTracks } from '../../lib/offline/offlineCache';
 
+function artistLine(t: Track): string {
+  return (t.artists || []).map((a) => a.name).filter(Boolean).join(', ');
+}
+
 const tabs = [
   { id: 'all', label: 'Tout' },
   { id: 'song', label: 'Titres' },
@@ -49,7 +53,10 @@ export function SearchPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [history, setHistory] = useState<string[]>([]);
+  const [feedbackMsg, setFeedbackMsg] = useState('');
+  const [pickMode, setPickMode] = useState(false);
   const searchSeq = useRef(0);
+  const learnedLib = useRef(false);
 
   useEffect(() => {
     if (q) return;
@@ -70,17 +77,28 @@ export function SearchPage() {
       .catch(() => setHistory([]));
   }, [q]);
 
+  // Une fois par session : indexe la biblio (likes) pour améliorer la recherche de tous.
+  useEffect(() => {
+    if (learnedLib.current) return;
+    learnedLib.current = true;
+    void api.learnLibrarySearch();
+  }, []);
+
   useEffect(() => {
     if (!q) {
       setData(null);
       setOfflineHits([]);
       setLoading(false);
       setError('');
+      setFeedbackMsg('');
+      setPickMode(false);
       return;
     }
     const seq = ++searchSeq.current;
     setLoading(true);
     setError('');
+    setFeedbackMsg('');
+    setPickMode(false);
     setData(null);
     const needle = q.trim().toLowerCase();
     const wantLocal = filter === 'all' || filter === 'song' || filter === 'video';
@@ -116,6 +134,62 @@ export function SearchPage() {
   const noteClick = (track: Track) => {
     if (!q) return;
     void api.recordSearchClick(q, track);
+    if (pickMode) {
+      void api
+        .searchFeedback({
+          query: q,
+          kind: 'correct_pick',
+          correctVideoId: track.id,
+          title: track.title,
+          artist: artistLine(track),
+        })
+        .then((r) => {
+          setFeedbackMsg(
+            r.learned
+              ? 'Merci — on retiendra ce titre pour cette recherche.'
+              : 'Signalement enregistré.',
+          );
+          setPickMode(false);
+        })
+        .catch(() => setFeedbackMsg('Impossible d’enregistrer le signalement.'));
+    }
+  };
+
+  const reportEmpty = () => {
+    if (!q) return;
+    void api
+      .searchFeedback({ query: q, kind: 'empty' })
+      .then(() => setFeedbackMsg('Merci — on va améliorer cette recherche.'))
+      .catch(() => setFeedbackMsg('Impossible d’envoyer le signalement.'));
+  };
+
+  const reportWrongTop = () => {
+    if (!q || !data?.topResult) return;
+    setPickMode(true);
+    void api.searchFeedback({
+      query: q,
+      kind: 'wrong',
+      wrongVideoId: data.topResult.id,
+      title: data.topResult.title,
+      artist: artistLine(data.topResult),
+    });
+    setFeedbackMsg('Choisis le bon titre dans la liste — on l’apprendra.');
+  };
+
+  const confirmTop = () => {
+    if (!q || !data?.topResult) return;
+    void api
+      .searchFeedback({
+        query: q,
+        kind: 'confirm',
+        correctVideoId: data.topResult.id,
+        title: data.topResult.title,
+        artist: artistLine(data.topResult),
+      })
+      .then((r) =>
+        setFeedbackMsg(r.learned ? 'Parfait — résultat confirmé.' : 'OK.'),
+      )
+      .catch(() => setFeedbackMsg('Impossible d’enregistrer.'));
   };
 
   if (!q) {
@@ -317,10 +391,60 @@ export function SearchPage() {
             !data.albums.length &&
             !data.playlists.length &&
             !data.videos.length && (
-              <p className="text-yt-muted">
-                Aucun résultat pour « {q} ». Essaie un autre filtre ou une orthographe différente.
-              </p>
+              <div className="space-y-3">
+                <p className="text-yt-muted">
+                  Aucun résultat pour « {q} ». Essaie un autre filtre ou une orthographe différente.
+                </p>
+                <button
+                  type="button"
+                  onClick={reportEmpty}
+                  className="rounded-full bg-yt-elevated px-4 py-2 text-sm text-yt-muted hover:text-white"
+                >
+                  Signaler : aucun résultat / mauvais matching
+                </button>
+              </div>
             )}
+
+          {!loading && (data.topResult || data.songs.length > 0) && (
+            <div className="rounded-xl border border-white/10 bg-yt-elevated/40 px-4 py-3 text-sm">
+              <p className="mb-2 text-yt-muted">
+                {pickMode
+                  ? 'Mode correction : clique le bon titre ci-dessus.'
+                  : 'Ce n’est pas le bon titre ou le bon artiste ?'}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {data.topResult && !pickMode && (
+                  <button
+                    type="button"
+                    onClick={confirmTop}
+                    className="rounded-full bg-white/10 px-3 py-1.5 text-xs hover:bg-white/20"
+                  >
+                    Oui, c’est le bon
+                  </button>
+                )}
+                {data.topResult && (
+                  <button
+                    type="button"
+                    onClick={reportWrongTop}
+                    className="rounded-full bg-white/10 px-3 py-1.5 text-xs hover:bg-white/20"
+                  >
+                    Non — choisir le bon titre
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={reportEmpty}
+                  className="rounded-full bg-white/10 px-3 py-1.5 text-xs hover:bg-white/20"
+                >
+                  Recherche à côté
+                </button>
+              </div>
+              {feedbackMsg && <p className="mt-2 text-xs text-emerald-300/90">{feedbackMsg}</p>}
+            </div>
+          )}
+          {feedbackMsg && !data.topResult && !data.songs.length && (
+            <p className="text-xs text-emerald-300/90">{feedbackMsg}</p>
+          )}
         </div>
       )}
     </div>

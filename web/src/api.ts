@@ -631,11 +631,39 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ query: q }),
     }).catch(() => ({ ok: false })),
-  recordSearchClick: (q: string, track: { id: string; type?: string }) =>
+  recordSearchClick: (
+    q: string,
+    track: { id: string; type?: string; title?: string; artists?: Array<{ name?: string }> },
+  ) =>
     req<{ ok: boolean }>('/api/search/history', {
       method: 'POST',
-      body: JSON.stringify({ query: q, clickedId: track.id, clickedKind: track.type || 'song' }),
+      body: JSON.stringify({
+        query: q,
+        clickedId: track.id,
+        clickedKind: track.type || 'song',
+        title: track.title,
+        artist: (track.artists || []).map((a) => a.name).filter(Boolean).join(', '),
+      }),
     }).catch(() => ({ ok: false })),
+  searchFeedback: (payload: {
+    query: string;
+    kind: 'empty' | 'wrong' | 'confirm' | 'correct_pick';
+    wrongVideoId?: string;
+    correctVideoId?: string;
+    videoId?: string;
+    title?: string;
+    artist?: string;
+    note?: string;
+  }) =>
+    req<{ ok: boolean; learned: boolean }>('/api/search/feedback', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  learnLibrarySearch: () =>
+    req<{ ok: boolean; indexed: number }>('/api/search/learn-library', {
+      method: 'POST',
+      body: '{}',
+    }).catch(() => ({ ok: false, indexed: 0 })),
   prefs: () => req<{ prefs: any; follows: any[] }>('/api/prefs'),
   savePrefs: (patch: Record<string, unknown>) =>
     req<{ prefs: any }>('/api/prefs', { method: 'PUT', body: JSON.stringify(patch) }),

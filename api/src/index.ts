@@ -86,7 +86,16 @@ import {
   repairLibraryTrackMeta,
   scheduleLibraryRepair,
   libraryMembership,
+  getLikedTracks,
+  getLibraryTasteTracks,
 } from './library/library.js';
+import {
+  recordSearchFeedback,
+  listSearchFeedback,
+  indexLibraryTracksAsHits,
+  type SearchFeedbackKind,
+} from './reco/searchHits.js';
+import { upsertIndexedTracks } from './library/searchIndex.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, replaceSearchWarm, enqueueListHeadWarm, enqueueNextDiskWarm, isPlaybackHot } from './media/stream.js';
 import {
   scheduleUserTasteWarm,
@@ -2347,8 +2356,71 @@ app.post('/api/search/history', accountRequired, (req, res) => {
   addSearchHistory(req.userId!, q, {
     id: req.body?.clickedId,
     kind: req.body?.clickedKind,
+    title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+    artist: typeof req.body?.artist === 'string' ? req.body.artist : undefined,
   });
   res.json({ ok: true, history: listSearchHistory(req.userId!, 40) });
+});
+
+/**
+ * Feedback recherche utilisateur → apprentissage (query fautive → bon videoId).
+ * kind: empty | wrong | confirm | correct_pick
+ */
+app.post(
+  '/api/search/feedback',
+  accountRequired,
+  rateLimit({ windowMs: 60_000, max: 40 }),
+  (req, res) => {
+    const q = String(req.body?.query || '').trim();
+    const kind = String(req.body?.kind || '') as SearchFeedbackKind;
+    if (!q || !['empty', 'wrong', 'confirm', 'correct_pick'].includes(kind)) {
+      res.status(400).json({ error: 'query + kind (empty|wrong|confirm|correct_pick) requis' });
+      return;
+    }
+    const out = recordSearchFeedback({
+      userId: req.userId!,
+      query: q,
+      kind,
+      wrongVideoId: typeof req.body?.wrongVideoId === 'string' ? req.body.wrongVideoId : undefined,
+      correctVideoId:
+        typeof req.body?.correctVideoId === 'string'
+          ? req.body.correctVideoId
+          : typeof req.body?.videoId === 'string'
+            ? req.body.videoId
+            : undefined,
+      title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+      artist: typeof req.body?.artist === 'string' ? req.body.artist : undefined,
+      note: typeof req.body?.note === 'string' ? req.body.note : undefined,
+    });
+    res.json(out);
+  },
+);
+
+/** Indexe likes + goûts biblio dans FTS + hits canoniques (améliore la recherche pour TOUS). */
+app.post(
+  '/api/search/learn-library',
+  accountRequired,
+  rateLimit({ windowMs: 60_000, max: 6 }),
+  (req, res) => {
+    try {
+      const liked = getLikedTracks(req.userId!, 400);
+      const taste = getLibraryTasteTracks(req.userId!, 200);
+      const byId = new Map<string, (typeof liked)[0]>();
+      for (const t of [...liked, ...taste]) {
+        if (t?.id) byId.set(t.id, t);
+      }
+      const tracks = [...byId.values()];
+      upsertIndexedTracks(tracks);
+      indexLibraryTracksAsHits(tracks, 'library');
+      res.json({ ok: true, indexed: tracks.length });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  },
+);
+
+app.get('/api/admin/search/feedback', requireAdmin, (_req, res) => {
+  res.json({ feedback: listSearchFeedback(60) });
 });
 
 /** Reconnaissance titre / fredonnement (AudD) → résultats recherche. */

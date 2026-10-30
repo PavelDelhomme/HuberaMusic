@@ -354,7 +354,7 @@ export function listListenEventsDetailed(userId: string, limit = 500) {
 export function addSearchHistory(
   userId: string,
   query: string,
-  clicked?: { id?: string; kind?: string },
+  clicked?: { id?: string; kind?: string; title?: string; artist?: string },
 ) {
   const q = query.trim().replace(/\s+/g, ' ');
   // Ignore frappes trop courtes (pollution « K », « Ke », « Ken »)
@@ -383,7 +383,10 @@ export function addSearchHistory(
 
   if (clicked?.id) {
     try {
-      recordSearchHitClick(q, clicked.id);
+      recordSearchHitClick(q, clicked.id, {
+        title: clicked.title,
+        artist: clicked.artist,
+      });
     } catch {
       /* non-bloquant */
     }

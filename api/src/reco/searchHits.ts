@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +51,22 @@ export function ensureSearchHitsSchema() {
       duration_text TEXT,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS search_feedback (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      query TEXT NOT NULL,
+      query_fold TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      wrong_video_id TEXT,
+      correct_video_id TEXT,
+      title TEXT,
+      artist TEXT,
+      note TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_search_feedback_fold ON search_feedback(query_fold);
+    CREATE INDEX IF NOT EXISTS idx_search_feedback_created ON search_feedback(created_at);
   `);
   schemaReady = true;
 }
@@ -157,6 +174,142 @@ export function recordSearchHitClick(query: string, videoId: string, meta?: { ti
        artist = CASE WHEN length(excluded.artist) > 0 THEN excluded.artist ELSE search_canonical_hits.artist END,
        updated_at = excluded.updated_at`,
   ).run(fold, id, title, artist, source, nextScore, now);
+}
+
+function artistBlob(t: { artists?: Array<{ name?: string } | string>; artist?: string }): string {
+  if (t.artist) return String(t.artist);
+  const arts = t.artists || [];
+  return arts
+    .map((a) => (typeof a === 'string' ? a : a?.name || ''))
+    .filter(Boolean)
+    .join(', ');
+}
+
+/** Indexe un titre biblio comme hit canonique (titre, titre+artiste, artiste+titre). */
+export function indexLibraryTrackAsHit(
+  track: { id: string; title?: string; artists?: Array<{ name?: string } | string>; artist?: string },
+  source: 'library' | 'feedback' | 'click' = 'library',
+  baseScore = 600,
+) {
+  ensureSearchHitsSchema();
+  const id = String(track.id || '').trim();
+  const title = String(track.title || '').trim();
+  if (!id || id.length < 6 || !title || title === 'Sans titre') return;
+  const artist = artistBlob(track);
+  const aliases = new Set<string>();
+  aliases.add(foldText(title));
+  if (artist) {
+    aliases.add(foldText(`${artist} ${title}`));
+    aliases.add(foldText(`${title} ${artist}`));
+  }
+  // Titre sans parenthèses « (feat. …) » — requêtes courtes
+  const bare = title.replace(/\s*[\(\[\{].*$/, '').trim();
+  if (bare && bare.length >= 3 && foldText(bare) !== foldText(title)) {
+    aliases.add(foldText(bare));
+    if (artist) aliases.add(foldText(`${bare} ${artist}`));
+  }
+  for (const key of aliases) {
+    if (!key || key.length < 2) continue;
+    upsertHit(key, id, title, artist, source, baseScore);
+  }
+}
+
+export function indexLibraryTracksAsHits(
+  tracks: Array<{ id: string; title?: string; artists?: Array<{ name?: string } | string>; artist?: string }>,
+  source: 'library' | 'feedback' | 'click' = 'library',
+) {
+  const tx = db.transaction((rows: typeof tracks) => {
+    for (const t of rows) indexLibraryTrackAsHit(t, source, source === 'feedback' ? 900 : 600);
+  });
+  ensureSearchHitsSchema();
+  tx(tracks);
+}
+
+export type SearchFeedbackKind = 'empty' | 'wrong' | 'confirm' | 'correct_pick';
+
+/**
+ * Feedback utilisateur recherche :
+ * - empty : rien trouvé
+ * - wrong : le top / un résultat n’est pas le bon
+ * - confirm / correct_pick : ce videoId EST la bonne réponse pour la query
+ */
+export function recordSearchFeedback(opts: {
+  userId: string;
+  query: string;
+  kind: SearchFeedbackKind;
+  wrongVideoId?: string;
+  correctVideoId?: string;
+  title?: string;
+  artist?: string;
+  note?: string;
+}): { ok: boolean; learned: boolean } {
+  ensureSearchHitsSchema();
+  loadSearchHitsSeed();
+  const q = String(opts.query || '').trim().replace(/\s+/g, ' ');
+  const fold = foldText(q);
+  if (!q || fold.length < 2) return { ok: false, learned: false };
+  const kind = opts.kind;
+  if (!['empty', 'wrong', 'confirm', 'correct_pick'].includes(kind)) {
+    return { ok: false, learned: false };
+  }
+  db.prepare(
+    `INSERT INTO search_feedback
+      (id, user_id, query, query_fold, kind, wrong_video_id, correct_video_id, title, artist, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    randomUUID(),
+    opts.userId,
+    q,
+    fold,
+    kind,
+    opts.wrongVideoId || null,
+    opts.correctVideoId || null,
+    opts.title || null,
+    opts.artist || null,
+    opts.note || null,
+    Date.now(),
+  );
+
+  let learned = false;
+  const correctId = String(opts.correctVideoId || '').trim();
+  if ((kind === 'confirm' || kind === 'correct_pick' || kind === 'wrong') && correctId.length >= 6) {
+    indexLibraryTrackAsHit(
+      {
+        id: correctId,
+        title: opts.title || correctId,
+        artist: opts.artist || '',
+      },
+      'feedback',
+      950,
+    );
+    // Alias exact de la query tapée (fautes incluses) → le bon ID
+    upsertHit(fold, correctId, opts.title || correctId, opts.artist || '', 'feedback', 980);
+    recordSearchHitClick(q, correctId, { title: opts.title, artist: opts.artist });
+    learned = true;
+  }
+  // Mauvais résultat sans correction : baisse le score du mapping query→wrong
+  if (kind === 'wrong' && opts.wrongVideoId && !correctId) {
+    const wrong = String(opts.wrongVideoId).trim();
+    try {
+      db.prepare(
+        `UPDATE search_canonical_hits SET score = MAX(0, score - 120), updated_at = ?
+         WHERE query_fold = ? AND video_id = ?`,
+      ).run(Date.now(), fold, wrong);
+    } catch {
+      /* */
+    }
+  }
+  return { ok: true, learned };
+}
+
+export function listSearchFeedback(limit = 40): Array<Record<string, unknown>> {
+  ensureSearchHitsSchema();
+  return db
+    .prepare(
+      `SELECT id, user_id, query, kind, wrong_video_id, correct_video_id, title, artist, note, created_at
+       FROM search_feedback ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(limit) as Array<Record<string, unknown>>;
 }
 
 export type ResolvedHit = {
