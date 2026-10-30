@@ -53,3 +53,9 @@ scripts/proxy-steward/__pycache__/
 **/.ota-out/
 
 *.torrent
+
+# Local lab dumps / accidental PDFs at repo root
+scripts/qa/*.xml
+/Hubera-*.pdf
+/architecture-*.pdf
+/hubera-repo-structure-*.pdf
