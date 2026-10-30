@@ -760,26 +760,14 @@ function isLaisseNousRaverQuery(q: string): boolean {
 }
 
 function laisseNousRaverTracks(): Track[] {
+  // Extended/Radio (abVA… / zzOx…) timeout côté YT — seul l’original stream.
+  // Remplacements seed redirigent les vieux IDs bibliothèque → PcpOcHlHiog.
   return [
     hitToTrack({
       videoId: 'PcpOcHlHiog',
       title: 'Laisse Nous Raver',
       artist: 'Rekkt & NIVK',
       score: 1000,
-      source: 'seed',
-    }),
-    hitToTrack({
-      videoId: 'abVAuW6XTCU',
-      title: 'Laisse Nous Raver (Extended Mix)',
-      artist: 'Rekkt & NIVK',
-      score: 980,
-      source: 'seed',
-    }),
-    hitToTrack({
-      videoId: 'zzOxVZ8W5pA',
-      title: 'Laisse Nous Raver (Radio Mix)',
-      artist: 'Rekkt & NIVK',
-      score: 800,
       source: 'seed',
     }),
   ].map((t) => ({ ...t, type: 'song' as const }));

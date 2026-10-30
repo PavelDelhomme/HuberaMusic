@@ -144,10 +144,12 @@ export function healTrackFromTelemetry(opts: {
   enqueueDiskWarm([id]);
   enqueueListHeadWarm([id], { front: true });
 
-  // Remplacement seulement après un skip confirmé (titre vraiment mort).
+  // Remplacement : skip confirmé, vidéo morte, OU 5xx/timeout dur après ensure
+  // (sinon Extended Mix Rekkt restait en 5xx sans jamais basculer vers l’original).
   const wantReplace =
     kind === 'android.player.load_skip' ||
     kind === 'android.player.early_end' ||
+    playerHard ||
     /unavailable|VIDEO_UNAVAILABLE|private|removed/i.test(String(opts.message || ''));
 
   // Pré-télécharge le .m4a intégral (OAuth remux / proxies) avant la prochaine écoute.

@@ -61,6 +61,25 @@ export function sameVersion(deadTitle: string, candTitle: string): boolean {
   return true;
 }
 
+/**
+ * Extended / radio / remix mort → original jouable (tags vides).
+ * Pas l’inverse (ne pas remplacer un original par un remix).
+ */
+const SOFT_DOWNGRADE = new Set(['extended', 'radio', 'remix']);
+
+export function versionCompatible(
+  deadTitle: string,
+  candTitle: string,
+  opts?: { allowBaseFallback?: boolean },
+): boolean {
+  if (sameVersion(deadTitle, candTitle)) return true;
+  if (!opts?.allowBaseFallback) return false;
+  const want = versionTags(deadTitle);
+  const got = versionTags(candTitle);
+  if (!want.size || got.size) return false;
+  return [...want].every((t) => SOFT_DOWNGRADE.has(t));
+}
+
 export function artistLine(t: Pick<Track, 'artists'>): string {
   return (t.artists || [])
     .map((a) => a?.name)
@@ -147,17 +166,21 @@ export function scoreCandidate(
   title: string,
   artist: string,
   durationSec?: number | null,
+  opts?: { allowBaseFallback?: boolean },
 ): number {
   const nt = normalize(title);
   const na = normalize(artist);
   const ct = normalize(cand.title || '');
   const ca = normalize(artistLine(cand));
   if (!nt || !ct) return 0;
-  if (!sameVersion(title, cand.title || '')) return 0;
+  const soft = Boolean(opts?.allowBaseFallback);
+  if (!versionCompatible(title, cand.title || '', { allowBaseFallback: soft })) return 0;
 
   const tScore = titleScore(nt, ct, na, ca);
   if (!tScore) return 0;
   let score = tScore;
+  // Extended → original : un peu moins bien noté qu’un match de version exact.
+  if (soft && !sameVersion(title, cand.title || '')) score = Math.max(0, score - 4);
 
   // Artiste manquant côté candidat (souvent une « vidéo » YT) : accepter si le
   // titre porte le nom, ou si le titre matche très fort.

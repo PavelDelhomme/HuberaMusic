@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { db, getTrackPayload } from '../library/db.js';
 import { getTrack, search } from '../youtube/yt.js';
 import type { Track } from '../youtube/types.js';
-import { artistLine, sameVersion, scoreCandidate } from './trackMatch.js';
+import { artistLine, scoreCandidate, versionCompatible } from './trackMatch.js';
 import { foldText } from '../reco/searchRank.js';
 import { findAtlasEquivalent, rememberAtlasPlayable } from './trackAtlas.js';
 
@@ -36,6 +36,37 @@ const inflight = new Map<string, Promise<string | null>>();
 /** Une seule recherche YouTube à la fois — sinon health + lecture saturent. */
 let heavySearches = 0;
 
+/** Pins connus : Extended/Radio Rekkt morts → original jouable. */
+const SEED_REPLACEMENTS: Array<{
+  deadId: string;
+  replacementId: string;
+  title: string;
+  artist: string;
+  score: number;
+}> = [
+  {
+    deadId: 'abVAuW6XTCU',
+    replacementId: 'PcpOcHlHiog',
+    title: 'Laisse Nous Raver (Extended Mix)',
+    artist: 'Rekkt & NIVK',
+    score: 92,
+  },
+  {
+    deadId: 'zzOxVZ8W5pA',
+    replacementId: 'PcpOcHlHiog',
+    title: 'Laisse Nous Raver (Radio Mix)',
+    artist: 'Rekkt & NIVK',
+    score: 90,
+  },
+  {
+    deadId: 'te6K9qC6Sxg',
+    replacementId: 'PcpOcHlHiog',
+    title: 'Laisse Nous Raver',
+    artist: 'Rekkt & NIVK',
+    score: 95,
+  },
+];
+
 export function ensureTrackReplacementSchema() {
   if (schemaReady) return;
   db.exec(`
@@ -53,6 +84,33 @@ export function ensureTrackReplacementSchema() {
       ON track_id_replacements(replacement_id);
   `);
   schemaReady = true;
+  seedHardReplacements();
+}
+
+/** Ré-applique les pins seed (idempotent) — Extended mort ≠ silence. */
+export function seedHardReplacements() {
+  if (!schemaReady) return;
+  const now = Date.now();
+  for (const p of SEED_REPLACEMENTS) {
+    if (!VIDEO_ID.test(p.deadId) || !VIDEO_ID.test(p.replacementId)) continue;
+    if (p.deadId === p.replacementId) continue;
+    try {
+      db.prepare(
+        `INSERT INTO track_id_replacements
+           (dead_id, replacement_id, title, artist, score, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'seed', ?, ?)
+         ON CONFLICT(dead_id) DO UPDATE SET
+           replacement_id = excluded.replacement_id,
+           title = excluded.title,
+           artist = excluded.artist,
+           score = excluded.score,
+           source = 'seed',
+           updated_at = excluded.updated_at`,
+      ).run(p.deadId, p.replacementId, p.title, p.artist, p.score, now, now);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 export function getReplacementId(deadId: string): string | null {
@@ -302,34 +360,49 @@ export async function findReplacementId(
       const b = foldText(`${t.title} ${artistLine(t)}`);
       return /grace ellis|sant andreu|alba armengou|nick monteiro|jazz revival/.test(b);
     };
-    const ranked = candidates
-      .filter((t) => !jazzFalse(t))
-      .map((t) => ({ t, s: scoreCandidate(t, title, artist, durationSec) }))
-      .filter((x) => x.s >= MIN_SCORE)
-      .sort((a, b) => b.s - a.s);
+    const pick = async (allowBaseFallback: boolean): Promise<string | null> => {
+      const ranked = candidates
+        .filter((t) => !jazzFalse(t))
+        .map((t) => ({
+          t,
+          s: scoreCandidate(t, title, artist, durationSec, { allowBaseFallback }),
+        }))
+        .filter((x) => x.s >= (allowBaseFallback ? MIN_SCORE - 5 : MIN_SCORE))
+        .sort((a, b) => b.s - a.s);
 
-    const seen = new Set<string>();
-    const unique = ranked.filter(({ t }) => (seen.has(t.id) ? false : seen.add(t.id)));
+      const seen = new Set<string>();
+      const unique = ranked.filter(({ t }) => (seen.has(t.id) ? false : seen.add(t.id)));
 
-    for (const { t, s } of unique.slice(0, 2)) {
-      if (getReplacementId(t.id) === deadId) continue;
-      const listed = await listedTitle(t.id);
-      if (!listed || !sameVersion(title, listed)) {
-        console.info(`[replacement] ${deadId} candidat ${t.id} autre version « ${listed.slice(0, 80)} »`);
-        continue;
+      for (const { t, s } of unique.slice(0, allowBaseFallback ? 4 : 2)) {
+        if (getReplacementId(t.id) === deadId) continue;
+        const listed = await listedTitle(t.id);
+        if (
+          !listed ||
+          !versionCompatible(title, listed, { allowBaseFallback })
+        ) {
+          console.info(
+            `[replacement] ${deadId} candidat ${t.id} autre version « ${String(listed || '').slice(0, 80)} »`,
+          );
+          continue;
+        }
+        if (!(await playable(t.id))) {
+          console.info(`[replacement] ${deadId} candidat ${t.id} score=${s} ne joue pas`);
+          continue;
+        }
+        console.log(
+          `[replacement] ${deadId} → ${t.id} (score ${s}${allowBaseFallback ? ' soft' : ''}) « ${t.title} — ${artistLine(t)} »`,
+        );
+        saveReplacement(deadId, t.id, title, artist, s);
+        rememberAtlasPlayable(t.id, t.title || title, artistLine(t) || artist);
+        return t.id;
       }
-      if (!(await playable(t.id))) {
-        console.info(`[replacement] ${deadId} candidat ${t.id} score=${s} ne joue pas`);
-        continue;
-      }
-      console.log(
-        `[replacement] ${deadId} → ${t.id} (score ${s}) « ${t.title} — ${artistLine(t)} »`,
-      );
-      saveReplacement(deadId, t.id, title, artist, s);
-      rememberAtlasPlayable(t.id, t.title || title, artistLine(t) || artist);
-      return t.id;
-    }
-    return null;
+      return null;
+    };
+
+    const strict = await pick(false);
+    if (strict) return strict;
+    // Extended / radio morts → original jouable (ex. Laisse Nous Raver Rekkt).
+    return pick(true);
     } finally {
       heavySearches = Math.max(0, heavySearches - 1);
     }
