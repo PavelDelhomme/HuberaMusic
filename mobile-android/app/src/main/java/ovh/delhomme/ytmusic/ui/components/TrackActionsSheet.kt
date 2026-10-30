@@ -852,6 +852,70 @@ fun TrackActionsSheet(
             }
 
             SheetAction(
+                Icons.Default.Sync,
+                "Ça n'a pas marché",
+                "Cherche une autre adresse du même titre",
+            ) {
+                context.toastMain("Recherche d’une alternative…")
+                container.appScope().launch {
+                    runCatching {
+                        container.ensureFreshToken()
+                        val deadId = enriched.id
+                        val r = container.api.trackReplacement(
+                            deadId,
+                            title = enriched.title,
+                            artist = enriched.artistLine().takeIf { it != "Artiste" },
+                        )
+                        val repl = r.replacementId?.trim().orEmpty()
+                        runCatching {
+                            ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                                level = "warn",
+                                kind = "android.track_unplayable",
+                                message = "Ça n'a pas marché id=$deadId → ${repl.ifBlank { "null" }}",
+                                meta = mapOf(
+                                    "trackId" to deadId,
+                                    "replacementId" to repl,
+                                    "title" to enriched.title,
+                                    "artist" to enriched.artistLine(),
+                                    "cached" to (r.cached == true),
+                                ),
+                                force = true,
+                            )
+                        }
+                        if (repl.length == 11 && repl != deadId) {
+                            TrackCanonical.remember(deadId, repl)
+                            val alt = enriched.copy(id = repl, canonicalId = deadId, playable = true)
+                            enriched = alt
+                            val st = player.state.value
+                            val aliases = TrackCanonical.aliasIds(deadId)
+                            val q = st.queue.toMutableList()
+                            val idx = q.indexOfFirst { it.id in aliases }
+                            if (idx >= 0) {
+                                q[idx] = alt
+                                player.play(
+                                    q,
+                                    idx,
+                                    title = st.queueTitle,
+                                    sourceId = st.sourceId,
+                                    sourceKind = st.sourceKind,
+                                )
+                                context.toastMain("Alternative trouvée — lecture reprise")
+                            } else {
+                                player.play(listOf(alt), 0, title = enriched.title)
+                                context.toastMain("Alternative trouvée — lecture")
+                            }
+                        } else {
+                            context.toastMain("Pas d’alternative trouvée pour l’instant")
+                        }
+                    }.onFailure { e ->
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        context.toastMain(e.apiMessage().ifBlank { "Échec recherche d’alternative" })
+                    }
+                }
+                onDismiss()
+            }
+
+            SheetAction(
                 Icons.Default.BugReport,
                 "Signaler un problème",
                 "À l'équipe de développement",
