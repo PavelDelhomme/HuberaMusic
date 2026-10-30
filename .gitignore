@@ -47,3 +47,9 @@ data/proxy-steward/live.json
 
 # Cache Python du steward proxy
 scripts/proxy-steward/__pycache__/
+
+# Build OTA lab artifacts
+.ota-out/
+**/.ota-out/
+
+*.torrent
