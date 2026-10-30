@@ -2325,8 +2325,11 @@ app.get('/api/search', accountRequired, async (req, res) => {
     ].filter((id): id is string => typeof id === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(id));
     if (warmIds.length) {
       const uniq = [...new Set(warmIds)];
-      replaceSearchWarm(uniq.slice(0, 20), req.userId!);
-      ensurePlayableQueueAhead(uniq.slice(0, 20), { userId: req.userId! });
+      // Pendant une écoute : 3 max (ne pas noyer yt-dlp / budget disque).
+      // Au repos : 5 — assez pour le top + suivants, pas un burst de 20.
+      const ahead = isPlaybackHot(90_000) ? 3 : 5;
+      replaceSearchWarm(uniq.slice(0, ahead), req.userId!);
+      ensurePlayableQueueAhead(uniq.slice(0, ahead), { userId: req.userId! });
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });
