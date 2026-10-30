@@ -59,3 +59,6 @@ scripts/qa/*.xml
 /Hubera-*.pdf
 /architecture-*.pdf
 /hubera-repo-structure-*.pdf
+scripts/qa/__pycache__/
+__pycache__/
+**/__pycache__/
