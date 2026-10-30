@@ -913,10 +913,87 @@ export function startPlayabilitySweep(): void {
   );
 }
 
+const FRESH_BEFORE_SWEEP = 8;
+
+function listMissingAudioIds(
+  limit: number,
+  isMissing: (error: string | null | undefined) => boolean,
+): string[] {
+  try {
+    const rows = openPlayabilityDb()
+      .prepare(
+        `SELECT videoId, error FROM playability WHERE status = 'fail' ORDER BY lastChecked ASC LIMIT ?`,
+      )
+      .all(Math.max(limit * 6, limit)) as { videoId: string; error: string | null }[];
+    const out: string[] = [];
+    for (const row of rows) {
+      if (!VIDEO_ID.test(row.videoId)) continue;
+      if (!isMissing(row.error)) continue;
+      out.push(row.videoId);
+      if (out.length >= limit) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Routes neuves d’abord (autre client InnerTube, autre itag, relais),
+ * puis le balayage quotidien. Les ids explicites encore sans URL audio
+ * passent par le même ordre.
+ */
+export async function runScheduledPlayabilitySweep(opts: SweepOptions = {}): Promise<SweepSummary> {
+  const { isMissingAudioUrlFailure, runMissingAudioRecoveryThenDaily } = await import(
+    '../media/freshAudioRoutes.js'
+  );
+  const explicit = (opts.ids || []).filter((id) => VIDEO_ID.test(id));
+  const videoIds = explicit.length
+    ? explicit.filter((id) => {
+        const row = getPlayability(id);
+        if (!row) return true;
+        if (row.status === 'ok') return false;
+        return isMissingAudioUrlFailure(row.error);
+      })
+    : listMissingAudioIds(FRESH_BEFORE_SWEEP, isMissingAudioUrlFailure);
+  const out = await runMissingAudioRecoveryThenDaily({
+    videoIds,
+    attempt: async (route, videoId) => {
+      const { attemptProductionFreshRoute } = await import('../media/freshAudioRoutesLive.js');
+      return attemptProductionFreshRoute(route, videoId);
+    },
+    onSuccess: async (videoId, hit) => {
+      const { rememberFreshAudio } = await import('../media/freshAudioRoutesLive.js');
+      await rememberFreshAudio(videoId, hit);
+    },
+    daily: () =>
+      runPlayabilitySweep({
+        ...opts,
+        limit: opts.limit || DEFAULT_BATCH,
+        concurrency: opts.concurrency ?? DEFAULT_CONCURRENCY,
+      }),
+  });
+  if (out.recoveries.length) {
+    console.info(
+      '[fresh-audio] avant balayage',
+      JSON.stringify(
+        out.recoveries.map((r) => ({
+          videoId: r.videoId,
+          ok: r.ok,
+          route: r.route,
+          tried: r.tried.map((t) => `${t.name}:${t.ok ? 'ok' : t.detail}`),
+        })),
+      ),
+    );
+  }
+  return out.daily;
+}
+
 async function runCronTick() {
   if (sweepRunning) return;
   try {
-    const { isPlaybackHot } = await import('../media/stream.js');
+    const { isPlaybackHot, playbackProbeExclusive } = await import('../media/stream.js');
+    if (playbackProbeExclusive()) return;
     if (isPlaybackHot(90_000)) {
       console.info('[playability] skip cron — lecture en cours');
       return;
@@ -926,7 +1003,7 @@ async function runCronTick() {
   }
   sweepRunning = true;
   try {
-    await runPlayabilitySweep({ limit: DEFAULT_BATCH, concurrency: DEFAULT_CONCURRENCY });
+    await runScheduledPlayabilitySweep({ limit: DEFAULT_BATCH, concurrency: DEFAULT_CONCURRENCY });
   } catch (err) {
     console.warn('[playability] cron KO', String((err as Error).message || err).slice(0, 120));
   } finally {
@@ -961,7 +1038,7 @@ if (isMain) {
   if (!opts.limit && opts.ids?.length) opts.limit = opts.ids.length;
   if (!opts.limit) opts.limit = 8;
   if (once) {
-    runPlayabilitySweep(opts)
+    runScheduledPlayabilitySweep(opts)
       .then((s) => {
         console.log(JSON.stringify({ ok: true, ...s, results: s.results.slice(0, 20) }, null, 2));
         process.exit(0);

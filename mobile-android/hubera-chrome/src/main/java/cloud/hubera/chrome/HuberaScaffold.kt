@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
@@ -19,7 +21,6 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -27,11 +28,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +60,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,30 +70,72 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import cloud.hubera.id.sso.HuberaIdAccounts
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun HuberaAccountButton(
     onClick: () -> Unit,
     userPicture: @Composable (() -> Unit)? = null,
 ) {
-    IconButton(onClick = onClick) {
-        if (userPicture != null) {
-            userPicture()
-        } else {
-            Box(
-                Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Default.Person,
-                    contentDescription = "Compte",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    val context = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    var emails by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        emails = withContext(Dispatchers.IO) {
+            runCatching {
+                HuberaIdAccounts.listAccounts(context)
+                    .map { it.email.trim() }
+                    .filter { it.isNotEmpty() }
+                    .distinctBy { it.lowercase() }
+            }.getOrDefault(emptyList())
+        }
+    }
+    Box {
+        IconButton(onClick = { open = true }) {
+            if (userPicture != null) {
+                userPicture()
+            } else {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Person,
+                        contentDescription = "Compte",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            for (mail in emails) {
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(mail, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "Compte Hubera ID",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    onClick = { open = false },
                 )
             }
+            DropdownMenuItem(
+                text = { Text("Paramètres") },
+                onClick = {
+                    open = false
+                    onClick()
+                },
+            )
         }
     }
 }
@@ -109,7 +166,6 @@ fun HuberaTopBar(
         },
         actions = {
             extraActions()
-            HuberaAccountButton(onClick = onAccountClick, userPicture = userPicture)
         },
         windowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
         colors = TopAppBarDefaults.topAppBarColors(
@@ -127,7 +183,6 @@ fun HuberaDrawerContent(
     userEmail: String? = null,
     extra: @Composable ColumnScope.() -> Unit = {},
 ) {
-    val context = LocalContext.current
     Column(
         Modifier
             .fillMaxHeight()
@@ -162,46 +217,6 @@ fun HuberaDrawerContent(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-        }
-        Text(
-            "Apps Hubera",
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        )
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(240.dp)
-                .padding(horizontal = 8.dp),
-            userScrollEnabled = true,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            items(HuberaProduct.suite) { app ->
-                val selected = app == current
-                Column(
-                    Modifier
-                        .clip(MaterialTheme.shapes.medium)
-                        .background(
-                            if (selected) HuberaTeal.copy(alpha = 0.12f)
-                            else MaterialTheme.colorScheme.surfaceVariant,
-                        )
-                        .clickable(enabled = !selected) { HuberaAppLauncher.openOrWeb(context, app.id) }
-                        .padding(8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Icon(app.icon, contentDescription = app.title, tint = HuberaTeal, modifier = Modifier.size(22.dp))
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        app.title,
-                        style = MaterialTheme.typography.labelSmall,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
         }
         extra()
@@ -255,9 +270,58 @@ fun HuberaBottomNav(
     }
 }
 
+@Composable
+fun HuberaAppsDialog(
+    current: HuberaProduct,
+    onDismiss: () -> Unit,
+) {
+    val waffleCtx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Apps Hubera") },
+        text = {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier.fillMaxWidth().height(280.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(HuberaProduct.suite) { app ->
+                    Column(
+                        Modifier
+                            .clip(MaterialTheme.shapes.medium)
+                            .background(
+                                if (app == current) HuberaTeal.copy(alpha = 0.12f)
+                                else MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                            .clickable(enabled = app != current) {
+                                onDismiss()
+                                HuberaAppLauncher.openOrWeb(waffleCtx, app.id)
+                            }
+                            .padding(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(app.icon, contentDescription = app.title, tint = HuberaTeal)
+                        Spacer(Modifier.height(4.dp))
+                        Text(app.title, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Fermer") }
+        },
+    )
+}
+
 /**
  * Squelette Google-like : hamburger à gauche, titre, compte à droite, drawer suite, nav bas.
  */
+/** Bandeau natif du bord gauche : ouvre le tiroir Compose. */
+object HuberaDrawerEdge {
+    @Volatile var open: (() -> Unit)? = null
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HuberaScaffold(
@@ -281,6 +345,15 @@ fun HuberaScaffold(
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    DisposableEffect(drawerState) {
+        val previous = HuberaDrawerEdge.open
+        HuberaDrawerEdge.open = { scope.launch { drawerState.open() } }
+        onDispose {
+            if (HuberaDrawerEdge.open != previous) HuberaDrawerEdge.open = previous
+        }
+    }
+    var dragged by remember { mutableFloatStateOf(0f) }
+    Box(Modifier.fillMaxSize()) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -307,7 +380,10 @@ fun HuberaScaffold(
                         title = title,
                         onMenuClick = { scope.launch { drawerState.open() } },
                         onAccountClick = onAccountClick,
-                        extraActions = extraActions,
+                        extraActions = {
+                            extraActions()
+                            HuberaAccountButton(onClick = onAccountClick, userPicture = userPicture)
+                        },
                         userPicture = userPicture,
                     )
                 }
@@ -325,5 +401,26 @@ fun HuberaScaffold(
             snackbarHost = snackbarHost,
             content = content,
         )
+    }
+        if (drawerState.currentValue == DrawerValue.Closed) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .width(28.dp)
+                    .pointerInput(drawerState) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragged = 0f },
+                            onHorizontalDrag = { _, delta ->
+                                dragged += delta
+                                if (dragged > 28f && drawerState.currentValue == DrawerValue.Closed) {
+                                    dragged = 0f
+                                    scope.launch { drawerState.open() }
+                                }
+                            },
+                        )
+                    },
+            )
+        }
     }
 }

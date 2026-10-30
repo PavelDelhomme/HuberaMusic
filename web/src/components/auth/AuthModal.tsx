@@ -23,6 +23,55 @@ const isProdHost =
   typeof window !== 'undefined' &&
   !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
 
+const isIosClient =
+  typeof navigator !== 'undefined' &&
+  /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+
+function reportAuthIncident(payload: {
+  email?: string;
+  kind: string;
+  message: string;
+}) {
+  try {
+    void fetch('/api/client/auth-incident', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        ios: isIosClient,
+        ua: navigator.userAgent || '',
+        href: typeof location !== 'undefined' ? location.href : '',
+      }),
+      keepalive: true,
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Après login iOS : si l’UI reste noire / vide, alerter ops. */
+function watchIosBlackScreenAfterLogin(email: string) {
+  if (!isIosClient) return;
+  window.setTimeout(() => {
+    try {
+      const root = document.getElementById('root') || document.body;
+      const text = (root?.innerText || '').replace(/\s+/g, ' ').trim();
+      const bg = getComputedStyle(document.body).backgroundColor || '';
+      const looksEmpty = text.length < 8;
+      const looksBlack = /rgba?\(\s*0\s*,\s*0\s*,\s*0/.test(bg) || bg === 'rgb(0, 0, 0)';
+      if (looksEmpty || (looksBlack && text.length < 40)) {
+        reportAuthIncident({
+          email,
+          kind: 'ios-black-screen',
+          message: `Après connexion, écran suspect (textLen=${text.length}, bg=${bg})`,
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, 3500);
+}
+
 export function AuthModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { login, register, loginGoogle, googleEnabled, googleClientId, user, init, allowRegister } = useAuth();
   const refresh = useLibrary((s) => s.refresh);
@@ -414,9 +463,15 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
                       setError('Entre le code 2FA de ton application d’authentification');
                       return;
                     }
+                    reportAuthIncident({
+                      email,
+                      kind: 'login-fail',
+                      message: msg,
+                    });
                     throw err;
                   }
                   await refresh();
+                  watchIosBlackScreenAfterLogin(email);
                   await maybeOfferPasskey();
                 } else {
                   await register(email, password, name || email.split('@')[0]);
@@ -434,7 +489,15 @@ export function AuthModal({ open, onClose }: { open: boolean; onClose: () => voi
                   }
                 }
               } catch (err) {
-                setError(String((err as Error).message || err));
+                const msg = String((err as Error).message || err);
+                setError(msg);
+                if (mode === 'login' || mode === 'register') {
+                  reportAuthIncident({
+                    email,
+                    kind: mode === 'register' ? 'register-fail' : 'login-fail',
+                    message: msg,
+                  });
+                }
               }
             })();
           }}

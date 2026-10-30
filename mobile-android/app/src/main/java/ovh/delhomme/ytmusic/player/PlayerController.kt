@@ -185,7 +185,8 @@ class PlayerController(
                 syncFrom(c)
                 pending?.let { (tracks, idx) ->
                     val seek = pendingSeekMs
-                    val auto = pendingAutoplay || userWantsPlaying == true
+                    val auto = (pendingAutoplay || userWantsPlaying == true) &&
+                        PlaybackResume.mayAutoPlay()
                     pending = null
                     pendingSeekMs = 0L
                     pendingAutoplay = true
@@ -272,9 +273,16 @@ class PlayerController(
                 StreamPrefetcher.markStreamOk()
                 val upcoming = PlaybackService.Holder.queue
                     .drop(PlaybackService.Holder.index + 1)
-                    .take(3)
+                    .take(1)
                     .map { it.id }
-                StreamPrefetcher.prepareRestoredCurrent(base, curId, upcoming)
+                // Hors du fil UI : warm bloquant (format + tête) sinon Suivant / reprise figent l'écran.
+                Thread {
+                    StreamPrefetcher.prepareRestoredCurrent(base, curId, upcoming)
+                }.apply {
+                    name = "ytm-restore-current"
+                    isDaemon = true
+                    start()
+                }
             }
         }
     }
@@ -316,6 +324,8 @@ class PlayerController(
         PlaybackService.Holder.queueTitle = queueTitle
         this.sourceId = sourceId
         this.sourceKind = sourceKind
+        PlaybackService.Holder.pinLoop = sourceKind == "pins"
+        PlaybackResume.noteUserPlay()
         healAfterBackground()
         if (controller != null && PlaybackService.Holder.service == null) {
             release()
@@ -345,25 +355,15 @@ class PlayerController(
             scope.launch {
                 delay(if (offlineReady || headReady) 40L else 80L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
-                playable.drop(idx + 1).take(3).forEach { t ->
-                    StreamPrefetcher.warmTrackFormatOnly(base, t.id)
-                    StreamPrefetcher.requestServerDiskCache(base, t.id)
+                withContext(Dispatchers.IO) {
+                    StreamPrefetcher.prefetchByProximity(
+                        base,
+                        playable.map { it.id },
+                        idx,
+                        ahead = StreamLaunchPolicy.WARM_PREFIX_AHEAD,
+                        force = false,
+                    )
                 }
-                warmAround(playable, idx)
-                StreamPrefetcher.prefetchByProximity(
-                    base,
-                    playable.map { it.id },
-                    idx,
-                    ahead = 4,
-                    force = true,
-                )
-                StreamPrefetcher.prefetchUpcomingHeadsTiered(
-                    base,
-                    playable.map { it.id },
-                    idx,
-                    count = 3,
-                    ignoreQuiet = true,
-                )
             }
         }
         val c = controller ?: PlaybackService.Holder.player
@@ -425,6 +425,7 @@ class PlayerController(
 
     /** Ajoute des suggestions après la file utilisateur (zone auto) — toujours, pour affichage. */
     fun appendAutoTracks(tracks: List<TrackDto>, forSeedId: String? = null) {
+        if (QuickAccessLoopPolicy.blocksFollowing(sourceKind, PlaybackService.Holder.pinLoop)) return
         if (forSeedId != null && _state.value.track?.id != forSeedId) return
         val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
@@ -459,6 +460,7 @@ class PlayerController(
      * après la fin de la file utilisateur.
      */
     fun ensureAutoplayAhead() {
+        if (QuickAccessLoopPolicy.blocksFollowing(sourceKind, PlaybackService.Holder.pinLoop)) return
         if (fillJob?.isActive == true) return
         val remainingUser = (userQueueEnd - _state.value.queueIndex - 1).coerceAtLeast(0)
         if (isPrecomputedMixSource(sourceKind, remainingUser)) return
@@ -526,7 +528,8 @@ class PlayerController(
                 p.mediaItemCount == 0 ||
                 p.playbackState == Player.STATE_IDLE
         if (exoEmpty && _state.value.queue.isNotEmpty()) {
-            if (p != null && p.isPlaying) {
+            if (p != null && (p.isPlaying || (p.playWhenReady && p.playbackState == Player.STATE_BUFFERING))) {
+                PlaybackResume.noteUserPause()
                 userWantsPlaying = false
                 pendingAutoplay = false
                 p.pause()
@@ -545,12 +548,24 @@ class PlayerController(
             }
             return
         }
-        if (p.isPlaying) {
+        val loadingOrPlaying =
+            p.isPlaying ||
+                (
+                    p.playWhenReady &&
+                        p.playerError == null &&
+                        (
+                            p.playbackState == Player.STATE_BUFFERING ||
+                                p.playbackState == Player.STATE_READY
+                            )
+                    )
+        if (loadingOrPlaying) {
+            PlaybackResume.noteUserPause()
             userWantsPlaying = false
             pendingAutoplay = false
             p.pause()
             StreamPrefetcher.cancelIdle()
         } else {
+            PlaybackResume.noteUserPlay()
             userWantsPlaying = true
             pendingAutoplay = true
             resumeOrPlay(p)
@@ -564,6 +579,7 @@ class PlayerController(
      * On hydrate pending + Holder puis [ensureServiceAndConnect] ; le bind flushe avec autoplay.
      */
     private fun startPlaybackFromUiState(): Boolean {
+        PlaybackResume.noteUserPlay()
         val fromPending = pending
         val tracks = fromPending?.first?.takeIf { it.isNotEmpty() } ?: _state.value.queue
         if (tracks.isEmpty()) return false
@@ -650,6 +666,7 @@ class PlayerController(
     }
 
     fun pause() {
+        PlaybackResume.noteUserPause()
         userWantsPlaying = false
         pendingAutoplay = false
         ovh.delhomme.ytmusic.data.NetworkMonitor.clearPausedForNetwork()
@@ -704,6 +721,7 @@ class PlayerController(
      * Déclenché typiquement par un swipe bas sur la barre réduite.
      */
     fun stopAndClear() {
+        PlaybackResume.noteUserPause()
         userWantsPlaying = false
         pendingAutoplay = false
         pending = null
@@ -751,6 +769,7 @@ class PlayerController(
     var onClearLocal: (() -> Unit)? = null
 
     fun playResume() {
+        PlaybackResume.noteUserPlay()
         healAfterBackground()
         userWantsPlaying = true
         pendingAutoplay = true
@@ -834,6 +853,31 @@ class PlayerController(
 
     /** Appelé quand il n’y a plus de suivant (UI ou notif système). */
     private fun fillThenSkipFromEnd(fromUserSkip: Boolean = false) {
+        if (PlaybackService.Holder.pinLoop) {
+            val extended = PlaybackService.Holder.extendUserQueue()
+            val p = player() ?: PlaybackService.Holder.player
+            if (extended > 0 && p != null) {
+                userQueueEnd = PlaybackService.Holder.userQueueEnd
+                val cur = p.currentMediaItemIndex.coerceAtLeast(0)
+                if (p.mediaItemCount > cur + 1) {
+                    p.seekTo(cur + 1, 0L)
+                    p.playWhenReady = true
+                    p.play()
+                    syncFrom(p)
+                }
+                return
+            }
+            if (p != null && p.mediaItemCount > 0) {
+                p.seekTo(0, 0L)
+                if (p.playbackState == Player.STATE_IDLE || p.playbackState == Player.STATE_ENDED) {
+                    p.prepare()
+                }
+                p.playWhenReady = true
+                p.play()
+                syncFrom(p)
+                return
+            }
+        }
         if (pauseAtEndOfQueue || pauseAtEndOfTrack) {
             player()?.pause()
             clearSleepTimer()
@@ -1214,6 +1258,7 @@ class PlayerController(
     }
 
     fun playAt(index: Int) {
+        PlaybackResume.noteUserPlay()
         ensureServiceAndConnect()
         val p = player() ?: PlaybackService.Holder.player ?: return
         val queue = PlaybackService.Holder.queue.ifEmpty { _state.value.queue }
@@ -1340,6 +1385,33 @@ class PlayerController(
         val turningOn = !shuffleEnabled
         shuffleEnabled = turningOn
         val c = player()
+        if (c != null && turningOn && sourceKind == "pins") {
+            val idx = c.currentMediaItemIndex.coerceAtLeast(0)
+            val queue = PlaybackService.Holder.queue
+            val end = userQueueEnd.coerceIn(0, queue.size).let { if (it <= 0) queue.size else it }
+            val safeIdx = idx.coerceAtMost((end - 1).coerceAtLeast(0))
+            val cur = queue.getOrNull(safeIdx)
+            if (cur != null && end > 1) {
+                val others = queue.take(end).filter { it.id != cur.id }.shuffled()
+                val newQ = listOf(cur) + others
+                if (safeIdx > 0 && safeIdx < c.mediaItemCount) {
+                    c.removeMediaItems(0, safeIdx.coerceAtMost(c.mediaItemCount))
+                }
+                if (c.mediaItemCount > 1) c.removeMediaItems(1, c.mediaItemCount)
+                if (others.isNotEmpty()) c.addMediaItems(others.map { mediaItem(it) })
+                userQueueEnd = newQ.size
+                PlaybackService.Holder.queue = newQ
+                PlaybackService.Holder.userQueueEnd = newQ.size
+                PlaybackService.Holder.fullQueue = newQ
+                PlaybackService.Holder.fullQueueCursor = newQ.size
+                PlaybackService.Holder.pinLoop = true
+                shuffleNatural = queue.take(end).toMutableList()
+                c.shuffleModeEnabled = false
+                syncFrom(c)
+                _state.value = _state.value.copy(shuffle = true)
+                return
+            }
+        }
         if (c != null && turningOn) {
             val idx = c.currentMediaItemIndex.coerceAtLeast(0)
             val queue = PlaybackService.Holder.queue.toMutableList()
@@ -1896,18 +1968,18 @@ class PlayerController(
                 StreamPrefetcher.prepareRestoredCurrent(
                     base,
                     currentId,
-                    window.drop(idx + 1).map { it.id },
+                    window.drop(idx + 1).take(1).map { it.id },
                     force = false,
                 )
-                window.drop(idx + 1).take(3).forEachIndexed { i, t ->
-                    StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
-                }
             }
         } else if (!currentId.isNullOrBlank() && headReady) {
             scope.launch(Dispatchers.IO) {
-                window.drop(idx + 1).take(3).forEachIndexed { i, t ->
-                    StreamPrefetcher.prefetchUserQueuedHead(base, t.id, asNext = i == 0)
-                }
+                StreamPrefetcher.prepareRestoredCurrent(
+                    base,
+                    currentId,
+                    window.drop(idx + 1).take(1).map { it.id },
+                    force = false,
+                )
             }
         }
         if (autoplay) {
@@ -1915,22 +1987,14 @@ class PlayerController(
             scope.launch {
                 delay(if (headReady && !coldResume) 80L else 120L)
                 if (player()?.currentMediaItem?.mediaId != startId) return@launch
-                warmAround(window, idx)
-                StreamPrefetcher.prefetchByProximity(
-                    base,
-                    window.map { it.id },
-                    idx,
-                    ahead = 4,
-                    force = true,
-                )
-                StreamPrefetcher.maintainRollingPrefetch(base, window.map { it.id }, idx, window = 4)
-                if (!ovh.delhomme.ytmusic.data.BatterySaver.isActive()) {
-                    runCatching {
-                        YtMusicApp.instance.container.downloadManager.enqueueAheadDuringPlayback(
-                            window.drop(idx + 1),
-                            limit = 3,
-                        )
-                    }
+                withContext(Dispatchers.IO) {
+                    StreamPrefetcher.prefetchByProximity(
+                        base,
+                        window.map { it.id },
+                        idx,
+                        ahead = StreamLaunchPolicy.WARM_PREFIX_AHEAD,
+                        force = false,
+                    )
                 }
             }
         }
@@ -2045,7 +2109,7 @@ class PlayerController(
         if (queue.isEmpty()) return
         val p = player() ?: PlaybackService.Holder.player
         val pos = p?.currentPosition?.coerceAtLeast(0L) ?: ui.positionMs
-        val playing = p?.let { it.isPlaying || it.playWhenReady } ?: ui.playing
+        val playing = p?.isEffectivePlayback() == true
         onPersistLocal?.invoke(
             LocalPlaybackSnapshot(
                 queue = queue,

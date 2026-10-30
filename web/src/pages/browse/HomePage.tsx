@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { warmFormats } from '../../lib/audio/streamPrefetch';
 import { perfStart } from '../../lib/util/perf';
 import { getCachedMix, mixCacheKey, setCachedMix } from '../../lib/util/mixCache';
+import { formatTrackDuration } from '../../lib/util/time';
 
 const HOME_CACHE_KEY = 'ytm_home_v1';
 
@@ -404,10 +405,19 @@ export function HomePage() {
                 onClick={() => {
                   if (pinPlayBusy) return;
                   setPinPlayBusy('play');
-                  void resolvePinTracks(quickAccessItems)
-                    .then((tracks) => {
-                      if (!tracks.length) return;
-                      void playQueue(tracks, 0);
+                  void Promise.resolve(
+                    quickAccessItems.filter(
+                      (t) =>
+                        isPlayableSongId(t.id) &&
+                        t.type !== 'album' &&
+                        t.type !== 'playlist' &&
+                        t.type !== 'artist' &&
+                        t.type !== 'mix',
+                    ),
+                  )
+                    .then((songs) => {
+                      if (!songs.length) return;
+                      void playQueue(songs, 0, { sourceKind: 'pins' });
                     })
                     .finally(() => setPinPlayBusy(null));
                 }}
@@ -422,10 +432,19 @@ export function HomePage() {
                 onClick={() => {
                   if (pinPlayBusy) return;
                   setPinPlayBusy('shuffle');
-                  void resolvePinTracks(quickAccessItems)
-                    .then((tracks) => {
-                      if (!tracks.length) return;
-                      void playQueue(shuffleTracks(tracks), 0);
+                  void Promise.resolve(
+                    quickAccessItems.filter(
+                      (t) =>
+                        isPlayableSongId(t.id) &&
+                        t.type !== 'album' &&
+                        t.type !== 'playlist' &&
+                        t.type !== 'artist' &&
+                        t.type !== 'mix',
+                    ),
+                  )
+                    .then((songs) => {
+                      if (!songs.length) return;
+                      void playQueue(shuffleTracks(songs), 0, { sourceKind: 'pins' });
                     })
                     .finally(() => setPinPlayBusy(null));
                 }}
@@ -455,7 +474,12 @@ export function HomePage() {
                   className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/5"
                 >
                   <GripVertical className="h-4 w-4 shrink-0 text-yt-muted" />
-                  <span className="min-w-0 flex-1 truncate text-sm">{item.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {item.title}
+                    {formatTrackDuration(item) ? (
+                      <span className="text-yt-muted"> · {formatTrackDuration(item)}</span>
+                    ) : null}
+                  </span>
                   <button
                     type="button"
                     className="rounded p-1 text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-30"
@@ -492,7 +516,7 @@ export function HomePage() {
               ))}
             </ul>
           ) : (
-            <ShelfRow title="" items={quickAccessItems} />
+            <ShelfRow title="" items={quickAccessItems} sourceKind="pins" />
           )}
         </section>
       )}

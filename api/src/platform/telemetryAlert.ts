@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { mailBrand, sendMail, getAppEnv, appUrl } from './mail.js';
 import { buildTextPdf } from './textPdf.js';
 import {
@@ -97,18 +99,35 @@ function asRecord(meta: unknown): Record<string, unknown> {
   return {};
 }
 
-function extractLogs(meta: unknown): string {
+/** Extraire un bloc « --- label --- » depuis une stack fabriquée côté Android. */
+function sectionFromStack(stack: string | undefined, label: string): string {
+  if (!stack) return '';
+  const re = new RegExp(
+    `---\\s*${label}\\s*---\\s*\\n([\\s\\S]*?)(?=\\n---\\s|$)`,
+    'i',
+  );
+  const m = re.exec(stack);
+  return m?.[1]?.trim() || '';
+}
+
+function extractLogs(meta: unknown, stack?: string): string {
   const m = asRecord(meta);
   const logs = m.recentLogs;
   if (typeof logs === 'string' && logs.trim()) return logs;
+  if (Array.isArray(logs) && logs.length) return logs.map(String).join('\n');
+  // Fallback : stack synthétique « (pas de Throwable — diagnostic AppLog) »
+  const fromStack = sectionFromStack(stack, 'recent logs');
+  if (fromStack) return fromStack;
   return '';
 }
 
-function extractBreadcrumbs(meta: unknown): string {
+function extractBreadcrumbs(meta: unknown, stack?: string): string {
   const m = asRecord(meta);
   const b = m.breadcrumbs;
-  if (Array.isArray(b)) return b.map((x) => String(x)).join('\n');
-  if (typeof b === 'string') return b;
+  if (Array.isArray(b) && b.length) return b.map((x) => String(x)).join('\n');
+  if (typeof b === 'string' && b.trim()) return b;
+  const fromStack = sectionFromStack(stack, 'breadcrumbs');
+  if (fromStack) return fromStack;
   return '';
 }
 
@@ -234,8 +253,8 @@ export async function maybeAlertTelemetryError(ev: {
   }
 
   const env = ev.env || getAppEnv();
-  const logsRaw = extractLogs(ev.meta);
-  const crumbsRaw = extractBreadcrumbs(ev.meta);
+  const logsRaw = extractLogs(ev.meta, ev.stack);
+  const crumbsRaw = extractBreadcrumbs(ev.meta, ev.stack);
   const logs = tidyRecentLogs(logsRaw);
   const crumbs = tidyBreadcrumbs(crumbsRaw);
   const stack = tidyStack((ev.stack || '').trim() || '(aucune stack Throwable — voir logs / breadcrumbs)');
@@ -357,10 +376,11 @@ export async function maybeAlertTelemetryError(ev: {
   <pre style="margin:0;white-space:pre-wrap;background:#fef3c7;padding:12px 14px;border-radius:10px;border:1px solid #f59e0b;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5">${esc(diagText)}${esc(skipNote)}</pre>
 
   ${sectionCard('Message', esc(ev.message || '(vide)'))}
-  ${sectionCard('Stack (nettoyée)', esc(stack.slice(0, 6_000)) + (stack.length > 6_000 ? esc('\n…[PDF]') : ''), 'dark')}
-  ${sectionCard('Breadcrumbs', esc(crumbs.slice(0, 4_000)))}
-  ${sectionCard('Logs récents (filtrés)', esc(logs.slice(-6_000)))}
-  ${sectionCard('Meta', esc(metaLite.slice(0, 3_500)))}
+  ${sectionCard('Stack (nettoyée)', esc(stack.slice(0, 8_000)) + (stack.length > 8_000 ? esc('\n…[PDF]') : ''), 'dark')}
+  ${sectionCard('Stack brute', esc((ev.stack || logsRaw || '(vide)').slice(0, 8_000)), 'dark')}
+  ${sectionCard('Breadcrumbs', esc(crumbs.slice(0, 6_000)))}
+  ${sectionCard('Logs récents (filtrés)', esc(logs.slice(-10_000)))}
+  ${sectionCard('Meta', esc(metaLite.slice(0, 6_000)))}
   ${heavy ? '<p style="color:#666;font-size:13px"><em>Dump complet joint en PDF.</em></p>' : ''}
 </div>`.trim();
 
@@ -391,7 +411,8 @@ export async function maybeAlertTelemetryError(ev: {
   } catch (err) {
     console.error('[telemetry-alert] rapport KO', err);
   }
-  if (heavy || !ev.stack || logsRaw.length > 2_000) {
+  {
+    // Toujours un PDF : les mails sans PJ perdaient stacks / logs / traces.
     try {
       const pdf = buildTextPdf({
         title: `${mailBrand()} ${env} · ${level} · ${ev.kind} · ${ev.id}`,
@@ -437,6 +458,13 @@ export async function maybeAlertTelemetryError(ev: {
       text: textSummary,
       attachments,
     });
+    try {
+      const dir = join(process.cwd(), 'data', 'incidents');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${ev.id}.md`), fullDump, 'utf8');
+    } catch (err) {
+      console.error('[telemetry-alert] dump file KO', err);
+    }
     console.info(
       `[telemetry-alert] sent to=${to} kind=${ev.kind} id=${ev.id} tracks=${tracks.length} pdf=${attachments.some((a) => a.contentType === 'application/pdf')}`,
     );

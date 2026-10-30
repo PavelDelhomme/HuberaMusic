@@ -395,6 +395,18 @@ export const api = {
     req<{ stats: any; events: any[] }>(
       `/api/admin/telemetry${level ? `?level=${encodeURIComponent(level)}` : ''}`,
     ),
+  adminDocsTask: (task: {
+    title: string;
+    body: string;
+    project: string;
+    category: string;
+    column_id: string;
+    priority: number;
+  }) =>
+    req<{ ok: boolean; id?: string; error?: string; status?: number; task?: typeof task }>(
+      '/api/admin/docs-task',
+      { method: 'POST', body: JSON.stringify(task) },
+    ),
   adminMailOutbox: () => req<{ mails: any[] }>('/api/admin/mail-outbox'),
   adminSmtp: () => req<{ smtp: any; env: string; appUrl: string | null }>('/api/admin/smtp'),
   adminSmtpTest: (to?: string) =>

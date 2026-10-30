@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installConsoleTimestamps } from './platform/log.js';
+import { fitClientJson } from './platform/jsonBound.js';
 import { installYoutubeJsEvaluator } from './youtube/youtubeiEval.js';
 
 installConsoleTimestamps();
@@ -124,6 +125,8 @@ import {
   getApkJob,
   getApkPath,
   apkPublicInfo,
+  apkBetaPublicInfo,
+  getBetaApkPath,
   getBuildJob,
   publishApkBuffer,
   startApkBuild,
@@ -131,6 +134,7 @@ import {
   MUSIC_PKG_HUBERA,
 } from './platform/admin.js';
 import { huberaLegacyStatus, huberaNotice, pingFromRequest } from './platform/huberaLegacy.js';
+import { betaOfferBeatsProd, isBetaAccount } from './platform/betaChannel.js';
 import {
   allowPublicApkTicket,
   consumeApkTicket,
@@ -251,6 +255,7 @@ import {
   telemetryStats,
 } from './platform/platform.js';
 import { sendVerificationEmail, getAppEnv, smtpPublicConfig, testSmtp } from './platform/mail.js';
+import { postDocsTask } from './platform/docsTask.js';
 import {
   disableTotpForUser,
   enableTotpForUser,
@@ -380,11 +385,30 @@ app.use('/api/admin/apk/upload', express.raw({ type: () => true, limit: '120mb' 
 /** MP3 importé sur le compte utilisateur (binaire audio, pas JSON). */
 app.use('/api/import/file', express.raw({ type: () => true, limit: '40mb' }));
 app.use(express.json({ limit: '6mb' }));
+// Plafonne le JSON renvoyé : Moshi lit tout le corps, un trop gros corps sature le tas 256 Mo.
+app.use((req, res, next) => {
+  const orig = res.json.bind(res);
+  res.json = (body?: unknown) => {
+    const fitted = fitClientJson(body);
+    if (fitted.clipped) console.warn('[json] bounded', req.path);
+    return orig(fitted.body);
+  };
+  next();
+});
 app.use(cookieParser());
 app.use(authOptional);
 
 const authBurst = rateLimit({ windowMs: 60_000, max: 20 });
 const authStrict = rateLimit({ windowMs: 15 * 60_000, max: 40 });
+
+/** Chemins OTA relatifs → URL absolue (évite « no protocol » côté clients naïfs). */
+function absolutePublicUrl(pathOrUrl: string | null | undefined, origin: string): string | null {
+  const raw = String(pathOrUrl || '').trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const base = origin.replace(/\/$/, '');
+  return raw.startsWith('/') ? `${base}${raw}` : `${base}/${raw}`;
+}
 
 /** Notes de version (Compte / Profil) — source : VERSION_NOTES.json à la racine. */
 app.get('/api/version', (req, res) => {
@@ -416,17 +440,44 @@ app.get('/api/version', (req, res) => {
   let advertised = semver;
   if (apkNewerThanPhone && apkName && cmp(apkName, advertised) > 0) advertised = apkName;
   if (clientVer && cmp(clientVer, advertised) > 0) advertised = clientVer;
-  res.json({
+  const body: Record<string, unknown> = {
     version: advertised,
     appVersion: `p+${advertised}`,
     minVersion: '1.3.0',
     forceUpdate: false,
+    mandatory: false,
+    channel: 'prod',
     apkAvailable: apkNewerThanPhone && cmp(apkName || semver, clientVer || '0') > 0,
-    apkUrl: apkNewerThanPhone ? apk.downloadPath : null,
+    apkUrl: apkNewerThanPhone
+      ? absolutePublicUrl(apk.downloadPath, 'https://music.hubera.cloud')
+      : null,
     apkVersion: apkNewerThanPhone ? apk.versionName : null,
     apkVersionCode: apkNewerThanPhone ? apkCode : null,
     webUrl: 'https://music.hubera.cloud',
-  });
+  };
+  const betaUser = isBetaAccount(req.user?.email, process.env.HUBERA_BETA_EMAILS || '');
+  const beta = apkBetaPublicInfo();
+  const betaCode = Number(beta.versionCode || 0) || 0;
+  const betaName = String(beta.versionName || '').replace(/^[pbd]\+/, '').trim();
+  if (
+    betaUser &&
+    betaOfferBeatsProd({
+      betaReady: beta.ready,
+      betaCode,
+      prodCode: apkCode,
+      clientCode,
+    }) &&
+    (!clientVer || !betaName || cmp(betaName, clientVer) >= 0)
+  ) {
+    body.channel = 'beta';
+    body.version = betaName || advertised;
+    body.appVersion = `b+${body.version}`;
+    body.apkAvailable = cmp(betaName || String(body.version), clientVer || '0') > 0;
+    body.apkUrl = absolutePublicUrl(beta.downloadPath, 'https://music.hubera.cloud');
+    body.apkVersion = beta.versionName;
+    body.apkVersionCode = betaCode;
+  }
+  res.json(body);
 });
 
 app.get('/api/version-notes', (_req, res) => {
@@ -563,6 +614,54 @@ app.post('/api/auth/login', authBurst, authStrict, async (req, res) => {
       return;
     }
     res.status(401).json({ error: msg });
+  }
+});
+
+/** Incident client (ex. iOS page noire / login cassé) → mail ops. */
+const authIncidentLast = new Map<string, number>();
+app.post('/api/client/auth-incident', authBurst, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 120);
+    const kind = String(req.body?.kind || 'auth').trim().slice(0, 64);
+    const message = String(req.body?.message || 'incident auth').trim().slice(0, 800);
+    const ua = String(req.headers['user-agent'] || req.body?.ua || '').slice(0, 240);
+    const href = String(req.body?.href || '').slice(0, 240);
+    const isIos = /iphone|ipad|ipod|ios/i.test(ua) || !!req.body?.ios;
+    const fp = `${kind}|${email}|${message.slice(0, 80)}`;
+    const now = Date.now();
+    if ((authIncidentLast.get(fp) || 0) + 120_000 > now) {
+      res.json({ ok: true, throttled: true });
+      return;
+    }
+    authIncidentLast.set(fp, now);
+    const { sendMail, mailBrand } = await import('./platform/mail.js');
+    const to =
+      process.env.TELEMETRY_ALERT_TO ||
+      process.env.ADMIN_EMAILS ||
+      process.env.SEED_EMAIL ||
+      'paul@delhomme.ovh';
+    const brand = mailBrand();
+    const subject = `[${brand}] Auth / écran noir${isIos ? ' · iOS' : ''} — ${email || 'anonyme'}`;
+    const text =
+      `Incident connexion Hubera Music\n` +
+      `kind: ${kind}\n` +
+      `email: ${email || '(vide)'}\n` +
+      `ios: ${isIos}\n` +
+      `message: ${message}\n` +
+      `href: ${href}\n` +
+      `ua: ${ua}\n` +
+      `at: ${new Date().toISOString()}\n`;
+    await sendMail({
+      to,
+      subject,
+      text,
+      html: `<pre style="font-family:ui-monospace,monospace;font-size:13px">${text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')}</pre>`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String((err as Error).message || err) });
   }
 });
 
@@ -1126,6 +1225,52 @@ app.post(
           trackId: typeof e.trackId === 'string' ? e.trackId : undefined,
           http: typeof e.http === 'number' ? e.http : undefined,
         });
+        // Crash / erreur player tamponnés : mail individuel (throttle) avec crumbs+logs
+        // — le digest seul listait les titres sans breadcrumbs → mails « vides ».
+        const lv = String(level || '').toLowerCase();
+        const kindStr = String(kind || '');
+        if (
+          lv === 'fatal' ||
+          kindStr.includes('crash') ||
+          (lv === 'error' && (kindStr.includes('android.player') || kindStr.includes('android.user_report')))
+        ) {
+          const alertStack = e.stack ? trunc(e.stack, 24_000) : undefined;
+          const alertMeta = {
+            batch: true,
+            count: typeof e.count === 'number' ? e.count : 1,
+            trackId: e.trackId,
+            title: e.title,
+            artist: e.artist,
+            diagnosis: e.diagnosis,
+            http: e.http,
+            code: e.code,
+            streak: e.streak,
+            network: e.network ?? e.networkish,
+            local: e.local,
+            appVersion: e.appVersion,
+            model: e.model,
+            manufacturer: e.manufacturer,
+            sdk: e.sdk,
+            breadcrumbs: e.breadcrumbs,
+            recentLogs: typeof e.recentLogs === 'string' ? trunc(e.recentLogs, 24_000) : undefined,
+          };
+          void import('./platform/telemetryAlert.js')
+            .then(({ maybeAlertTelemetryError }) =>
+              maybeAlertTelemetryError({
+                id,
+                env,
+                level,
+                kind,
+                message,
+                stack: alertStack,
+                userAgent,
+                userId,
+                deviceId,
+                meta: alertMeta,
+              }),
+            )
+            .catch((err) => console.error('[telemetry] batch alert', err));
+        }
       }
       void import('./platform/telemetryAlert.js')
         .then(({ maybeAlertTelemetryDigest }) =>
@@ -1450,6 +1595,32 @@ app.get('/api/admin/telemetry', requireAdmin, (req, res) => {
       limit: Number(req.query.limit || 100),
       offset: Number(req.query.offset || 0),
     }),
+  });
+});
+
+/** Erreur groupée → tâche Hubera Docs (bug, colonne todo). Le jeton est celui de l’admin, pas un secret du dépôt. */
+app.post('/api/admin/docs-task', requireAdmin, async (req, res) => {
+  const header = req.headers.authorization;
+  const bearer = header?.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const cookie = String((req as { cookies?: { ytm_token?: string } }).cookies?.ytm_token || '').trim();
+  const result = await postDocsTask(
+    {
+      title: req.body?.title,
+      body: req.body?.body,
+      project: req.body?.project,
+      priority: req.body?.priority,
+    },
+    {
+      origin: process.env.DOCS_API_URL || 'https://docs.hubera.cloud',
+      accessToken: bearer || cookie,
+    },
+  );
+  res.status(result.ok ? 201 : 200).json({
+    ok: result.ok,
+    id: result.id,
+    error: result.error,
+    status: result.status,
+    task: result.task,
   });
 });
 
@@ -1870,7 +2041,12 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
   }
   let pkg = String(req.query.package || req.query.clientPackage || '');
   if (ticketReason === 'public' && !pkg) pkg = MUSIC_PKG_HUBERA;
-  const path = getApkPath(pkg);
+  const wantsBeta = String(req.query.channel || '') === 'beta';
+  if (wantsBeta && !isBetaAccount(req.user?.email, process.env.HUBERA_BETA_EMAILS || '')) {
+    res.status(404).json({ error: 'APK non publiée' });
+    return;
+  }
+  const path = wantsBeta ? getBetaApkPath() : getApkPath(pkg);
   if (!path) {
     res.status(404).json({
       error: 'APK non publiée',
@@ -2995,17 +3171,18 @@ function librarySongIds(lib: { songs?: Array<{ id?: string }>; liked?: Array<{ i
 }
 
 /**
- * Têtes Aléatoire biblio (~100 ids) — rotation ~30 min / compte.
- * Warm serveur lancé en fond ; client Android = warm léger de ce batch seulement.
+ * Têtes Aléatoire biblio (plusieurs centaines) — rotation ~30 min, ou fresh=1.
+ * La liste part tout de suite ; le warm disque reste sériel.
  */
 app.get('/api/library/shuffle-heads', accountRequired, (req, res) => {
   try {
     const warm = String(req.query.warm || '1') !== '0';
     const scope = String(req.query.scope || 'all') === 'recent' ? 'recent' : 'all';
-    const result = getShuffleHeads(req.userId!, { warm, scope });
+    const fresh = String(req.query.fresh || '') === '1';
+    const result = getShuffleHeads(req.userId!, { warm, scope, fresh });
     res.json(result);
     if (warm && result.ids?.length) {
-      ensurePlayableQueueAhead(result.ids.slice(0, 20), { userId: req.userId! });
+      ensurePlayableQueueAhead(result.ids.slice(0, 8), { userId: req.userId! });
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -3019,7 +3196,7 @@ app.post('/api/library/shuffle-heads/refresh', accountRequired, (req, res) => {
     const result = getShuffleHeads(req.userId!, { warm: true, scope });
     res.json(result);
     if (result.ids?.length) {
-      ensurePlayableQueueAhead(result.ids.slice(0, 20), { userId: req.userId! });
+      ensurePlayableQueueAhead(result.ids.slice(0, 8), { userId: req.userId! });
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -3666,9 +3843,8 @@ process.on('uncaughtException', (err) => {
   // Laisse le temps d’envoyer le mail avant exit
   setTimeout(() => process.exit(1), 1500);
 });
-process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason);
-  const err = reason instanceof Error ? reason : new Error(String(reason));
+process.on('unhandledRejection', (rejected) => {
+  const err = rejected instanceof Error ? rejected : new Error(String(rejected));
   // Client a coupé le flux (curl/tests/Exo abort) → yt-dlp SIGTERM → exit null : pas d’alerte mail
   // Range EOF disque déjà géré (416) — anciennes races / start===size ne doivent plus spammer.
   if (
@@ -3684,11 +3860,16 @@ process.on('unhandledRejection', (reason) => {
     const blob = `${err.message}\n${err.stack || ''}`;
     const m =
       /\[stream\s+([a-zA-Z0-9_-]{11})\]/.exec(blob) ||
-      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/.exec(blob);
+      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\bid=([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\bvideoId[=: ]([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\/cache\/([a-zA-Z0-9_-]{11})\.(?:m4a|mp4|part)\b/.exec(blob);
     return m?.[1];
   })();
+  const shortReason = err.message.replace(/\s+/g, ' ').trim().slice(0, 160);
+  console.error('[unhandledRejection]', trackIdFromErr || 'sans-id', shortReason);
   try {
-    const meta = trackIdFromErr ? { trackId: trackIdFromErr } : undefined;
+    const meta = { reason: shortReason, ...(trackIdFromErr ? { trackId: trackIdFromErr } : {}) };
     const id = insertTelemetry({
       env: getAppEnv(),
       level: 'error',

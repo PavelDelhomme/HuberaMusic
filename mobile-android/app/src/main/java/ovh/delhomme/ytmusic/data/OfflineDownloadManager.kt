@@ -158,6 +158,9 @@ class OfflineDownloadManager(
 
     /** DL opportuniste pendant lecture : titres à +3 et au-delà. */
     fun enqueueAheadDuringPlayback(tracks: List<TrackDto>, limit: Int = 1) {
+        if (!ovh.delhomme.ytmusic.player.StreamLaunchPolicy.allowFullFileDownload(playbackActive = true)) {
+            return
+        }
         enqueueAhead(tracks, limit = limit, skipFirst = 3, duringPlaybackSafe = true)
     }
 

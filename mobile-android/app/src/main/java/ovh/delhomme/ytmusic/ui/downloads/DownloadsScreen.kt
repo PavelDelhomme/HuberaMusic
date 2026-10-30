@@ -379,7 +379,7 @@ fun DownloadsScreen(
                                 fontWeight = FontWeight.Medium,
                             )
                             Text(
-                                track.artistLine(),
+                                track.durationLabel()?.let { "${track.artistLine()} · $it" } ?: track.artistLine(),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,

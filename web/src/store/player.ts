@@ -78,7 +78,7 @@ type PlayerState = {
   userQueueEnd: number;
   /** Collection d’où vient la file (album / playlist / mix…) — overlay « en lecture ». */
   sourceId: string | null;
-  sourceKind: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
+  sourceKind: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | 'pins' | null;
   /** Suggestions automatiques après la file (style YTM). */
   autoplay: boolean;
   isPlaying: boolean;
@@ -122,7 +122,7 @@ type PlayerState = {
       /** Nouvelle playlist / titre depuis l’UI : remplace la file et repart de 0. */
       forceRestart?: boolean;
       sourceId?: string | null;
-      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
+      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | 'pins' | null;
     },
   ) => Promise<void>;
   playQueue: (
@@ -130,7 +130,7 @@ type PlayerState = {
     startIndex?: number,
     opts?: {
       sourceId?: string | null;
-      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
+      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | 'pins' | null;
     },
   ) => Promise<void>;
   playAt: (index: number) => Promise<void>;
@@ -840,6 +840,7 @@ function mergeAutoTracks(seedId: string, pool: Track[], relatedUpdate?: Track[])
   const state = usePlayer.getState();
   // Toujours remplir « À suivre » (affichage) — autoplay ne contrôle que l’auto-avance en fin de file user
   // Ignore les réponses obsolètes (titre déjà changé)
+  if (state.sourceKind === 'pins') return;
   if (state.current?.id && state.current.id !== seedId) return;
   const boundary = Math.max(state.userQueueEnd || 0, state.queueIndex + 1);
   const autoLen = state.queue.length - boundary;
@@ -1033,12 +1034,17 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
 
   const targetVol = Math.max(0, Math.min(1, state.volume > 0 ? state.volume : 0.9));
 
-  // Si le même titre est déjà chargé sur le primary → seek 0 + play (skip/loop rapide)
+  // Si le même titre est déjà chargé sur le primary → seek 0 + play (skip/loop rapide).
+  // Ne pas comparer à location.pathname (casse la reprise après navigation SPA).
+  const srcLooksPlayable =
+    Boolean(audio.src) &&
+    (audio.src.includes('/api/stream/') ||
+      audio.src.startsWith('blob:') ||
+      /^https?:\/\//i.test(audio.src));
   if (
     audio.dataset.trackId === track.id &&
-    audio.src &&
-    audio.readyState >= 2 &&
-    !audio.src.endsWith(window.location.pathname)
+    srcLooksPlayable &&
+    audio.readyState >= 2
   ) {
     try {
       audio.muted = false;
@@ -1710,7 +1716,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       return;
     }
     const idx = Math.min(Math.max(0, startIndex), playable.length - 1);
+    const pinLoop = opts?.sourceKind === 'pins';
     const precomputed =
+      pinLoop ||
       opts?.sourceKind === 'mix' ||
       opts?.sourceKind === 'radio' ||
       opts?.sourceKind === 'album' ||
@@ -1725,9 +1733,13 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       forceRestart: true,
       sourceId: opts?.sourceId,
       sourceKind: opts?.sourceKind,
-      noAutoRadio: Boolean(precomputed && (opts?.sourceKind === 'history' || opts?.sourceKind === 'playlist' || playable.length >= 20)),
+      noAutoRadio: Boolean(
+        pinLoop ||
+          (precomputed &&
+            (opts?.sourceKind === 'history' || opts?.sourceKind === 'playlist' || playable.length >= 20)),
+      ),
     });
-    if (precomputed && (opts?.sourceKind === 'history' || playable.length >= 20)) {
+    if (!pinLoop && precomputed && (opts?.sourceKind === 'history' || playable.length >= 20)) {
       set({ autoplay: false });
     }
     end(`${playable.length} tracks`);
@@ -2129,6 +2141,11 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     }
     let nextIndex = queueIndex + 1;
     const end = get().userQueueEnd || 0;
+    if (get().sourceKind === 'pins' && (nextIndex >= end || nextIndex >= queue.length)) {
+      nextIndex = 0;
+      await get().playAt(nextIndex);
+      return;
+    }
     // Fin naturelle sur le dernier titre « user » : stop si lecture auto OFF (suggestions restent visibles)
     if (
       opts?.fromEnded &&
@@ -2350,7 +2367,28 @@ export const usePlayer = create<PlayerState>((set, get) => ({
 
   toggleShuffle: () => {
     const turningOn = !get().shuffle;
-    if (turningOn) {
+    if (turningOn && get().sourceKind === 'pins') {
+      set((s) => {
+        const end = Math.min(s.userQueueEnd || s.queue.length, s.queue.length);
+        const qi = Math.min(s.queueIndex, Math.max(0, end - 1));
+        const cur = s.queue[qi];
+        if (!cur || end <= 1) return { shuffle: true };
+        const others = s.queue.slice(0, end).filter((_, i) => i !== qi);
+        for (let i = others.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const tmp = others[i]!;
+          others[i] = others[j]!;
+          others[j] = tmp;
+        }
+        return {
+          shuffle: true,
+          queue: [cur, ...others],
+          queueIndex: 0,
+          userQueueEnd: end,
+          shuffleNatural: s.queue.slice(0, end),
+        };
+      });
+    } else if (turningOn) {
       // Réordonne uniquement la suite — snapshot naturel pour restore
       set((s) => {
         const qi = s.queueIndex;
@@ -2660,6 +2698,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   },
 
   appendRelated: (tracks) => {
+    if (get().sourceKind === 'pins') return;
     set((s) => {
       const ids = new Set(s.queue.map((t) => t.id));
       const extra = tracks.filter((t) => isPlayable(t) && !ids.has(t.id));

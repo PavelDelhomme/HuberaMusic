@@ -213,6 +213,12 @@ fun SearchIdentifySheet(
                     stopRecorder()
                     phase = "uploading"
                     message = "Analyse en cours…"
+                    val slow = launch {
+                        delay(8_000)
+                        if (phase == "uploading") {
+                            message = "L’analyse des paroles prend plus de temps que d’habitude. Ça continue."
+                        }
+                    }
                     val bytes = withContext(Dispatchers.IO) { file.readBytes() }
                     if (bytes.size < 800) {
                         phase = "error"
@@ -231,6 +237,7 @@ fun SearchIdentifySheet(
                         )
                     }
                     file.delete()
+                    slow.cancel()
                     if (resp.ok && !resp.query.isNullOrBlank()) {
                         matched = listOfNotNull(resp.artist, resp.title)
                             .joinToString(" — ")

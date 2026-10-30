@@ -74,8 +74,12 @@ object CrashReporter {
         while (cur != null) {
             if (cur is java.net.SocketTimeoutException) return true
             if (cur is java.net.UnknownHostException) return true
+            if (cur is javax.net.ssl.SSLPeerUnverifiedException) return true
+            if (cur is javax.net.ssl.SSLHandshakeException) return true
             val m = cur.message.orEmpty()
             if (m.contains("timeout", ignoreCase = true)) return true
+            if (m.contains("not verified", ignoreCase = true)) return true
+            if (m.contains("Trust anchor", ignoreCase = true)) return true
             if (m.contains("Unable to resolve host", ignoreCase = true)) return true
             if (m.contains("HTTP 502") || m.contains("HTTP 503") || m.contains("HTTP 504")) return true
             cur = cur.cause

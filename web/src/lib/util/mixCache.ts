@@ -72,6 +72,7 @@ export function isPrecomputedMixSource(
   sourceKind: string | null | undefined,
   remainingUserTracks: number,
 ) {
+  if (sourceKind === 'pins') return true;
   if (sourceKind === 'history' || sourceKind === 'playlist') {
     return remainingUserTracks >= 1;
   }

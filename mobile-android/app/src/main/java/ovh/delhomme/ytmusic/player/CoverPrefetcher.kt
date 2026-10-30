@@ -42,15 +42,17 @@ object CoverPrefetcher {
                 0, 1 -> 800
                 else -> 360
             }
-            warm(t.coverUrl(sizeHint = hint))
+            warm(t.coverUrl(sizeHint = hint), t.id)
         }
     }
 
-    fun warm(url: String?) {
+    fun warm(url: String?, id: String? = null) {
         if (!ovh.delhomme.ytmusic.data.BatterySaver.allowCoverPrefetch()) return
         if (url.isNullOrBlank()) return
         val ctx = runCatching { YtMusicApp.instance }.getOrNull() ?: return
-        if (!inFlight.add(url)) return
+        if (!id.isNullOrBlank() && ovh.delhomme.ytmusic.data.CoverStore.peek(ctx, id) != null) return
+        val key = id?.let { "cover:$it" } ?: url
+        if (!inFlight.add(key)) return
         val size = when {
             url.contains("=s800") || url.contains("=w800") -> 800
             url.contains("=s520") || url.contains("=w520") -> 520
@@ -59,12 +61,17 @@ object CoverPrefetcher {
         val req = ImageRequest.Builder(ctx)
             .data(url)
             .size(ovh.delhomme.ytmusic.data.BatterySaver.coverSizeHint(size))
-            .memoryCacheKey(url)
-            .diskCacheKey(url)
+            .memoryCacheKey(key)
+            .diskCacheKey(key)
             .listener(
-                onSuccess = { _, _ -> inFlight.remove(url) },
-                onError = { _, _ -> inFlight.remove(url) },
-                onCancel = { inFlight.remove(url) },
+                onSuccess = { _, result ->
+                    inFlight.remove(key)
+                    if (!id.isNullOrBlank()) {
+                        ovh.delhomme.ytmusic.data.CoverStore.saveDrawable(ctx, id, result.drawable)
+                    }
+                },
+                onError = { _, _ -> inFlight.remove(key) },
+                onCancel = { inFlight.remove(key) },
             )
             .build()
         ctx.imageLoader.enqueue(req)

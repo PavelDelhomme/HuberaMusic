@@ -12,6 +12,8 @@ const APK_PATH = join(APK_PUBLIC_DIR, 'ytmusic.apk');
 const APK_MANIFEST = join(APK_PUBLIC_DIR, 'manifest.json');
 const APK_HUBERA_PATH = join(APK_PUBLIC_DIR, 'hubera-music.apk');
 const APK_HUBERA_MANIFEST = join(APK_PUBLIC_DIR, 'hubera-manifest.json');
+const APK_BETA_PATH = join(APK_PUBLIC_DIR, 'hubera-music-beta.apk');
+const APK_BETA_MANIFEST = join(APK_PUBLIC_DIR, 'hubera-beta-manifest.json');
 export const MUSIC_PKG_LEGACY = 'ovh.delhomme.ytmusic';
 export const MUSIC_PKG_HUBERA = 'cloud.hubera.music';
 
@@ -241,6 +243,24 @@ export function apkPublicInfo(port: number, pkg?: string | null) {
     job: apkJob,
     sdkReady: existsSync(join(ROOT, 'mobile-android', 'gradlew')),
   };
+}
+
+export function apkBetaPublicInfo() {
+  const manifest = readNamedManifest(APK_BETA_MANIFEST);
+  const ready = existsSync(APK_BETA_PATH);
+  const st = ready ? statSync(APK_BETA_PATH) : null;
+  return {
+    ready,
+    path: ready ? APK_BETA_PATH : null,
+    sizeBytes: st?.size ?? manifest?.sizeBytes ?? null,
+    versionName: manifest?.versionName ?? null,
+    versionCode: manifest?.versionCode ?? null,
+    downloadPath: '/api/deploy/apk?package=cloud.hubera.music&channel=beta',
+  };
+}
+
+export function getBetaApkPath() {
+  return existsSync(APK_BETA_PATH) ? APK_BETA_PATH : null;
 }
 
 export function getApkPath(pkg?: string | null) {

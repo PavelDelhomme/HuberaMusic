@@ -82,6 +82,8 @@ data class SearchUiState(
     val recent: List<String> = emptyList(),
     /** Suggestions API tant que l’utilisateur tape (vide = mode historique). */
     val suggestions: List<String> = emptyList(),
+    /** Affiché si la recherche dépasse quelques secondes. */
+    val slowHint: String? = null,
 )
 
 private val FILTERS = listOf(
@@ -166,6 +168,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             suggestions = emptyList(),
             error = null,
             loading = false,
+            slowHint = null,
         )
     }
 
@@ -219,10 +222,9 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
             val list = runCatching {
                 container.ensureFreshToken()
                 val raw = container.api.searchSuggestions(q)["suggestions"]
-                (raw as? List<*>)?.mapNotNull { it?.toString()?.trim()?.takeIf { s -> s.isNotEmpty() } }
-                    ?.distinct()
-                    ?.take(10)
+                val parsed = (raw as? List<*>)?.mapNotNull { it?.toString()?.trim()?.takeIf { s -> s.isNotEmpty() } }
                     .orEmpty()
+                suggestionsMatchingQuery(q, parsed)
             }.getOrDefault(emptyList())
             if (_state.value.query.trim() != q) return@launch
             _state.value = _state.value.copy(suggestions = list)
@@ -233,16 +235,31 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         job?.cancel()
         val q = _state.value.query
         if (q.trim().length < 2) {
-            _state.value = _state.value.copy(sections = emptyList(), loading = false)
+            _state.value = _state.value.copy(sections = emptyList(), loading = false, error = null)
             return
         }
+        // Tout de suite : la frappe ne doit pas tomber sur l’écran « Réessayer »
+        // le temps du délai. L’erreur n’est posée qu’à la fin, si ça a vraiment échoué.
+        _state.value = _state.value.copy(loading = true, error = null)
         val filter = _state.value.filter
         job = viewModelScope.launch {
             delay(380)
             val currentQ = _state.value.query.trim()
             val currentFilter = _state.value.filter
             if (currentQ.length < 2) return@launch
-            _state.value = _state.value.copy(loading = true, error = null, sections = emptyList())
+            _state.value = _state.value.copy(loading = true, error = null, slowHint = null)
+            launch {
+                delay(3500)
+                if (
+                    _state.value.loading &&
+                    _state.value.query.trim() == currentQ &&
+                    _state.value.filter == currentFilter
+                ) {
+                    _state.value = _state.value.copy(
+                        slowHint = "La recherche prend plus de temps que d’habitude. Ça continue, ce n’est pas bloqué.",
+                    )
+                }
+            }
 
             // Toujours chercher d’abord dans les téléchargements locaux (offline-capable)
             val offlineHits = filterOfflineDownloads(currentQ, currentFilter)
@@ -300,12 +317,25 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
                         }
                     }
                 }
-                _state.value = _state.value.copy(loading = false, sections = sections, error = null)
+                _state.value = _state.value.copy(
+                    loading = false,
+                    sections = sectionsForQuery(currentQ, sections),
+                    error = null,
+                    slowHint = null,
+                )
                 // Ne pas préchauffer 8 titres : ça noie yt-dlp pendant que tu lances un résultat.
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (_state.value.query.trim() != currentQ) return@launch
+                if (_state.value.query.trim() != currentQ || _state.value.filter != currentFilter) return@launch
+                val rawEarly = e.message.orEmpty()
+                if (
+                    rawEarly.contains("canceled", ignoreCase = true) ||
+                    rawEarly.contains("cancelled", ignoreCase = true) ||
+                    rawEarly.contains("Job was", ignoreCase = true)
+                ) {
+                    return@launch
+                }
                 // Hors-ligne / API KO : on expose quand même les DL locaux
                 if (offlineHits.isNotEmpty()) {
                     _state.value = _state.value.copy(
@@ -512,10 +542,18 @@ fun SearchScreen(
                         suggestions = state.suggestions,
                         onPick = vm::commitSearch,
                     )
+                    if (state.slowHint != null) {
+                        Text(
+                            state.slowHint!!,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     SearchLoadingSkeleton()
                 }
             }
-            state.error != null -> {
+            !state.loading && state.error != null && state.query.trim().length >= 2 -> {
                 Column(
                     Modifier
                         .fillMaxSize()
@@ -597,19 +635,25 @@ fun SearchScreen(
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
                     )
                     Text(
-                        "Essaie un autre filtre, orthographe, ou réessaie.",
+                        "Essaie un autre filtre ou une autre orthographe.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(horizontal = 24.dp),
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Button(onClick = vm::retrySearch) {
-                        Text("Réessayer")
-                    }
                 }
             }
             else -> {
                 LazyColumn(contentPadding = PaddingValues(bottom = 24.dp, top = 4.dp)) {
+                    if (state.slowHint != null) {
+                        item(key = "slow-hint") {
+                            Text(
+                                state.slowHint!!,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     if (state.suggestions.isNotEmpty()) {
                         item(key = "sug-header") {
                             SearchSuggestionsBlock(
@@ -706,6 +750,61 @@ fun SearchScreen(
     }
 }
 
+/** 0 = hors sujet (Madonna pour « stromae »). Plus c’est haut, plus ça colle à la frappe. */
+private fun queryMatchScore(query: String, name: String): Int {
+    val q = query.trim().lowercase()
+    val n = name.trim().lowercase()
+    if (q.length < 2 || n.isEmpty()) return 0
+    if (n == q) return 400
+    if (n.startsWith(q)) return 300
+    if (n.split(Regex("[\\s·\\-–—'’]+")).any { it.startsWith(q) }) return 200
+    if (q.length >= 4 && n.contains(q)) return 100
+    return 0
+}
+
+private fun trackQueryScore(query: String, track: TrackDto): Int {
+    val names = listOf(track.title) + track.artists.orEmpty().map { it.name }
+    return names.maxOf { queryMatchScore(query, it) }
+}
+
+/** Hors-sujet écarté. Le nom tapé reste en tête s’il est proposé. */
+private fun suggestionsMatchingQuery(query: String, raw: List<String>): List<String> {
+    val q = query.trim().lowercase()
+    return raw
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && it.lowercase() != q && queryMatchScore(query, it) > 0 }
+        .distinctBy { it.lowercase() }
+        .sortedByDescending { queryMatchScore(query, it) }
+        .take(10)
+}
+
+/**
+ * L’artiste qui correspond à la frappe passe devant un résultat sans rapport
+ * (ex. Madonna en tête pour « stromae »).
+ */
+private fun sectionsForQuery(query: String, sections: List<SearchSection>): List<SearchSection> {
+    val ranked = sections.map { sec ->
+        if (!sec.title.equals("Artistes", ignoreCase = true)) sec
+        else {
+            val items = sec.items.withIndex()
+                .sortedWith(
+                    compareByDescending<IndexedValue<TrackDto>> { trackQueryScore(query, it.value) }
+                        .thenBy { it.index },
+                )
+                .map { it.value }
+            sec.copy(items = items)
+        }
+    }
+    val artist = ranked.firstOrNull { it.title.equals("Artistes", ignoreCase = true) }
+    val artistLeads = artist?.items?.firstOrNull()?.let { trackQueryScore(query, it) >= 300 } == true
+    if (!artistLeads) return ranked
+    val head = ranked.firstOrNull { !it.title.equals("Artistes", ignoreCase = true) }?.items?.firstOrNull()
+    if (head != null && trackQueryScore(query, head) > 0) return ranked
+    val artists = ranked.filter { it.title.equals("Artistes", ignoreCase = true) }
+    val rest = ranked.filter { !it.title.equals("Artistes", ignoreCase = true) }
+    return artists + rest
+}
+
 @Composable
 private fun SearchSuggestionsBlock(
     draft: String,
@@ -717,9 +816,7 @@ private fun SearchSuggestionsBlock(
     if (draftNorm.isEmpty() && suggestions.isEmpty()) return
     val opts = buildList {
         if (draftNorm.isNotEmpty()) add(draftNorm to true)
-        suggestions
-            .filter { it.trim().lowercase() != draftNorm.lowercase() }
-            .forEach { add(it to false) }
+        suggestionsMatchingQuery(draftNorm, suggestions).forEach { add(it to false) }
     }
     if (opts.isEmpty()) return
     Column(

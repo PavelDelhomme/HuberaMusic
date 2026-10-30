@@ -132,6 +132,9 @@ class QuickAccessStore(
      * retirés / ajoutés sur l’autre téléphone au pull-to-refresh.
      * Les ajouts/suppressions passent déjà par addPin/removePin à l’action.
      */
+    private val pendingAdds = mutableSetOf<String>()
+    private val pendingRemoves = mutableSetOf<String>()
+
     suspend fun syncFromApi(api: YtMusicApi, userEmail: String? = null) {
         val email = (userEmail ?: currentEmail())?.trim()?.lowercase().orEmpty()
         val bound = boundUserEmail()
@@ -141,8 +144,27 @@ class QuickAccessStore(
         val remote = runCatching { api.pins().pins }.getOrDefault(emptyList())
         val tracks = remote.mapNotNull { pinToTrack(it) }
             .distinctBy { it.id }
+            .toMutableList()
+        val local = pins.first()
+        for (t in local) {
+            t.thumbnails?.firstOrNull()?.url?.let { ThumbLedger.remember(t.id, it) }
+        }
+        val localById = local.associateBy { it.id }
+        for (t in local) {
+            if (t.id in pendingAdds && tracks.none { it.id == t.id }) tracks.add(t)
+        }
+        val kept = tracks
+            .filter { it.id !in pendingRemoves }
+            .distinctBy { it.id }
             .take(48)
-        replaceAll(tracks, boundEmail = email.ifBlank { null })
+            .map { remote ->
+                if (!remote.thumbnails.isNullOrEmpty()) remote
+                else {
+                    val thumbs = localById[remote.id]?.thumbnails
+                    if (thumbs.isNullOrEmpty()) remote else remote.copy(thumbnails = thumbs)
+                }
+            }
+        replaceAll(kept, boundEmail = email.ifBlank { null })
     }
 
     /**
@@ -181,6 +203,8 @@ class QuickAccessStore(
             if (idx >= 0) {
                 current.removeAt(idx)
                 nowPinned = false
+                pendingRemoves.add(track.id)
+                pendingAdds.remove(track.id)
             } else {
                 // Premier épinglé = gauche ; le plus récent = droite (append).
                 current.add(track.copy(type = when (track.type) {
@@ -188,6 +212,8 @@ class QuickAccessStore(
                     else -> track.type
                 }))
                 nowPinned = true
+                pendingAdds.add(track.id)
+                pendingRemoves.remove(track.id)
             }
             prefs[key] = adapter.toJson(current.distinctBy { it.id }.take(48))
             if (email.isNotBlank()) prefs[boundUserKey] = email
@@ -201,14 +227,16 @@ class QuickAccessStore(
                 }
             }
         }
-        // Sync serveur en fond — l’UI ne doit pas attendre addPin + biblio.
+        // L’ajout peut finir en fond. Le retrait attend le serveur : sinon
+        // rouvrir l’app ramène le titre dans l’accès rapide. La bibliothèque n’est pas touchée.
         if (api != null) {
             val pinnedSnapshot = nowPinned
             val pinType = track.type?.takeIf { it != "video" && it.isNotBlank() } ?: "song"
-            ovh.delhomme.ytmusic.YtMusicApp.instance.container.appScope().launch {
-                runCatching {
-                    if (pinnedSnapshot) {
+            if (pinnedSnapshot) {
+                ovh.delhomme.ytmusic.YtMusicApp.instance.container.appScope().launch {
+                    runCatching {
                         api.addPin(trackToPinBody(track.copy(type = pinType)))
+                        pendingAdds.remove(track.id)
                         when (pinType) {
                             "album" -> runCatching { api.saveAlbum(track.copy(type = "album")) }
                             "artist" -> runCatching { api.saveArtist(track.copy(type = "artist")) }
@@ -221,10 +249,11 @@ class QuickAccessStore(
                                 }
                             }
                         }
-                    } else {
-                        api.removePin(track.id)
                     }
                 }
+            } else {
+                runCatching { api.removePin(track.id) }
+                    .onSuccess { pendingRemoves.remove(track.id) }
             }
         }
         return nowPinned
@@ -246,6 +275,7 @@ class QuickAccessStore(
             val byId = current.associateBy { it.id }
             val reordered = idSet.mapNotNull { byId[it] }.toMutableList()
             for (t in current) {
+                if (t.id in pendingRemoves) continue
                 if (reordered.none { it.id == t.id }) reordered.add(t)
             }
             prefs[key] = adapter.toJson(reordered.take(48))
@@ -255,7 +285,10 @@ class QuickAccessStore(
             runCatching {
                 val resp = api.reorderPins(mapOf("ids" to idSet))
                 replaceAll(
-                    resp.pins.mapNotNull { pinToTrack(it) }.distinctBy { it.id }.take(48),
+                    resp.pins.mapNotNull { pinToTrack(it) }
+                        .filter { it.id !in pendingRemoves }
+                        .distinctBy { it.id }
+                        .take(48),
                     boundEmail = email.ifBlank { null },
                 )
             }.onFailure {

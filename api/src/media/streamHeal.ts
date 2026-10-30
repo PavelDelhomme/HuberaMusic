@@ -26,6 +26,9 @@ const HEAL_KINDS = new Set([
   'android.player.early_end',
   'android.player.load_skip',
   'android.player.load_recover',
+  // Erreur Exo « source » (502 / timeout) : re-warm pour rendre le titre jouable vite
+  // (tous utilisateurs — pas seulement stall).
+  'android.player',
 ]);
 /** Hint UI à 2,5 s : ne PAS lancer ensure/replace (noie yt-dlp pendant le resolve live). */
 const FORMAT_ONLY_KINDS = new Set([
@@ -84,11 +87,19 @@ export function healTrackFromTelemetry(opts: {
   if (!id) return;
   const now = Date.now();
   const hits = noteStallHit(id, now);
+  const blob = `${opts.message || ''}\n${JSON.stringify(opts.meta || {})}`;
+  const playerHard =
+    kind === 'android.player' &&
+    (/http=5\d\d|Response code:\s*5\d\d|502|503|504|SocketTimeout|Unable to resolve host/i.test(blob) ||
+      Number((opts.meta as any)?.streak || 0) >= 2);
   // stall froid : jamais d’ensure .m4a (ça noie yt-dlp pendant le /url live).
+  // android.player « soft » : format only ; hard (5xx / streak) → ensure comme load_skip.
   const escalate =
-    kind === 'android.player.stall' || kind === 'android.player.prefetch_miss'
-      ? hits >= 8
-      : hits >= 2;
+    kind === 'android.player'
+      ? playerHard
+      : kind === 'android.player.stall' || kind === 'android.player.prefetch_miss'
+        ? hits >= 8
+        : hits >= 2;
   if (inFlightEnsure.has(id)) {
     bumpWarmPriority(id);
     enqueueDiskWarm([id]);
@@ -96,7 +107,10 @@ export function healTrackFromTelemetry(opts: {
   }
   const prev = lastHealAt.get(id) || 0;
   // 1er stall : format only. 2e dans 90 s (ou load_skip) : ensure le .m4a.
-  const formatOnly = FORMAT_ONLY_KINDS.has(kind) && !escalate && !opts.force;
+  const formatOnly =
+    ((FORMAT_ONLY_KINDS.has(kind) || (kind === 'android.player' && !playerHard)) &&
+      !escalate &&
+      !opts.force);
   if (formatOnly) {
     if (now - prev < HEAL_COOLDOWN_MS) {
       bumpWarmPriority(id);
@@ -130,10 +144,12 @@ export function healTrackFromTelemetry(opts: {
   enqueueDiskWarm([id]);
   enqueueListHeadWarm([id], { front: true });
 
-  // Remplacement seulement après un skip confirmé (titre vraiment mort).
+  // Remplacement : skip confirmé, vidéo morte, OU 5xx/timeout dur après ensure
+  // (sinon Extended Mix Rekkt restait en 5xx sans jamais basculer vers l’original).
   const wantReplace =
     kind === 'android.player.load_skip' ||
     kind === 'android.player.early_end' ||
+    playerHard ||
     /unavailable|VIDEO_UNAVAILABLE|private|removed/i.test(String(opts.message || ''));
 
   // Pré-télécharge le .m4a intégral (OAuth remux / proxies) avant la prochaine écoute.

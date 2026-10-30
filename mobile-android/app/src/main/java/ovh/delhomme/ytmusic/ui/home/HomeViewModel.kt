@@ -97,13 +97,25 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             if (!NetworkMonitor.isOnline()) {
+                val cached = if (_state.value.shelves.isEmpty() && _state.value.radios.isEmpty()) {
+                    container.homeCache.read()
+                } else {
+                    null
+                }
+                val shelves = _state.value.shelves.ifEmpty { cached?.shelves.orEmpty() }
+                val radios = _state.value.radios.ifEmpty { cached?.radios.orEmpty() }
+                val previews = _state.value.radioPreviews.ifEmpty { cached?.radioPreviews.orEmpty() }
                 _state.value = _state.value.copy(
                     loading = false,
                     refreshing = false,
-                    radios = emptyList(),
-                    shelves = emptyList(),
-                    radioPreviews = emptyMap(),
-                    error = "Hors ligne — ouvre Bibliothèque → Téléchargés",
+                    shelves = shelves,
+                    radios = radios,
+                    radioPreviews = previews,
+                    error = if (shelves.isEmpty() && radios.isEmpty()) {
+                        "Hors ligne — ouvre Bibliothèque → Téléchargés"
+                    } else {
+                        null
+                    },
                 )
                 return@launch
             }

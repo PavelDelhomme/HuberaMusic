@@ -22,10 +22,10 @@ import {
 import { findReplacementId, getReplacementId } from './trackReplacement.js';
 
 /** Fenêtre à pré-vérifier (format + proxy + tête disque) avant que l’utilisateur arrive. */
-export const PREFLIGHT_AHEAD = 20;
-/** .m4a intégral : seulement les tout prochains — 20 téléchargements complets noient yt-dlp. */
-const FULL_DISK_HOT = 3;
-const FULL_DISK_IDLE = 4;
+export const PREFLIGHT_AHEAD = 1;
+/** Un seul fichier suivant, et pas pendant l’écoute. */
+const FULL_DISK_HOT = 0;
+const FULL_DISK_IDLE = 1;
 const VERIFIED_TTL_MS = 30 * 60_000;
 
 const verified = new Map<string, { playId: string; at: number }>();
@@ -212,8 +212,7 @@ export function ensurePlayableQueueAhead(
   ].slice(0, 50);
   if (!uniq.length) return;
   const hot = isPlaybackHot(90_000);
-  const aheadN = hot ? 4 : PREFLIGHT_AHEAD;
-  const ahead = uniq.slice(0, aheadN);
+  const ahead = uniq.slice(0, PREFLIGHT_AHEAD);
   const fullN = hot ? FULL_DISK_HOT : FULL_DISK_IDLE;
   enqueueStreamWarm(ahead, opts?.userId);
   enqueueListHeadWarm(ahead, { front: true });
@@ -261,11 +260,13 @@ async function runPreflightQueue() {
 }
 
 async function runPreflightTwenty(ids: string[], userId?: string) {
+  if (isPlaybackHot(90_000)) return;
   const hot = isPlaybackHot(90_000);
   const conc = hot ? 2 : 3;
   let cursor = 0;
   const worker = async () => {
     while (cursor < ids.length) {
+      if (isPlaybackHot(90_000)) return;
       const idx = cursor++;
       const id = ids[idx];
       if (!id) continue;

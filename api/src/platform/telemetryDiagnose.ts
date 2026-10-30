@@ -265,9 +265,31 @@ export function diagnoseTelemetryEvent(ev: {
     };
   }
 
+  const progressive = /Aucun format vidéo progressif/i.exec(core);
+  if (progressive) {
+    const id = /\bid=([a-zA-Z0-9_-]{11})\b/.exec(core)?.[1] || '';
+    return {
+      family: 'video-format',
+      title: id ? `Pas de vidéo progressive · ${id}` : 'Pas de vidéo progressive',
+      summary: id
+        ? `Le titre ${id} n’a pas de MP4 progressif. La lecture ne démarre pas sur ce format.`
+        : 'Un titre n’a pas de MP4 progressif, et l’identifiant n’était pas dans l’erreur.',
+      likelyCause: 'YouTube ne propose pas itag 18/22 pour ce videoId, ou le déchiffrement a échoué.',
+      actions: [
+        'Lire id= dans le message : c’est le videoId, pour tous les comptes',
+        'Réessayer un autre itag audio avant de conclure que le titre est mort',
+      ],
+      surface: 'server',
+    };
+  }
+
+  const taggedId =
+    /\bid=([a-zA-Z0-9_-]{11})\b/.exec(text)?.[1] ||
+    /\/cache\/([a-zA-Z0-9_-]{11})\.(?:m4a|mp4)\b/.exec(text)?.[1] ||
+    '';
   return {
-    family: 'generic',
-    title: 'Erreur applicative',
+    family: taggedId ? 'track' : 'generic',
+    title: taggedId ? `Erreur sur ${taggedId}` : 'Erreur applicative',
     summary: ev.message?.trim() || 'Pas de message — voir stack et logs récents.',
     likelyCause: 'À classer d’après kind + stack (pas assez de signatures connues).',
     actions: [

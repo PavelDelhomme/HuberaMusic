@@ -90,7 +90,7 @@ export function scheduleUserTasteWarm(
     const last = userCooldown.get(userId) || 0;
     if (now - last < USER_COOLDOWN_MS) {
       // Toujours remonter la priorité des extras (titre home / play)
-      const extras = extraIds.filter(validId).slice(0, 12);
+      const extras = extraIds.filter(validId).slice(0, 1);
       if (extras.length) enqueueStreamWarm(extras, userId);
       return;
     }
@@ -108,12 +108,12 @@ export function scheduleUserTasteWarm(
       // Uniquement les extras (titre courant / +1), zéro disk.
       const hotNow = isPlaybackHot(120_000);
       if (hotNow || playbackHot) {
-        const focus = extraIds.filter(validId).slice(0, 4);
+        const focus = extraIds.filter(validId).slice(0, 1);
         if (focus.length) enqueueStreamWarm(focus, userId);
         return;
       }
-      enqueueStreamWarm(ids.slice(0, 28), userId);
-      const diskN = Math.max(0, Math.min(16, opts?.disk ?? 10));
+      enqueueStreamWarm(ids.slice(0, 1), userId);
+      const diskN = 1;
       const needDisk = ids.filter(needsDisk).slice(0, diskN);
       if (needDisk.length) enqueueDiskWarm(needDisk);
       void import('./ensurePlayable.js')
@@ -144,15 +144,13 @@ export async function runGlobalTasteWarmOnce(): Promise<{ warmed: number; disk: 
     if (!ids.length) return { warmed: 0, disk: 0 };
 
     // Lots pour ne pas saturer la file warm
-    for (let i = 0; i < ids.length; i += 20) {
-      enqueueStreamWarm(ids.slice(i, i + 20));
-    }
+    enqueueStreamWarm(ids.slice(0, 1));
     // Disque seulement hors écoute
     if (isPlaybackHot(90_000)) {
       console.info(`[tasteWarm] global warm=${ids.length} diskQueue=0 (playback hot)`);
       return { warmed: ids.length, disk: 0 };
     }
-    const diskCap = Math.max(8, Math.min(80, Number(process.env.TASTE_WARM_DISK || 36) || 36));
+    const diskCap = 1;
     const needDisk = ids.filter(needsDisk).slice(0, diskCap);
     enqueueDiskWarm(needDisk);
     console.info(`[tasteWarm] global warm=${ids.length} diskQueue=${needDisk.length}`);

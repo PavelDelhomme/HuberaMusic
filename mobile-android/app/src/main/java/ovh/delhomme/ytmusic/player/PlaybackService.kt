@@ -7,6 +7,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -72,6 +73,15 @@ class PlaybackService : MediaSessionService() {
     private val cmdToggleShuffle = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
     private val cmdAddPlaylist = SessionCommand(ACTION_ADD_PLAYLIST, Bundle.EMPTY)
     private val cmdOpenLyrics = SessionCommand(ACTION_OPEN_LYRICS, Bundle.EMPTY)
+    private val cmdSkipNext = SessionCommand(ACTION_SKIP_NEXT, Bundle.EMPTY)
+    private val cmdSkipPrev = SessionCommand(ACTION_SKIP_PREV, Bundle.EMPTY)
+    private val lyricHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val lyricTick = object : Runnable {
+        override fun run() {
+            publishLyricExtras()
+            lyricHandler.postDelayed(this, 480)
+        }
+    }
 
     private val recoverGen = AtomicInteger(0)
     private val streamFailStreak = AtomicInteger(0)
@@ -170,16 +180,6 @@ class PlaybackService : MediaSessionService() {
         val base = resolvedApiBase()
         if (base.isNotBlank() && id.length == 11) {
             StreamPrefetcher.warmTrackFormatOnly(base, id)
-            StreamPrefetcher.requestServerDiskCache(base, id)
-            // Warm le suivant aussi (évite cold_next → BUFFERING au skip naturel).
-            val nextIdx = exo.currentMediaItemIndex + 1
-            if (nextIdx in 0 until exo.mediaItemCount) {
-                val nextId = exo.getMediaItemAt(nextIdx).mediaId.orEmpty()
-                if (nextId.length == 11) {
-                    StreamPrefetcher.warmTrackFormatOnly(base, nextId)
-                    StreamPrefetcher.requestServerDiskCache(base, nextId)
-                }
-            }
         }
     }
 
@@ -709,8 +709,8 @@ class PlaybackService : MediaSessionService() {
                     if (api.isNotBlank() && q.isNotEmpty() && idx in q.indices) {
                         Thread {
                             val ids = q.map { it.id }
-                            StreamPrefetcher.prefetchByProximity(api, ids, idx, ahead = 4, force = false)
-                            StreamPrefetcher.prefetchNextDuringPlayback(api, ids, idx, ignoreQuiet = true)
+                        StreamPrefetcher.prefetchByProximity(api, ids, idx, ahead = 1, force = false)
+                        StreamPrefetcher.prefetchNextDuringPlayback(api, ids, idx, ignoreQuiet = false)
                         }.apply {
                             name = "ytm-proximity-prefetch"
                             isDaemon = true
@@ -734,12 +734,29 @@ class PlaybackService : MediaSessionService() {
                 // Boutons play/pause seulement — pas de rebuild metadata / notif à chaque tick buffer.
                 refreshMediaButtons()
             }
+            if (player.isEffectivePlayback()) {
+                PlaybackResume.noteAudible()
+            }
             if (events.contains(Player.EVENT_IS_PLAYING_CHANGED)) {
                 PlaybackIdleGuard.onPlayingChanged(player.isPlaying)
             }
             // file:// local en ligne : on le GARDE (streamUrl + probe OK).
             // L’ancienne bascule READY → proxy recâblait un .m4a jouable sur
             // SimpleCache HTTP empoisonné → BUFFERING / son haché.
+            if (
+                events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED) &&
+                player.playWhenReady &&
+                !PlaybackResume.mayAutoPlay()
+            ) {
+                // Pause, buffering sans son, ou échec : un play() tardif (rebind, focus)
+                // ne doit pas sortir de son.
+                AppLog.i(
+                    "PlaybackService",
+                    "lecture auto ignorée id=${player.currentMediaItem?.mediaId} " +
+                        "state=${player.playbackState}",
+                )
+                player.playWhenReady = false
+            }
             if (
                 events.contains(Player.EVENT_IS_PLAYING_CHANGED) ||
                 events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
@@ -836,7 +853,7 @@ class PlaybackService : MediaSessionService() {
                             resolvedApiBase(),
                             ids,
                             idx,
-                            ahead = 4,
+                            ahead = 1,
                             force = false,
                         )
                         StreamPrefetcher.prefetchNextDuringPlayback(
@@ -950,7 +967,11 @@ class PlaybackService : MediaSessionService() {
                 // Stop en fin de file user si lecture auto OFF (suggestions restent dans la file)
                 val idx = exo.currentMediaItemIndex
                 val end = Holder.userQueueEnd
-                if (!Holder.autoplaySuggestions && end > 0 && idx >= end) {
+                if (Holder.pinLoop && end > 0 && idx >= end && exo.mediaItemCount > 0) {
+                    exo.seekTo(0, 0L)
+                    exo.playWhenReady = true
+                    exo.play()
+                } else if (!Holder.autoplaySuggestions && end > 0 && idx >= end) {
                     val back = (end - 1).coerceAtLeast(0)
                     exo.pause()
                     val dur = exo.duration
@@ -1032,6 +1053,12 @@ class PlaybackService : MediaSessionService() {
                 val curIdx = exo.currentMediaItemIndex.coerceAtLeast(0)
                 val nextIdx = curIdx + 1
                 val end = userQueueEndAfterExtend(nextIdx)
+                if (Holder.pinLoop && end > 0 && nextIdx >= end && exo.mediaItemCount > 0) {
+                    exo.seekTo(0, 0L)
+                    exo.playWhenReady = true
+                    exo.play()
+                    return
+                }
                 if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
                     exo.playWhenReady = false
                     runCatching { exo.pause() }
@@ -1602,6 +1629,7 @@ class PlaybackService : MediaSessionService() {
         exo.addListener(playerListener)
         player = exo
         audioFocus = PlayerAudioFocus(this) { player }
+        PlaybackResume.onUserPause = { audioFocus?.cancelPendingResume() }
         val forwarding = YtmForwardingPlayer(exo)
         sessionPlayer = forwarding
 
@@ -1627,6 +1655,8 @@ class PlaybackService : MediaSessionService() {
 
         Holder.player = exo
         Holder.service = this
+        lyricHandler.removeCallbacks(lyricTick)
+        lyricHandler.post(lyricTick)
         refreshPlaybackActiveFlag(exo)
         if (exo.audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
             AudioEqualizer.attach(exo.audioSessionId)
@@ -1757,8 +1787,10 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        lyricHandler.removeCallbacks(lyricTick)
         persistPlaybackSnapshot(durable = true)
         scope.cancel()
+        PlaybackResume.onUserPause = null
         audioFocus?.abandon(force = true)
         audioFocus = null
         player?.removeListener(playerListener)
@@ -1923,6 +1955,8 @@ class PlaybackService : MediaSessionService() {
                 .add(cmdToggleShuffle)
                 .add(cmdAddPlaylist)
                 .add(cmdOpenLyrics)
+                .add(cmdSkipNext)
+                .add(cmdSkipPrev)
                 .build()
             // Force next/prev toujours dispo (sinon Samsung grise « suivant » sans item suivant)
             val playerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
@@ -1970,6 +2004,12 @@ class PlaybackService : MediaSessionService() {
                 }
                 ACTION_OPEN_LYRICS -> {
                     openAppFromMediaAction(MainActivity.EXTRA_OPEN_LYRICS)
+                }
+                ACTION_SKIP_NEXT -> {
+                    skipToNextFromExternal(restoreRepeatOne = false)
+                }
+                ACTION_SKIP_PREV -> {
+                    skipToPreviousFromExternal()
                 }
             }
             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -2021,10 +2061,11 @@ class PlaybackService : MediaSessionService() {
      * Jamais [Player.seekToNext] : un flux YouTube DASH « dynamique » relance alors
      * le titre courant à 0. On avance par **index de file**, comme le précédent.
      */
-    fun skipToNextFromExternal() {
+    fun skipToNextFromExternal(restoreRepeatOne: Boolean = true) {
         val h = android.os.Handler(mainLooper)
         val run = Runnable {
             val exo = player ?: return@Runnable
+            PlaybackResume.noteUserPlay()
             val now = android.os.SystemClock.elapsedRealtime()
             if (now - lastSkipNextAtMs < 220L) return@Runnable
             lastSkipNextAtMs = now
@@ -2053,9 +2094,11 @@ class PlaybackService : MediaSessionService() {
                     StreamPrefetcher.markStreamOk()
                     val api = resolvedApiBase()
                     val q = Holder.queue.map { it.id }
-                    val target = StreamPrefetcher.pickReadySkipTarget(
+                    var target = StreamPrefetcher.pickReadySkipTarget(
                         api, q, next, direction = 1, window = 4, timeoutMs = 0L,
                     )
+                    if (target == cur) target = next
+                    if (target == cur) return@Runnable
                     runCatching { advanceToQueueIndex(exo, target) }
                     scope.launch(Dispatchers.IO) {
                         StreamPrefetcher.prefetchByProximity(api, q, target, ahead = 4, force = true)
@@ -2069,7 +2112,7 @@ class PlaybackService : MediaSessionService() {
                 }
                 fillAutoplayFromService(advanceAfterFill = true)
             } finally {
-                if (wasOne) exo.repeatMode = Player.REPEAT_MODE_ONE
+                if (wasOne && restoreRepeatOne) exo.repeatMode = Player.REPEAT_MODE_ONE
             }
         }
         if (android.os.Looper.myLooper() == mainLooper) run.run() else h.post(run)
@@ -2083,23 +2126,33 @@ class PlaybackService : MediaSessionService() {
         val h = android.os.Handler(mainLooper)
         val run = Runnable {
             val exo = player ?: return@Runnable
+            PlaybackResume.noteUserPlay()
             val cur = exo.currentMediaItemIndex.coerceAtLeast(0)
-            val prev = when {
-                cur > 0 -> cur - 1
-                exo.mediaItemCount > 1 -> exo.mediaItemCount - 1
-                Holder.queue.size > 1 && Holder.index > 0 -> Holder.index - 1
-                Holder.queue.size > 1 -> Holder.queue.lastIndex
-                else -> {
-                    runCatching { exo.seekTo(0L) }
-                    return@Runnable
-                }
+            val prev = resolvePreviousQueueIndex(
+                curExo = cur,
+                exoCount = exo.mediaItemCount,
+                holderIndex = Holder.index,
+                holderQueueSize = Holder.queue.size,
+            )
+            if (prev == null) {
+                // Un seul titre : restart début (comportement attendu).
+                runCatching { exo.seekTo(0L) }
+                return@Runnable
             }
             StreamPrefetcher.markStreamOk()
             val api = resolvedApiBase()
             val q = Holder.queue.map { it.id }
-            val target = StreamPrefetcher.pickReadySkipTarget(
-                api, q, prev, direction = -1, window = 2, timeoutMs = 0L,
+            // Préférer une tête chaude derrière, mais **jamais** rester sur cur
+            // ni restart à 0 si un vrai précédent existe (régression « Prev cassé »).
+            val target0 = StreamPrefetcher.pickReadySkipTarget(
+                api, q, prev, direction = -1, window = 3, timeoutMs = 0L,
             )
+            val target = resolvePrevSkipTarget(cur = cur, askedPrev = prev, pickReady = target0)
+            if (target == cur) {
+                runCatching { exo.seekTo(0L) }
+                return@Runnable
+            }
+            AppLog.i("PlaybackService", "skipPrev cur=$cur → target=$target (asked=$prev)")
             runCatching { advanceToQueueIndex(exo, target) }
             scope.launch(Dispatchers.IO) {
                 StreamPrefetcher.prefetchByProximity(api, q, target, ahead = 4, force = true)
@@ -2121,8 +2174,7 @@ class PlaybackService : MediaSessionService() {
             if (exoPlayer != null) promoteUpcomingToLocal(exoPlayer, nextIdx)
             exo.seekTo(nextIdx, 0L)
             exo.prepare()
-            exo.playWhenReady = true
-            exo.play()
+            playIfAllowed(exo)
             Holder.index = nextIdx
             earlyEndRetries = 0
             recoveringTrackId = ""
@@ -2151,6 +2203,12 @@ class PlaybackService : MediaSessionService() {
         }
         StreamPrefetcher.markStreamOk()
         val end = userQueueEndAfterExtend(nextIdx)
+        if (Holder.pinLoop && end > 0 && nextIdx >= end && exo.mediaItemCount > 0) {
+            exo.seekTo(0, 0L)
+            exo.playWhenReady = true
+            exo.play()
+            return
+        }
         if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
             exo.playWhenReady = false
             runCatching { exo.pause() }
@@ -2328,6 +2386,15 @@ class PlaybackService : MediaSessionService() {
             "PlaybackService",
             "STATE_ENDED idx=$curIdx next=$nextIdx count=${exo.mediaItemCount} auto=${Holder.autoplaySuggestions} userEnd=$end",
         )
+        if (Holder.pinLoop && end > 0 && nextIdx >= end && exo.mediaItemCount > 0) {
+            exo.seekTo(0, 0L)
+            if (exo.playbackState == Player.STATE_IDLE || exo.playbackState == Player.STATE_ENDED) {
+                exo.prepare()
+            }
+            exo.playWhenReady = true
+            exo.play()
+            return
+        }
         if (!Holder.autoplaySuggestions && end > 0 && nextIdx >= end) {
             exo.playWhenReady = false
             runCatching { exo.pause() }
@@ -2362,6 +2429,7 @@ class PlaybackService : MediaSessionService() {
 
     /** Précharge « À suivre » dans Exo — indépendant du toggle auto-avance. */
     private fun ensureServiceAutoplayAhead(exo: Player) {
+        if (QuickAccessLoopPolicy.blocksFollowing(null, Holder.pinLoop)) return
         if (serviceFillInFlight) return
         val idx = exo.currentMediaItemIndex.coerceAtLeast(0)
         val remaining = (exo.mediaItemCount - idx - 1).coerceAtLeast(0)
@@ -2378,6 +2446,18 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun fillAutoplayFromService(advanceAfterFill: Boolean) {
+        if (Holder.pinLoop) {
+            if (advanceAfterFill) {
+                val exo = player ?: return
+                if (Holder.extendUserQueue() > 0) return
+                if (exo.mediaItemCount > 0) {
+                    exo.seekTo(0, 0L)
+                    exo.playWhenReady = true
+                    exo.play()
+                }
+            }
+            return
+        }
         if (serviceFillInFlight) return
         val exo = player ?: return
         val seed = exo.currentMediaItem?.mediaId
@@ -2807,6 +2887,42 @@ class PlaybackService : MediaSessionService() {
         AppLog.i("PlaybackService", "resolveCurrentKeep reason=$reason id=$id")
     }
 
+    private fun playIfAllowed(exo: Player) {
+        if (!PlaybackResume.mayAutoPlay()) {
+            exo.playWhenReady = false
+            return
+        }
+        exo.playWhenReady = true
+        exo.play()
+    }
+
+    /** Activité en arrière-plan ou écran éteint : fige une lecture qui n’était pas effective. */
+    fun snapshotLeaveForeground() {
+        val exo = player ?: return
+        PlaybackResume.onLeaveForeground(exo.isEffectivePlayback())
+        if (PlaybackResume.mayAutoPlay()) return
+        audioFocus?.cancelPendingResume()
+        if (exo.playWhenReady || exo.isPlaying) {
+            AppLog.i("PlaybackService", "quitte le premier plan sans lecture effective → pause")
+            exo.playWhenReady = false
+        }
+    }
+
+    /**
+     * Retour au premier plan (onStart, écran rallumé, activité rouverte).
+     * Ne relance pas le son si ce n’était pas une lecture effective.
+     */
+    fun holdSilenceOnForeground(reason: String) {
+        val exo = player ?: return
+        val hold = PlaybackResume.onEnterForeground(exo.toPlaybackObserve())
+        if (!hold) return
+        audioFocus?.cancelPendingResume()
+        if (exo.playWhenReady || exo.isPlaying) {
+            AppLog.i("PlaybackService", "pas de reprise au premier plan ($reason)")
+            exo.playWhenReady = false
+        }
+    }
+
     /**
      * Reconstruit l’URI du titre courant (proxy frais) et reprend à la position.
      * À appeler après Wi‑Fi ↔ 4G, coupure données, ou retour en ligne.
@@ -2830,12 +2946,14 @@ class PlaybackService : MediaSessionService() {
             if (hasLocal && !LocalPlaybackPolicy.shouldKeepLocalFileUri(scheme)) {
                 ensureCurrentIsLocalFile()
             }
-            if (forcePlay && !exo.isPlaying) {
+            if (forcePlay && !exo.isPlaying && PlaybackResume.mayAutoPlay()) {
                 runCatching {
                     exo.prepare()
                     exo.playWhenReady = true
                     exo.play()
                 }
+            } else if (!PlaybackResume.mayAutoPlay()) {
+                exo.playWhenReady = false
             }
             return
         }
@@ -2853,7 +2971,8 @@ class PlaybackService : MediaSessionService() {
             handleNaturalEnd(exo)
             return
         }
-        val wantPlay = forcePlay || exo.playWhenReady || exo.isPlaying
+        val wantPlay = PlaybackResume.mayAutoPlay() &&
+            (forcePlay || exo.isEffectivePlayback() || exo.isPlaying)
         recoverGen.incrementAndGet()
         streamFailStreak.set(0)
         StreamPrefetcher.markStreamOk()
@@ -2885,6 +3004,8 @@ class PlaybackService : MediaSessionService() {
             if (wantPlay) {
                 exo.playWhenReady = true
                 exo.play()
+            } else if (!PlaybackResume.mayAutoPlay()) {
+                exo.playWhenReady = false
             }
         }
     }
@@ -2893,7 +3014,9 @@ class PlaybackService : MediaSessionService() {
     fun rebindIfStalled(reason: String) {
         val exo = player ?: return
         if (exo.mediaItemCount <= 0) return
-        if (!exo.playWhenReady && !exo.isPlaying) return
+        if (!PlaybackResume.mayAutoPlay()) return
+        // Pas de rebind « reprise » sur un chargement qui n’a jamais fait de son.
+        if (!exo.isEffectivePlayback() && !PlaybackResume.heardSincePause) return
         val stalled =
             exo.playbackState == Player.STATE_BUFFERING ||
                 exo.playbackState == Player.STATE_IDLE ||
@@ -2920,7 +3043,7 @@ class PlaybackService : MediaSessionService() {
                     positionMs = exo.currentPosition.coerceAtLeast(0L),
                     userQueueEnd = Holder.userQueueEnd.coerceIn(0, queue.size),
                     queueTitle = Holder.queueTitle,
-                    wasPlaying = exo.isPlaying || exo.playWhenReady,
+                    wasPlaying = exo.isEffectivePlayback(),
                 ),
                 durable = true,
             )
@@ -2981,6 +3104,8 @@ class PlaybackService : MediaSessionService() {
         @Volatile var fullQueueCursor: Int = 0
         /** Auto-avance dans « À suivre » (sinon stop en fin de file user). */
         @Volatile var autoplaySuggestions: Boolean = true
+        /** Accès rapide : boucle uniquement les titres épinglés, sans « À suivre ». */
+        @Volatile var pinLoop: Boolean = false
         /** Service détruit (idle guard / OS) → invalider MediaController UI. */
         @Volatile var onServiceStopped: (() -> Unit)? = null
         /** Mis à jour sur le thread principal — lecture depuis IO sans toucher ExoPlayer. */
@@ -3101,6 +3226,7 @@ class PlaybackService : MediaSessionService() {
          * la file avance donc en fenêtre glissante.
          */
         private fun releasePlayedTail(p: ExoPlayer, keepBehind: Int = 40, maxSize: Int = 240) {
+            if (pinLoop && queue.size <= 240) return
             val current = queue
             if (current.size <= maxSize) return
             val drop = (p.currentMediaItemIndex - keepBehind).coerceAtMost(current.size - maxSize)
@@ -3138,6 +3264,71 @@ class PlaybackService : MediaSessionService() {
         const val ACTION_TOGGLE_SHUFFLE = "ytm.action.TOGGLE_SHUFFLE"
         const val ACTION_ADD_PLAYLIST = "ytm.action.ADD_PLAYLIST"
         const val ACTION_OPEN_LYRICS = "ytm.action.OPEN_LYRICS"
+        const val ACTION_SKIP_NEXT = "ytm.action.SKIP_NEXT"
+        const val ACTION_SKIP_PREV = "ytm.action.SKIP_PREV"
+    }
+
+    private fun publishLyricExtras() {
+        val exo = player ?: return
+        val id = exo.currentMediaItem?.mediaId.orEmpty()
+        val pos = exo.currentPosition.coerceAtLeast(0L)
+        val t = LyricNow.triple(this, id, pos)
+        session?.setSessionExtras(
+            Bundle().apply {
+                putString("lyricPrev", t.first)
+                putString("lyricCur", t.second)
+                putString("lyricNext", t.third)
+            },
+        )
+    }
+}
+
+private object LyricNow {
+    fun triple(ctx: Context, trackId: String, posMs: Long): Triple<String, String, String> {
+        if (trackId.isBlank()) return Triple("", "", "")
+        val prefs = ctx.getSharedPreferences("plm_lyrics_cache_v6", Context.MODE_PRIVATE)
+        val timed = prefs.getString("l_$trackId", null)
+        val lines = if (!timed.isNullOrBlank()) parseTimed(timed) else parseLrc(prefs.getString("t_$trackId", null))
+        if (lines.isEmpty()) return Triple("", "", "")
+        var i = 0
+        while (i + 1 < lines.size && lines[i + 1].first <= posMs) i++
+        val prev = if (i > 0) lines[i - 1].second else ""
+        val cur = lines[i].second
+        val next = if (i + 1 < lines.size) lines[i + 1].second else ""
+        return Triple(prev, cur, next)
+    }
+
+    private fun parseTimed(raw: String): List<Pair<Long, String>> {
+        val out = ArrayList<Pair<Long, String>>()
+        for (line in raw.lineSequence()) {
+            val p = line.split('|', limit = 2)
+            if (p.size < 2) continue
+            val ms = p[0].toLongOrNull() ?: continue
+            val text = p[1].trim()
+            if (text.isNotEmpty()) out += ms to text
+        }
+        return out
+    }
+
+    private fun parseLrc(raw: String?): List<Pair<Long, String>> {
+        if (raw.isNullOrBlank()) return emptyList()
+        val re = Regex("""\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?]\s*(.*)""")
+        val out = ArrayList<Pair<Long, String>>()
+        for (line in raw.lineSequence()) {
+            val m = re.find(line.trim()) ?: continue
+            val min = m.groupValues[1].toLongOrNull() ?: continue
+            val sec = m.groupValues[2].toLongOrNull() ?: continue
+            val frac = m.groupValues[3]
+            val fracMs = when {
+                frac.isEmpty() -> 0L
+                frac.length == 1 -> frac.toLong() * 100
+                frac.length == 2 -> frac.toLong() * 10
+                else -> frac.take(3).toLong()
+            }
+            val text = m.groupValues[4].trim()
+            if (text.isNotEmpty()) out += ((min * 60 + sec) * 1000L + fracMs) to text
+        }
+        return out
     }
 }
 
@@ -3149,6 +3340,16 @@ class PlaybackService : MediaSessionService() {
 private class YtmForwardingPlayer(
     private val exo: ExoPlayer,
 ) : ForwardingPlayer(exo) {
+    override fun play() {
+        PlaybackResume.noteUserPlay()
+        super.play()
+    }
+
+    override fun pause() {
+        PlaybackResume.noteUserPause()
+        super.pause()
+    }
+
     override fun getAvailableCommands(): Player.Commands =
         super.getAvailableCommands().buildUpon()
             .add(COMMAND_SEEK_TO_NEXT)

@@ -75,7 +75,7 @@ class PlayerAudioFocus(
                 AppLog.i("audio-focus", "LOSS permanent → pause (appel=$call)")
                 cancelDuckTimeout()
                 unduck(p)
-                val wasPlaying = p.playWhenReady || p.isPlaying
+                val wasPlaying = p.isEffectivePlayback()
                 focusPauseAtMs = android.os.SystemClock.elapsedRealtime()
                 runCatching { p.pause() }
                 held = false
@@ -92,7 +92,7 @@ class PlayerAudioFocus(
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                val wasPlaying = p.playWhenReady || p.isPlaying
+                val wasPlaying = p.isEffectivePlayback()
                 waitingTransientGain = true
                 if (inCall()) {
                     AppLog.i("audio-focus", "LOSS_TRANSIENT appel → pause")
@@ -126,12 +126,14 @@ class PlayerAudioFocus(
                 held = true
                 waitingTransientGain = false
                 pendingDelayedGain = false
-                if (resumeOnGain) {
+                if (resumeOnGain && PlaybackResume.mayAutoPlay()) {
                     resumeOnGain = false
                     runCatching {
                         p.playWhenReady = true
                         p.play()
                     }
+                } else {
+                    resumeOnGain = false
                 }
             }
         }
@@ -228,6 +230,7 @@ class PlayerAudioFocus(
                 request = null
                 handler.postDelayed({
                     if (inCall()) return@postDelayed
+                    if (!PlaybackResume.mayAutoPlay()) return@postDelayed
                     if (!requestIfNeeded()) return@postDelayed
                     PlaybackService.Holder.lastCallResumeAtMs = System.currentTimeMillis()
                     val svc = PlaybackService.Holder.service
@@ -319,8 +322,9 @@ class PlayerAudioFocus(
                 AudioManager.AUDIOFOCUS_REQUEST_DELAYED -> {
                     // Blackview / API 28 : DELAY_OK → ne pas traiter comme refus (sinon pause immédiate).
                     pendingDelayedGain = true
-                    resumeOnGain = true
-                    AppLog.i("audio-focus", "request DELAYED — attente GAIN")
+                    // Reprise seulement si l’utilisateur n’a pas mis pause entre-temps.
+                    resumeOnGain = PlaybackResume.mayAutoPlay()
+                    AppLog.i("audio-focus", "request DELAYED — attente GAIN resume=$resumeOnGain")
                     true
                 }
                 else -> {
@@ -340,6 +344,19 @@ class PlayerAudioFocus(
         }
         if (!ok) AppLog.w("audio-focus", "request refused")
         return ok
+    }
+
+    /**
+     * Pause utilisateur : aucune reprise au prochain GAIN, même si un DELAYED
+     * ou une fin d’appel était déjà armée.
+     */
+    fun cancelPendingResume() {
+        resumeOnGain = false
+        waitingTransientGain = false
+        pendingDelayedGain = false
+        cancelDuckTimeout()
+        cancelCallProbe()
+        cancelCallWatch()
     }
 
     /**

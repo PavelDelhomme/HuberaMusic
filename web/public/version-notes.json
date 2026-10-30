@@ -1,6 +1,237 @@
 {
-  "updatedAt": "2026-10-08",
+  "updatedAt": "2026-10-26",
   "versions": [
+    {
+      "version": "1.3.396",
+      "date": "2026-10-26",
+      "time": "14:00",
+      "at": "2026-10-26T14:00:00+02:00",
+      "title": "Aléatoire : moins de titres morts",
+      "notes": [
+        "La file aléatoire écarte les titres déjà marqués morts ou remplacés.",
+        "Le serveur chauffe plus de têtes pour limiter les trous au démarrage."
+      ]
+    },
+    {
+      "version": "1.3.394",
+      "date": "2026-10-23",
+      "time": "22:05",
+      "at": "2026-10-23T22:05:00+02:00",
+      "title": "La ligne de paroles remonte encore",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour laisser voir les paroles qui suivent."
+      ]
+    },
+    {
+      "version": "1.3.393",
+      "date": "2026-10-23",
+      "time": "21:40",
+      "at": "2026-10-23T21:40:00+02:00",
+      "title": "La ligne de paroles remonte",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour voir tout de suite les paroles suivantes."
+      ]
+    },
+    {
+      "version": "1.3.392",
+      "date": "2026-10-23",
+      "time": "09:10",
+      "at": "2026-10-23T09:10:00+02:00",
+      "title": "Les pochettes reviennent",
+      "notes": [
+        "Album, titre et file réaffichent la pochette déjà vue, et une vignette ne reste plus bloquée au chargement."
+      ]
+    },
+    {
+      "version": "1.3.391",
+      "date": "2026-10-23",
+      "time": "02:40",
+      "at": "2026-10-23T02:40:00+02:00",
+      "title": "L’icône de compte liste les adresses",
+      "notes": [
+        "L’icône en haut à droite liste les adresses Hubera ID connectées."
+      ]
+    },
+    {
+      "version": "1.3.390",
+      "date": "2026-10-22",
+      "time": "23:58",
+      "at": "2026-10-22T23:58:00+02:00",
+      "title": "Le titre suivant est déjà prêt",
+      "notes": [
+        "En radio, en mix ou en aléatoire, seul le titre suivant prépare son début, pour enchaîner sans trou."
+      ]
+    },
+    {
+      "version": "1.3.389",
+      "date": "2026-10-22",
+      "time": "23:55",
+      "at": "2026-10-22T23:55:00+02:00",
+      "title": "La bio suit la langue du téléphone",
+      "notes": [
+        "Sur une page d’artiste, le texte déjà reçu s’affiche tout de suite. S’il existe une version dans la langue du téléphone, elle la remplace ensuite."
+      ]
+    },
+    {
+      "version": "1.3.388",
+      "date": "2026-10-22",
+      "time": "23:50",
+      "at": "2026-10-22T23:50:00+02:00",
+      "title": "Suivre change tout de suite",
+      "notes": [
+        "Sur une page d’artiste, Suivre et Biblio changent d’état tout de suite. L’enregistrement se fait ensuite. En cas d’échec, le bouton revient à l’état précédent."
+      ]
+    },
+    {
+      "version": "1.3.387",
+      "date": "2026-10-22",
+      "time": "23:45",
+      "at": "2026-10-22T23:45:00+02:00",
+      "title": "La suggestion suit le nom tapé",
+      "notes": [
+        "Une recherche d’artiste en minuscules propose ce nom, pas un artiste sans rapport. « stromae » ne met plus Madonna en premier."
+      ]
+    },
+    {
+      "version": "1.3.386",
+      "date": "2026-10-22",
+      "time": "23:35",
+      "at": "2026-10-22T23:35:00+02:00",
+      "title": "La recherche ne montre plus Réessayer pendant la frappe",
+      "notes": [
+        "Pendant qu’on tape, le champ reste. Réessayer n’apparaît qu’une fois la recherche terminée, et seulement si elle a vraiment échoué."
+      ]
+    },
+    {
+      "version": "1.3.385",
+      "date": "2026-10-22",
+      "time": "23:25",
+      "at": "2026-10-22T23:25:00+02:00",
+      "title": "Lecteur en pause reste en barre",
+      "notes": [
+        "Si la lecture est en pause, rouvrir l’application laisse le lecteur en barre. Le plein écran ne revient pas tout seul et le son ne reprend pas."
+      ]
+    },
+    {
+      "version": "1.3.384",
+      "date": "2026-10-22",
+      "time": "23:15",
+      "at": "2026-10-22T23:15:00+02:00",
+      "title": "Tout voir sous la barre d’état",
+      "notes": [
+        "Tout voir ouvre l’accès rapide dans la zone sûre. Le titre et le retour restent visibles sous la barre d’état."
+      ]
+    },
+    {
+      "version": "1.3.383",
+      "date": "2026-10-22",
+      "time": "23:05",
+      "at": "2026-10-22T23:05:00+02:00",
+      "title": "Corbeille de l’accès rapide",
+      "notes": [
+        "Chaque ligne de l’accès rapide a une corbeille. Confirmer retire le titre de l’accès rapide. Il reste dans la bibliothèque."
+      ]
+    },
+    {
+      "version": "1.3.382",
+      "date": "2026-10-22",
+      "time": "22:50",
+      "at": "2026-10-22T22:50:00+02:00",
+      "title": "Pochettes gardées",
+      "notes": [
+        "Une pochette de titre, d’album ou d’artiste déjà vue reste sur l’appareil. Rouvrir l’accueil la réaffiche sans attendre le réseau."
+      ]
+    },
+    {
+      "version": "1.3.381",
+      "date": "2026-10-22",
+      "time": "22:40",
+      "at": "2026-10-22T22:40:00+02:00",
+      "title": "Boutons des vignettes",
+      "notes": [
+        "Sur une vignette de titre, de mix ou de playlist : lire en bas à droite, ajouter à la bibliothèque en bas à gauche, trois points en haut à droite."
+      ]
+    },
+    {
+      "version": "1.3.380",
+      "date": "2026-10-22",
+      "time": "20:45",
+      "at": "2026-10-22T20:45:00+02:00",
+      "title": "Fermer le tiroir",
+      "notes": [
+        "Le menu se ferme avec le bouton, un glissement, ou un tap sur Compte."
+      ]
+    },
+    {
+      "version": "1.3.378",
+      "date": "2026-10-21",
+      "time": "14:40",
+      "at": "2026-10-21T14:40:00+02:00",
+      "title": "Tiroir depuis le bord gauche",
+      "notes": [
+        "Le menu s’ouvre en glissant depuis le bord gauche de l’écran. Ouvrir l’application ne lance pas une lecture."
+      ]
+    },
+    {
+      "version": "1.3.376",
+      "date": "2026-10-19",
+      "time": "18:30",
+      "at": "2026-10-19T18:30:00+02:00",
+      "title": "Accès rapide en boucle, aléatoire plus vite",
+      "notes": [
+        "L’accès rapide ne joue et ne boucle que les titres épinglés. « À suivre » et les similaires ne s’y ajoutent plus. L’aléatoire de l’accès rapide mélange tous les titres épinglés. L’aléatoire de la bibliothèque prépare plusieurs centaines de titres différents puis charge le reste."
+      ]
+    },
+    {
+      "version": "1.3.375",
+      "date": "2026-10-18",
+      "time": "18:45",
+      "at": "2026-10-18T18:45:00+02:00",
+      "title": "Autre itag si la lecture échoue",
+      "notes": [
+        "Si un titre ne part pas, le serveur essaie un autre client et un autre format, pour chaque compte. La suite en aléatoire ne précharge plus qu’un titre à la fois pendant l’écoute."
+      ]
+    },
+    {
+      "version": "1.3.373",
+      "date": "2026-10-17",
+      "time": "14:30",
+      "at": "2026-10-17T14:30:00+02:00",
+      "title": "Pause respectée au retour",
+      "notes": [
+        "Revenir dans l’app, rallumer l’écran ou rouvrir Hubera Music ne relance plus le son si la lecture était en pause, en chargement sans son, ou avait échoué. La musique ne reprend que si elle jouait vraiment."
+      ]
+    },
+    {
+      "version": "1.3.372",
+      "date": "2026-10-16",
+      "time": "07:10",
+      "at": "2026-10-16T07:10:00+02:00",
+      "title": "Durée toujours positive",
+      "notes": [
+        "Un titre n’affiche plus une durée négative. Le temps restant et la durée totale restent à l’écran en positif."
+      ]
+    },
+    {
+      "version": "1.3.367",
+      "date": "2026-10-10",
+      "time": "13:00",
+      "at": "2026-10-10T13:00:00+02:00",
+      "title": "Partager : lien Hubera Music et YouTube",
+      "notes": [
+        "Partager un titre envoie les deux liens : Hubera Music et YouTube."
+      ]
+    },
+    {
+      "version": "1.3.366",
+      "date": "2026-10-09",
+      "time": "17:10",
+      "at": "2026-10-09T17:10:00+02:00",
+      "title": "OTA : autoriser d’abord, puis télécharger",
+      "notes": [
+        "La mise à jour demande d’abord d’autoriser l’installation depuis cette source, puis télécharge l’APK. Plus de boucle."
+      ]
+    },
     {
       "version": "1.3.365",
       "date": "2026-10-08",
@@ -8,7 +239,7 @@
       "at": "2026-10-08T22:35:00+02:00",
       "title": "En-tête Music d’avant le tiroir grille",
       "notes": [
-        "Plus de menu hamburger avec la grille d’apps Hubera. Accueil retrouve le logo et le titre, comme avant. Les autres apps s’ouvrent depuis Compte si besoin. Mise à jour proposée, pas forcée."
+        "Plus de menu hamburger avec la grille d’apps Hubera. Accueil retrouve le logo et le titre, comme avant. Les autres apps s’ouvrent depuis Compte si besoin."
       ]
     },
     {
@@ -20,7 +251,7 @@
       "notes": [
         "La barre du haut et du bas restent au-dessus des boutons Retour / Accueil / récents et sous les notifications.",
         "Le champ Recherche n’est plus collé ni décalé.",
-        "Pendant le téléchargement d’une mise à jour, tu vois les nouveautés de cette version. Mise à jour proposée, pas forcée."
+        "Pendant le téléchargement d’une mise à jour, tu vois les nouveautés de cette version."
       ]
     },
     {
@@ -30,7 +261,7 @@
       "at": "2026-10-08T21:10:00+02:00",
       "title": "Drawer : app installée, sinon le site",
       "notes": [
-        "Le menu Apps Hubera ouvre l’application déjà installée (Maps, Fuel, Docs…). Si elle n’est pas là, le site s’ouvre. Mise à jour proposée, pas forcée."
+        "Le menu Apps Hubera ouvre l’application déjà installée (Maps, Fuel, Docs…). Si elle n’est pas là, le site s’ouvre."
       ]
     },
     {
@@ -40,7 +271,7 @@
       "at": "2026-10-08T20:30:00+02:00",
       "title": "Seek hors-ligne, clip officiel, lecture stable",
       "notes": [
-        "Un titre déjà téléchargé reste en local après un seek — plus de blocage à 0:00. Le clip officiel avance (image + position). La lecture n’est plus annulée par l’écran. Mise à jour proposée, pas forcée."
+        "Un titre déjà téléchargé reste en local après un seek — plus de blocage à 0:00. Le clip officiel avance (image + position). La lecture n’est plus annulée par l’écran."
       ]
     },
     {
@@ -50,7 +281,7 @@
       "at": "2026-10-08T18:40:00+02:00",
       "title": "Recherche quasi instantanée (index musique)",
       "notes": [
-        "Les titres déjà vus (biblio, recherches) sortent tout de suite via un index local. YouTube Music complète en fond. Mise à jour proposée, pas forcée."
+        "Les titres déjà vus (biblio, recherches) sortent tout de suite via un index local. YouTube Music complète en fond."
       ]
     },
     {
@@ -60,7 +291,7 @@
       "at": "2026-10-08T16:40:00+02:00",
       "title": "Menu suite Hubera, comme Gmail",
       "notes": [
-        "Hamburger à gauche, compte à droite, bas Accueil / Recherche / Biblio. Le tiroir ouvre les autres apps Hubera. Mise à jour proposée, pas forcée."
+        "Hamburger à gauche, compte à droite, bas Accueil / Recherche / Biblio. Le tiroir ouvre les autres apps Hubera."
       ]
     },
     {
@@ -70,7 +301,7 @@
       "at": "2026-10-08T16:20:00+02:00",
       "title": "Titres déjà téléchargés : lecture locale, plus de blocage",
       "notes": [
-        "Un titre déjà sur le téléphone se joue vraiment en local, même en Wi‑Fi : on ne le recâble plus vers le serveur (ça coincait le chargement et abîmait le son). Mise à jour proposée, pas forcée."
+        "Un titre déjà sur le téléphone se joue vraiment en local, même en Wi‑Fi : on ne le recâble plus vers le serveur (ça coincait le chargement et abîmait le son)."
       ]
     },
     {
@@ -80,7 +311,7 @@
       "at": "2026-10-08T15:50:00+02:00",
       "title": "Continuer avec un compte Hubera déjà sur le téléphone",
       "notes": [
-        "Si tu es déjà connecté dans une autre app Hubera (ID, Mail, Docs…), Music propose Continuer avec ton e-mail. Mise à jour proposée, pas forcée."
+        "Si tu es déjà connecté dans une autre app Hubera (ID, Mail, Docs…), Music propose Continuer avec ton e-mail."
       ]
     },
     {
@@ -90,7 +321,7 @@
       "at": "2026-10-07T17:00:00+02:00",
       "title": "Paroles calées, next en karaoké, titres déjà téléchargés",
       "notes": [
-        "Ton calage paroles reste le calage : plus d’écrasement par le rythme des autres. Next / précédent depuis les bords ou le chip, sans fermer le karaoké. Un titre déjà téléchargé se joue en local même en ligne. Mise à jour proposée, pas forcée."
+        "Ton calage paroles reste le calage : plus d’écrasement par le rythme des autres. Next / précédent depuis les bords ou le chip, sans fermer le karaoké. Un titre déjà téléchargé se joue en local même en ligne."
       ]
     },
     {
@@ -100,7 +331,7 @@
       "at": "2026-10-07T16:20:00+02:00",
       "title": "Paroles : tu peux faire défiler, retour auto après 8 s",
       "notes": [
-        "Toutes les lignes sont scrollables (avant / après). La ligne chantée reste en évidence. Si tu ne touches plus, ça revient à la ligne en cours au bout de 8 secondes — plus un blocage sur 3 lignes. Mise à jour proposée, pas forcée."
+        "Toutes les lignes sont scrollables (avant / après). La ligne chantée reste en évidence. Si tu ne touches plus, ça revient à la ligne en cours au bout de 8 secondes — plus un blocage sur 3 lignes."
       ]
     },
     {
@@ -110,7 +341,7 @@
       "at": "2026-10-07T13:15:00+02:00",
       "title": "Karaoké : la ligne chantée reste à l’écran",
       "notes": [
-        "Les paroles synchronisées affichent la ligne en cours au centre (précédente / actuelle / suivante), plus un mur qui défile hors cadre. Mise à jour proposée, pas forcée."
+        "Les paroles synchronisées affichent la ligne en cours au centre (précédente / actuelle / suivante), plus un mur qui défile hors cadre."
       ]
     },
     {
@@ -120,7 +351,7 @@
       "at": "2026-10-06T20:45:00+02:00",
       "title": "Lecture à froid + paroles de nouveau calées",
       "notes": [
-        "Un titre jamais écouté attend que le fichier soit prêt (~30 s) au lieu d’un refus immédiat. Les paroles déjà en cache restent synchronisées : une réponse vide ne les efface plus. Mise à jour proposée, pas forcée."
+        "Un titre jamais écouté attend que le fichier soit prêt (~30 s) au lieu d’un refus immédiat. Les paroles déjà en cache restent synchronisées : une réponse vide ne les efface plus."
       ]
     },
     {
@@ -130,7 +361,7 @@
       "at": "2026-10-06T20:20:00+02:00",
       "title": "Lecture froide : plus de skip pendant le chargement YouTube",
       "notes": [
-        "Un titre jamais écouté attend le flux YouTube (~40 s) au lieu d’être sauté à 5–18 s. Les paroles ne bloquent plus le son. Mise à jour proposée, pas forcée."
+        "Un titre jamais écouté attend le flux YouTube (~40 s) au lieu d’être sauté à 5–18 s. Les paroles ne bloquent plus le son."
       ]
     },
     {
@@ -140,7 +371,7 @@
       "at": "2026-10-06T16:10:00+02:00",
       "title": "Titres froids jouables, suivant préparé sans noyer YouTube",
       "notes": [
-        "La bibliothèque ne lance plus des dizaines de téléchargements complets : seules les premières secondes se préparent, et les 3 titres suivants pendant l’écoute. Les titres jamais écoutés partent à nouveau. Mise à jour proposée, pas forcée."
+        "La bibliothèque ne lance plus des dizaines de téléchargements complets : seules les premières secondes se préparent, et les 3 titres suivants pendant l’écoute. Les titres jamais écoutés partent à nouveau."
       ]
     },
     {
@@ -150,7 +381,7 @@
       "at": "2026-10-06T03:50:00+02:00",
       "title": "Accès rapide et titres déjà écoutés : lecture depuis le serveur",
       "notes": [
-        "Un clic Accès rapide ou un titre déjà écouté part du fichier déjà sur le serveur — plus de rechargement YouTube. Pendant l’écoute, les 3 suivants se préparent sur d’autres relais. Mise à jour proposée, pas forcée."
+        "Un clic Accès rapide ou un titre déjà écouté part du fichier déjà sur le serveur — plus de rechargement YouTube. Pendant l’écoute, les 3 suivants se préparent sur d’autres relais."
       ]
     },
     {
@@ -160,7 +391,7 @@
       "at": "2026-10-05T20:50:00+02:00",
       "title": "Enregistré récemment : les premières secondes déjà sur le serveur",
       "notes": [
-        "Les titres enregistrés récemment, déjà écoutés (48 h) ou ajoutés en « lire ensuite » gardent leurs premières secondes sur le serveur, même pendant une autre écoute. Changement de relais automatique sans couper le son en cours. Mise à jour proposée, pas forcée."
+        "Les titres enregistrés récemment, déjà écoutés (48 h) ou ajoutés en « lire ensuite » gardent leurs premières secondes sur le serveur, même pendant une autre écoute. Changement de relais automatique sans couper le son en cours."
       ]
     },
     {
@@ -171,7 +402,7 @@
       "title": "Enchaînement auto : 6 titres d’avance, relais si un son bloque",
       "notes": [
         "Le lecteur prépare 6 titres devant (au lieu de 4) pour l’auto-avance « à suivre », et change de relais si un titre froid reste coincé. abcdefu / titres qui chargeaient sans partir sont retentés au lieu de rester en BUFFERING.",
-        "Mise à jour proposée, pas forcée."
+        ""
       ]
     },
     {
@@ -182,7 +413,7 @@
       "title": "Paroles en pause, biblio artiste complète, DL sans casser l’écoute",
       "notes": [
         "En pause tu fais défiler les paroles sans bouger la lecture. Le bouton Biblio d’un artiste ajoute tout son catalogue et lance la lecture. Les téléchargements (titre, album, artiste) passent par d’autres relais que le son en cours, pour ne plus rendre tes favoris inécoutables.",
-        "Mise à jour proposée, pas forcée."
+        ""
       ]
     },
     {
@@ -193,7 +424,7 @@
       "title": "3 titres d’avance sans noyer le son en cours",
       "notes": [
         "Pendant l’écoute, les 3 suivants se préparent sans voler la bande au titre actuel. Skip et retour arrière restent fluides, sans brûler toute la file.",
-        "Mise à jour proposée, pas forcée."
+        ""
       ]
     },
     {
@@ -204,7 +435,7 @@
       "title": "Skip immédiat, 3 titres déjà en buffer",
       "notes": [
         "Pendant l’écoute les 3 suivants se chargent. Un skip va tout de suite sur un titre déjà prêt (pas d’attente, pas de file brûlée). Le retour arrière garde le cache.",
-        "Mise à jour proposée, pas forcée."
+        ""
       ]
     },
     {
@@ -215,7 +446,7 @@
       "title": "Skip : on enchaîne sur un titre déjà prêt",
       "notes": [
         "Les 3 suivants se chargent pendant l’écoute. Si un titre refuse de démarrer, on passe à celui d’après déjà en buffer — plus de file entière brûlée, plus d’attente infinie.",
-        "Retour arrière : les titres déjà entendus restent en cache. Mise à jour proposée, pas forcée."
+        "Retour arrière : les titres déjà entendus restent en cache."
       ]
     },
     {
@@ -226,7 +457,7 @@
       "title": "Les 3 titres suivants se chargent vraiment pendant l’écoute",
       "notes": [
         "Pendant que tu écoutes, les 3 suivants (et le 4ᵉ en marge) se préparent. Si tu sautes 1, 2, 3, 4 puis tu reviens au premier, le buffer reste et la suite continue de charger.",
-        "Plus de skip qui brûle toute la file sur Samsung. Mise à jour proposée, pas forcée."
+        "Plus de skip qui brûle toute la file sur Samsung."
       ]
     },
     {
@@ -237,7 +468,7 @@
       "title": "Toujours 3 titres d’avance, même en skippant",
       "notes": [
         "Pendant l’écoute : les 3 suivants se chargent. Si tu en sautes plusieurs, la fenêtre avance avec toi. Si tu reviens au premier, on garde le buffer et on continue à préparer la suite.",
-        "Plus de skip auto en chaîne qui brûle toute la file. Mise à jour proposée, pas forcée."
+        "Plus de skip auto en chaîne qui brûle toute la file."
       ]
     },
     {
@@ -248,7 +479,7 @@
       "title": "Le titre suivant se prépare pendant que tu écoutes",
       "notes": [
         "Pendant chaque morceau, le suivant est chargé en avance (tête + fichier), sans noyer le titre en cours.",
-        "Skip et accès rapide : on enchaîne sans rester coincé en chargement. Mise à jour proposée, pas forcée."
+        "Skip et accès rapide : on enchaîne sans rester coincé en chargement."
       ]
     },
     {
@@ -259,7 +490,7 @@
       "title": "Plus de trou : skip immédiat et 40 titres d’avance",
       "notes": [
         "Si un titre refuse de charger, on passe au suivant tout de suite et on continue à préparer la suite (pas d’attente bloquante).",
-        "Le serveur précharge le début puis le fichier entier des ~40 titres suivants, via plusieurs proxies. Accès rapide, bibliothèque et aléatoire. Mise à jour proposée, pas forcée."
+        "Le serveur précharge le début puis le fichier entier des ~40 titres suivants, via plusieurs proxies. Accès rapide, bibliothèque et aléatoire."
       ]
     },
     {
@@ -270,7 +501,7 @@
       "title": "Le titre en cours d’abord, puis les suivants",
       "notes": [
         "Tant qu’un titre charge ou joue, le bouton Aléatoire ne relance plus le flux : il mélange seulement la suite.",
-        "Préchargement dans l’ordre : ce que tu écoutes, puis le titre d’après, puis les plus proches. Mise à jour proposée, pas forcée."
+        "Préchargement dans l’ordre : ce que tu écoutes, puis le titre d’après, puis les plus proches."
       ]
     },
     {

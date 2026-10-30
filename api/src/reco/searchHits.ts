@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db } from '../library/db.js';
+import { durationsByIds } from '../library/searchIndex.js';
 import { foldText } from './searchRank.js';
 import type { Track } from '../youtube/types.js';
 
@@ -253,18 +254,55 @@ export function getCachedTrackDuration(videoId: string): { seconds: number; text
   return { seconds: row.duration_seconds, text: row.duration_text || undefined };
 }
 
-/** Applique les durées cachées sur une liste de pistes. */
+function clockFromSeconds(total: number): string {
+  const whole = Math.floor(total);
+  const s = whole % 60;
+  const m = Math.floor(whole / 60) % 60;
+  const h = Math.floor(whole / 3600);
+  const ss = String(s).padStart(2, '0');
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${ss}`;
+  return `${m}:${ss}`;
+}
+
+function secondsFromClock(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const parts = raw.trim().split(':').map((p) => Number(p));
+  if (!parts.length || parts.some((n) => !Number.isFinite(n) || n < 0)) return undefined;
+  if (parts.length === 2 && parts[1] < 60) return parts[0] * 60 + parts[1];
+  if (parts.length === 3 && parts[1] < 60 && parts[2] < 60) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  if (parts.length === 1 && parts[0] > 0 && parts[0] < 60 * 60 * 6) return parts[0];
+  return undefined;
+}
+
+/** Applique les durées déjà connues (cache, bibliothèque) et une horloge lisible. */
 export function applyCachedDurations<T extends Track>(tracks: T[]): T[] {
   ensureSearchHitsSchema();
+  const need = tracks
+    .filter((t) => !(t.durationSeconds && t.durationSeconds > 0 && t.duration))
+    .map((t) => t.id);
+  const meta = durationsByIds(need);
   return tracks.map((t) => {
-    if (t.durationSeconds && t.durationSeconds > 0 && t.duration) return t;
-    const cached = getCachedTrackDuration(t.id);
-    if (!cached) return t;
-    return {
-      ...t,
-      durationSeconds: t.durationSeconds || cached.seconds,
-      duration: t.duration || cached.text || undefined,
-    };
+    let seconds = t.durationSeconds && t.durationSeconds > 0 ? Math.floor(t.durationSeconds) : undefined;
+    let text = typeof t.duration === 'string' && /\d/.test(t.duration) ? t.duration.trim() : undefined;
+    if (!seconds && text) seconds = secondsFromClock(text);
+    if (!seconds || !text) {
+      const cached = getCachedTrackDuration(t.id);
+      if (cached) {
+        seconds = seconds || cached.seconds;
+        text = text || cached.text;
+      }
+    }
+    const fromMeta = meta.get(t.id);
+    if (fromMeta && (!seconds || !text)) {
+      text = text || fromMeta;
+      seconds = seconds || secondsFromClock(fromMeta);
+    }
+    if (seconds && seconds > 0 && !text) text = clockFromSeconds(seconds);
+    if (!seconds || !text) return t;
+    if (t.duration === text && t.durationSeconds === seconds) return t;
+    return { ...t, durationSeconds: seconds, duration: text };
   });
 }
 

@@ -47,3 +47,18 @@ data/proxy-steward/live.json
 
 # Cache Python du steward proxy
 scripts/proxy-steward/__pycache__/
+
+# Build OTA lab artifacts
+.ota-out/
+**/.ota-out/
+
+*.torrent
+
+# Local lab dumps / accidental PDFs at repo root
+scripts/qa/*.xml
+/Hubera-*.pdf
+/architecture-*.pdf
+/hubera-repo-structure-*.pdf
+scripts/qa/__pycache__/
+__pycache__/
+**/__pycache__/

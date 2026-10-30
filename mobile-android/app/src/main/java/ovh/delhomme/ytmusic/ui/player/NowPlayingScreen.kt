@@ -165,6 +165,7 @@ import ovh.delhomme.ytmusic.ui.components.DownloadStatusIcon
 import ovh.delhomme.ytmusic.ui.components.EqualizerSheet
 import ovh.delhomme.ytmusic.ui.components.HoldSeekIconButton
 import ovh.delhomme.ytmusic.ui.components.MediaCover
+import ovh.delhomme.ytmusic.ui.components.rememberCoverRequest
 import ovh.delhomme.ytmusic.ui.components.dragReorderHandle
 import ovh.delhomme.ytmusic.ui.components.dragReorderItem
 import ovh.delhomme.ytmusic.ui.components.dragReorderLongPress
@@ -284,6 +285,8 @@ fun NowPlayingScreen(
     // (sinon setMediaItems+prepare → coupe l’audio). Clear seulement si le seed change.
     var lastAutoplaySeed by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(ui.track?.id, ui.sourceKind, ui.userQueueEnd, ui.queueIndex) {
+        // Accès rapide : pas de « À suivre » hors des titres épinglés.
+        if (ui.sourceKind == "pins") return@LaunchedEffect
         // Toujours remplir « À suivre » pour l’affichage — autoplay = auto-avance seulement
         val seed = ui.track?.id ?: return@LaunchedEffect
         val remainingUser = (ui.userQueueEnd - ui.queueIndex - 1).coerceAtLeast(0)
@@ -626,7 +629,7 @@ fun NowPlayingScreen(
         // Ambient blur — fond unifié sous cover + chrome (sheet visible uniquement)
         if (sheetVisible) {
             AsyncImage(
-                model = track.coverUrl(160),
+                model = rememberCoverRequest(track, 160),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -933,7 +936,7 @@ fun NowPlayingScreen(
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             AsyncImage(
-                                                model = track.coverUrl(400),
+                                                model = rememberCoverRequest(track, 400),
                                                 contentDescription = track.title,
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier
@@ -959,7 +962,7 @@ fun NowPlayingScreen(
                                         ) {
                                             // Pochette tout de suite — plus d’écran « Recherche du clip… »
                                             AsyncImage(
-                                                model = track.coverUrl(400),
+                                                model = rememberCoverRequest(track, 400),
                                                 contentDescription = track.title,
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier
@@ -1809,7 +1812,7 @@ private fun NowPlayingSeekTransport(
             }
             val remainingMs = (ui.durationMs - scrubPos).coerceAtLeast(0L)
             Text(
-                "-${formatMs(remainingMs)}",
+                formatMs(remainingMs),
                 style = MaterialTheme.typography.labelSmall,
                 color = PlayerMuted,
             )
@@ -1853,7 +1856,7 @@ private fun NowPlayingSeekTransport(
                     }
                     PlayerChromeAction.PlayPause -> IconButton(onClick = player::toggle) {
                         Icon(
-                            if (ui.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            if (ui.playing || ui.buffering) Icons.Default.Pause else Icons.Default.PlayArrow,
                             slot.label,
                             tint = PlayerFg,
                             modifier = Modifier.size(if (landscape) 48.dp else 56.dp),
@@ -2892,7 +2895,7 @@ private fun QueueExpandedBody(
                                 color = PlayerMuted,
                             )
                         }
-                        if (similarTracks.isNotEmpty()) {
+                        if (similarTracks.isNotEmpty() && ui.sourceKind != "pins") {
                             TextButton(
                                 onClick = {
                                     similarTracks.take(30).forEach { player.addToQueue(it) }
@@ -3633,26 +3636,41 @@ private fun InlineSyncedLyrics(
                     }
                 }
 
-                LaunchedEffect(active, followLyrics, timed.size, track.id) {
-                    if (!followLyrics || timed.isEmpty()) return@LaunchedEffect
+                val lyricViewH = (
+                    lyricsListState.layoutInfo.viewportEndOffset -
+                        lyricsListState.layoutInfo.viewportStartOffset
+                    ).coerceAtLeast(0)
+                LaunchedEffect(active, followLyrics, timed.size, track.id, lyricViewH) {
+                    if (!followLyrics || timed.isEmpty() || lyricViewH <= 0) return@LaunchedEffect
                     val target = active.coerceAtLeast(0).coerceAtMost(timed.lastIndex)
-                    val info = lyricsListState.layoutInfo
-                    val vis = info.visibleItemsInfo
-                    val currentItem = vis.firstOrNull { it.index == target }
-                    val viewportH = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
-                    val inComfort = currentItem != null &&
-                        currentItem.offset > viewportH * 0.16f &&
-                        (currentItem.offset + currentItem.size) < viewportH * 0.84f
-                    if (inComfort) return@LaunchedEffect
                     programmaticScroll = true
                     runCatching {
-                        lyricsListState.animateScrollToItem((target - 2).coerceAtLeast(0))
+                        val info = lyricsListState.layoutInfo
+                        val viewH = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
+                        val known = info.visibleItemsInfo.firstOrNull { it.index == target }?.size
+                        val lineH = (known ?: (viewH / 4)).coerceAtLeast(1)
+                        val top = ovh.delhomme.ytmusic.player.LyricAnchor.desiredTopPx(viewH, lineH)
+                        lyricsListState.scrollToItem(target, scrollOffset = -top)
+                        val placed = lyricsListState.layoutInfo
+                        val view2 = (placed.viewportEndOffset - placed.viewportStartOffset).coerceAtLeast(1)
+                        val item = placed.visibleItemsInfo.firstOrNull { it.index == target }
+                        val size = item?.size ?: lineH
+                        val top2 = ovh.delhomme.ytmusic.player.LyricAnchor.desiredTopPx(view2, size)
+                        val offsetNow = item?.offset
+                        if (
+                            offsetNow != null &&
+                            ovh.delhomme.ytmusic.player.LyricAnchor.shouldRecenter(offsetNow, size, view2)
+                        ) {
+                            lyricsListState.scroll {
+                                scrollBy((offsetNow - top2).toFloat())
+                            }
+                        }
                     }
                     delay(40)
                     programmaticScroll = false
                 }
 
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
                         state = lyricsListState,
                         modifier = Modifier.fillMaxSize(),
@@ -3681,7 +3699,7 @@ private fun InlineSyncedLyrics(
                 }
             }
             !text.isNullOrBlank() -> {
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         item {
                             Text(
@@ -4200,17 +4218,8 @@ private fun NowPlayingHeroCover(
     landscape: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val fullPx = if (landscape) 720 else 900
-    val fullUrl = track.coverUrl(fullPx)
-    val thumbUrl = track.coverUrl(520)
-    val cacheTag = if (landscape) "np-l" else "np-hero-v5"
-    fun coverRequest(url: String?, px: Int) = ImageRequest.Builder(context)
-        .data(url)
-        .size(px)
-        .memoryCacheKey("$cacheTag:$url")
-        .diskCacheKey("$cacheTag:$url")
-        .build()
+    val request = rememberCoverRequest(track, fullPx)
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
@@ -4227,13 +4236,7 @@ private fun NowPlayingHeroCover(
             else -> 1f
         }
         SubcomposeAsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(fullUrl)
-                .size(fullPx)
-                .memoryCacheKey("$cacheTag:$fullUrl")
-                .diskCacheKey("$cacheTag:$fullUrl")
-                .crossfade(80)
-                .build(),
+            model = request,
             contentDescription = track.title,
             contentScale = ContentScale.Crop,
             alignment = Alignment.Center,
@@ -4249,46 +4252,8 @@ private fun NowPlayingHeroCover(
                         Modifier
                     },
                 ),
-            loading = {
-                AsyncImage(
-                    model = coverRequest(thumbUrl, 520),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.Center,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .then(
-                            if (zoom > 1.01f) {
-                                Modifier.graphicsLayer {
-                                    scaleX = zoom
-                                    scaleY = zoom
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                )
-            },
-            error = {
-                AsyncImage(
-                    model = coverRequest(thumbUrl, 520),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.Center,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .then(
-                            if (zoom > 1.01f) {
-                                Modifier.graphicsLayer {
-                                    scaleX = zoom
-                                    scaleY = zoom
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                )
-            },
+            loading = {},
+            error = {},
         )
     }
 }
