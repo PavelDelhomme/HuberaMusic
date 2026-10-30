@@ -21,11 +21,14 @@ import {
 } from './stream.js';
 import { findReplacementId, getReplacementId } from './trackReplacement.js';
 
-/** Fenêtre à pré-vérifier (format + proxy + tête disque) avant que l’utilisateur arrive. */
-export const PREFLIGHT_AHEAD = 1;
-/** Un seul fichier suivant, et pas pendant l’écoute. */
+/**
+ * Fenêtre à pré-vérifier (format + proxy + tête disque) avant que l’utilisateur arrive.
+ * 3 = Copilot/roadmap : catalogue YT + cache local + 2–3 suivants chauds, pas un burst.
+ */
+export const PREFLIGHT_AHEAD = 3;
+/** Pendant l’écoute : pas de .m4a complet (évite de voler la bande). Au repos : 2 fichiers. */
 const FULL_DISK_HOT = 0;
-const FULL_DISK_IDLE = 1;
+const FULL_DISK_IDLE = 2;
 const VERIFIED_TTL_MS = 30 * 60_000;
 
 const verified = new Map<string, { playId: string; at: number }>();

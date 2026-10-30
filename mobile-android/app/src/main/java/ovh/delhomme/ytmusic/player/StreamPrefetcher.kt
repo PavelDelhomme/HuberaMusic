@@ -311,13 +311,14 @@ object StreamPrefetcher {
 
     /**
      * Prépare Aléatoire : #0 format + tête Exo **bloquants** (1er son immédiat),
-     * #1–2 en fire-and-forget pour ne pas retarder le play (skip bientôt chaud).
+     * #1–2 en fire-and-forget (préfixe chaud, pas de fichiers entiers).
      */
     suspend fun prepareShuffleLead(baseApi: String, trackIds: List<String>) {
         if (trackIds.isEmpty() || isStreamDown()) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val base = baseApi.trimEnd('/')
-        val lead = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }.take(2)
+        val lead = trackIds.distinct().filter { it.length == 11 && !isLocalOffline(it) }
+            .take(1 + StreamLaunchPolicy.WARM_PREFIX_AHEAD)
         if (lead.isEmpty()) return
         quietPrefetch(520L)
         val app = YtMusicApp.instance
@@ -326,8 +327,8 @@ object StreamPrefetcher {
         warmCurrentBlocking(base, first, timeoutMs = 1_500L, wait = true)
         prefetchStartHeadBlocking(app, base, first, HEAD_NEXT_WIFI)
         markHeadReady(first)
-        // Un seul suivant, en préfixe, après la tête du titre lancé.
-        lead.getOrNull(1)?.let { id ->
+        // #1–2 suivants en préfixe, sans bloquer le play.
+        lead.drop(1).forEach { id ->
             if (!PlaybackService.Holder.isCurrentStreamLoading()) {
                 prefetchStartHead(base, id, HEAD_3S, priorityNext = true)
             }
@@ -335,8 +336,8 @@ object StreamPrefetcher {
     }
 
     /**
-     * Cold start / restore file : le titre suivant reçoit d’abord une tête pour enchaîner,
-     * puis le titre courant. Un seul suivant, pas une rafale.
+     * Cold start / restore file : 2 suivants reçoivent une tête pour enchaîner,
+     * puis le titre courant. Pas une rafale de 6–8.
      * Le play utilisateur trouve alors déjà des octets en SimpleCache → moins de BUFFERING
      * / « Flux audio indisponible » (Samsung / titres Gims froids).
      */
@@ -349,11 +350,14 @@ object StreamPrefetcher {
         if (currentId.length != 11 || isLocalOffline(currentId)) return
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         val base = baseApi.trimEnd('/')
-        val next = upcomingIds
+        val nextIds = upcomingIds
             .distinct()
-            .firstOrNull { it.length == 11 && it != currentId && !isLocalOffline(it) }
-        if (next != null && !hasPlayableHead(next, 400L * 1024L)) {
-            prefetchStartHead(base, next, HEAD_3S, priorityNext = true)
+            .filter { it.length == 11 && it != currentId && !isLocalOffline(it) }
+            .take(StreamLaunchPolicy.WARM_PREFIX_AHEAD)
+        for (next in nextIds) {
+            if (!hasPlayableHead(next, 400L * 1024L)) {
+                prefetchStartHead(base, next, HEAD_3S, priorityNext = true)
+            }
         }
         val reallyWarm = hasPlayableHead(currentId) && wasHeadReadyRecently(currentId, withinMs = 45_000L)
         if (!force && reallyWarm) return
@@ -983,16 +987,20 @@ object StreamPrefetcher {
             if (current.length == 11) warmBatch(baseApi, listOf(current))
             return
         }
-        val nextId = queueIds.drop(idx + 1).firstOrNull { it.length == 11 && !isLocalOffline(it) }
-            ?: return
-        warmBatch(baseApi, listOf(nextId))
-        PlayerCache.prefetchHead(
-            YtMusicApp.instance,
-            streamPrefetchUrl(baseApi, nextId),
-            nextId,
-            HEAD_3S,
-            priorityNext = true,
-        )
+        val nextIds = queueIds.drop(idx + 1)
+            .filter { it.length == 11 && !isLocalOffline(it) }
+            .take(take)
+        if (nextIds.isEmpty()) return
+        warmBatch(baseApi, nextIds)
+        nextIds.forEach { nextId ->
+            PlayerCache.prefetchHead(
+                YtMusicApp.instance,
+                streamPrefetchUrl(baseApi, nextId),
+                nextId,
+                HEAD_3S,
+                priorityNext = true,
+            )
+        }
     }
 
     /** Supprime du SimpleCache les titres avant l’index (sauf keepBehind). */

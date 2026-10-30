@@ -1,6 +1,18 @@
 {
-  "updatedAt": "2026-10-30T09:14:48+01:00",
+  "updatedAt": "2026-10-30T09:31:14+01:00",
   "versions": [
+    {
+      "version": "1.3.404",
+      "date": "2026-10-30",
+      "time": "09:35",
+      "at": "2026-10-30T09:31:14+01:00",
+      "title": "Cache + préchauffage file (roadmap heal)",
+      "notes": [
+        "À chaud : 2 titres suivants en tête (plus un seul), jamais un burst de fichiers entiers.",
+        "Serveur : preflight 3 titres ; 2 .m4a complets au repos, 0 pendant l’écoute.",
+        "Aligné roadmap : catalogue YT + cache local + heal/replace (voir Docs 2026-10-30)."
+      ]
+    },
     {
       "version": "1.3.403",
       "date": "2026-10-30",
@@ -2749,5 +2761,6 @@
   "1.3.400": "Next/Prev media keys au premier plan → skipTo*FromExternal (plus de ViewPostIme silencieux).",
   "1.3.401": "Mails erreur : breadcrumbs+logs toujours (buffer hors-ligne + batch alert) · heal android.player 5xx · Next media keys 1.3.400.",
   "1.3.402": "Précédent : seuil hold 520ms (tap lent n’avale plus le skip) · politique prev testée (SkipQueuePolicy) · jamais restart si titre d’avant existe.",
-  "1.3.403": "Laisse Nous Raver Extended/Radio → original jouable · soft version fallback · heal 5xx lance remplacement · seeds Rekkt."
+  "1.3.403": "Laisse Nous Raver Extended/Radio → original jouable · soft version fallback · heal 5xx lance remplacement · seeds Rekkt.",
+  "1.3.404": "Préfixe chaud 2 suivants · preflight serveur ×3 · .m4a×2 au repos · roadmap cache+heal (pas YT direct à chaque lecture)."
 }

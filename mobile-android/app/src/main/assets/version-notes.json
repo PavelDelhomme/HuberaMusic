@@ -1,6 +1,57 @@
 {
-  "updatedAt": "2026-10-26",
+  "updatedAt": "2026-10-30T09:31:14+01:00",
   "versions": [
+    {
+      "version": "1.3.404",
+      "date": "2026-10-30",
+      "time": "09:35",
+      "at": "2026-10-30T09:31:14+01:00",
+      "title": "Cache + préchauffage file (roadmap heal)",
+      "notes": [
+        "À chaud : 2 titres suivants en tête (plus un seul), jamais un burst de fichiers entiers.",
+        "Serveur : preflight 3 titres ; 2 .m4a complets au repos, 0 pendant l’écoute.",
+        "Aligné roadmap : catalogue YT + cache local + heal/replace (voir Docs 2026-10-30)."
+      ]
+    },
+    {
+      "version": "1.3.403",
+      "date": "2026-10-30",
+      "time": "09:15",
+      "at": "2026-10-30T09:14:48+01:00",
+      "title": "Rekkt Laisse Nous Raver — alternatives auto",
+      "notes": [
+        "Extended Mix / Radio Mix (IDs morts timeout) redirigés vers Laisse Nous Raver jouable (PcpOcHlHiog).",
+        "Remplacement soft : Extended/radio/remix → original si le même artiste+titre joue.",
+        "Heal télémétrie 5xx lance aussi un remplacement après ensure (plus seulement load_skip).",
+        "Pins seed persistés en base au boot."
+      ]
+    },
+    {
+      "version": "1.3.398",
+      "date": "2026-10-26",
+      "time": "21:27",
+      "at": "2026-10-26T21:27:06+02:00",
+      "title": "Artiste/titre + reprise flux après navigation",
+      "notes": [
+        "Les noms collés type AronChupa s’affichent correctement (Aron Chupa).",
+        "Titres « Artiste - Morceau » sans artiste sont séparés.",
+        "La lecture ne se cale plus sur l’URL de page après une navigation dans l’app.",
+        "Recherche : un titre exact d’un autre artiste ne passe plus devant Stromae quand la requête nomme Stromae (typo ostromae)."
+      ]
+    },
+    {
+      "version": "1.3.397",
+      "date": "2026-10-26",
+      "time": "19:41",
+      "at": "2026-10-26T19:41:45+02:00",
+      "title": "Recherche : artistes récents et versions tendances",
+      "notes": [
+        "La recherche trouve mieux les artistes récents (Lenaïg, Lorette…) même sans fiche YouTube Music.",
+        "Pour un même titre (« la maison brûle »), plusieurs versions / artistes apparaissent en tête.",
+        "Les pubs « bientôt dispo sur les plateformes » sont écartées.",
+        "Les titres multi-mots passent toujours par YouTube (plus seulement l’index local figé)."
+      ]
+    },
     {
       "version": "1.3.396",
       "date": "2026-10-26",
@@ -2706,5 +2757,10 @@
         "Probe durée + refus des DL incomplets"
       ]
     }
-  ]
+  ],
+  "1.3.400": "Next/Prev media keys au premier plan → skipTo*FromExternal (plus de ViewPostIme silencieux).",
+  "1.3.401": "Mails erreur : breadcrumbs+logs toujours (buffer hors-ligne + batch alert) · heal android.player 5xx · Next media keys 1.3.400.",
+  "1.3.402": "Précédent : seuil hold 520ms (tap lent n’avale plus le skip) · politique prev testée (SkipQueuePolicy) · jamais restart si titre d’avant existe.",
+  "1.3.403": "Laisse Nous Raver Extended/Radio → original jouable · soft version fallback · heal 5xx lance remplacement · seeds Rekkt.",
+  "1.3.404": "Préfixe chaud 2 suivants · preflight serveur ×3 · .m4a×2 au repos · roadmap cache+heal (pas YT direct à chaque lecture)."
 }
