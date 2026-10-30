@@ -2477,9 +2477,11 @@ export async function handleStream(req: Request, res: Response) {
   // (30–90 s à froid) → 502 systématique sur les titres pas encore en cache.
   // Vidéo : resolve + fetch GV souvent plus lent (yt-dlp -g / pipe)
   // Offline : budget large pour downloadTrack / yt-dlp 140.
+  // Tête audio web/Android : 28 s max — au-delà openresty coupe en 504 HTML
+  // (pire que 503 JSON Retry-After). Offline / mid-range : budgets plus larges.
   const deadlineAt =
     Date.now() +
-    (wantOffline ? 95_000 : wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 55_000);
+    (wantOffline ? 95_000 : wantVideo ? 40_000 : midNeedsDisk ? 95_000 : 28_000);
   const ensureTime = (label: string) => {
     if (Date.now() >= deadlineAt) throw new Error(`stream deadline (${label})`);
   };
