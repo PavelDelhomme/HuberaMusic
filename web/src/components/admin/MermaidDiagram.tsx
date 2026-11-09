@@ -1,9 +1,10 @@
 /**
- * Rendu d'un diagramme Mermaid, sans dépendance npm lourde.
+ * Rendu d'un diagramme Mermaid.
  *
- * Mermaid est chargé à la demande depuis un CDN (ESM) et initialisé en mode
- * strict. Si le réseau est indisponible ou le rendu échoue, on affiche le code
- * source du diagramme : l'admin garde toujours une vue exploitable.
+ * Mermaid est chargé depuis le **bundle local** (dépendance npm) : la CSP de
+ * Hubera n'autorise que `'self'` pour les scripts, un CDN serait bloqué.
+ * Le CDN reste en second recours pour les contextes sans build (dev isolé).
+ * Si tout échoue, on affiche le code source : l'admin garde une vue exploitable.
  */
 import { useEffect, useRef, useState } from 'react';
 
@@ -12,32 +13,41 @@ type MermaidApi = {
   render: (id: string, code: string) => Promise<{ svg: string; bindFunctions?: (el: Element) => void }>;
 };
 
+/** Repli CDN (bloqué par la CSP en prod Hubera — conservé pour le dev local). */
 const CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
 let mermaidPromise: Promise<MermaidApi | null> | null = null;
 let seq = 0;
 
-/** Charge (une seule fois) Mermaid depuis le CDN. Renvoie null si indisponible. */
+/** Charge (une seule fois) Mermaid : bundle npm d'abord, CDN en repli. */
 function loadMermaid(): Promise<MermaidApi | null> {
   if (mermaidPromise) return mermaidPromise;
   mermaidPromise = (async () => {
-    try {
-      const mod = (await import(/* @vite-ignore */ CDN)) as { default?: MermaidApi } & MermaidApi;
-      const api = (mod.default ?? mod) as MermaidApi;
-      api.initialize({
-        startOnLoad: false,
-        securityLevel: 'strict',
-        theme: 'base',
-        themeVariables: {
-          fontFamily: 'ui-sans-serif, system-ui, sans-serif',
-          primaryColor: '#e0f2fe',
-          primaryTextColor: '#0f172a',
-          lineColor: '#64748b',
-        },
-      });
-      return api;
-    } catch {
-      return null;
+    const candidates: Array<() => Promise<unknown>> = [
+      () => import('mermaid'), // bundlé → servi en 'self', conforme CSP
+      () => import(/* @vite-ignore */ CDN),
+    ];
+    for (const load of candidates) {
+      try {
+        const mod = (await load()) as { default?: MermaidApi } & MermaidApi;
+        const api = (mod.default ?? mod) as MermaidApi;
+        if (typeof api?.render !== 'function') continue;
+        api.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: 'base',
+          themeVariables: {
+            fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+            primaryColor: '#1f2937',
+            primaryTextColor: '#f8fafc',
+            lineColor: '#6b7280',
+          },
+        });
+        return api;
+      } catch {
+        /* tentative suivante */
+      }
     }
+    return null;
   })();
   return mermaidPromise;
 }
