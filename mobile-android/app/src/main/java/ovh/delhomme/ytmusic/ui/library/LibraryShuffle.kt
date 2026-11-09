@@ -11,8 +11,8 @@ import ovh.delhomme.ytmusic.YtMusicApp
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.ShuffleHeadStore
 import ovh.delhomme.ytmusic.data.TrackDto
-import ovh.delhomme.ytmusic.data.resolvePinsPool
 import ovh.delhomme.ytmusic.player.PlayerCache
+import ovh.delhomme.ytmusic.player.QuickAccessLoopPolicy
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
 import ovh.delhomme.ytmusic.ui.util.toastMain
 
@@ -22,19 +22,24 @@ import ovh.delhomme.ytmusic.ui.util.toastMain
  * onPlay **immédiat** ; #0 priorise hors-ligne / SimpleCache / têtes serveur.
  * Warm lead en parallèle après (Exo a la bande).
  */
+/** File jouable en RAM / Exo — le reste reste dans [PlaybackService.Holder.fullQueue]. */
+private const val PLAY_RAM_CAP = 400
+
 suspend fun playLibraryShuffled(
     container: AppContainer,
     queue: List<TrackDto>,
     onPlay: (List<TrackDto>, Int) -> Unit,
     sourceKey: String = "lib:generic",
 ) = coroutineScope {
-    val playable = queue.filter { it.isPlayable() && it.id.length == 11 }
+    val playable = withContext(Dispatchers.Default) {
+        queue.filter { it.isPlayable() && it.id.length == 11 }
+    }
     if (playable.isEmpty()) {
         YtMusicApp.instance.toastMain("Aucun titre jouable", Toast.LENGTH_SHORT)
         return@coroutineScope
     }
     val ctx = YtMusicApp.instance
-    val recent = ShuffleHeadStore.loadRecentPlayed(ctx, max = 400).toHashSet()
+    val recent = ShuffleHeadStore.loadRecentPlayed(ctx, max = 8_000).toHashSet()
     var warmIds = container.libraryHeadPrefetcher.cachedShuffleHeadIds()
     // Heads en parallèle — ne bloque pas le play plus de ~200 ms
     val headsJob = if (warmIds.isEmpty()) {
@@ -62,9 +67,8 @@ suspend fun playLibraryShuffled(
                 PlayerCache.cachedBytes(ctx, id, StreamPrefetcher.HEAD_3S) >= MIN_HOT_BYTES
         }
     }
-    val biasWarm = hotWarm.ifEmpty { warmIds }
     val shuffled = withContext(Dispatchers.Default) {
-        trueShuffleQueue(playable, recent, biasWarm, offlineIds)
+        trueShuffleQueue(playable, recent, hotWarm, offlineIds)
     }
     val base = container.resolvedApiBase()
     val leadIds = shuffled.take(3).map { it.id }
@@ -75,44 +79,33 @@ suspend fun playLibraryShuffled(
         )
     // Ne pas cancelAll avant Exo si on a déjà une tête utile
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(if (lead0Hot) 180L else 420L)
+    StreamPrefetcher.quietPrefetch(400L)
     runCatching { container.downloadManager.cancelOpportunistic() }
     if (lead0Hot) {
         StreamPrefetcher.markHeadReady(lead0)
     }
     // Play tout de suite — zéro attente warm bloquant
-    onPlay(shuffled, 0)
+    val leadWindow = if (shuffled.size > PLAY_RAM_CAP) shuffled.take(PLAY_RAM_CAP) else shuffled
+    onPlay(leadWindow, 0)
+    ovh.delhomme.ytmusic.player.PlaybackService.Holder.rememberFullQueue(shuffled, leadWindow.size)
     ShuffleHeadStore.rememberPlayed(ctx, shuffled.take(1).map { it.id })
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
-            // #1 prioritaire pendant que #0 joue (auto-heal file)
-            StreamPrefetcher.prefetchNextDuringPlayback(
-                base,
-                shuffled.map { it.id },
-                0,
-                ignoreQuiet = true,
-            )
+            kotlinx.coroutines.delay(if (lead0Hot) 80L else 120L)
+            StreamPrefetcher.prefetchByProximity(base, shuffled.map { it.id }, 0, ahead = 4, force = true)
+            StreamPrefetcher.prefetchNextDuringPlayback(base, shuffled.map { it.id }, 0, ignoreQuiet = true)
             if (!lead0Hot) {
                 runCatching { StreamPrefetcher.warmTrackFormatOnly(base, lead0) }
-                runCatching {
-                    StreamPrefetcher.prefetchStartHead(
-                        base,
-                        lead0,
-                        StreamPrefetcher.HEAD_3S,
-                        priorityNext = true,
-                    )
-                }
             }
             withTimeoutOrNull(LEAD_WARM_TIMEOUT_MS) {
-                runCatching { StreamPrefetcher.prepareShuffleLead(base, leadIds) }
+                runCatching { StreamPrefetcher.prepareShuffleLead(base, leadIds.take(2)) }
             }
             runCatching {
-                val nextHead = shuffled.drop(3).take(8).map { it.id }
-                StreamPrefetcher.warmFormatsLight(base, nextHead, limit = 8)
-                StreamPrefetcher.warmHeads3s(base, shuffled.drop(1).take(4).map { it.id }, limit = 4)
+                val nextHead = shuffled.drop(1).take(4).map { it.id }
+                StreamPrefetcher.warmFormatsLight(base, nextHead, limit = 4)
                 val fp = ShuffleHeadStore.fingerprint(playable.take(500))
                 val cacheKey = ShuffleHeadStore.keyFor(sourceKey, fp)
-                ShuffleHeadStore.saveHead(ctx, cacheKey, shuffled.drop(1).take(12).map { it.id })
+                ShuffleHeadStore.saveHead(ctx, cacheKey, nextHead)
             }
             container.libraryHeadPrefetcher.requestSoon("after-shuffle")
         }
@@ -120,8 +113,9 @@ suspend fun playLibraryShuffled(
 }
 
 /**
- * #0 : hors-ligne → warm/hot → pool. #1–#2 aussi tirés du warm (évite skip froid).
- * Reste : mélange partiel.
+ * Mélange complet du pool (pas toujours les mêmes têtes).
+ * Si un titre est déjà en cache, il passe en #0 pour un départ < 2 s.
+ * Le reste de la bibliothèque suit dans la même file.
  */
 internal fun trueShuffleQueue(
     playable: List<TrackDto>,
@@ -130,41 +124,26 @@ internal fun trueShuffleQueue(
     offlineIds: Set<String> = emptySet(),
 ): List<TrackDto> {
     if (playable.size <= 1) return playable
+    // Anti-répétition session : pas de déjà-entendu tant qu’il reste du frais.
+    // Seulement quand TOUTE la biblio de la session a été entendue → on re-mélange.
     val fresh = playable.filter { it.id !in recent }
-    val pool = if (fresh.size >= (playable.size / 4).coerceAtLeast(8)) fresh else playable
-    val byId = pool.associateBy { it.id }
-    val warmSet = warmIds.toHashSet()
-    val offlineInPool = pool.filter { it.id in offlineIds }
-    val warmOffline = offlineInPool.filter { it.id in warmSet }
-    val warmInPool = pool.filter { it.id in warmSet }
-    val startPool = when {
-        warmOffline.isNotEmpty() -> warmOffline
-        offlineInPool.isNotEmpty() -> offlineInPool
-        warmInPool.isNotEmpty() -> warmInPool
-        else -> pool
-    }
-    val start = startPool.random()
-    val used = linkedSetOf(start.id)
-    val head = mutableListOf(start)
-    // #1 puis #2 : rester dans le lot serveur warm (sinon BUFFERING au skip)
-    for (wid in warmIds) {
-        if (head.size >= 3) break
-        if (wid in used) continue
-        val t = byId[wid] ?: continue
-        head += t
-        used += wid
-    }
-    val restPool = pool.filter { it.id !in used }
-    if (restPool.isEmpty()) return head
-    val copy = restPool.toMutableList()
-    val mixN = minOf(240, copy.size)
-    for (i in 0 until mixN) {
-        val j = i + kotlin.random.Random.nextInt(copy.size - i)
+    val pool = if (fresh.isNotEmpty()) fresh else playable
+    val copy = pool.toMutableList()
+    for (i in copy.lastIndex downTo 1) {
+        val j = kotlin.random.Random.nextInt(i + 1)
         val tmp = copy[i]
         copy[i] = copy[j]
         copy[j] = tmp
     }
-    return head + copy
+    val hot = (offlineIds + warmIds).toHashSet()
+    if (hot.isNotEmpty() && copy.first().id !in hot) {
+        val hotIndex = copy.indexOfFirst { it.id in hot }
+        if (hotIndex > 0) {
+            val t = copy.removeAt(hotIndex)
+            copy.add(0, t)
+        }
+    }
+    return copy
 }
 
 /**
@@ -176,14 +155,20 @@ suspend fun playQueueWithLead(
     startIndex: Int = 0,
     onPlay: (List<TrackDto>, Int) -> Unit,
 ) = coroutineScope {
-    val playable = queue.filter { it.isPlayable() && it.id.length == 11 }
+    val playable = withContext(Dispatchers.Default) {
+        queue.filter { it.isPlayable() && it.id.length == 11 }
+    }
     if (playable.isEmpty()) {
         YtMusicApp.instance.toastMain("Aucun titre jouable", Toast.LENGTH_SHORT)
         return@coroutineScope
     }
     val idx = startIndex.coerceIn(0, playable.lastIndex)
+    val from = idx
+    val to = (from + PLAY_RAM_CAP).coerceAtMost(playable.size)
+    val window = if (playable.size > PLAY_RAM_CAP) playable.subList(from, to) else playable
+    val localIdx = if (playable.size > PLAY_RAM_CAP) 0 else idx
     val base = container.resolvedApiBase()
-    val lead = playable.drop(idx).take(3).map { it.id }
+    val lead = window.drop(localIdx).take(20).map { it.id }
     val lead0 = lead.firstOrNull().orEmpty()
     val ctx = YtMusicApp.instance
     val hot = lead0.isNotEmpty() && (
@@ -192,39 +177,39 @@ suspend fun playQueueWithLead(
         )
     if (hot) StreamPrefetcher.markHeadReady(lead0)
     StreamPrefetcher.cancelIdle(preserveNext = true)
-    StreamPrefetcher.quietPrefetch(if (hot) 160L else 380L)
-    onPlay(playable, idx)
+    StreamPrefetcher.quietPrefetch(400L)
+    onPlay(window, localIdx)
+    ovh.delhomme.ytmusic.player.PlaybackService.Holder.rememberFullQueue(playable, from + window.size)
+    container.libraryHeadPrefetcher.warmDisplayedList(lead.take(3))
     if (base.isNotBlank() && !StreamPrefetcher.isStreamDown()) {
         launch(Dispatchers.IO) {
             runCatching { container.downloadManager.cancelOpportunistic() }
+            kotlinx.coroutines.delay(if (hot) 80L else 120L)
+            StreamPrefetcher.prefetchByProximity(base, window.map { it.id }, localIdx, ahead = 4, force = true)
+            StreamPrefetcher.prefetchNextDuringPlayback(base, window.map { it.id }, localIdx, ignoreQuiet = true)
             withTimeoutOrNull(LEAD_WARM_TIMEOUT_MS) {
-                runCatching { StreamPrefetcher.prepareShuffleLead(base, lead) }
+                runCatching { StreamPrefetcher.prepareShuffleLead(base, lead.take(2)) }
             }
-            StreamPrefetcher.warmFormatsLight(base, playable.drop(idx + 3).take(6).map { it.id }, limit = 6)
+            StreamPrefetcher.warmFormatsLight(base, lead.drop(1).take(4), limit = 4)
         }
     }
 }
 
 /**
- * Aléatoire Accès rapide : résout les pins en parallèle puis [playLibraryShuffled].
+ * Aléatoire Accès rapide : mélange complet des titres épinglés seulement.
+ * Pas de repli bibliothèque, pas d’extension playlist.
  * @return false si aucun titre jouable (caller → Toast).
  */
 suspend fun playQuickAccessShuffled(
-    container: AppContainer,
+    @Suppress("UNUSED_PARAMETER") container: AppContainer,
     pins: List<TrackDto>,
     onPlay: (List<TrackDto>, Int) -> Unit,
 ): Boolean {
-    if (pins.isEmpty()) return false
-    val uniq = withContext(Dispatchers.IO) {
-        resolvePinsPool(container.api, pins, container.mixCache)
-    }
-    if (uniq.isEmpty()) return false
-    playLibraryShuffled(
-        container,
-        uniq,
-        onPlay,
-        sourceKey = "home:pins",
-    )
+    val songs = QuickAccessLoopPolicy.playbackIds(
+        pins.map { it.id to it.isPlayable() },
+    ).mapNotNull { id -> pins.find { it.id == id } }
+    if (songs.isEmpty()) return false
+    onPlay(songs.shuffled(), 0)
     return true
 }
 

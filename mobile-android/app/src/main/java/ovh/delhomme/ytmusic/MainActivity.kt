@@ -3,6 +3,7 @@ package ovh.delhomme.ytmusic
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.net.Uri
@@ -19,30 +20,48 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.Toast
+import cloud.hubera.chrome.HuberaDrawerEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -57,6 +76,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -69,6 +89,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -153,6 +174,108 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        window.decorView.post {
+            excludeLeftEdge()
+            attachEdgeStrip()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        window.decorView.post {
+            excludeLeftEdge()
+            attachEdgeStrip()
+        }
+    }
+
+    /**
+     * Quand Music est au premier plan, les KEYCODE_MEDIA_* arrivent ici (IME)
+     * et ne passent pas par MediaSession — Next/Prev semblaient « cassés » via
+     * casque / adb / certains OEM. On forward vers le même chemin que la notif.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_MEDIA_NEXT,
+                KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD,
+                -> {
+                    PlaybackService.Holder.service?.skipToNextFromExternal()
+                        ?: PlaybackService.Holder.onSkipNext?.invoke()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+                KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD,
+                -> {
+                    PlaybackService.Holder.service?.skipToPreviousFromExternal()
+                        ?: PlaybackService.Holder.onSkipPrev?.invoke()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                KeyEvent.KEYCODE_HEADSETHOOK,
+                -> {
+                    val p = PlaybackService.Holder.player
+                    if (p != null) {
+                        if (p.isPlaying) p.pause() else p.play()
+                        return true
+                    }
+                }
+                KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                    PlaybackService.Holder.player?.play()
+                    return true
+                }
+                KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                    PlaybackService.Holder.player?.pause()
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    private var edgeDownX = 0f
+    private var edgeDownY = 0f
+
+    private fun attachEdgeStrip() {
+        val decor = window.decorView as? ViewGroup ?: return
+        if (decor.findViewWithTag<View>("hubera-edge") != null) return
+        val density = resources.displayMetrics.density
+        val edge = (28 * density).toInt().coerceAtLeast(1)
+        val strip = View(this)
+        strip.tag = "hubera-edge"
+        strip.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    edgeDownX = ev.rawX
+                    edgeDownY = ev.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - edgeDownX
+                    val dy = ev.rawY - edgeDownY
+                    if (edgeDownX <= edge && dx > 12f * density && kotlin.math.abs(dx) > kotlin.math.abs(dy)) {
+                        HuberaDrawerEdge.open?.invoke()
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+        decor.addView(
+            strip,
+            FrameLayout.LayoutParams(edge, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START),
+        )
+    }
+
+    /** Le geste système laisse le bord gauche au tiroir. */
+    private fun excludeLeftEdge() {
+        if (Build.VERSION.SDK_INT < 29) return
+        val density = resources.displayMetrics.density
+        val width = (28 * density).toInt().coerceAtLeast(1)
+        val height = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+        ViewCompat.setSystemGestureExclusionRects(
+            window.decorView,
+            listOf(Rect(0, 0, width, height)),
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -202,17 +325,33 @@ class MainActivity : ComponentActivity() {
             "plm.delhomme.ovh",
             "ytmusic.delhomme.ovh",
             "pue-la-merde.delhomme.ovh",
+            "ytmusic-preprod.delhomme.ovh",
+            "music.hubera.cloud",
         )
+
+        private fun isLoginDeviceHost(host: String): Boolean {
+            if (host.isEmpty()) return false
+            if (host in LOGIN_DEVICE_HOSTS) return true
+            if (host == "hubera.cloud" || host.endsWith(".hubera.cloud")) return true
+            if (host.endsWith(".delhomme.ovh")) return true
+            return host == "localhost" || host == "127.0.0.1"
+        }
 
         fun parseDeviceLogin(uri: Uri?): DeviceLoginDeepLink? {
             if (uri == null) return null
             val host = uri.host?.lowercase().orEmpty()
+            val path = uri.path.orEmpty()
+            val isLoginPath =
+                path.startsWith("/login-device") ||
+                    path.contains("login-device") ||
+                    host == "login-device"
             val isHttps =
                 (uri.scheme == "https" || uri.scheme == "http") &&
-                    host in LOGIN_DEVICE_HOSTS &&
-                    (uri.path?.startsWith("/login-device") == true)
+                    isLoginPath &&
+                    (isLoginDeviceHost(host) || isLoginPath)
             val isCustom =
-                (uri.scheme == "ytmusic" || uri.scheme == "plm") && uri.host == "login-device"
+                (uri.scheme == "ytmusic" || uri.scheme == "plm" || uri.scheme == "hubera") &&
+                    (host == "login-device" || isLoginPath)
             if (!isHttps && !isCustom) return null
             val claim = uri.getQueryParameter("claim")?.trim().orEmpty()
             if (claim.isNotEmpty()) return DeviceLoginDeepLink.Claim(claim)
@@ -235,6 +374,7 @@ private sealed class Tab(val route: String, val label: String, val icon: ImageVe
     data object Library : Tab("library", "Biblio", Icons.Default.LibraryMusic)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun YtMusicAppContent(
     container: AppContainer,
@@ -245,6 +385,7 @@ fun YtMusicAppContent(
     val scope = rememberCoroutineScope()
     var loggedIn by remember { mutableStateOf<Boolean?>(null) }
     var showNowPlaying by remember { mutableStateOf(false) }
+    var suppressPlayerOpenUntil by remember { mutableLongStateOf(0L) }
     var playerFocusToken by remember { mutableIntStateOf(0) }
     var openLyricsToken by remember { mutableIntStateOf(0) }
     var pendingOpenAddPlaylist by remember { mutableStateOf(false) }
@@ -320,14 +461,27 @@ fun YtMusicAppContent(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    var leftWhilePaused by remember { mutableStateOf(false) }
+    val nowPlayingOpen = rememberUpdatedState(showNowPlaying)
     DisposableEffect(lifecycleOwner, player) {
         val obs = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> {
+                    PlaybackService.Holder.service?.holdSilenceOnForeground("activity-start")
                     player.healAfterBackground()
                     player.connect()
+                    // Pause + retour dans l’app : rester sur la barre, ne pas rouvrir le plein écran
+                    // et ne pas relancer le son. Un titre qui joue vraiment reste où il était.
+                    if (leftWhilePaused && !player.state.value.playing) {
+                        showNowPlaying = false
+                    }
+                    leftWhilePaused = false
                 }
                 Lifecycle.Event.ON_STOP -> {
+                    PlaybackService.Holder.service?.snapshotLeaveForeground()
+                    if (nowPlayingOpen.value && !player.state.value.playing) {
+                        leftWhilePaused = true
+                    }
                     player.flushPersist()
                     // Ne PAS cancelIdle ici : en arrière-plan la lecture continue
                     // et le prefetch de la file doit rester actif (sinon coupures).
@@ -392,15 +546,7 @@ fun YtMusicAppContent(
     LaunchedEffect(Unit) {
         val intent = activity?.intent
         val injected = intent?.getStringExtra(MainActivity.EXTRA_ACCESS_TOKEN)?.trim().orEmpty()
-        // Toujours tenter LAN→prod (émulateur, hors Wi‑Fi maison) avant session debug ou stockée.
-        val switched = container.ensureReachableApiOrFallbackToProd()
-        if (switched) {
-            Toast.makeText(
-                context,
-                "API locale injoignable — bascule PROD",
-                Toast.LENGTH_LONG,
-            ).show()
-        }
+        // Peindre l’accueil dès qu’il y a des tokens locaux — ne pas bloquer sur le probe API.
         if (BuildConfig.DEBUG && injected.isNotEmpty()) {
             container.tokenStore.saveSession(
                 injected,
@@ -417,14 +563,33 @@ fun YtMusicAppContent(
             val hasTokens =
                 !container.tokenStore.peekAccess().isNullOrBlank() ||
                     !container.tokenStore.getRefresh().isNullOrBlank()
-            val validated = withTimeoutOrNull(15_000L) {
-                container.validateSession()
-            }
-            loggedIn = when (validated) {
-                true -> true
-                false -> false
-                null -> hasTokens // API lente / timeout → rester connecté si tokens
-            }
+            if (hasTokens) loggedIn = true
+        }
+        val switched = container.ensureReachableApiOrFallbackToProd()
+        if (switched) {
+            Toast.makeText(
+                context,
+                "API locale injoignable — bascule PROD",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+        if (loggedIn != true && !(BuildConfig.DEBUG && injected.isNotEmpty())) {
+            container.tokenStore.warmCache()
+            val hasTokens =
+                !container.tokenStore.peekAccess().isNullOrBlank() ||
+                    !container.tokenStore.getRefresh().isNullOrBlank()
+            if (hasTokens) loggedIn = true
+        }
+        val validated = withTimeoutOrNull(15_000L) {
+            container.validateSession()
+        }
+        val hasTokensNow =
+            !container.tokenStore.peekAccess().isNullOrBlank() ||
+                !container.tokenStore.getRefresh().isNullOrBlank()
+        loggedIn = when (validated) {
+            true -> true
+            false -> false
+            null -> hasTokensNow || loggedIn == true
         }
     }
 
@@ -462,8 +627,10 @@ fun YtMusicAppContent(
                 context.packageManager.canRequestPackageInstalls() &&
                 ovh.delhomme.ytmusic.update.UpdateRelaunch.consumePendingAfterPermission(context)
             ) {
-                Toast.makeText(context, "Permission OK — relance de la mise à jour…", Toast.LENGTH_SHORT).show()
-                apkUpdater.startManualUpdate()
+                Toast.makeText(context, "Permission OK — installation du fichier déjà téléchargé", Toast.LENGTH_SHORT).show()
+                if (!apkUpdater.installCachedApkWithoutDownload()) {
+                    apkUpdater.startManualUpdate()
+                }
                 return@LifecycleEventObserver
             }
             if (pendingUpdate?.available == true) return@LifecycleEventObserver
@@ -512,6 +679,9 @@ fun YtMusicAppContent(
     BackHandler(enabled = loggedIn == true && showNowPlaying) {
         showNowPlaying = false
     }
+    BackHandler(enabled = loggedIn != true) {
+        (context as? android.app.Activity)?.moveTaskToBack(true)
+    }
 
     when (loggedIn) {
         null -> Box(
@@ -522,7 +692,7 @@ fun YtMusicAppContent(
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    "PLM",
+                    "Hubera Music",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -609,7 +779,7 @@ fun YtMusicAppContent(
                         Toast.makeText(
                             context,
                             if (ok) {
-                                "Regarde l’écran Confirmer (derrière PLM parfois)"
+                                "Regarde l’écran Confirmer (parfois derrière l’app)"
                             } else {
                                 "Écran système introuvable — appuie Plus tard ou réessaie dans Compte"
                             },
@@ -627,7 +797,15 @@ fun YtMusicAppContent(
                     apkUpdater.dismissAwaitingConfirm(snooze = true)
                     Toast.makeText(context, "Mise à jour reportée", Toast.LENGTH_SHORT).show()
                 },
-                onOpenPlayer = {
+                onOpenPlayer = open@{
+                    if (
+                        ovh.delhomme.ytmusic.player.DetailOpenPolicy.shouldIgnorePlayerReopen(
+                            android.os.SystemClock.elapsedRealtime(),
+                            suppressPlayerOpenUntil,
+                        )
+                    ) {
+                        return@open
+                    }
                     val ui = player.state.value
                     if (ui.track != null || ui.queueSize > 0) {
                         showNowPlaying = true
@@ -635,6 +813,11 @@ fun YtMusicAppContent(
                     }
                 },
                 onClosePlayer = { showNowPlaying = false },
+                onLeavePlayerForDetail = {
+                    suppressPlayerOpenUntil = android.os.SystemClock.elapsedRealtime() +
+                        ovh.delhomme.ytmusic.player.DetailOpenPolicy.PLAYER_REOPEN_SUPPRESS_MS
+                    showNowPlaying = false
+                },
                 onPlayTracks = { tracks, idx ->
                     val t = tracks.getOrNull(idx)
                     AppLog.breadcrumb("play", "${t?.id ?: "?"} idx=$idx n=${tracks.size}")
@@ -670,6 +853,7 @@ fun YtMusicAppContent(
                             }
                         }
                     }
+                    val pinsish = title.startsWith("Accès rapide")
                     if (radioish) {
                         player.playRadioOrEnqueue(tracks, title, sourceKind = "mix")
                     } else {
@@ -678,7 +862,11 @@ fun YtMusicAppContent(
                             idx,
                             title = title,
                             userQueueEnd = tracks.size,
-                            sourceKind = if (historyish) "history" else "library",
+                            sourceKind = when {
+                                pinsish -> "pins"
+                                historyish -> "history"
+                                else -> "library"
+                            },
                         )
                     }
                     showNowPlaying = false
@@ -699,6 +887,7 @@ fun YtMusicAppContent(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainTabs(
     container: AppContainer,
@@ -717,6 +906,7 @@ private fun MainTabs(
     onUpdateBannerDismiss: () -> Unit = {},
     onOpenPlayer: () -> Unit,
     onClosePlayer: () -> Unit,
+    onLeavePlayerForDetail: () -> Unit = onClosePlayer,
     onPlayTracks: (List<TrackDto>, Int) -> Unit,
     onPlayNamed: (List<TrackDto>, Int, String) -> Unit = { tracks, idx, _ -> onPlayTracks(tracks, idx) },
     onLoggedOut: () -> Unit,
@@ -869,7 +1059,7 @@ private fun MainTabs(
                 ).show()
                 return@launch
             }
-            onClosePlayer()
+            onLeavePlayerForDetail()
             nav.navigate("detail/artist/${Uri.encode(resolved)}")
         }
     }
@@ -893,6 +1083,7 @@ private fun MainTabs(
     var forceOnboarding by remember { mutableStateOf(false) }
     var onboardingChecked by remember { mutableStateOf(false) }
     var showGoogleLink by remember { mutableStateOf(false) }
+    var showHuberaNotice by remember { mutableStateOf(false) }
 
     var sessionHydrated by remember { mutableStateOf(false) }
     var pendingRemoteLabel by remember { mutableStateOf<String?>(null) }
@@ -903,7 +1094,7 @@ private fun MainTabs(
     LaunchedEffect(sessionHydrated, hasPlayback, openPlayerFromIntent) {
         if (!openPlayerFromIntent || openPlayerIntentHandled || !sessionHydrated) return@LaunchedEffect
         openPlayerIntentHandled = true
-        if (hasPlayback) onOpenPlayer()
+        if (hasPlayback && player.state.value.playing) onOpenPlayer()
     }
 
     // Sync J’aime ↔ notification média (cœur dans le panneau système)
@@ -930,7 +1121,7 @@ private fun MainTabs(
         runCatching {
             val learned = container.api.lyricOffsets().offsets
             if (learned.isNotEmpty()) {
-                val prefs = container.sharedPrefs("plm_lyric_sync_v1")
+                val prefs = container.sharedPrefs("plm_lyric_sync_v2")
                 val ed = prefs.edit()
                 for ((id, ms) in learned) {
                     if (id.isBlank() || ms == 0L) continue
@@ -968,6 +1159,10 @@ private fun MainTabs(
             // Dialog opt-in seulement — jamais de navigation auto vers OAuth (écran bloquant)
             if (me != null && !guest && !streamReady && !cool && !forceOnboarding) {
                 showGoogleLink = true
+            }
+            val huberaPrefs = container.sharedPrefs("hubera_notice")
+            if (me != null && !guest && !huberaPrefs.getBoolean("seen_v1", false)) {
+                showHuberaNotice = true
             }
         }
         if (!sessionHydrated) {
@@ -1393,16 +1588,82 @@ private fun MainTabs(
             }
         }
     }
-
-    Scaffold(
-        contentWindowInsets = if (showBottomChrome || isDetailRoute) {
-            WindowInsets.safeDrawing
+    // Accueil : mettre en arrière-plan. Recherche / Biblio : revenir à l’accueil.
+    BackHandler(
+        enabled = !playerExpanded && (routeRoot == null || routeRoot in mainTabRoutes),
+    ) {
+        if (routeRoot == null || routeRoot == Tab.Home.route) {
+            (context as? android.app.Activity)?.moveTaskToBack(true)
         } else {
-            WindowInsets(0, 0, 0, 0)
+            nav.navigate(Tab.Home.route) {
+                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
+    val musicDrawerState = rememberDrawerState(DrawerValue.Closed)
+    val musicDrawerScope = rememberCoroutineScope()
+    DisposableEffect(musicDrawerState) {
+        val previous = HuberaDrawerEdge.open
+        HuberaDrawerEdge.open = { musicDrawerScope.launch { musicDrawerState.open() } }
+        onDispose {
+            if (HuberaDrawerEdge.open != previous) HuberaDrawerEdge.open = previous
+        }
+    }
+    BackHandler(enabled = musicDrawerState.isOpen) {
+        musicDrawerScope.launch { musicDrawerState.close() }
+    }
+    ModalNavigationDrawer(
+        drawerState = musicDrawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 4.dp, top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Menu Hubera Music",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    IconButton(onClick = { musicDrawerScope.launch { musicDrawerState.close() } }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Fermer le menu")
+                    }
+                }
+                Text(
+                    "Compte",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            musicDrawerScope.launch { musicDrawerState.close() }
+                            nav.navigate("account") { launchSingleTop = true }
+                        }
+                        .padding(16.dp),
+                )
+            }
+        },
+    ) {
+    Scaffold(
+        // Compte / Historique / Aide ont déjà un TopAppBar (status bar).
+        // Si bottomBar (mini-lecteur / nav) est affiché, NE PAS réappliquer l’inset
+        // bas sur le contenu : sinon bande noire vide entre le texte et le lecteur
+        // (double safeDrawing.Bottom — surtout visible sur Compte).
+        contentWindowInsets = when {
+            showBottomChrome -> WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+            isDetailRoute -> WindowInsets.safeDrawing
+            else -> WindowInsets(0, 0, 0, 0)
         },
         bottomBar = {
             if (showBottomChrome) {
-                Column(Modifier.navigationBarsPadding()) {
+                Column(
+                    Modifier.windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom),
+                    ),
+                ) {
                     val online by ovh.delhomme.ytmusic.data.NetworkMonitor.onlineFlow.collectAsState(
                         initial = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline(),
                     )
@@ -1533,6 +1794,7 @@ private fun MainTabs(
                     val landscapeChrome = isLandscape()
                     NavigationBar(
                         containerColor = MaterialTheme.colorScheme.surface,
+                        windowInsets = WindowInsets(0, 0, 0, 0),
                         modifier = if (landscapeChrome) Modifier.height(52.dp) else Modifier,
                     ) {
                         tabs.forEach { tab ->
@@ -1599,6 +1861,7 @@ private fun MainTabs(
                     onMore = { menuTrack = it; menuPlaylistId = null },
                     onOpenDetail = ::openDetail,
                     onOpenArtist = ::openArtist,
+                    onOpenAccount = { nav.navigate("account") },
                 )
             }
             composable(Tab.Library.route) {
@@ -1649,6 +1912,7 @@ private fun MainTabs(
             composable("help_limits") {
                 ovh.delhomme.ytmusic.ui.components.HelpLimitsScreen(
                     onBack = { nav.popBackStack() },
+                    huberaMessage = container.apkUpdateManager.lastHuberaMessage(),
                 )
             }
             composable("history") {
@@ -1777,6 +2041,7 @@ private fun MainTabs(
             }
         }
     }
+    }
 
     menuTrack?.let { track ->
         TrackActionsSheet(
@@ -1795,9 +2060,22 @@ private fun MainTabs(
                 menuTrack = null
                 menuPlaylistId = null
             },
-            onOpenAlbum = { id ->
-                onClosePlayer()
-                nav.navigate("detail/album/${Uri.encode(id)}")
+            onOpenAlbum = album@{ id ->
+                if (!ovh.delhomme.ytmusic.player.DetailOpenPolicy.closesPlayer("album")) return@album
+                onLeavePlayerForDetail()
+                playerSheetMounted = false
+                val albumId = id.trim()
+                if (albumId.isEmpty()) return@album
+                scope.launch {
+                    kotlinx.coroutines.delay(48)
+                    onLeavePlayerForDetail()
+                    playerSheetMounted = false
+                    runCatching {
+                        nav.navigate("detail/album/${Uri.encode(albumId)}") {
+                            launchSingleTop = true
+                        }
+                    }
+                }
             },
             onOpenArtist = { id ->
                 openArtist(id, "")
@@ -1904,6 +2182,35 @@ private fun MainTabs(
         CastSheet(container = container, player = player, onDismiss = { showCast = false })
     }
 
+    if (showHuberaNotice && !forceOnboarding) {
+        AlertDialog(
+            onDismissRequest = {
+                container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                showHuberaNotice = false
+            },
+            title = { Text("Hubera Music") },
+            text = {
+                Text(
+                    "Hubera Music. Ton compte et tes playlists restent. " +
+                        "Détails dans Compte → Aide & limites. Le login local continue : rien n’est fusionné.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                    showHuberaNotice = false
+                    nav.navigate("help_limits")
+                }) { Text("Aide & limites") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    container.sharedPrefs("hubera_notice").edit().putBoolean("seen_v1", true).apply()
+                    showHuberaNotice = false
+                }) { Text("OK") }
+            },
+        )
+    }
+
     if (showGoogleLink && !forceOnboarding) {
         AlertDialog(
             onDismissRequest = {
@@ -1915,7 +2222,7 @@ private fun MainTabs(
             text = {
                 Text(
                     "Une fois : choisis ton compte Google sur le téléphone (code appareil, sans mot de passe). " +
-                        "PLM signe tes streams avec ton compte — ça reste actif après les mises à jour. " +
+                        "L’app signe tes streams avec ton compte — ça reste actif après les mises à jour. " +
                         "Option biblio : likes / playlists ensuite.",
                 )
             },

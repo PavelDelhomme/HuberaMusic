@@ -35,7 +35,7 @@ function installSteps(platform: Platform): { title: string; steps: string[] } {
       return {
         title: 'iPhone / iPad (Safari)',
         steps: [
-          'Ouvre PLM dans Safari (pas Chrome).',
+          'Ouvre MHC dans Safari (pas Chrome).',
           'Appuie sur Partager (carré avec flèche).',
           'Choisis « Sur l’écran d’accueil » → Ajouter.',
         ],
@@ -45,7 +45,7 @@ function installSteps(platform: Platform): { title: string; steps: string[] } {
         title: 'Android — APK native',
         steps: [
           'Ouvre la page /install (bouton ci-dessous).',
-          'Télécharge PLM.apk — pas « Ajouter à l’écran d’accueil ».',
+          'Télécharge MHC.apk — pas « Ajouter à l’écran d’accueil ».',
           'Xiaomi : autorise les sources inconnues, ouvre le fichier dans Téléchargements.',
         ],
       };
@@ -54,7 +54,7 @@ function installSteps(platform: Platform): { title: string; steps: string[] } {
         title: 'Windows (Edge / Chrome)',
         steps: [
           'Cherche l’icône ⊕ / « Installer » dans la barre d’adresse.',
-          'Ou menu ⋮ → Applications → « Installer PLM ».',
+          'Ou menu ⋮ → Applications → « Installer MHC ».',
           'Edge : … → Applications → Installer ce site en tant qu’application.',
         ],
       };
@@ -63,7 +63,7 @@ function installSteps(platform: Platform): { title: string; steps: string[] } {
         title: 'macOS (Chrome / Edge / Safari)',
         steps: [
           'Chrome/Edge : icône ⊕ dans la barre d’adresse → Installer.',
-          'Ou menu ⋮ → Enregistrer et partager → Installer PLM.',
+          'Ou menu ⋮ → Enregistrer et partager → Installer MHC.',
           'Safari : Fichier → Ajouter au Dock (macOS Sonoma+).',
         ],
       };
@@ -72,7 +72,7 @@ function installSteps(platform: Platform): { title: string; steps: string[] } {
         title: 'Linux (Chrome / Chromium / Edge)',
         steps: [
           'Icône ⊕ / Installer dans la barre d’adresse.',
-          'Ou menu ⋮ → Installer PLM…',
+          'Ou menu ⋮ → Installer MHC…',
           'L’app apparaît dans ton lanceur d’applications.',
         ],
       };

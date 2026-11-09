@@ -17,6 +17,15 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
+import { docsTaskFromGroup, groupErrorSignatures } from './groupErrors';
+
+function docsFailLabel(error?: string) {
+  if (error === 'allowlist') return 'Hubera Docs refuse ce compte';
+  if (error === 'unreachable') return 'Hubera Docs est injoignable';
+  if (error === 'auth' || error === 'invalid') return 'Session Docs refusée';
+  return 'Hubera Docs n’a pas créé la tâche';
+}
+
 export function AdminPage() {
   const user = useAuth((s) => s.user);
   const [status, setStatus] = useState<any>(null);
@@ -42,6 +51,8 @@ export function AdminPage() {
   const [telemetry, setTelemetry] = useState<{ stats: any; events: any[] } | null>(null);
   const [mails, setMails] = useState<any[]>([]);
   const [levelFilter, setLevelFilter] = useState('');
+  const [docsBusy, setDocsBusy] = useState('');
+  const [docsNote, setDocsNote] = useState('');
   const [reco, setReco] = useState<any>(null);
   const [recoMode, setRecoMode] = useState('radio');
   const [recoWeights, setRecoWeights] = useState({
@@ -684,7 +695,53 @@ bash scripts/deploy/link-home-stream.sh
         </div>
         <p className="mb-4 text-sm text-yt-muted">
           Client web, PWA mobile et desktop envoient erreurs, perf JS heap et batterie (si dispo).
+          Les erreurs sont groupées par app et par signature. « Tâche Docs » crée une tâche
+          bug dans la colonne À faire.
         </p>
+        {docsNote && <p className="mb-3 text-sm text-yt-muted">{docsNote}</p>}
+        <ul className="mb-4 space-y-1 text-xs">
+          {groupErrorSignatures(telemetry?.events || []).slice(0, 12).map((g) => {
+            const key = `${g.app}|${g.signature}`;
+            return (
+            <li key={key} className="flex items-center justify-between gap-2 rounded-lg bg-black/30 px-3 py-2">
+              <span>
+                {g.count} × {g.app} — {g.signature}
+              </span>
+              <button
+                type="button"
+                disabled={docsBusy === key}
+                className="shrink-0 rounded-md border border-white/20 px-2 py-1 disabled:opacity-50"
+                onClick={() => {
+                  const task = docsTaskFromGroup(g);
+                  setDocsBusy(key);
+                  void api
+                    .adminDocsTask(task)
+                    .then(async (res) => {
+                      if (res.ok) {
+                        setDocsNote(`Tâche Docs créée pour ${g.app}${res.id ? ` (${res.id})` : ''}.`);
+                        return;
+                      }
+                      await navigator.clipboard.writeText(JSON.stringify(task, null, 2));
+                      setDocsNote('');
+                      setErr(`${docsFailLabel(res.error)} — JSON copié pour ${g.app}.`);
+                    })
+                    .catch(async () => {
+                      try {
+                        await navigator.clipboard.writeText(JSON.stringify(task, null, 2));
+                        setErr(`Hubera Docs injoignable — JSON copié pour ${g.app}.`);
+                      } catch {
+                        setErr(`Hubera Docs injoignable — tâche non créée pour ${g.app}.`);
+                      }
+                    })
+                    .finally(() => setDocsBusy((cur) => (cur === key ? '' : cur)));
+                }}
+              >
+                {docsBusy === key ? 'Création…' : 'Tâche Docs'}
+              </button>
+            </li>
+            );
+          })}
+        </ul>
         <div className="max-h-80 overflow-auto rounded-xl bg-black/40">
           <table className="w-full text-left text-xs">
             <thead className="sticky top-0 bg-yt-elevated text-yt-muted">
@@ -986,7 +1043,7 @@ bash scripts/deploy/link-home-stream.sh
         ) : (
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center">
             <div className="flex-1">
-              <h2 className="font-display text-2xl font-semibold">Installe PLM (PWA)</h2>
+              <h2 className="font-display text-2xl font-semibold">Installe MHC (PWA)</h2>
               <p className="mt-2 max-w-md text-sm text-yt-muted">
                 Même Wi‑Fi que cet ordinateur. Scanne le QR, ouvre le lien, puis installe en PWA
                 (plein écran, icône, offline).
@@ -1085,7 +1142,7 @@ bash scripts/deploy/link-home-stream.sh
             </li>
             <li>
               <strong className="text-white">Ordinateur</strong> — Chrome/Edge propose « Installer
-              PLM » uniquement si pas déjà installé (bannière conditionnelle).
+              MHC » uniquement si pas déjà installé (bannière conditionnelle).
             </li>
             <li>
               <strong className="text-white">Electron</strong> —{' '}
@@ -1166,7 +1223,7 @@ function MaintenanceAdminBlock() {
                 maintenance: next,
                 maintenanceMessage: next
                   ? message.trim() ||
-                    'PLM est en maintenance — réessaie dans un instant.'
+                    'MHC est en maintenance — réessaie dans un instant.'
                   : null,
                 maintenanceUntil: next ? until : null,
                 maintenanceBlockPlayback: next ? blockPlayback : false,

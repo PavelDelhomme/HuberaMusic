@@ -14,8 +14,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /**
- * Clic court → [onClick] (skip).
+ * Clic court → [onClick] (skip Next/Prev).
  * Appui long → seek répété via [onHoldTick] dans le titre courant.
+ *
+ * Seuil volontairement large (~520 ms) : un tap un peu lent ne doit **pas**
+ * être pris pour un hold (sinon Précédent/Suivant semblent cassés — le clic
+ * est avalé et seul un seek −2 s a lieu).
  */
 @Composable
 fun HoldSeekIconButton(
@@ -27,24 +31,28 @@ fun HoldSeekIconButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    var suppressClick by remember { mutableStateOf(false) }
+    var heldSeek by remember { mutableStateOf(false) }
 
     LaunchedEffect(pressed, enabled) {
-        if (!pressed || !enabled) return@LaunchedEffect
-        suppressClick = false
-        delay(320)
-        if (!isActive) return@LaunchedEffect
-        suppressClick = true
+        if (!pressed || !enabled) {
+            // Relâchement : ne pas laisser heldSeek coincé si le delay n’a pas fini.
+            return@LaunchedEffect
+        }
+        heldSeek = false
+        delay(HOLD_THRESHOLD_MS)
+        if (!isActive || !pressed) return@LaunchedEffect
+        heldSeek = true
         while (isActive) {
             onHoldTick()
-            delay(280)
+            delay(HOLD_TICK_MS)
         }
     }
 
     IconButton(
         onClick = {
-            if (suppressClick) {
-                suppressClick = false
+            if (heldSeek) {
+                // Fin d’un vrai appui long : pas de skip.
+                heldSeek = false
                 return@IconButton
             }
             onClick()
@@ -55,3 +63,7 @@ fun HoldSeekIconButton(
         content = content,
     )
 }
+
+/** Avant ce délai, tout relâchement = clic skip (Next/Prev). */
+internal const val HOLD_THRESHOLD_MS = 520L
+internal const val HOLD_TICK_MS = 280L

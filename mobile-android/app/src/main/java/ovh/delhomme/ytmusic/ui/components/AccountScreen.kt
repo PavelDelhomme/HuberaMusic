@@ -6,11 +6,14 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -31,16 +34,19 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -77,6 +83,8 @@ import ovh.delhomme.ytmusic.auth.PasskeyAuth
 import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.RefreshBody
 import ovh.delhomme.ytmusic.data.UserDto
+import ovh.delhomme.ytmusic.debug.AppLog
+import ovh.delhomme.ytmusic.debug.TelemetryReporter
 import ovh.delhomme.ytmusic.ui.auth.QrScannerScreen
 import ovh.delhomme.ytmusic.ui.util.toastMain
 import ovh.delhomme.ytmusic.update.ApkUpdateManager
@@ -107,6 +115,9 @@ fun AccountScreen(
     var showQrScanner by remember { mutableStateOf(false) }
     var inviteClaimUrl by remember { mutableStateOf<String?>(null) }
     var inviteBusy by remember { mutableStateOf(false) }
+    var showReportProblem by remember { mutableStateOf(false) }
+    var reportNote by remember { mutableStateOf("") }
+    var reportBusy by remember { mutableStateOf(false) }
     var ytmLinked by remember {
         mutableStateOf(container.sharedPrefs("ytm_google").getBoolean("linked", false))
     }
@@ -141,22 +152,25 @@ fun AccountScreen(
         listenStats = withContext(Dispatchers.IO) {
             runCatching {
                 container.ensureFreshToken()
-                val detailed = container.api.historyDetailed()
-                val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
-                val recent = detailed.events.filter { it.createdAt >= weekAgo }
-                if (recent.isEmpty()) {
-                    val hist = container.api.history().history
-                    if (hist.isEmpty()) null
-                    else "Historique · ${hist.size} titres récents"
-                } else {
-                    val top = recent
-                        .groupingBy { it.track?.title?.takeIf { t -> t.isNotBlank() } ?: it.trackId }
-                        .eachCount()
-                        .maxByOrNull { it.value }
-                    val topLabel = top?.key?.let { " · top : $it" }.orEmpty()
-                    "${recent.size} écoutes (7 j)$topLabel"
-                }
-            }.getOrNull()
+                val s = container.api.historyStats()
+                val top = s.topWeek?.title?.takeIf { it.isNotBlank() }
+                    ?: s.topWeek?.trackId?.takeIf { !it.isNullOrBlank() }
+                val topLabel = top?.let { " · top : $it" }.orEmpty()
+                "Aujourd’hui ${s.day} · 7 j ${s.week} · 30 j ${s.month}$topLabel"
+            }.getOrElse {
+                runCatching {
+                    val detailed = container.api.historyDetailed()
+                    val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+                    val recent = detailed.events.filter { it.createdAt >= weekAgo }
+                    if (recent.isEmpty()) {
+                        val hist = container.api.history().history
+                        if (hist.isEmpty()) null
+                        else "Historique · ${hist.size} titres récents"
+                    } else {
+                        "${recent.size} écoutes (7 j)"
+                    }
+                }.getOrNull()
+            }
         }
     }
 
@@ -189,11 +203,66 @@ fun AccountScreen(
                     is DeviceLoginDeepLink.Claim -> {
                         context.toastMain("Ce QR est une invite — scanne-le depuis l’écran de login")
                     }
-                    null -> context.toastMain("QR non reconnu")
+                    null -> context.toastMain("QR non reconnu — ce n’est pas un QR de connexion Hubera Music")
                 }
             },
         )
         return
+    }
+
+    if (showReportProblem) {
+        AlertDialog(
+            onDismissRequest = { if (!reportBusy) showReportProblem = false },
+            title = { Text("Signaler un problème") },
+            text = {
+                Column {
+                    Text(
+                        "Décris ce qui cloche (optionnel). On envoie aussi le journal de cet appareil " +
+                            "(version, erreurs, ce qui s’est passé) pour qu’on puisse voir.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedTextField(
+                        value = reportNote,
+                        onValueChange = { reportNote = it.take(2_000) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp),
+                        minLines = 3,
+                        maxLines = 6,
+                        enabled = !reportBusy,
+                        placeholder = { Text("Ex. la lecture coupe, le QR ne marche plus…") },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !reportBusy,
+                    onClick = {
+                        reportBusy = true
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    TelemetryReporter.reportUserProblem(reportNote)
+                                }
+                                context.toastMain("Problème signalé — merci")
+                                showReportProblem = false
+                                reportNote = ""
+                            }.onFailure {
+                                AppLog.w("user-report", it.message ?: "fail", it)
+                                context.toastMain(it.message ?: "Envoi impossible — réessaie")
+                            }
+                            reportBusy = false
+                        }
+                    },
+                ) { Text(if (reportBusy) "Envoi…" else "Envoyer") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !reportBusy,
+                    onClick = { showReportProblem = false },
+                ) { Text("Annuler") }
+            },
+        )
     }
 
     LaunchedEffect(Unit) {
@@ -217,7 +286,11 @@ fun AccountScreen(
     }
 
     Scaffold(
-        contentWindowInsets = WindowInsets.safeDrawing,
+        // Pas d’inset bas : le mini-lecteur / nav du Scaffold parent gère déjà le bas.
+        // Sinon bande noire illisible entre le contenu Compte et le lecteur.
+        contentWindowInsets = WindowInsets.safeDrawing.only(
+            WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
+        ),
         topBar = {
             TopAppBar(
                 title = { Text("Compte") },
@@ -234,7 +307,7 @@ fun AccountScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(top = 4.dp),
-            contentPadding = PaddingValues(bottom = 32.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
         ) {
             item {
                 Column(
@@ -290,6 +363,21 @@ fun AccountScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             }
 
+            if (updateUi.phase != ApkUpdateManager.Phase.Downloading &&
+                updateUi.phase != ApkUpdateManager.Phase.Installing &&
+                updateUi.phase != ApkUpdateManager.Phase.Available
+            ) {
+                item {
+                    Text(
+                        updater.lastHuberaMessage()
+                            ?: "PLM fait partie de Hubera Music. Tes données et ton compte restent. Nouveau domaine : music.hubera.cloud — plm.delhomme.ovh continue.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                    )
+                }
+            }
+
             // MAJ en haut : visible sur petits écrans sans scroller toute la liste
             item {
                 val accentRed = Color(0xFFE53935)
@@ -310,7 +398,7 @@ fun AccountScreen(
                     ApkUpdateManager.Phase.Checking -> "Vérification…"
                     ApkUpdateManager.Phase.Idle ->
                         if (updateUi.available) "Mettre à jour l’application"
-                        else "Mise à jour de l’app"
+                        else "Application à jour"
                 }
                 val subtitle = updateUi.message.ifBlank {
                     "Installée ${BuildConfig.VERSION_NAME}"
@@ -326,11 +414,10 @@ fun AccountScreen(
                         Text(
                             when (BuildConfig.APP_CHANNEL) {
                                 "d" ->
-                                    "Canal Dev (d+) — l’OTA serveur met à jour l’app « PLM », pas « PLM Dev ». " +
-                                        "Usage quotidien : ouvre l’icône PLM (p+)."
+                                    "Canal Dev — la mise à jour serveur va sur Hubera Music (prod), pas cette icône Dev."
                                 "b" ->
-                                    "Canal Preprod (b+) — l’OTA serveur met à jour l’app « PLM » (prod)."
-                                else -> "Canal non-prod — OTA cible PLM (prod)."
+                                    "Canal Preprod — la mise à jour serveur va sur Hubera Music (prod)."
+                                else -> "Canal hors production — la mise à jour cible Hubera Music (prod)."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = accentRed,
@@ -379,22 +466,35 @@ fun AccountScreen(
                             }
                         },
                     )
+                    val notes = updateUi.releaseNotes?.takeIf { it.isNotBlank() }
+                    if ((busy || phase == ApkUpdateManager.Phase.Available) && notes != null) {
+                        Text(
+                            notes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        )
+                    }
                     if (busy || phase == ApkUpdateManager.Phase.AwaitingConfirm) {
                         val determinate = phase == ApkUpdateManager.Phase.Downloading ||
                             phase == ApkUpdateManager.Phase.Installing
-                        if (determinate) {
-                            LinearProgressIndicator(
-                                progress = { updateUi.progress.coerceIn(0f, 1f) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                        Row(
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.5.dp,
                             )
-                        } else {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                            )
+                            Spacer(Modifier.size(10.dp))
+                            if (determinate) {
+                                LinearProgressIndicator(
+                                    progress = { updateUi.progress.coerceIn(0f, 1f) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            } else {
+                                LinearProgressIndicator(modifier = Modifier.weight(1f))
+                            }
                         }
                         if (phase == ApkUpdateManager.Phase.AwaitingConfirm) {
                             TextButton(
@@ -431,7 +531,7 @@ fun AccountScreen(
                                             android.content.Intent(
                                                 android.content.Intent.ACTION_VIEW,
                                                 android.net.Uri.parse(
-                                                    "https://plm.delhomme.ovh/api/deploy/apk",
+                                                    "https://music.hubera.cloud/api/deploy/apk",
                                                 ),
                                             ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
                                         )
@@ -451,10 +551,22 @@ fun AccountScreen(
                 AccountRow(
                     icon = { Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null) },
                     title = "Aide & limites",
-                    subtitle = "Pourquoi un titre charge lentement, hors-ligne, versions…",
+                    subtitle = "Hubera, hors-ligne, versions, lecture…",
                     onClick = {
                         onOpenHelp?.invoke()
                             ?: context.toastMain("Ouvre Compte depuis Accueil")
+                    },
+                )
+            }
+
+            item {
+                AccountRow(
+                    icon = { Icon(Icons.Default.BugReport, contentDescription = null) },
+                    title = "Signaler un problème",
+                    subtitle = "Envoie un journal de cet appareil à l’équipe",
+                    onClick = {
+                        reportNote = ""
+                        showReportProblem = true
                     },
                 )
             }

@@ -207,7 +207,7 @@ async function main() {
 
   if (SEND_MAIL && (slow.length || ko.length)) {
     const lines = [
-      `[PLM] Probe TTFB stream — slow=${slow.length} ko=${ko.length}`,
+      `[Hubera Music] Probe TTFB stream — slow=${slow.length} ko=${ko.length}`,
       `API ${API}`,
       '',
       'Summary:',
@@ -220,7 +220,7 @@ async function main() {
     ];
     await sendMail({
       to: process.env.PLAYBACK_DIGEST_TO || 'dev@delhomme.ovh',
-      subject: `[PLM] TTFB stream slow=${slow.length} ko=${ko.length}`,
+      subject: `[Hubera Music] TTFB stream slow=${slow.length} ko=${ko.length}`,
       text: lines.join('\n'),
     });
   }

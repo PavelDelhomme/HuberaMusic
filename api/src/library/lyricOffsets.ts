@@ -52,7 +52,8 @@ db.exec(`
   );
 `);
 
-const CLAMP = 15_000;
+/** ±90 s : intros longues / LRC décalés (ex. Ruelle sombre bloqué à −15 s). */
+const CLAMP = 90_000;
 const BUCKETS = 4;
 const MIN_CROWD_N = 2;
 const MIN_SEG_N = 2;
@@ -165,9 +166,11 @@ function loadSegments(
 
 /**
  * Offset effectif à l’instant `atMs` (interpolation linéaire entre segments).
- * Priorité : segments perso → offset perso constant → segments crowd → crowd global.
+ * Priorité : offset perso constant (l’utilisateur a calé) → segments perso
+ * → segments crowd → crowd global. Un calage perso n’est jamais écrasé.
  */
 export function offsetAtMs(profile: LyricSyncProfile, atMs: number, durationMs?: number | null): number {
+  if (profile.userOffsetMs !== 0) return profile.userOffsetMs;
   const segs = profile.segments;
   if (segs.length >= 2 && durationMs && durationMs > 0) {
     const r = Math.max(0, Math.min(1, atMs / durationMs));
@@ -201,7 +204,8 @@ export function resolveLyricSync(userId: string, trackId: string): LyricSyncProf
   return {
     userOffsetMs,
     crowdOffsetMs,
-    segments,
+    // Calage perso : ne pas exposer les segments crowd (le client les appliquerait).
+    segments: userOffsetMs !== 0 && !fromUser ? [] : segments,
     segmentsFromUser: fromUser,
   };
 }

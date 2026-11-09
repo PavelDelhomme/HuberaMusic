@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import ovh.delhomme.ytmusic.player.PlaybackService
 import ovh.delhomme.ytmusic.player.StreamPrefetcher
+import ovh.delhomme.ytmusic.player.isEffectivePlayback
 import ovh.delhomme.ytmusic.ui.util.toastMain
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -299,7 +300,7 @@ object NetworkMonitor {
                 }
             }
 
-            val wasPlaying = exo.isPlaying || exo.playWhenReady
+            val wasPlaying = exo.isEffectivePlayback()
             if (!curId.isNullOrBlank() && store.has(curId)) {
                 jumpToOffline(curIdx, resumePlay = wasPlaying)
                 return@post
@@ -332,6 +333,7 @@ object NetworkMonitor {
         val resume = pausedForNetwork
         pausedForNetwork = false
         main.post {
+            if (!ovh.delhomme.ytmusic.player.PlaybackResume.mayAutoPlay()) return@post
             val svc = PlaybackService.Holder.service
             val exo = PlaybackService.Holder.player ?: return@post
             if (resume) {

@@ -1,5 +1,67 @@
 [
   {
+    "videoId": "abVAuW6XTCU",
+    "title": "Laisse Nous Raver (Extended Mix)",
+    "artist": "Rekkt & NIVK",
+    "aliases": [
+      "laisse nous raver extended mix",
+      "laisse nous raver extended",
+      "laisse nous raver rekkt extended",
+      "rekkt nivk laisse nous raver extended mix",
+      "rekkt nivk laisse nous raver extended",
+      "laisse nous raver (extended mix)",
+      "laisse nous raver extended mix rekkt nivk",
+      "rekkt & nivk laisse nous raver extended mix"
+    ]
+  },
+  {
+    "videoId": "PcpOcHlHiog",
+    "title": "Laisse Nous Raver",
+    "artist": "Rekkt & NIVK",
+    "aliases": [
+      "laisse nous raver",
+      "laisse nous raver rekkt",
+      "rekkt nivk laisse nous raver",
+      "rekkt & nivk laisse nous raver",
+      "rekkt et nivk laisse nous raver",
+      "laisse nous rêver"
+    ]
+  },
+  {
+    "videoId": "zzOxVZ8W5pA",
+    "title": "Laisse Nous Raver (Radio Mix)",
+    "artist": "Rekkt & NIVK",
+    "aliases": [
+      "laisse nous raver radio mix",
+      "laisse nous raver radio"
+    ]
+  },
+  {
+    "videoId": "BKlfZ7RFp_k",
+    "title": "T'es Triste",
+    "artist": "N'to",
+    "aliases": [
+      "tes triste",
+      "t es triste",
+      "t'es triste",
+      "nto tes triste",
+      "n'to tes triste",
+      "n to tes triste",
+      "nto t es triste"
+    ]
+  },
+  {
+    "videoId": "5eCvfTUQrJ8",
+    "title": "T'es triste ??",
+    "artist": "Køni",
+    "aliases": [
+      "tes triste koni",
+      "koni tes triste",
+      "t es triste koni",
+      "tes triste ??"
+    ]
+  },
+  {
     "videoId": "Z_slTWayFK0",
     "title": "Waka Waka (This Time for Africa)",
     "artist": "Shakira",
@@ -88,6 +150,17 @@
     "title": "Papaoutai",
     "artist": "Stromae",
     "aliases": ["papaoutai", "stromae papaoutai", "papa ou t es", "papa outai"]
+  },
+  {
+    "videoId": "M7Z2tgJo8Hg",
+    "title": "Fils de joie",
+    "artist": "Stromae",
+    "aliases": [
+      "fils de joie",
+      "stromae fils de joie",
+      "fils de joie stromae",
+      "filsdejoie"
+    ]
   },
   {
     "videoId": "CLW3FnDa1nQ",
@@ -374,5 +447,27 @@
     "title": "Believer",
     "artist": "Imagine Dragons",
     "aliases": ["imagine dragons believer alt"]
+  },
+  {
+    "videoId": "XVy4kIIdmbo",
+    "title": "Cayenne",
+    "artist": "Les Amis D'ta Femme",
+    "aliases": [
+      "cayenne",
+      "cayenne les amis d ta femme",
+      "cayenne les amis de ta femme",
+      "cayenne les amants de ta femme",
+      "cayenne les amants d ta femme",
+      "les amis d ta femme cayenne",
+      "les amis de ta femme cayenne",
+      "les amants de ta femme cayenne",
+      "les amants d ta femme cayenne",
+      "amis d ta femme cayenne",
+      "amis de ta femme cayenne",
+      "amants de ta femme cayenne",
+      "les amis d'ta femme cayenne",
+      "cayenne les amis d'ta femme",
+      "adtf cayenne"
+    ]
   }
 ]

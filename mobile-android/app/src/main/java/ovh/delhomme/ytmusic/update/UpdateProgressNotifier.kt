@@ -20,7 +20,7 @@ class UpdateProgressNotifier(private val context: Context) {
         nm.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_ID,
-                "Mises à jour PLM",
+                "Mises à jour Hubera Music",
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
                 setShowBadge(true)
@@ -76,7 +76,7 @@ class UpdateProgressNotifier(private val context: Context) {
             NOTIF_ID,
             NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_play)
-                .setContentTitle("Mise à jour PLM")
+                .setContentTitle("Mise à jour Hubera Music")
                 .setContentText(text)
                 .setContentIntent(open)
                 .setAutoCancel(true)

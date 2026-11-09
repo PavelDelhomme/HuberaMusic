@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installConsoleTimestamps } from './platform/log.js';
+import { fitClientJson } from './platform/jsonBound.js';
 import { installYoutubeJsEvaluator } from './youtube/youtubeiEval.js';
 
 installConsoleTimestamps();
@@ -37,13 +38,17 @@ import {
   getAlbumRadio,
   getArtistRadio,
   getLyrics,
+  saveUserLyrics,
+  submitLyricsFeedback,
   getArtist,
   getAlbum,
   getPlaylist,
   getArtistSongs,
   getMoodCategory,
+  hydrateTracks,
   resetYT,
 } from './youtube/yt.js';
+import { isWeakTitle } from './youtube/mappers.js';
 import { identifyAudio } from './media/identify.js';
 import {
   getFullLibrary,
@@ -61,7 +66,7 @@ import {
   saveMix,
   removeMix,
   isMixSaved,
-  saveArtist,
+  saveArtistWithTracks,
   removeArtist,
   createPlaylist,
   updatePlaylist,
@@ -81,14 +86,30 @@ import {
   repairLibraryTrackMeta,
   scheduleLibraryRepair,
   libraryMembership,
+  getLikedTracks,
+  getLibraryTasteTracks,
 } from './library/library.js';
-import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed } from './media/stream.js';
+import {
+  recordSearchFeedback,
+  listSearchFeedback,
+  indexLibraryTracksAsHits,
+  type SearchFeedbackKind,
+} from './reco/searchHits.js';
+import { upsertIndexedTracks } from './library/searchIndex.js';
+import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, replaceSearchWarm, enqueueListHeadWarm, enqueueNextDiskWarm, isPlaybackHot } from './media/stream.js';
 import {
   scheduleUserTasteWarm,
   startGlobalTasteWarmScheduler,
   runGlobalTasteWarmOnce,
 } from './media/tasteWarmScheduler.js';
+import { ensurePlayableQueueAhead } from './media/ensurePlayable.js';
 import { libraryHealthStatus, startLibraryHealthScan } from './media/libraryHealth.js';
+import {
+  startPlayabilitySweep,
+  runPlayabilitySweep,
+  playabilitySweepStatus,
+  triggerOnDemandRecover,
+} from './library/playabilitySweep.js';
 import {
   startPlaybackDigestScheduler,
   sendPlaybackDigestNow,
@@ -102,19 +123,27 @@ import {
 import { streamHeadStats } from './media/streamHeadCache.js';
 import { youtubeProxyStats } from './youtube/youtubeProxy.js';
 import { resolveVisualVideo } from './media/visualResolve.js';
-import { importByKind, importByQueryOrUrl } from './media/import.js';
+import { importByKind, importByQueryOrUrl, importLocalAudioFile } from './media/import.js';
+import { getOwnedUpload } from './media/userUploads.js';
 import { handleOfflineStatus, startOfflineCollection } from './library/offline.js';
 import { getShuffleHeads, invalidateShuffleHeads } from './library/shuffleHeads.js';
+import { getListHeads, rememberVisibleListHeads, warmUserListHeads, warmUserPinnedAndHeard } from './library/listHeads.js';
 import { handleImageProxy } from './media/img.js';
 import {
   deployInfo,
   getApkJob,
   getApkPath,
+  apkPublicInfo,
+  apkBetaPublicInfo,
+  getBetaApkPath,
   getBuildJob,
   publishApkBuffer,
   startApkBuild,
   startBuild,
+  MUSIC_PKG_HUBERA,
 } from './platform/admin.js';
+import { huberaLegacyStatus, huberaNotice, pingFromRequest } from './platform/huberaLegacy.js';
+import { betaOfferBeatsProd, isBetaAccount } from './platform/betaChannel.js';
 import {
   allowPublicApkTicket,
   consumeApkTicket,
@@ -157,6 +186,7 @@ import {
   inviteDeviceLogin,
   pollDeviceLogin,
   startDeviceLogin,
+  publicOriginFromRequest,
 } from './auth/deviceLogin.js';
 import {
   accountRequired,
@@ -169,6 +199,7 @@ import {
   issueSession,
   loginGoogle,
   loginLocal,
+  loginWithHuberaAccessToken,
   registerLocal,
   requestPasswordReset,
   resetPasswordWithToken,
@@ -187,6 +218,7 @@ import {
   listFollows,
   listListenEvents,
   listListenEventsDetailed,
+  listenStatsSummary,
   listPins,
   listSearchHistory,
   listWeights,
@@ -219,11 +251,12 @@ import {
   resolveLyricSync,
   saveLyricOffset,
 } from './library/lyricOffsets.js';
-import { sendBatteryOptimizationMail } from './platform/batteryReport.js';
+import { sendBatteryOptimizationMail, enrichBatteryReport, type BatteryReportPayload } from './platform/batteryReport.js';
 import {
   createEmailToken,
   insertTelemetry,
   listMailOutbox,
+  listPlaybackTrace,
   listTelemetry,
   markEmailVerified,
   redeemEmailToken,
@@ -232,6 +265,7 @@ import {
   telemetryStats,
 } from './platform/platform.js';
 import { sendVerificationEmail, getAppEnv, smtpPublicConfig, testSmtp } from './platform/mail.js';
+import { postDocsTask } from './platform/docsTask.js';
 import {
   disableTotpForUser,
   enableTotpForUser,
@@ -305,7 +339,11 @@ function isAllowedOrigin(origin: string | undefined): boolean {
       (process.env.APP_URL || '').replace(/\/$/, ''),
       'https://plm.delhomme.ovh',
       'https://ytmusic.delhomme.ovh',
+      'https://ytm.delhomme.ovh',
       'https://pue-la-merde.delhomme.ovh',
+      'https://peule-la-merde.delhomme.ovh',
+      'https://plm.hubera.cloud',
+      'https://music.hubera.cloud',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
       'http://localhost:8787',
@@ -316,7 +354,8 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   if (origin.startsWith('android:apk-key-hash:')) return true;
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return true;
   // Alias canoniques toujours OK en prod (cookies Domain=.delhomme.ovh)
-  if (/^https:\/\/(plm|ytmusic|pue-la-merde)\.delhomme\.ovh$/i.test(origin)) return true;
+  if (/^https:\/\/(plm|ytmusic|ytm|pue-la-merde|peule-la-merde)\.delhomme\.ovh$/i.test(origin)) return true;
+  if (/^https:\/\/(music|plm)\.hubera\.cloud$/i.test(origin)) return true;
   if (env === 'local' || env === 'development') {
     return /^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?$/i.test(
       origin,
@@ -353,14 +392,104 @@ app.use(
 
 /** Upload APK binaire — avant express.json pour ne pas consommer le flux. */
 app.use('/api/admin/apk/upload', express.raw({ type: () => true, limit: '120mb' }));
+/** MP3 importé sur le compte utilisateur (binaire audio, pas JSON). */
+app.use('/api/import/file', express.raw({ type: () => true, limit: '40mb' }));
 app.use(express.json({ limit: '6mb' }));
+// Plafonne le JSON renvoyé : Moshi lit tout le corps, un trop gros corps sature le tas 256 Mo.
+app.use((req, res, next) => {
+  const orig = res.json.bind(res);
+  res.json = (body?: unknown) => {
+    const fitted = fitClientJson(body);
+    if (fitted.clipped) console.warn('[json] bounded', req.path);
+    return orig(fitted.body);
+  };
+  next();
+});
 app.use(cookieParser());
 app.use(authOptional);
 
 const authBurst = rateLimit({ windowMs: 60_000, max: 20 });
 const authStrict = rateLimit({ windowMs: 15 * 60_000, max: 40 });
 
+/** Chemins OTA relatifs → URL absolue (évite « no protocol » côté clients naïfs). */
+function absolutePublicUrl(pathOrUrl: string | null | undefined, origin: string): string | null {
+  const raw = String(pathOrUrl || '').trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const base = origin.replace(/\/$/, '');
+  return raw.startsWith('/') ? `${base}${raw}` : `${base}/${raw}`;
+}
+
 /** Notes de version (Compte / Profil) — source : VERSION_NOTES.json à la racine. */
+app.get('/api/version', (req, res) => {
+  let semver = '';
+  try {
+    semver = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+  } catch {
+    /* ignore */
+  }
+  if (!semver) semver = (process.env.APP_VERSION || '').trim() || '0.0.0';
+  const clientVer = String(req.query.clientVersion || '')
+    .replace(/^[pbd]\+/, '')
+    .trim();
+  const clientCode = Number(req.query.clientVersionCode || 0) || 0;
+  const clientPkg = String(req.query.clientPackage || req.query.package || '');
+  const apk = apkPublicInfo(PORT, clientPkg);
+  const apkName = String(apk.versionName || '')
+    .replace(/^[pbd]\+/, '')
+    .trim();
+  const apkCode = Number(apk.versionCode || 0) || 0;
+  const cmp = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  // Jamais proposer une APK plus vieille que le téléphone.
+  const apkNewerThanPhone =
+    Boolean(apk.ready) &&
+    apkCode > 0 &&
+    (clientCode <= 0 || apkCode >= clientCode) &&
+    (!clientVer || cmp(apkName || semver, clientVer) >= 0);
+  let advertised = semver;
+  if (apkNewerThanPhone && apkName && cmp(apkName, advertised) > 0) advertised = apkName;
+  if (clientVer && cmp(clientVer, advertised) > 0) advertised = clientVer;
+  const body: Record<string, unknown> = {
+    version: advertised,
+    appVersion: `p+${advertised}`,
+    minVersion: '1.3.0',
+    forceUpdate: false,
+    mandatory: false,
+    channel: 'prod',
+    apkAvailable: apkNewerThanPhone && cmp(apkName || semver, clientVer || '0') > 0,
+    apkUrl: apkNewerThanPhone
+      ? absolutePublicUrl(apk.downloadPath, 'https://music.hubera.cloud')
+      : null,
+    apkVersion: apkNewerThanPhone ? apk.versionName : null,
+    apkVersionCode: apkNewerThanPhone ? apkCode : null,
+    webUrl: 'https://music.hubera.cloud',
+  };
+  const betaUser = isBetaAccount(req.user?.email, process.env.HUBERA_BETA_EMAILS || '');
+  const beta = apkBetaPublicInfo();
+  const betaCode = Number(beta.versionCode || 0) || 0;
+  const betaName = String(beta.versionName || '').replace(/^[pbd]\+/, '').trim();
+  if (
+    betaUser &&
+    betaOfferBeatsProd({
+      betaReady: beta.ready,
+      betaCode,
+      prodCode: apkCode,
+      clientCode,
+    }) &&
+    (!clientVer || !betaName || cmp(betaName, clientVer) >= 0)
+  ) {
+    body.channel = 'beta';
+    body.version = betaName || advertised;
+    body.appVersion = `b+${body.version}`;
+    body.apkAvailable = cmp(betaName || String(body.version), clientVer || '0') > 0;
+    body.apkUrl = absolutePublicUrl(beta.downloadPath, 'https://music.hubera.cloud');
+    body.apkVersion = beta.versionName;
+    body.apkVersionCode = betaCode;
+  }
+  res.json(body);
+});
+
 app.get('/api/version-notes', (_req, res) => {
   const candidates = [
     join(ROOT, 'VERSION_NOTES.json'),
@@ -383,16 +512,17 @@ app.get('/api/version-notes', (_req, res) => {
 });
 
 app.get('/api/health', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   const ytCookies = youtubeCookiesStatus();
   const ref = process.env.BUILD_REF || 'local';
-  let semver = (process.env.APP_VERSION || '').trim();
-  if (!semver) {
-    try {
-      semver = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
-    } catch {
-      semver = process.env.npm_package_version || '0.0.0';
-    }
+  let semver = '';
+  try {
+    semver = readFileSync(join(ROOT, 'VERSION'), 'utf8').trim();
+  } catch {
+    /* ignore */
   }
+  if (!semver) semver = (process.env.APP_VERSION || '').trim();
+  if (!semver) semver = process.env.npm_package_version || '0.0.0';
   const channel = ref === 'prod' || process.env.APP_ENV === 'production' ? 'p' : 'd';
   res.json({
     ok: true,
@@ -429,8 +559,8 @@ app.get('/api/health', (_req, res) => {
         'OAuth TV + ytm_accounts sur volume ytmusic_data. Proxies gratuits (YOUTUBE_HTTP_PROXY_FREE) contre 50x — pas de PC maison. Ne pas Remove volumes ni changer JWT_SECRET.',
     },
     maintenance: publicMaintenanceStatus(),
-    canonicalHost: 'plm.delhomme.ovh',
-    aliasHosts: ['ytmusic.delhomme.ovh', 'pue-la-merde.delhomme.ovh'],
+    canonicalHost: 'music.hubera.cloud',
+    aliasHosts: ['plm.delhomme.ovh', 'ytmusic.delhomme.ovh', 'pue-la-merde.delhomme.ovh'],
   });
 });
 
@@ -451,12 +581,27 @@ app.post('/api/auth/register', authBurst, authStrict, async (req, res) => {
       return;
     }
     const result = await registerLocal(String(email), String(password), String(name || ''));
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: String((err as Error).message || err) });
+  }
+});
+
+app.post('/api/auth/login/hubera-sso', authBurst, authStrict, async (req, res) => {
+  try {
+    const token = String(req.body?.accessToken || req.body?.access_token || '').trim();
+    const result = await loginWithHuberaAccessToken(token, {
+      deviceLabel: String(req.body?.deviceLabel || req.headers['user-agent'] || 'android-sso').slice(0, 120),
+    });
+    const opts = sessionCookieOptions(req);
+    res.cookie('ytm_token', result.token, opts);
+    res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
+    res.json(result);
+  } catch (err) {
+    res.status(401).json({ error: String((err as Error).message || err) });
   }
 });
 
@@ -466,7 +611,7 @@ app.post('/api/auth/login', authBurst, authStrict, async (req, res) => {
       totp: req.body?.totp ? String(req.body.totp) : undefined,
       deviceLabel: String(req.body?.deviceLabel || req.headers['user-agent'] || 'web').slice(0, 120),
     });
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
     // Préchauffe goûts en fond (ne bloque pas le login)
@@ -482,13 +627,61 @@ app.post('/api/auth/login', authBurst, authStrict, async (req, res) => {
   }
 });
 
+/** Incident client (ex. iOS page noire / login cassé) → mail ops. */
+const authIncidentLast = new Map<string, number>();
+app.post('/api/client/auth-incident', authBurst, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 120);
+    const kind = String(req.body?.kind || 'auth').trim().slice(0, 64);
+    const message = String(req.body?.message || 'incident auth').trim().slice(0, 800);
+    const ua = String(req.headers['user-agent'] || req.body?.ua || '').slice(0, 240);
+    const href = String(req.body?.href || '').slice(0, 240);
+    const isIos = /iphone|ipad|ipod|ios/i.test(ua) || !!req.body?.ios;
+    const fp = `${kind}|${email}|${message.slice(0, 80)}`;
+    const now = Date.now();
+    if ((authIncidentLast.get(fp) || 0) + 120_000 > now) {
+      res.json({ ok: true, throttled: true });
+      return;
+    }
+    authIncidentLast.set(fp, now);
+    const { sendMail, mailBrand } = await import('./platform/mail.js');
+    const to =
+      process.env.TELEMETRY_ALERT_TO ||
+      process.env.ADMIN_EMAILS ||
+      process.env.SEED_EMAIL ||
+      'paul@delhomme.ovh';
+    const brand = mailBrand();
+    const subject = `[${brand}] Auth / écran noir${isIos ? ' · iOS' : ''} — ${email || 'anonyme'}`;
+    const text =
+      `Incident connexion Hubera Music\n` +
+      `kind: ${kind}\n` +
+      `email: ${email || '(vide)'}\n` +
+      `ios: ${isIos}\n` +
+      `message: ${message}\n` +
+      `href: ${href}\n` +
+      `ua: ${ua}\n` +
+      `at: ${new Date().toISOString()}\n`;
+    await sendMail({
+      to,
+      subject,
+      text,
+      html: `<pre style="font-family:ui-monospace,monospace;font-size:13px">${text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')}</pre>`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: String((err as Error).message || err) });
+  }
+});
+
 app.post('/api/auth/google', authBurst, authStrict, async (req, res) => {
   try {
     const result = await loginGoogle(
       String(req.body?.credential || req.body?.idToken || ''),
       String(req.body?.deviceLabel || 'google'),
     );
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', result.token, opts);
     res.cookie('ytm_refresh', result.refreshToken, { ...opts, httpOnly: true });
     if (result.user?.id) scheduleUserTasteWarm(result.user.id, [], { force: true, disk: 24 });
@@ -518,7 +711,7 @@ app.post('/api/auth/refresh', authBurst, async (req, res) => {
       return;
     }
     const token = await signToken(user);
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', token, opts);
     res.cookie('ytm_refresh', rotated.token, { ...opts, httpOnly: true });
     scheduleUserTasteWarm(user.id, [], { disk: 8 });
@@ -531,7 +724,7 @@ app.post('/api/auth/refresh', authBurst, async (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   const raw = String((req as any).cookies?.ytm_refresh || req.body?.refreshToken || '');
   if (raw) revokeRefreshToken(raw);
-  const opts = sessionCookieOptions();
+  const opts = sessionCookieOptions(req);
   res.clearCookie('ytm_token', { path: opts.path, sameSite: opts.sameSite, secure: opts.secure });
   res.clearCookie('ytm_refresh', { path: opts.path, sameSite: opts.sameSite, secure: opts.secure });
   res.json({ ok: true });
@@ -599,18 +792,18 @@ app.get('/verify-email', (req, res) => {
   if (!token) {
     res.status(400).type('html').send(`<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Lien invalide — PLM</title>
+<title>Lien invalide — Hubera Music</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#030303;color:#fff}
 .card{max-width:420px;margin:24px;padding:28px;border-radius:16px;border:1px solid #222;background:#121212}
 .err{color:#f87171}a{color:#ff0033}</style></head>
 <body><div class="card"><h1 class="err">Lien invalide</h1><p>Aucun jeton dans l’URL.</p>
-<p><a href="/">Retour PLM</a></p></div></body></html>`);
+<p><a href="/">Retour Hubera Music</a></p></div></body></html>`);
     return;
   }
 
   res.type('html').send(`<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Validation email — PLM</title>
+<title>Validation email — Hubera Music</title>
 <style>
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
     font-family:system-ui,sans-serif;background:#030303;color:#fff}
@@ -626,7 +819,7 @@ app.get('/verify-email', (req, res) => {
   <p id="msg">Confirmation de ton adresse email.</p>
   <button id="btn" type="button" style="display:none">Valider mon email</button>
   <p class="muted" id="hint"></p>
-  <p style="margin-top:20px"><a href="/">Retour PLM</a></p>
+  <p style="margin-top:20px"><a href="/">Retour Hubera Music</a></p>
 </div>
 <script>
 (function () {
@@ -691,18 +884,18 @@ app.get('/reset-password', (req, res) => {
   if (!token) {
     res.status(400).type('html').send(`<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Lien invalide — PLM</title>
+<title>Lien invalide — Hubera Music</title>
 <style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;background:#030303;color:#fff}
 .card{max-width:420px;margin:24px;padding:28px;border-radius:16px;border:1px solid #222;background:#121212}
 .err{color:#f87171}a{color:#ff0033}</style></head>
 <body><div class="card"><h1 class="err">Lien invalide</h1><p>Aucun jeton dans l’URL.</p>
-<p><a href="/">Retour PLM</a></p></div></body></html>`);
+<p><a href="/">Retour Hubera Music</a></p></div></body></html>`);
     return;
   }
 
   res.type('html').send(`<!DOCTYPE html>
 <html lang="fr"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Nouveau mot de passe — PLM</title>
+<title>Nouveau mot de passe — Hubera Music</title>
 <style>
   body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
     font-family:system-ui,sans-serif;background:#030303;color:#fff}
@@ -726,7 +919,7 @@ app.get('/reset-password', (req, res) => {
     <button id="btn" type="submit">Enregistrer</button>
   </form>
   <p class="muted" id="hint" style="margin-top:16px"></p>
-  <p style="margin-top:20px;text-align:center"><a href="/">Retour PLM</a></p>
+  <p style="margin-top:20px;text-align:center"><a href="/">Retour Hubera Music</a></p>
 </div>
 <script>
 (function () {
@@ -1022,8 +1215,14 @@ app.post(
             healTrackFromTelemetry({
               kind,
               level,
-              meta: { trackId: e.trackId },
+              message,
               userId,
+              meta: {
+                trackId: e.trackId,
+                title: e.title,
+                artist: e.artist,
+                diagnosis: e.diagnosis,
+              },
             }),
           )
           .catch(() => {});
@@ -1036,6 +1235,52 @@ app.post(
           trackId: typeof e.trackId === 'string' ? e.trackId : undefined,
           http: typeof e.http === 'number' ? e.http : undefined,
         });
+        // Crash / erreur player tamponnés : mail individuel (throttle) avec crumbs+logs
+        // — le digest seul listait les titres sans breadcrumbs → mails « vides ».
+        const lv = String(level || '').toLowerCase();
+        const kindStr = String(kind || '');
+        if (
+          lv === 'fatal' ||
+          kindStr.includes('crash') ||
+          (lv === 'error' && (kindStr.includes('android.player') || kindStr.includes('android.user_report')))
+        ) {
+          const alertStack = e.stack ? trunc(e.stack, 24_000) : undefined;
+          const alertMeta = {
+            batch: true,
+            count: typeof e.count === 'number' ? e.count : 1,
+            trackId: e.trackId,
+            title: e.title,
+            artist: e.artist,
+            diagnosis: e.diagnosis,
+            http: e.http,
+            code: e.code,
+            streak: e.streak,
+            network: e.network ?? e.networkish,
+            local: e.local,
+            appVersion: e.appVersion,
+            model: e.model,
+            manufacturer: e.manufacturer,
+            sdk: e.sdk,
+            breadcrumbs: e.breadcrumbs,
+            recentLogs: typeof e.recentLogs === 'string' ? trunc(e.recentLogs, 24_000) : undefined,
+          };
+          void import('./platform/telemetryAlert.js')
+            .then(({ maybeAlertTelemetryError }) =>
+              maybeAlertTelemetryError({
+                id,
+                env,
+                level,
+                kind,
+                message,
+                stack: alertStack,
+                userAgent,
+                userId,
+                deviceId,
+                meta: alertMeta,
+              }),
+            )
+            .catch((err) => console.error('[telemetry] batch alert', err));
+        }
       }
       void import('./platform/telemetryAlert.js')
         .then(({ maybeAlertTelemetryDigest }) =>
@@ -1056,7 +1301,13 @@ app.post(
   authRequired,
   async (req, res) => {
     try {
-      const result = await sendBatteryOptimizationMail(req.body || {});
+      const raw = (req.body || {}) as Record<string, unknown>;
+      const device = raw.device && typeof raw.device === 'object' ? (raw.device as Record<string, unknown>) : {};
+      const enriched = enrichBatteryReport(raw as BatteryReportPayload, {
+        userId: req.userId,
+        deviceId: String(req.headers['x-device-id'] || device.serial || ''),
+      });
+      const result = await sendBatteryOptimizationMail(enriched);
       res.json({ ok: true, ...result });
     } catch (err) {
       res.status(400).json({ error: String((err as Error).message || err) });
@@ -1103,13 +1354,19 @@ app.get('/.well-known/assetlinks.json', (_req, res) => {
       ? fps
       : ['3C:F6:C5:32:1D:A1:51:7E:79:94:0C:9E:25:51:4A:63:9B:2C:44:9E:3E:FF:7D:F7:47:68:76:CB:F6:F4:C1:1F'];
   const packages = new Set(
-    (process.env.ANDROID_PACKAGE_NAMES || process.env.ANDROID_PACKAGE_NAME || 'ovh.delhomme.ytmusic')
+    (process.env.ANDROID_PACKAGE_NAMES || process.env.ANDROID_PACKAGE_NAME || 'cloud.hubera.music,ovh.delhomme.ytmusic')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
   );
   // Flavor debug / Samsung DEV
-  if (packages.has('ovh.delhomme.ytmusic')) packages.add('ovh.delhomme.ytmusic.dev');
+  if (packages.has('ovh.delhomme.ytmusic')) {
+    packages.add('ovh.delhomme.ytmusic.dev');
+    packages.add('cloud.hubera.music');
+    packages.add('cloud.hubera.music.dev');
+  }
+  packages.add('cloud.hubera.music');
+  packages.add('cloud.hubera.music.dev');
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'public, max-age=3600');
   res.status(200).json(
@@ -1203,7 +1460,7 @@ app.post('/api/auth/passkeys/login/verify', async (req, res) => {
       return;
     }
     const session = await issueSession(user, 'passkey');
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', session.token, opts);
     res.cookie('ytm_refresh', session.refreshToken, { ...opts, httpOnly: true });
     res.json(session);
@@ -1214,8 +1471,7 @@ app.post('/api/auth/passkeys/login/verify', async (req, res) => {
 
 /** Login QR : appareil à connecter démarre une session (affiche le QR). */
 app.post('/api/auth/device-login/start', (req, res) => {
-  const origin = String(req.headers.origin || req.body?.origin || '').trim();
-  res.json(startDeviceLogin(origin || undefined));
+  res.json(startDeviceLogin(publicOriginFromRequest(req)));
 });
 
 /** Poll jusqu’à approbation — renvoie la session une fois. */
@@ -1246,7 +1502,7 @@ app.post('/api/auth/device-login/poll', async (req, res) => {
       return;
     }
     const session = await issueSession(user, 'device-qr');
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', session.token, opts);
     res.cookie('ytm_refresh', session.refreshToken, { ...opts, httpOnly: true });
     res.json({ status: 'approved', ...session });
@@ -1284,8 +1540,7 @@ app.get('/api/auth/device-login/peek', (req, res) => {
 
 /** Compte connecté → QR pour connecter un autre appareil. */
 app.post('/api/auth/device-login/invite', authRequired, (req, res) => {
-  const origin = String(req.headers.origin || req.body?.origin || '').trim();
-  res.json(inviteDeviceLogin(req.userId!, origin || undefined));
+  res.json(inviteDeviceLogin(req.userId!, publicOriginFromRequest(req)));
 });
 
 /** L’autre appareil ouvre le lien d’invite et récupère la session. */
@@ -1303,7 +1558,7 @@ app.post('/api/auth/device-login/claim', async (req, res) => {
       return;
     }
     const session = await issueSession(user, 'device-invite');
-    const opts = sessionCookieOptions();
+    const opts = sessionCookieOptions(req);
     res.cookie('ytm_token', session.token, opts);
     res.cookie('ytm_refresh', session.refreshToken, { ...opts, httpOnly: true });
     scheduleUserTasteWarm(user.id, [], { force: true, disk: 12 });
@@ -1353,8 +1608,77 @@ app.get('/api/admin/telemetry', requireAdmin, (req, res) => {
   });
 });
 
-app.get('/api/admin/library-health', requireAdmin, (_req, res) => {
-  res.json(libraryHealthStatus());
+/** Erreur groupée → tâche Hubera Docs (bug, colonne todo). Le jeton est celui de l’admin, pas un secret du dépôt. */
+app.post('/api/admin/docs-task', requireAdmin, async (req, res) => {
+  const header = req.headers.authorization;
+  const bearer = header?.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const cookie = String((req as { cookies?: { ytm_token?: string } }).cookies?.ytm_token || '').trim();
+  const result = await postDocsTask(
+    {
+      title: req.body?.title,
+      body: req.body?.body,
+      project: req.body?.project,
+      priority: req.body?.priority,
+    },
+    {
+      origin: process.env.DOCS_API_URL || 'https://docs.hubera.cloud',
+      accessToken: bearer || cookie,
+    },
+  );
+  res.status(result.ok ? 201 : 200).json({
+    ok: result.ok,
+    id: result.id,
+    error: result.error,
+    status: result.status,
+    task: result.task,
+  });
+});
+
+app.get('/api/admin/playback-trace', requireAdmin, (req, res) => {
+  res.json({
+    ok: true,
+    ...listPlaybackTrace({ limit: Number(req.query.limit || 400) }),
+  });
+});
+
+app.get('/api/admin/library-health', requireAdmin, async (_req, res) => {
+  try {
+    const { sharedCatalogStats } = await import('./library/sharedCatalog.js');
+    res.json({ ...libraryHealthStatus(), shared: sharedCatalogStats(), playability: playabilitySweepStatus() });
+  } catch {
+    res.json({ ...libraryHealthStatus(), playability: playabilitySweepStatus() });
+  }
+});
+
+app.get('/api/admin/playability', requireAdmin, (_req, res) => {
+  res.json({ ok: true, forceUpdate: false, ...playabilitySweepStatus() });
+});
+
+/** Balayage jouabilité — admin/deploy uniquement, jamais public. */
+app.post('/api/admin/playability/sweep', requireAdmin, async (req, res) => {
+  try {
+    const body = (req.body || {}) as {
+      limit?: number;
+      ids?: string[];
+      user?: string;
+      userId?: string;
+      dryRun?: boolean;
+      recover?: boolean;
+    };
+    const summary = await runPlayabilitySweep({
+      limit: Math.max(1, Math.min(40, Number(body.limit || 8))),
+      ids: Array.isArray(body.ids) ? body.ids.map(String) : undefined,
+      userEmail: body.user,
+      userId: body.userId,
+      dryRun: body.dryRun === true,
+      recover: body.recover !== false,
+      concurrency: 2,
+      sleepMs: 800,
+    });
+    res.json({ ok: true, forceUpdate: false, ...summary });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+  }
 });
 
 /** Aperçu / envoi forcé du digest chargement 12h30. */
@@ -1395,6 +1719,12 @@ app.post('/api/admin/library-warm', requireAdmin, async (_req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: String((err as Error).message || err) });
   }
+});
+
+/** Vide les files warm disque (urgence : écoute Nothing/Samsung timeout). */
+app.post('/api/admin/library-warm/clear', requireAdmin, (_req, res) => {
+  suspendBackgroundDiskWarm();
+  res.json({ ok: true, ...libraryWarmSweepStatus(), health: libraryHealthStatus() });
 });
 
 app.get('/api/admin/mail-outbox', requireAdmin, (_req, res) => {
@@ -1553,17 +1883,27 @@ app.post('/api/admin/apk/ticket', requireAdmin, (req, res) => {
 });
 
 /** Meta APK publique (page /install) — pas de binaire. */
-app.get('/api/install/apk-info', (_req, res) => {
+app.get('/api/install/apk-info', (req, res) => {
   const info = deployInfo(PORT).apk;
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '')
+    .split(',')[0]
+    .trim();
+  const origin = host ? `https://${host}` : 'https://music.hubera.cloud';
   res.json({
     ready: Boolean(info.ready),
     versionName: info.versionName,
     versionCode: info.versionCode,
     sizeBytes: info.sizeBytes,
     builtAt: info.builtAt,
-    package: 'ovh.delhomme.ytmusic',
+    package: 'cloud.hubera.music',
     installPath: '/install',
+    installUrl: `${origin}/install`,
+    hubera: huberaNotice(),
   });
+});
+
+app.get('/api/hubera/legacy-status', (_req, res) => {
+  res.json(huberaLegacyStatus());
 });
 
 /**
@@ -1580,7 +1920,7 @@ app.post('/api/install/apk-ticket', (req, res) => {
     res.status(429).json({ error: 'Trop de demandes — réessaie dans quelques minutes' });
     return;
   }
-  const path = getApkPath();
+  const path = getApkPath(MUSIC_PKG_HUBERA);
   if (!path) {
     res.status(404).json({
       error: 'APK non publiée',
@@ -1692,17 +2032,31 @@ function isHomeStreamRelay(req: Request): boolean {
 /** Téléchargement APK : ticket one-shot (?t=) · JWT compte · APK_DOWNLOAD_TOKEN. */
 app.get('/api/deploy/apk', authOptional, (req, res) => {
   const ticketTok = typeof req.query?.t === 'string' ? req.query.t.trim() : '';
+  let ticketReason: string | null = null;
   if (ticketTok) {
     const consumed = consumeApkTicket(ticketTok);
     if (!consumed.ok) {
       res.status(410).json({ error: consumed.error });
       return;
     }
+    ticketReason = consumed.reason;
   } else if (!apkDownloadOrAccount(req)) {
-    res.status(401).json({ error: 'Lien APK protégé — demande un QR à l’admin' });
+    const rawPkg = String(req.query.package || req.query.clientPackage || '');
+    const wantsLegacy = rawPkg === 'ovh.delhomme.ytmusic';
+    if (wantsLegacy) {
+      res.status(401).json({ error: 'Lien APK protégé — demande un QR à l’admin' });
+      return;
+    }
+    // Canal Hubera : même fichier que /install — l’OTA in-app ne doit plus 401.
+  }
+  let pkg = String(req.query.package || req.query.clientPackage || '');
+  if (ticketReason === 'public' && !pkg) pkg = MUSIC_PKG_HUBERA;
+  const wantsBeta = String(req.query.channel || '') === 'beta';
+  if (wantsBeta && !isBetaAccount(req.user?.email, process.env.HUBERA_BETA_EMAILS || '')) {
+    res.status(404).json({ error: 'APK non publiée' });
     return;
   }
-  const path = getApkPath();
+  const path = wantsBeta ? getBetaApkPath() : getApkPath(pkg);
   if (!path) {
     res.status(404).json({
       error: 'APK non publiée',
@@ -1711,29 +2065,51 @@ app.get('/api/deploy/apk', authOptional, (req, res) => {
     return;
   }
   res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-  res.setHeader('Content-Disposition', 'attachment; filename="PLM.apk"');
+  res.setHeader('Content-Disposition', 'attachment; filename="Hubera-Music.apk"');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path);
 });
 
 app.get('/api/deploy/apk/info', authOptional, (req, res) => {
-  if (!apkDownloadOrAccount(req)) {
-    res.status(401).json({ error: 'Lien APK protégé — clé manquante ou invalide' });
-    return;
-  }
-  const info = deployInfo(PORT).apk;
+  pingFromRequest(req.query as Record<string, unknown>, String(req.headers['user-agent'] || ''));
+  const pkg = String(req.query.clientPackage || req.query.package || '') || MUSIC_PKG_HUBERA;
+  const info = apkPublicInfo(PORT, pkg);
+  const liveExisting = latestLiveApkTicket(PORT);
+  const live =
+    liveExisting && liveExisting.remainingUses >= 3
+      ? liveExisting
+      : issueApkTicket('public', 'apk-info', PORT, {
+          exclusive: false,
+          maxUses: 16,
+          ttlMs: 2 * 60 * 60_000,
+        });
+  const slotPkg =
+    pkg.includes('ovh.delhomme.ytmusic') && !pkg.includes('cloud.hubera')
+      ? 'ovh.delhomme.ytmusic'
+      : 'cloud.hubera.music';
+  const downloadPath = `/api/deploy/apk?t=${encodeURIComponent(live.token)}&package=${encodeURIComponent(slotPkg)}`;
+  const downloadUrl = `https://music.hubera.cloud${downloadPath}`;
   res.json({
     ready: info.ready,
     versionName: info.versionName,
     versionCode: info.versionCode,
-    apiBaseUrl: info.apiBaseUrl,
+    apiBaseUrl: 'https://music.hubera.cloud',
     builtAt: info.builtAt,
     sizeBytes: info.sizeBytes,
-    downloadPath: info.downloadPath,
-    downloadUrl: info.downloadUrl,
-    // Toujours le paquet PLM prod — Dev/Preprod ne doivent pas croire que c’est « leur » APK.
-    package: info.package ?? 'ovh.delhomme.ytmusic',
+    downloadPath,
+    downloadUrl,
+    package: info.package ?? slotPkg,
+    forceUpdate: false,
+    hubera: huberaNotice(),
+    aliases: [
+      'https://music.hubera.cloud',
+      'https://plm.delhomme.ovh',
+      'https://ytmusic.delhomme.ovh',
+      'https://ytm.delhomme.ovh',
+      'https://pue-la-merde.delhomme.ovh',
+      'https://peule-la-merde.delhomme.ovh',
+    ],
   });
 });
 
@@ -1763,26 +2139,43 @@ app.get('/api/home', accountRequired, async (req, res) => {
     const localPl = listPlaylists(userId, { includeTracks: false });
 
     // reco perso + home YT + similar en parallèle (gros gain cold start)
-    // YT home : budget borné — si lent, on sert le perso tout de suite (suite via /home/more).
+    // Budgets stricts : sans ça homeReco (N×search) + similarForUser(getRelated/hydrate)
+    // saturent facilement 17–40s sur prod. Shelves utiles locales d’abord ; suite via /home/more.
+    const HOME_YT_MS = 3_000;
+    const HOME_RECO_MS = 3_000;
+    const HOME_SIM_MS = 2_000;
+
     const similarPromise =
       top[0] && /^[a-zA-Z0-9_-]{11}$/.test(top[0].id)
-        ? similarForUser(userId, top[0].id, top[0], { full: false }).catch(() => null)
+        ? // Fast = upNext léger ; similarForUser({full:false}) appelle encore getRelated+hydrate~40
+          Promise.race([
+            similarForUserFast(userId, top[0].id, top[0]).catch(() => null),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), HOME_SIM_MS)),
+          ])
         : Promise.resolve(null);
 
     const ytHomePromise = Promise.race([
       getHome().catch(() => [] as Awaited<ReturnType<typeof getHome>>),
       new Promise<Awaited<ReturnType<typeof getHome>>>((resolve) =>
-        setTimeout(() => resolve([]), 4_000),
+        setTimeout(() => resolve([]), HOME_YT_MS),
       ),
     ]);
 
-    const [reco, ytHome, sim] = await Promise.all([homeReco(userId), ytHomePromise, similarPromise]);
+    const [reco, ytHome, sim] = await Promise.all([
+      homeReco(userId, { budgetMs: HOME_RECO_MS }),
+      ytHomePromise,
+      similarPromise,
+    ]);
 
     // Préchauffe async des mixes catégorie (ne bloque pas la réponse home)
     warmCategoryMixes(userId, 3);
     // Si le budget YT a sauté, relance en fond pour le cache suivant
     if (!ytHome.length) {
       void getHome().catch(() => undefined);
+    }
+    // Enrichit « Rapide · pour toi » en fond (cache mix) sans bloquer Accueil
+    if (top[0] && /^[a-zA-Z0-9_-]{11}$/.test(top[0].id) && !sim?.tracks?.length) {
+      void similarForUser(userId, top[0].id, top[0], { full: false }).catch(() => undefined);
     }
 
     const personal: Awaited<ReturnType<typeof getHome>> = [
@@ -1923,7 +2316,22 @@ app.get('/api/search', accountRequired, async (req, res) => {
       // Frappe live / très courte : ne pas polluer l’historique
       q.length < 3;
     if (!noHistory) addSearchHistory(req.userId!, q);
-    res.json(await search(q, String(req.query.filter || 'all'), { userId: req.userId! }));
+    const payload = await search(q, String(req.query.filter || 'all'), { userId: req.userId! });
+    res.json(payload);
+    const songs =
+      (payload as { songs?: Array<{ id?: string }>; topResult?: { id?: string } })?.songs || [];
+    const warmIds = [
+      (payload as { topResult?: { id?: string } })?.topResult?.id,
+      ...songs.map((s) => s.id),
+    ].filter((id): id is string => typeof id === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(id));
+    if (warmIds.length) {
+      const uniq = [...new Set(warmIds)];
+      // Pendant une écoute : 3 max (ne pas noyer yt-dlp / budget disque).
+      // Au repos : 5 — assez pour le top + suivants, pas un burst de 20.
+      const ahead = isPlaybackHot(90_000) ? 3 : 5;
+      replaceSearchWarm(uniq.slice(0, ahead), req.userId!);
+      ensurePlayableQueueAhead(uniq.slice(0, ahead), { userId: req.userId! });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -1952,8 +2360,71 @@ app.post('/api/search/history', accountRequired, (req, res) => {
   addSearchHistory(req.userId!, q, {
     id: req.body?.clickedId,
     kind: req.body?.clickedKind,
+    title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+    artist: typeof req.body?.artist === 'string' ? req.body.artist : undefined,
   });
   res.json({ ok: true, history: listSearchHistory(req.userId!, 40) });
+});
+
+/**
+ * Feedback recherche utilisateur → apprentissage (query fautive → bon videoId).
+ * kind: empty | wrong | confirm | correct_pick
+ */
+app.post(
+  '/api/search/feedback',
+  accountRequired,
+  rateLimit({ windowMs: 60_000, max: 40 }),
+  (req, res) => {
+    const q = String(req.body?.query || '').trim();
+    const kind = String(req.body?.kind || '') as SearchFeedbackKind;
+    if (!q || !['empty', 'wrong', 'confirm', 'correct_pick'].includes(kind)) {
+      res.status(400).json({ error: 'query + kind (empty|wrong|confirm|correct_pick) requis' });
+      return;
+    }
+    const out = recordSearchFeedback({
+      userId: req.userId!,
+      query: q,
+      kind,
+      wrongVideoId: typeof req.body?.wrongVideoId === 'string' ? req.body.wrongVideoId : undefined,
+      correctVideoId:
+        typeof req.body?.correctVideoId === 'string'
+          ? req.body.correctVideoId
+          : typeof req.body?.videoId === 'string'
+            ? req.body.videoId
+            : undefined,
+      title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+      artist: typeof req.body?.artist === 'string' ? req.body.artist : undefined,
+      note: typeof req.body?.note === 'string' ? req.body.note : undefined,
+    });
+    res.json(out);
+  },
+);
+
+/** Indexe likes + goûts biblio dans FTS + hits canoniques (améliore la recherche pour TOUS). */
+app.post(
+  '/api/search/learn-library',
+  accountRequired,
+  rateLimit({ windowMs: 60_000, max: 6 }),
+  (req, res) => {
+    try {
+      const liked = getLikedTracks(req.userId!, 400);
+      const taste = getLibraryTasteTracks(req.userId!, 200);
+      const byId = new Map<string, (typeof liked)[0]>();
+      for (const t of [...liked, ...taste]) {
+        if (t?.id) byId.set(t.id, t);
+      }
+      const tracks = [...byId.values()];
+      upsertIndexedTracks(tracks);
+      indexLibraryTracksAsHits(tracks, 'library');
+      res.json({ ok: true, indexed: tracks.length });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  },
+);
+
+app.get('/api/admin/search/feedback', requireAdmin, (_req, res) => {
+  res.json({ feedback: listSearchFeedback(60) });
 });
 
 /** Reconnaissance titre / fredonnement (AudD) → résultats recherche. */
@@ -1986,7 +2457,22 @@ app.post(
 
 app.get('/api/track/:id', accountRequired, async (req, res) => {
   try {
-    const { track } = await getTrack(p(req.params.id));
+    const tid = p(req.params.id);
+    const owned = req.userId ? getOwnedUpload(req.userId, tid) : null;
+    if (owned) {
+      const { getTrackPayload } = await import('./library/db.js');
+      const cached = getTrackPayload(tid);
+      if (cached) {
+        res.json({
+          track: cached,
+          streamUrl: `/api/stream/${tid}`,
+          cached: true,
+          source: 'upload',
+        });
+        return;
+      }
+    }
+    const { track } = await getTrack(tid);
     // Ne pas écrire l'historique ici : c'est fait dès le play (même partiel)
     res.json({
       track,
@@ -2006,10 +2492,21 @@ app.get('/api/track/:id/replacement', accountRequired, async (req, res) => {
       res.status(400).json({ ok: false, error: 'id invalide' });
       return;
     }
+    if (req.userId && getOwnedUpload(req.userId, id)) {
+      res.json({ ok: false, deadId: id, upload: true, error: 'fichier local' });
+      return;
+    }
     const { getReplacementId, findReplacementId } = await import('./media/trackReplacement.js');
     const known = getReplacementId(id);
     if (known) {
-      res.json({ ok: true, deadId: id, replacementId: known, cached: true });
+      res.json({
+        ok: true,
+        available: true,
+        deadId: id,
+        replacementId: known,
+        cached: true,
+        message: 'Autre adresse audio disponible — lecture possible',
+      });
       return;
     }
     const title = typeof req.query.title === 'string' ? req.query.title : undefined;
@@ -2023,12 +2520,25 @@ app.get('/api/track/:id/replacement', accountRequired, async (req, res) => {
       const { enqueueStreamWarm, enqueueDiskWarm } = await import('./media/stream.js');
       enqueueStreamWarm([replacement], uid);
       enqueueDiskWarm([replacement]);
-      res.json({ ok: true, deadId: id, replacementId: replacement, cached: false });
+      res.json({
+        ok: true,
+        available: true,
+        deadId: id,
+        replacementId: replacement,
+        cached: false,
+        message: 'Nouveau titre audio trouvé — lecture reprise',
+      });
       return;
     }
-    res.json({ ok: true, deadId: id, replacementId: null });
+    res.json({
+      ok: true,
+      available: false,
+      deadId: id,
+      replacementId: null,
+      message: 'Pas de nouveau titre audio pour l’instant',
+    });
   } catch (err) {
-    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+    res.status(500).json({ ok: false, available: false, error: String((err as Error).message || err) });
   }
 });
 
@@ -2136,6 +2646,11 @@ app.get('/api/history/detailed', accountRequired, (req, res) => {
   res.json({ events: listListenEventsDetailed(req.userId!, 500) });
 });
 
+/** Stats écoute jour / 7 j / 30 j — agrégat serveur, appelé à l’ouverture Compte (pas de push). */
+app.get('/api/history/stats', accountRequired, (req, res) => {
+  res.json({ ok: true, ...listenStatsSummary(req.userId!) });
+});
+
 app.post('/api/listen', accountRequired, (req, res) => {
   try {
     const event = String(req.body?.event || 'start') as 'start' | 'progress' | 'complete' | 'skip';
@@ -2227,6 +2742,11 @@ app.post('/api/prefs/onboarding', accountRequired, (req, res) => {
 
 app.get('/api/pins', accountRequired, (req, res) => {
   res.json({ pins: listPins(req.userId!) });
+  try {
+    warmUserPinnedAndHeard(req.userId!);
+  } catch {
+    /* best-effort */
+  }
 });
 
 app.post('/api/pins', accountRequired, (req, res) => {
@@ -2416,18 +2936,99 @@ app.get('/api/track/:id/related', accountRequired, async (req, res) => {
 app.get('/api/track/:id/lyrics', accountRequired, async (req, res) => {
   try {
     const trackId = p(req.params.id);
-    const lyrics = await getLyrics(trackId);
-    const profile = resolveLyricSync(req.userId!, trackId);
-    res.json({
-      ...lyrics,
-      userOffsetMs: profile.userOffsetMs !== 0
-        ? profile.userOffsetMs
-        : profile.crowdOffsetMs,
-      crowdOffsetMs: profile.crowdOffsetMs,
-      personalOffsetMs: profile.userOffsetMs,
-      segments: profile.segments,
-      segmentsFromUser: profile.segmentsFromUser,
+    const qTitle = typeof req.query.title === 'string' ? req.query.title : '';
+    const qArtist = typeof req.query.artist === 'string' ? req.query.artist : '';
+    const force = req.query.refresh === '1' || req.query.force === '1';
+    const hints = { title: qTitle, artist: qArtist, forceRefetch: force };
+    const pack = (lyrics: Awaited<ReturnType<typeof getLyrics>>, pending = false) => {
+      const profile = resolveLyricSync(req.userId!, trackId);
+      const onsetMs = Math.abs(Number(lyrics.syncOffsetMs) || 0);
+      const learned =
+        onsetMs >= 5_000
+          ? 0
+          : profile.userOffsetMs !== 0
+            ? profile.userOffsetMs
+            : profile.crowdOffsetMs;
+      return {
+        ...lyrics,
+        pending,
+        userOffsetMs: learned,
+        crowdOffsetMs: onsetMs >= 5_000 ? 0 : profile.crowdOffsetMs,
+        personalOffsetMs: onsetMs >= 5_000 ? 0 : profile.userOffsetMs,
+        segments: profile.segments,
+        segmentsFromUser: profile.segmentsFromUser,
+      };
+    };
+    const fast = await getLyrics(trackId, { ...hints, fastOnly: true });
+    if (fast.lyrics) {
+      res.json(pack(fast, false));
+      getLyrics(trackId, hints).catch(() => {});
+      return;
+    }
+    const lyricsP = getLyrics(trackId, hints);
+    const raced = await Promise.race([
+      lyricsP.then((lyrics) => ({ ok: true as const, lyrics })),
+      new Promise<{ ok: false }>((resolve) => setTimeout(() => resolve({ ok: false }), 12_000)),
+    ]);
+    if (!raced.ok) {
+      lyricsP.catch(() => {});
+      res.json(
+        pack(
+          {
+            lyrics: null,
+            timed: null,
+            source: null,
+            syncOffsetMs: 0,
+          },
+          true,
+        ),
+      );
+      return;
+    }
+    res.json(pack(raced.lyrics, false));
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post('/api/track/:id/lyrics', accountRequired, async (req, res) => {
+  try {
+    const trackId = p(req.params.id);
+    const body = (req.body || {}) as { lyrics?: string; title?: string; artist?: string };
+    const saved = saveUserLyrics(
+      trackId,
+      String(body.lyrics || ''),
+      String(body.title || ''),
+      String(body.artist || ''),
+    );
+    if (!saved) {
+      res.status(400).json({ error: 'Paroles trop courtes ou invalides' });
+      return;
+    }
+    res.json(saved);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post('/api/track/:id/lyrics/feedback', accountRequired, async (req, res) => {
+  try {
+    const trackId = p(req.params.id);
+    const body = (req.body || {}) as {
+      vote?: string;
+      title?: string;
+      artist?: string;
+    };
+    const vote = String(body.vote || '').toLowerCase();
+    if (vote !== 'correct' && vote !== 'wrong') {
+      res.status(400).json({ error: 'vote=correct|wrong requis' });
+      return;
+    }
+    const result = await submitLyricsFeedback(trackId, vote, {
+      title: String(body.title || ''),
+      artist: String(body.artist || ''),
     });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2507,7 +3108,29 @@ app.get('/api/artist/:id/songs', accountRequired, async (req, res) => {
 
 app.get('/api/album/:id', accountRequired, async (req, res) => {
   try {
-    res.json(await getAlbum(p(req.params.id)));
+    const id = p(req.params.id);
+    let live: { album?: Record<string, unknown>; tracks?: import('./youtube/types.js').Track[] } | null = null;
+    try {
+      live = await getAlbum(id);
+    } catch (err) {
+      console.warn('[album] getAlbum KO', id, String((err as Error).message || err).slice(0, 120));
+    }
+    const { albumFromLibrary, mergeAlbumLiveAndLibrary } = await import('./library/library.js');
+    const fromLib = albumFromLibrary(req.userId!, id);
+    const merged = mergeAlbumLiveAndLibrary(live, fromLib);
+    if (merged && merged.tracks.length) {
+      const weak = merged.tracks.filter((t) => isWeakTitle(t.title, t.id)).length;
+      if (weak) {
+        try {
+          merged.tracks = await hydrateTracks(merged.tracks, { limit: 24, concurrency: 2 });
+        } catch {
+          /* titres biblio déjà là */
+        }
+      }
+      res.json(merged);
+      return;
+    }
+    res.status(502).json({ error: 'Album introuvable (YouTube + biblio)' });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2591,16 +3214,32 @@ app.get('/api/stream/:id', (req, res, next) => {
 
 app.post('/api/download/:id', accountRequired, async (req, res) => {
   try {
-    const id = p(req.params.id);
+    let id = p(req.params.id);
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) {
+      res.status(400).json({ error: 'ID invalide' });
+      return;
+    }
+    // Extended mort → original (même seed que like/biblio) pour warm + ack.
+    try {
+      const { getReplacementId } = await import('./media/trackReplacement.js');
+      const repl = getReplacementId(id);
+      if (repl) id = repl;
+    } catch {
+      /* ignore */
+    }
     // Client mobile a déjà le fichier local : ack rapide sans re-télécharger via yt-dlp
     if (String(req.query.ack || req.body?.ack || '') === '1') {
       markDownloaded(req.userId!, id);
-      res.json({ ok: true, ack: true });
+      res.json({ ok: true, ack: true, trackId: id });
       return;
     }
-    const path = await downloadTrack(id);
-    markDownloaded(req.userId!, id, path);
-    res.json({ ok: true, path, streamUrl: `/api/stream/${id}` });
+    enqueueListHeadWarm([id], { front: true });
+    if (isPlaybackHot(90_000)) {
+      res.json({ ok: true, queued: 'prefix', streamUrl: `/api/stream/${id}`, trackId: id });
+      return;
+    }
+    enqueueNextDiskWarm([id]);
+    res.json({ ok: true, queued: true, streamUrl: `/api/stream/${id}`, trackId: id });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2627,16 +3266,33 @@ app.get('/api/library/contains', accountRequired, (req, res) => {
   }
 });
 
+function librarySongIds(lib: { songs?: Array<{ id?: string }>; liked?: Array<{ id?: string }>; history?: Array<{ id?: string }> }): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of [...(lib.songs || []), ...(lib.liked || []), ...(lib.history || [])]) {
+    const id = String(t?.id || '');
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 /**
- * Têtes Aléatoire biblio (~100 ids) — rotation ~30 min / compte.
- * Warm serveur lancé en fond ; client Android = warm léger de ce batch seulement.
+ * Têtes Aléatoire biblio (plusieurs centaines) — rotation ~30 min, ou fresh=1.
+ * La liste part tout de suite ; le warm disque reste sériel.
  */
 app.get('/api/library/shuffle-heads', accountRequired, (req, res) => {
   try {
     const warm = String(req.query.warm || '1') !== '0';
     const scope = String(req.query.scope || 'all') === 'recent' ? 'recent' : 'all';
-    const result = getShuffleHeads(req.userId!, { warm, scope });
+    const fresh = String(req.query.fresh || '') === '1';
+    const result = getShuffleHeads(req.userId!, { warm, scope, fresh });
     res.json(result);
+    if (warm && result.ids?.length) {
+      ensurePlayableQueueAhead(result.ids.slice(0, 8), { userId: req.userId! });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2648,6 +3304,42 @@ app.post('/api/library/shuffle-heads/refresh', accountRequired, (req, res) => {
     const scope = String(req.query.scope || req.body?.scope || 'all') === 'recent' ? 'recent' : 'all';
     const result = getShuffleHeads(req.userId!, { warm: true, scope });
     res.json(result);
+    if (result.ids?.length) {
+      ensurePlayableQueueAhead(result.ids.slice(0, 8), { userId: req.userId! });
+    }
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+/**
+ * 10–20 premiers titres d’une liste (Tout lire A–Z / récents / aimés / file affichée).
+ * Préfixe .m4a 256–512 Ko sur le VPS, mis à jour par compte.
+ */
+app.get('/api/library/list-heads', accountRequired, (req, res) => {
+  try {
+    const raw = String(req.query.scope || 'az');
+    const scope = raw === 'recent' || raw === 'liked' ? raw : 'az';
+    const warm = String(req.query.warm || '1') !== '0';
+    const heads = getListHeads(req.userId!, scope, { warm });
+    res.json(heads);
+    if (warm && heads.ids?.length) {
+      ensurePlayableQueueAhead(heads.ids.slice(0, 20), { userId: req.userId! });
+    }
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post('/api/library/list-heads', accountRequired, (req, res) => {
+  try {
+    const raw = (req.body as { ids?: unknown } | undefined)?.ids;
+    const ids = Array.isArray(raw) ? raw.map((x) => String(x)) : [];
+    const remembered = rememberVisibleListHeads(req.userId!, ids);
+    res.json(remembered);
+    if (remembered.ids?.length) {
+      ensurePlayableQueueAhead(remembered.ids.slice(0, 20), { userId: req.userId! });
+    }
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2659,9 +3351,12 @@ app.get('/api/library', accountRequired, async (req, res) => {
     const light = String(req.query.light || '') === '1';
     if (light) {
       const lim = Math.max(10, Math.min(40, Number(req.query.limit) || 12));
-      res.json(getLibraryLight(req.userId!, lim));
+      const lightLib = getLibraryLight(req.userId!, lim);
+      res.json(lightLib);
       scheduleLibraryRepair(req.userId!);
       scheduleUserTasteWarm(req.userId!, [], { disk: 8 });
+      warmUserListHeads(req.userId!);
+      ensurePlayableQueueAhead(librarySongIds(lightLib), { userId: req.userId! });
       return;
     }
     // Réponse immédiate — repair méta / albums en fond (E4 : ne plus bloquer 2–3 s)
@@ -2669,6 +3364,8 @@ app.get('/api/library', accountRequired, async (req, res) => {
     res.json(library);
     scheduleLibraryRepair(req.userId!);
     scheduleUserTasteWarm(req.userId!, [], { disk: 8 });
+    warmUserListHeads(req.userId!);
+    ensurePlayableQueueAhead(librarySongIds(library), { userId: req.userId! });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2679,6 +3376,28 @@ app.post('/api/library/repair-meta', accountRequired, async (req, res) => {
     res.json(await repairLibraryTrackMeta(req.userId!));
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+/** Réparer un titre mort : re-résout Innertube (songs) + upsert canonique. */
+app.post('/api/library/repair-playability', accountRequired, async (req, res) => {
+  try {
+    const videoId = String((req.body as { videoId?: string } | undefined)?.videoId || '');
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      res.status(400).json({ ok: false, error: 'videoId invalide' });
+      return;
+    }
+    triggerOnDemandRecover(videoId);
+    const summary = await runPlayabilitySweep({
+      ids: [videoId],
+      limit: 1,
+      userId: req.userId!,
+      concurrency: 1,
+      sleepMs: 0,
+    });
+    res.json({ ok: true, forceUpdate: false, ...summary });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
   }
 });
 
@@ -2762,9 +3481,15 @@ app.delete('/api/library/albums/:id', accountRequired, (req, res) => {
   res.json({ ok: true, ...result, library: getFullLibrary(req.userId!) });
 });
 
-app.post('/api/library/artists', accountRequired, (req, res) => {
+app.post('/api/library/artists', accountRequired, async (req, res) => {
   try {
-    res.json({ artist: saveArtist(req.userId!, req.body), library: getFullLibrary(req.userId!) });
+    const result = await saveArtistWithTracks(req.userId!, req.body || {});
+    res.json({
+      artist: result.artist,
+      tracksAdded: result.tracksAdded,
+      tracksTotal: result.tracksTotal,
+      library: getFullLibrary(req.userId!),
+    });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -2864,6 +3589,50 @@ app.put('/api/library/playlists/:id/reorder', accountRequired, (req, res) => {
     res.status(500).json({ error: String(err) });
   }
 });
+
+app.post(
+  '/api/import/file',
+  accountRequired,
+  rateLimit({ windowMs: 15 * 60_000, max: 20 }),
+  async (req, res) => {
+    try {
+      const raw = req.body;
+      const buf = Buffer.isBuffer(raw)
+        ? raw
+        : raw instanceof Uint8Array
+          ? Buffer.from(raw)
+          : Buffer.alloc(0);
+      const filename = String(
+        req.query.filename || req.headers['x-filename'] || req.headers['x-file-name'] || '',
+      ).trim();
+      const title = String(req.query.title || req.headers['x-track-title'] || '').trim();
+      const artist = String(req.query.artist || req.headers['x-track-artist'] || '').trim();
+      const mime = String(req.headers['content-type'] || 'audio/mpeg')
+        .split(';')[0]
+        .trim();
+      if (mime.toLowerCase().includes('multipart/')) {
+        res.status(400).json({
+          error: 'Envoie le fichier en binaire (Content-Type: audio/mpeg), pas en multipart',
+        });
+        return;
+      }
+      const result = await importLocalAudioFile(req.userId!, {
+        buffer: buf,
+        filename: filename || undefined,
+        mime,
+        title: title || undefined,
+        artist: artist || undefined,
+      });
+      res.json({ ...result, library: getFullLibrary(req.userId!) });
+    } catch (err) {
+      const msg = String((err as Error).message || err);
+      const code = /trop (petit|lourd)|Seuls les|Limite atteinte|Compte requis/i.test(msg)
+        ? 400
+        : 500;
+      res.status(code).json({ error: msg });
+    }
+  },
+);
 
 app.post('/api/import', accountRequired, async (req, res) => {
   try {
@@ -3049,8 +3818,35 @@ app.put('/api/session/state', accountRequired, (req, res) => {
 });
 
 const clientDist = join(ROOT, 'web', 'dist');
+const huberaLanding = join(ROOT, 'web', 'hubera-landing.html');
 if (existsSync(clientDist)) {
-  app.use(express.static(clientDist));
+  app.get('/', (req, res, next) => {
+    if (existsSync(huberaLanding)) {
+      res.type('html');
+      res.sendFile(huberaLanding);
+      return;
+    }
+    next();
+  });
+  app.get('/app', (_req, res) => {
+    res.sendFile(join(clientDist, 'index.html'));
+  });
+  app.use(
+    express.static(clientDist, {
+      setHeaders(res, filePath) {
+        const base = filePath.replace(/\\/g, '/').split('/').pop() || '';
+        if (
+          base === 'index.html' ||
+          base === 'sw.js' ||
+          base === 'registerSW.js' ||
+          base === 'manifest.webmanifest' ||
+          base === 'refresh.html'
+        ) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        }
+      },
+    }),
+  );
   // Ne jamais servir le SPA pour /api ou well-known (sinon 200 HTML sur routes API manquantes)
   app.get(/.*/, (req, res) => {
     const p = req.path || '';
@@ -3156,9 +3952,8 @@ process.on('uncaughtException', (err) => {
   // Laisse le temps d’envoyer le mail avant exit
   setTimeout(() => process.exit(1), 1500);
 });
-process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason);
-  const err = reason instanceof Error ? reason : new Error(String(reason));
+process.on('unhandledRejection', (rejected) => {
+  const err = rejected instanceof Error ? rejected : new Error(String(rejected));
   // Client a coupé le flux (curl/tests/Exo abort) → yt-dlp SIGTERM → exit null : pas d’alerte mail
   // Range EOF disque déjà géré (416) — anciennes races / start===size ne doivent plus spammer.
   if (
@@ -3174,11 +3969,16 @@ process.on('unhandledRejection', (reason) => {
     const blob = `${err.message}\n${err.stack || ''}`;
     const m =
       /\[stream\s+([a-zA-Z0-9_-]{11})\]/.exec(blob) ||
-      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/.exec(blob);
+      /\/api\/stream\/([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\bid=([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\bvideoId[=: ]([a-zA-Z0-9_-]{11})\b/.exec(blob) ||
+      /\/cache\/([a-zA-Z0-9_-]{11})\.(?:m4a|mp4|part)\b/.exec(blob);
     return m?.[1];
   })();
+  const shortReason = err.message.replace(/\s+/g, ' ').trim().slice(0, 160);
+  console.error('[unhandledRejection]', trackIdFromErr || 'sans-id', shortReason);
   try {
-    const meta = trackIdFromErr ? { trackId: trackIdFromErr } : undefined;
+    const meta = { reason: shortReason, ...(trackIdFromErr ? { trackId: trackIdFromErr } : {}) };
     const id = insertTelemetry({
       env: getAppEnv(),
       level: 'error',
@@ -3220,13 +4020,17 @@ server.listen(PORT, '0.0.0.0', () => {
   } catch (err) {
     console.error('[auth] seed sync', err);
   }
-  console.log(`PLM API → http://localhost:${PORT}`);
-  console.log(`PLM LAN → http://0.0.0.0:${PORT} (toutes interfaces)`);
-  console.log(`PLM WS  → ws://localhost:${PORT}/ws`);
+  console.log(`Hubera Music API → http://localhost:${PORT}`);
+  console.log(`Hubera Music LAN → http://0.0.0.0:${PORT} (toutes interfaces)`);
+  console.log(`Hubera Music WS  → ws://localhost:${PORT}/ws`);
   startLibraryHealthScan();
+  startPlayabilitySweep();
   startGlobalTasteWarmScheduler();
   startPlaybackDigestScheduler();
   startLibraryWarmSweep();
+  void import('./media/trackAtlas.js')
+    .then((m) => m.startTrackAtlas())
+    .catch((err) => console.warn('[atlas] import KO', String((err as Error).message || err).slice(0, 80)));
   void import('./youtube/youtubeProxy.js')
     .then((m) => {
       m.startYoutubeProxyBackgroundRefresh();

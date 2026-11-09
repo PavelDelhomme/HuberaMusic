@@ -73,7 +73,7 @@ export function InstallPage() {
     <div className="mx-auto min-h-[70vh] max-w-lg px-4 py-10">
       <div className="mb-8 flex flex-col items-center text-center">
         <BrandLogo className="mb-4 h-16 w-16" />
-        <h1 className="font-display text-2xl font-bold tracking-tight">Installer PLM</h1>
+        <h1 className="font-display text-2xl font-bold tracking-tight">Installer MHC</h1>
         <p className="mt-2 text-sm text-yt-muted">
           Application Android <strong className="text-white">native</strong> (APK) — pas un site
           web ajouté à l’écran d’accueil.
@@ -104,7 +104,7 @@ export function InstallPage() {
             className="flex w-full items-center justify-center gap-2 rounded-full bg-yt-red py-3 text-sm font-semibold text-white disabled:opacity-50"
           >
             <Download className="h-4 w-4" />
-            {busy ? 'Préparation…' : 'Télécharger PLM.apk'}
+            {busy ? 'Préparation…' : 'Télécharger MHC.apk'}
           </button>
           {downloadUrl && (
             <a
@@ -125,7 +125,7 @@ export function InstallPage() {
             Depuis ton téléphone
           </div>
           <p className="mb-4 text-sm text-yt-muted">
-            Scanne ce QR avec la caméra Android, puis appuie sur « Télécharger PLM.apk ».
+            Scanne ce QR avec la caméra Android, puis appuie sur « Télécharger MHC.apk ».
           </p>
           <div className="mb-4 flex justify-center rounded-2xl bg-white p-3">
             <QRCodeSVG value={pageUrl} size={168} level="M" />
@@ -146,7 +146,7 @@ export function InstallPage() {
       {os === 'ios' && (
         <section className="mb-6 rounded-2xl border border-yt-border bg-yt-surface p-5 text-sm text-yt-muted">
           <p className="mb-2 font-medium text-white">iPhone / iPad</p>
-          Pas d’APK sur iOS. Ouvre PLM dans <strong className="text-white">Safari</strong> → Partager →
+          Pas d’APK sur iOS. Ouvre MHC dans <strong className="text-white">Safari</strong> → Partager →
           « Sur l’écran d’accueil ».
         </section>
       )}
@@ -157,7 +157,7 @@ export function InstallPage() {
           Xiaomi / MIUI — installation
         </div>
         <ol className="list-decimal space-y-2 pl-5 text-xs leading-relaxed text-yt-muted">
-          <li>Télécharge via le bouton rouge (fichier <code className="text-white">PLM.apk</code>).</li>
+          <li>Télécharge via le bouton rouge (fichier <code className="text-white">MHC.apk</code>).</li>
           <li>
             Si bloqué : Paramètres → Applications → Gérer les applications → les trois points →
             <strong className="text-white"> Installer via USB / sources inconnues</strong> pour ton
@@ -169,7 +169,7 @@ export function InstallPage() {
           </li>
           <li>
             Vérifie que le package est <code className="text-white">ovh.delhomme.ytmusic</code> et
-            l’icône PLM.
+            l’icône MHC.
           </li>
         </ol>
         <ul className="mt-4 space-y-1.5 text-xs text-yt-muted">
@@ -188,7 +188,7 @@ export function InstallPage() {
       <p className="mt-8 text-center text-xs text-yt-muted">
         Déjà un compte ?{' '}
         <Link to="/" className="text-white underline">
-          Retour à PLM
+          Retour à MHC
         </Link>
       </p>
     </div>

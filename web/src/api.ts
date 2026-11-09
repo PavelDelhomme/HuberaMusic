@@ -9,6 +9,7 @@ export type Track = {
   durationSeconds?: number;
   thumbnails: { url: string; width?: number; height?: number }[];
   type: 'song' | 'video' | 'album' | 'playlist' | 'artist' | 'mix' | 'unknown';
+  source?: 'upload' | 'youtube';
 };
 
 export type Shelf = {
@@ -41,6 +42,10 @@ export type LibraryData = {
   /** Playlists / albums / mixes lancés récemment. */
   recentEntities: Track[];
   downloaded: string[];
+  /** Réponse GET /api/library?light=1 */
+  partial?: boolean;
+  totalSongs?: number;
+  totalLiked?: number;
 };
 
 export type User = {
@@ -74,7 +79,7 @@ export function apiOrigin(): string {
   try {
     if (Capacitor.isNativePlatform()) {
       const stored = localStorage.getItem('ytm_api_origin')?.replace(/\/$/, '');
-      return stored || 'https://plm.delhomme.ovh';
+      return stored || 'https://music.hubera.cloud';
     }
   } catch {
     /* web */
@@ -390,6 +395,18 @@ export const api = {
     req<{ stats: any; events: any[] }>(
       `/api/admin/telemetry${level ? `?level=${encodeURIComponent(level)}` : ''}`,
     ),
+  adminDocsTask: (task: {
+    title: string;
+    body: string;
+    project: string;
+    category: string;
+    column_id: string;
+    priority: number;
+  }) =>
+    req<{ ok: boolean; id?: string; error?: string; status?: number; task?: typeof task }>(
+      '/api/admin/docs-task',
+      { method: 'POST', body: JSON.stringify(task) },
+    ),
   adminMailOutbox: () => req<{ mails: any[] }>('/api/admin/mail-outbox'),
   adminSmtp: () => req<{ smtp: any; env: string; appUrl: string | null }>('/api/admin/smtp'),
   adminSmtpTest: (to?: string) =>
@@ -591,7 +608,8 @@ export const api = {
       albums: Track[];
       artists: Track[];
       playlists: Track[];
-    }>(`/api/search?${params.toString()}`);
+      // YT + typo repair peut dépasser 25s ; ne pas couper avant le gateway.
+    }>(`/api/search?${params.toString()}`, { timeoutMs: 90_000 });
   },
   suggestions: (q: string) =>
     req<{ suggestions: string[] }>(`/api/search/suggestions?q=${encodeURIComponent(q)}`),
@@ -613,11 +631,39 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ query: q }),
     }).catch(() => ({ ok: false })),
-  recordSearchClick: (q: string, track: { id: string; type?: string }) =>
+  recordSearchClick: (
+    q: string,
+    track: { id: string; type?: string; title?: string; artists?: Array<{ name?: string }> },
+  ) =>
     req<{ ok: boolean }>('/api/search/history', {
       method: 'POST',
-      body: JSON.stringify({ query: q, clickedId: track.id, clickedKind: track.type || 'song' }),
+      body: JSON.stringify({
+        query: q,
+        clickedId: track.id,
+        clickedKind: track.type || 'song',
+        title: track.title,
+        artist: (track.artists || []).map((a) => a.name).filter(Boolean).join(', '),
+      }),
     }).catch(() => ({ ok: false })),
+  searchFeedback: (payload: {
+    query: string;
+    kind: 'empty' | 'wrong' | 'confirm' | 'correct_pick';
+    wrongVideoId?: string;
+    correctVideoId?: string;
+    videoId?: string;
+    title?: string;
+    artist?: string;
+    note?: string;
+  }) =>
+    req<{ ok: boolean; learned: boolean }>('/api/search/feedback', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  learnLibrarySearch: () =>
+    req<{ ok: boolean; indexed: number }>('/api/search/learn-library', {
+      method: 'POST',
+      body: '{}',
+    }).catch(() => ({ ok: false, indexed: 0 })),
   prefs: () => req<{ prefs: any; follows: any[] }>('/api/prefs'),
   savePrefs: (patch: Record<string, unknown>) =>
     req<{ prefs: any }>('/api/prefs', { method: 'PUT', body: JSON.stringify(patch) }),
@@ -738,11 +784,18 @@ export const api = {
       artist: { id: string; name: string; subscribers?: string; thumbnails: Track['thumbnails']; description?: string };
       tracks: Track[];
     }>(`/api/artist/${id}/songs${limit ? `?limit=${limit}` : ''}`),
-  lyrics: (id: string) =>
-    req<{
+  lyrics: (id: string, hints?: { title?: string; artist?: string }) => {
+    const q = new URLSearchParams();
+    if (hints?.title?.trim()) q.set('title', hints.title.trim());
+    const artist = hints?.artist?.trim();
+    if (artist && !/^(artiste|artist|inconnu|unknown|n\/a)$/i.test(artist)) {
+      q.set('artist', artist);
+    }
+    const qs = q.toString();
+    return req<{
       lyrics: string | null;
       timed?: { startMs: number; text: string }[] | null;
-      source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
+      source?: string | null;
       syncOffsetMs?: number;
       userOffsetMs?: number;
       crowdOffsetMs?: number;
@@ -754,7 +807,49 @@ export const api = {
         offsetMs: number;
       }[];
       segmentsFromUser?: boolean;
-    }>(`/api/track/${id}/lyrics`),
+      suggestions?: {
+        title: string;
+        artist: string;
+        url: string;
+        source: string;
+        reason: string;
+        score?: number;
+      }[];
+      searchUrls?: { label: string; url: string }[];
+    }>(`/api/track/${id}/lyrics${qs ? `?${qs}` : ''}`);
+  },
+  saveLyrics: (id: string, lyrics: string, hints?: { title?: string; artist?: string }) =>
+    req<{ lyrics: string | null; timed?: { startMs: number; text: string }[] | null; source?: string | null }>(
+      `/api/track/${id}/lyrics`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          lyrics,
+          title: hints?.title || undefined,
+          artist: hints?.artist || undefined,
+        }),
+      },
+    ),
+  lyricsFeedback: (
+    id: string,
+    vote: 'correct' | 'wrong',
+    hints?: { title?: string; artist?: string },
+  ) =>
+    req<{
+      lyrics: string | null;
+      timed?: { startMs: number; text: string }[] | null;
+      source?: string | null;
+      vote: string;
+      refreshed: boolean;
+    }>(`/api/track/${id}/lyrics/feedback`, {
+      method: 'POST',
+      body: JSON.stringify({
+        vote,
+        title: hints?.title || undefined,
+        artist: hints?.artist || undefined,
+      }),
+      timeoutMs: 45_000,
+    }),
   lyricOffsets: () => req<{ offsets: Record<string, number> }>('/api/lyric-offsets'),
   saveLyricOffset: (
     id: string,
@@ -864,6 +959,8 @@ export const api = {
       body: JSON.stringify(entity),
     }),
   library: () => req<LibraryData>('/api/library'),
+  libraryLight: (limit = 40) =>
+    req<LibraryData>(`/api/library?light=1&limit=${Math.max(10, Math.min(40, limit))}`),
   /** Têtes Aléatoire biblio (~100) — rotation serveur ~30 min. */
   shuffleHeads: (warm = true) =>
     req<{
@@ -955,6 +1052,49 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  importFile: async (file: File, meta?: { title?: string; artist?: string }) => {
+    const qs = new URLSearchParams();
+    if (meta?.title) qs.set('title', meta.title);
+    if (meta?.artist) qs.set('artist', meta.artist);
+    if (file.name) qs.set('filename', file.name);
+    const headers: Record<string, string> = {
+      'X-Device-Id': deviceId(),
+      'Content-Type': file.type || 'audio/mpeg',
+    };
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const url = apiUrl(`/api/import/file?${qs.toString()}`);
+    const go = () =>
+      fetch(url, {
+        method: 'POST',
+        headers,
+        body: file,
+        credentials: 'include',
+      });
+    let res = await go();
+    if (res.status === 401) {
+      const refreshed = await tryRefresh();
+      if (refreshed) {
+        const t2 = getToken();
+        if (t2) headers.Authorization = `Bearer ${t2}`;
+        res = await go();
+      }
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || res.statusText || 'Import MP3 impossible');
+    }
+    return res.json() as Promise<{
+      title: string;
+      kind: string;
+      id: string;
+      metaSource?: string;
+      youtubeId?: string;
+      track: Track;
+      added: Record<string, unknown>;
+      library: LibraryData;
+    }>;
+  },
   ytmStatus: () =>
     req<{ account: any; oauth: any }>('/api/ytm/status'),
   ytmConnectCookie: (cookie: string) =>

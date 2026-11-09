@@ -158,7 +158,7 @@ export function DevicePicker({ open, onClose }: { open: boolean; onClose: () => 
           )}
           {devices.length > 0 && others.length === 0 && (
             <p className="text-xs text-yt-muted">
-              Ouvre PLM sur un PC (même compte) pour caster la lecture depuis le téléphone.
+              Ouvre MHC sur un PC (même compte) pour caster la lecture depuis le téléphone.
             </p>
           )}
         </div>
@@ -194,7 +194,7 @@ export function DevicePicker({ open, onClose }: { open: boolean; onClose: () => 
                   .then(() => setCastMsg('Cast lancé vers Chromecast'))
                   .catch((e) =>
                     setCastMsg(
-                      `Cast Chromecast impossible : ${String(e.message || e)}. Vérifie le Wi‑Fi et réessaie, ou utilise « Appareils PLM ».`,
+                      `Cast Chromecast impossible : ${String(e.message || e)}. Vérifie le Wi‑Fi et réessaie, ou utilise « Appareils MHC ».`,
                     ),
                   );
               }}

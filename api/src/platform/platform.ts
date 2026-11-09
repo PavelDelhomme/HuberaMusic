@@ -271,6 +271,59 @@ export function insertTelemetry(ev: {
   return id;
 }
 
+export type BatteryTelemetryPoint = {
+  created_at: number;
+  battery_level: number;
+  battery_charging: number | null;
+  device_id: string | null;
+};
+
+/** Points batterie (0–100) pour un compte / appareil sur une fenêtre. */
+export function listBatteryTelemetry(opts: {
+  userId?: string;
+  deviceId?: string;
+  sinceMs: number;
+  limit?: number;
+}): BatteryTelemetryPoint[] {
+  const limit = Math.min(opts.limit || 400, 800);
+  const rows = (
+    opts.userId
+      ? db
+          .prepare(
+            `SELECT created_at, battery_level, battery_charging, device_id
+             FROM telemetry_events
+             WHERE battery_level IS NOT NULL
+               AND created_at >= ?
+               AND user_id = ?
+             ORDER BY created_at ASC
+             LIMIT ?`,
+          )
+          .all(opts.sinceMs, opts.userId, limit)
+      : db
+          .prepare(
+            `SELECT created_at, battery_level, battery_charging, device_id
+             FROM telemetry_events
+             WHERE battery_level IS NOT NULL
+               AND created_at >= ?
+             ORDER BY created_at ASC
+             LIMIT ?`,
+          )
+          .all(opts.sinceMs, limit)
+  ) as BatteryTelemetryPoint[];
+  const device = (opts.deviceId || '').trim();
+  const filtered = device ? rows.filter((r) => (r.device_id || '') === device) : rows;
+  return filtered.map((r) => ({
+    ...r,
+    battery_level: normalizeBatteryPct(r.battery_level),
+  }));
+}
+
+function normalizeBatteryPct(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  if (v >= 0 && v <= 1.01) return Math.round(v * 100);
+  return Math.round(v);
+}
+
 export function listTelemetry(opts: { level?: string; limit?: number; offset?: number } = {}) {
   const limit = Math.min(opts.limit || 100, 500);
   const offset = opts.offset || 0;
@@ -284,6 +337,70 @@ export function listTelemetry(opts: { level?: string; limit?: number; offset?: n
   return db
     .prepare(`SELECT * FROM telemetry_events ORDER BY created_at DESC LIMIT ? OFFSET ?`)
     .all(limit, offset);
+}
+
+export function listPlaybackTrace(opts: { limit?: number } = {}) {
+  const limit = Math.min(opts.limit || 400, 800);
+  const rows = db
+    .prepare(
+      `SELECT id, created_at, level, kind, message, user_id, device_id, meta
+       FROM telemetry_events
+       WHERE kind LIKE 'android.player%'
+          OR kind LIKE 'android.playback%'
+          OR kind LIKE 'android.crash%'
+          OR kind = 'crash'
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(limit) as Array<{
+    id: string;
+    created_at: number;
+    level: string;
+    kind: string;
+    message: string | null;
+    user_id: string | null;
+    device_id: string | null;
+    meta: string | null;
+  }>;
+  const stuck = new Map<
+    string,
+    { trackId: string; title?: string; skips: number; lastKind: string; lastAt: number; lastMessage?: string }
+  >();
+  for (const row of rows) {
+    let meta: Record<string, unknown> = {};
+    try {
+      meta = row.meta ? (JSON.parse(row.meta) as Record<string, unknown>) : {};
+    } catch {
+      meta = {};
+    }
+    const trackId = String(meta.trackId || meta.id || '').trim();
+    if (!trackId || trackId.length < 8) continue;
+    const title = String(meta.title || '').trim() || undefined;
+    const isSkip =
+      row.kind.includes('load_skip') ||
+      String(meta.traceKind || '') === 'skip' ||
+      String(meta.traceKind || '') === 'stuck_in_library';
+    const cur = stuck.get(trackId) || {
+      trackId,
+      title,
+      skips: 0,
+      lastKind: row.kind,
+      lastAt: row.created_at,
+      lastMessage: row.message || undefined,
+    };
+    if (title && !cur.title) cur.title = title;
+    if (isSkip) cur.skips += 1;
+    if (row.created_at >= cur.lastAt) {
+      cur.lastKind = row.kind;
+      cur.lastAt = row.created_at;
+      cur.lastMessage = row.message || undefined;
+    }
+    stuck.set(trackId, cur);
+  }
+  return {
+    events: rows,
+    stuck: [...stuck.values()].filter((s) => s.skips >= 2).sort((a, b) => b.skips - a.skips),
+  };
 }
 
 export function telemetryStats() {

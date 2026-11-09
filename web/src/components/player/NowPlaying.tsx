@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type TouchEvent } from 'react';
 import { ListMusic, Mic2, MoreVertical, Pause, Play, Radio, Repeat, Repeat1, Save, Shuffle, SkipBack, SkipForward, Sparkles } from 'lucide-react';
 import { api, artistNames, getToken, thumb, type Track } from '../../api';
 import { usePlayer } from '../../store/player';
@@ -54,10 +54,12 @@ export function SyncedLyrics({
   text,
   timed,
   source,
+  variant = 'panel',
 }: {
   text: string | null;
   timed?: { startMs: number; text: string }[] | null;
-  source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
+  source?: string | null;
+  variant?: 'panel' | 'overlay';
 }) {
   const audioEl = usePlayer((s) => s.audioEl);
   const isPlaying = usePlayer((s) => s.isPlaying);
@@ -68,14 +70,12 @@ export function SyncedLyrics({
   const seek = usePlayer((s) => s.seek);
   const [clock, setClock] = useState(0);
   const [userOffsetMs, setUserOffsetMs] = useState(() => getLyricUserOffsetMs(currentId));
-  const activeRef = useRef<HTMLParagraphElement | null>(null);
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const prevIdxRef = useRef(-1);
-  const userScrollUntilRef = useRef(0);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const lastActiveRef = useRef(-1);
 
   useEffect(() => {
     setUserOffsetMs(getLyricUserOffsetMs(currentId));
+    setToolsOpen(false);
   }, [currentId, text, timed]);
 
   const lines = useMemo(() => {
@@ -177,45 +177,76 @@ export function SyncedLyrics({
     const durationMs = duration > 0 ? Math.round(duration * 1000) : undefined;
     return { atMs, durationMs };
   };
-  useEffect(() => {
-    const lineEl = activeRef.current;
-    if (!lineEl || activeIdx < 0) return;
-    if (Date.now() < userScrollUntilRef.current) {
-      prevIdxRef.current = activeIdx;
-      return;
-    }
-    let scroller: HTMLElement | null = scrollerRef.current;
-    if (scroller) {
-      let n: HTMLElement | null = lineEl.parentElement;
-      while (n) {
-        const oy = getComputedStyle(n).overflowY;
-        if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 8) {
-          scroller = n;
-          break;
-        }
-        n = n.parentElement;
-      }
-    }
-    if (!scroller) return;
-    const prev = prevIdxRef.current;
-    prevIdxRef.current = activeIdx;
-    const lineTop =
-      lineEl.getBoundingClientRect().top -
-      scroller.getBoundingClientRect().top +
-      scroller.scrollTop;
-    const top = lineTop - scroller.clientHeight / 2 + lineEl.clientHeight / 2;
-    const jump = prev < 0 || Math.abs(activeIdx - prev) > 1;
-    scroller.scrollTo({
-      top: Math.max(0, top),
-      behavior: jump ? 'smooth' : 'auto',
+
+  const prevLine = activeIdx > 0 ? lines[activeIdx - 1] : null;
+  const currentLine = activeIdx >= 0 ? lines[activeIdx] : null;
+  const nextLine = activeIdx < 0
+    ? (lines[0] ?? null)
+    : (activeIdx < lines.length - 1 ? lines[activeIdx + 1] : null);
+
+  const calibrateTo = (lineT: number) => {
+    if (!currentId) return;
+    const el = usePlayer.getState().audioEl;
+    const now = el && Number.isFinite(el.currentTime) ? el.currentTime : clock;
+    const nextMs = Math.round((now + leadSec - sourceLagSec - lineT) * 1000);
+    setLyricUserOffsetMs(currentId, nextMs, {
+      atMs: Math.round(now * 1000),
+      durationMs: duration > 0 ? Math.round(duration * 1000) : undefined,
+      source: 'calibrate',
     });
-  }, [activeIdx]);
+    setUserOffsetMs(getLyricUserOffsetMs(currentId));
+    lastActiveRef.current = -1;
+  };
+
+  const lineProps = (line: LyricLine | null, current: boolean) => {
+    if (!line) {
+      return { className: current
+        ? 'min-h-[2.75rem] px-3 py-2 text-center text-xl font-semibold leading-snug text-white sm:text-2xl'
+        : 'min-h-[2rem] px-3 py-1.5 text-center text-sm leading-snug text-white/40 sm:text-base' };
+    }
+    return {
+      role: 'button' as const,
+      tabIndex: 0,
+      title: 'Clic : aller à cet instant · Clic droit : caler le sync',
+      onClick: () => seek(Math.max(0, line.t)),
+      onContextMenu: (e: ReactMouseEvent<HTMLParagraphElement>) => {
+        e.preventDefault();
+        calibrateTo(line.t);
+      },
+      onKeyDown: (e: ReactKeyboardEvent<HTMLParagraphElement>) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          seek(Math.max(0, line.t));
+        }
+      },
+      className: current
+        ? 'cursor-pointer rounded-xl bg-[#ff0033]/22 px-3 py-2 text-center text-xl font-semibold leading-snug text-white sm:text-2xl'
+        : 'cursor-pointer rounded-lg px-3 py-1.5 text-center text-sm leading-snug text-white/45 hover:text-white/80 sm:text-base',
+    };
+  };
 
   // Texte brut sans timings → scroll libre, pas de faux karaoké
   if (!lines.length) {
+    if (variant === 'overlay') return null;
     return (
-      <div className="whitespace-pre-wrap px-2 py-6 text-base leading-8 text-[#c6c6c6] sm:px-4 sm:text-[17px] sm:leading-9">
+      <div className="whitespace-pre-wrap px-2 py-2 text-base leading-6 text-[#c6c6c6] sm:px-4 sm:text-[17px] sm:leading-6">
         {text || 'Paroles indisponibles pour ce titre.'}
+      </div>
+    );
+  }
+
+  if (variant === 'overlay') {
+    return (
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/80 via-black/35 to-transparent px-3 pb-4 pt-10">
+        {prevLine ? (
+          <p className="truncate text-center text-xs text-white/45">{prevLine.text}</p>
+        ) : null}
+        <p className="mt-1 text-center text-base font-semibold leading-snug text-white drop-shadow sm:text-lg">
+          {currentLine?.text || ' '}
+        </p>
+        {nextLine ? (
+          <p className="mt-1 truncate text-center text-xs text-white/50">{nextLine.text}</p>
+        ) : null}
       </div>
     );
   }
@@ -223,173 +254,88 @@ export function SyncedLyrics({
   return (
     <div className="relative">
       {currentId && (
-        <div className="sticky top-0 z-10 mb-2 space-y-1 bg-yt-surface/90 px-2 py-1.5 backdrop-blur-sm">
-          <p className="text-center text-[10px] text-yt-muted">
-            Appui long sur une ligne pour recaler le rythme
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-1.5">
+        <div className="sticky top-0 z-10 bg-yt-surface/95 px-1 py-0.5 backdrop-blur-sm">
+          <div className="flex h-7 flex-nowrap items-center justify-center gap-1 overflow-x-auto">
             <button
               type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Retarder de 0,25 s"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-yt-muted hover:text-white"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 250, syncOpts()));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 1_000, syncOpts()));
                 lastActiveRef.current = -1;
               }}
             >
-              −0,25
+              −1
             </button>
             <button
               type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Retarder de 0,20 s"
+              className="min-w-[2.6rem] shrink-0 text-center text-[11px] font-semibold tabular-nums text-yt-muted"
+              title="Remettre le sync"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, 200, syncOpts()));
+                setLyricUserOffsetMs(currentId, 0, { ...syncOpts(), source: 'reset' });
+                setUserOffsetMs(0);
                 lastActiveRef.current = -1;
               }}
             >
-              −0,20
-            </button>
-            <span className="min-w-[3.5rem] text-center text-[11px] font-semibold tabular-nums text-yt-muted">
               {Math.abs(activeOffsetSec) < 0.01
                 ? 'sync'
-                : `${activeOffsetSec > 0 ? '+' : ''}${activeOffsetSec.toFixed(2)} s`}
-            </span>
-            <button
-              type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Avancer de 0,20 s"
-              onClick={() => {
-                if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -200, syncOpts()));
-                lastActiveRef.current = -1;
-              }}
-            >
-              +0,20
+                : `${activeOffsetSec > 0 ? '+' : ''}${activeOffsetSec.toFixed(1)}`}
             </button>
             <button
               type="button"
-              className="rounded-full border border-yt-border px-2 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-              title="Avancer de 0,25 s"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-yt-muted hover:text-white"
               onClick={() => {
                 if (!currentId) return;
-                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -250, syncOpts()));
+                setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, -1_000, syncOpts()));
                 lastActiveRef.current = -1;
               }}
             >
-              +0,25
+              +1
             </button>
-            {userOffsetMs !== 0 && (
-              <button
-                type="button"
-                className="rounded-full border border-yt-border px-2.5 py-1 text-[11px] text-yt-muted hover:bg-yt-hover hover:text-white"
-                onClick={() => {
-                  if (!currentId) return;
-                  setLyricUserOffsetMs(currentId, 0, { ...syncOpts(), source: 'reset' });
-                  setUserOffsetMs(0);
-                  setUserOffsetMs(0);
-                  lastActiveRef.current = -1;
-                }}
-              >
-                Reset
-              </button>
-            )}
+            <button
+              type="button"
+              className="shrink-0 px-1 text-[13px] text-yt-muted hover:text-white"
+              aria-expanded={toolsOpen}
+              aria-label={toolsOpen ? 'Replier les options paroles' : 'Options paroles'}
+              onClick={() => setToolsOpen((v) => !v)}
+            >
+              {toolsOpen ? '▴' : '▾'}
+            </button>
           </div>
+          {toolsOpen && (
+            <div className="flex h-7 flex-nowrap items-center justify-center gap-1 overflow-x-auto pb-0.5">
+              {(
+                [
+                  [15_000, '−15'],
+                  [5_000, '−5'],
+                  [200, '−0,2'],
+                  [-200, '+0,2'],
+                  [-5_000, '+5'],
+                  [-15_000, '+15'],
+                ] as const
+              ).map(([delta, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-yt-muted hover:text-white"
+                  onClick={() => {
+                    if (!currentId) return;
+                    setUserOffsetMs(nudgeLyricUserOffsetMs(currentId, delta, syncOpts()));
+                    lastActiveRef.current = -1;
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
-      <div
-        ref={scrollerRef}
-        data-lyrics-scroll
-        className="space-y-4 px-3 py-6 sm:px-6"
-        onWheel={() => {
-          userScrollUntilRef.current = Date.now() + 4000;
-        }}
-        onTouchMove={() => {
-          userScrollUntilRef.current = Date.now() + 4000;
-        }}
-      >
-        {lines.map((line, i) => {
-          const active = i === activeIdx;
-          const past = activeIdx >= 0 && i < activeIdx;
-          return (
-            <p
-              key={`${i}-${line.t}`}
-              ref={active ? activeRef : undefined}
-              role="button"
-              tabIndex={0}
-              onClick={() => seek(Math.max(0, line.t))}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                if (!currentId) return;
-                const el = usePlayer.getState().audioEl;
-                const now = el && Number.isFinite(el.currentTime) ? el.currentTime : clock;
-                const nextMs = Math.round(
-                  (now + leadSec - sourceLagSec - line.t) * 1000,
-                );
-                setLyricUserOffsetMs(currentId, nextMs, {
-                  atMs: Math.round(now * 1000),
-                  durationMs: duration > 0 ? Math.round(duration * 1000) : undefined,
-                  source: 'calibrate',
-                });
-                setUserOffsetMs(getLyricUserOffsetMs(currentId));
-                lastActiveRef.current = -1;
-              }}
-              onTouchStart={(e) => {
-                const target = e.currentTarget;
-                const timer = window.setTimeout(() => {
-                  if (!currentId) return;
-                  const el = usePlayer.getState().audioEl;
-                  const now = el && Number.isFinite(el.currentTime) ? el.currentTime : clock;
-                  const nextMs = Math.round(
-                    (now + leadSec - sourceLagSec - line.t) * 1000,
-                  );
-                  setLyricUserOffsetMs(currentId, nextMs, {
-                    atMs: Math.round(now * 1000),
-                    durationMs: duration > 0 ? Math.round(duration * 1000) : undefined,
-                    source: 'calibrate',
-                  });
-                  setUserOffsetMs(getLyricUserOffsetMs(currentId));
-                  lastActiveRef.current = -1;
-                  target.dataset.calibrated = '1';
-                }, 480);
-                target.dataset.longPressTimer = String(timer);
-              }}
-              onTouchEnd={(e) => {
-                const t = e.currentTarget.dataset.longPressTimer;
-                if (t) window.clearTimeout(Number(t));
-                if (e.currentTarget.dataset.calibrated === '1') {
-                  e.preventDefault();
-                  delete e.currentTarget.dataset.calibrated;
-                }
-                delete e.currentTarget.dataset.longPressTimer;
-              }}
-              onTouchCancel={(e) => {
-                const t = e.currentTarget.dataset.longPressTimer;
-                if (t) window.clearTimeout(Number(t));
-                delete e.currentTarget.dataset.longPressTimer;
-                delete e.currentTarget.dataset.calibrated;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  seek(Math.max(0, line.t));
-                }
-              }}
-              className={`origin-left cursor-pointer rounded-lg px-2 transition-all duration-200 hover:text-white ${
-                active
-                  ? 'bg-[#ff0033]/22 py-2 text-3xl font-extrabold leading-tight text-white underline decoration-yt-red decoration-2 underline-offset-4 sm:text-4xl'
-                  : past
-                    ? 'text-base leading-7 text-white/25 sm:text-lg'
-                    : 'text-lg leading-8 text-[#9a9a9a] sm:text-xl sm:leading-9'
-              }`}
-              title="Clic : aller à cet instant · Appui long : caler le sync"
-            >
-              {line.text || '\u00a0'}
-            </p>
-          );
-        })}
+      <div className="flex min-h-[16rem] flex-col items-center justify-center gap-3 px-3 py-6 sm:px-6">
+        <p {...lineProps(prevLine, false)}>{prevLine?.text || '\u00a0'}</p>
+        <p {...lineProps(currentLine, true)}>{currentLine?.text || '\u00a0'}</p>
+        <p {...lineProps(nextLine, false)}>{nextLine?.text || '\u00a0'}</p>
       </div>
     </div>
   );
@@ -436,10 +382,17 @@ export function NowPlaying({
   const [tab, setTab] = useState<NowPlayingTab>(initialTab);
   const [lyricsText, setLyricsText] = useState<string | null>(null);
   const [lyricsTimed, setLyricsTimed] = useState<{ startMs: number; text: string }[] | null>(null);
-  const [lyricsSource, setLyricsSource] = useState<
-    'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null
-  >(null);
+  const [lyricsSource, setLyricsSource] = useState<string | null>(null);
+  const [lyricsSuggestions, setLyricsSuggestions] = useState<
+    { title: string; artist: string; url: string; reason: string }[]
+  >([]);
+  const [lyricsSearchUrls, setLyricsSearchUrls] = useState<{ label: string; url: string }[]>([]);
+  const [lyricsDraft, setLyricsDraft] = useState('');
+  const [lyricsSaving, setLyricsSaving] = useState(false);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [lyricsNonce, setLyricsNonce] = useState(0);
+  const [lyricsVoteBusy, setLyricsVoteBusy] = useState(false);
+  const [lyricsVoteHint, setLyricsVoteHint] = useState<string | null>(null);
   const [queueVisible, setQueueVisible] = useState(QUEUE_PAGE);
   const [similarVisible, setSimilarVisible] = useState(10);
   const [saveOpen, setSaveOpen] = useState(false);
@@ -510,7 +463,7 @@ export function NowPlaying({
   }, [current?.id]);
 
   useEffect(() => {
-    if (!open || tab !== 'lyrics' || !current?.id) return;
+    if (!open || !current?.id) return;
     let cancelled = false;
     setLyricsLoading(true);
     // Ne pas vider tout de suite → évite flash « indisponible »
@@ -518,9 +471,16 @@ export function NowPlaying({
       setLyricsText(r.lyrics || null);
       setLyricsTimed(r.timed || null);
       setLyricsSource(r.source ?? null);
+      setLyricsSuggestions(r.suggestions || []);
+      setLyricsSearchUrls(r.searchUrls || []);
+    };
+    const artist = artistNames(current);
+    const hints = {
+      title: current.title,
+      artist: artist !== 'Artiste' ? artist : undefined,
     };
     void api
-      .lyrics(current.id)
+      .lyrics(current.id, hints)
       .then(async (r) => {
         if (cancelled) return;
         apply(r);
@@ -528,7 +488,7 @@ export function NowPlaying({
         if (!r.lyrics) {
           await new Promise((res) => setTimeout(res, 500));
           if (cancelled) return;
-          const retry = await api.lyrics(current.id).catch(() => null);
+          const retry = await api.lyrics(current.id, hints).catch(() => null);
           if (retry?.lyrics) apply(retry);
         }
       })
@@ -544,7 +504,7 @@ export function NowPlaying({
     return () => {
       cancelled = true;
     };
-  }, [open, tab, current?.id]);
+  }, [open, current?.id, lyricsNonce]);
 
   // Mode vidéo : son du clip ; affiche tout de suite le même ID (pas d’attente resolve).
   useEffect(() => {
@@ -786,6 +746,14 @@ export function NowPlaying({
             ) : (
               <CoverImage item={current} size={800} rounded="md" alt={current.title} />
             )}
+            {lyricsText ? (
+              <SyncedLyrics
+                text={lyricsText}
+                timed={lyricsTimed}
+                source={lyricsSource}
+                variant="overlay"
+              />
+            ) : null}
           </div>
         </div>
 
@@ -1097,7 +1065,156 @@ export function NowPlaying({
                 {lyricsLoading ? (
                   <div className="px-3 py-5 text-sm text-yt-muted">Chargement des paroles…</div>
                 ) : (
-                  <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
+                  <>
+                    <SyncedLyrics text={lyricsText} timed={lyricsTimed} source={lyricsSource} />
+                    <div className="mt-1 flex h-7 flex-nowrap items-center justify-center gap-2 overflow-x-auto px-1">
+                      <button
+                        type="button"
+                        disabled={lyricsVoteBusy || !current?.id}
+                        onClick={() => {
+                          if (!current?.id) return;
+                          const hints = {
+                            title: current.title,
+                            artist: artistNames(current) !== 'Artiste' ? artistNames(current) : undefined,
+                          };
+                          setLyricsVoteBusy(true);
+                          setLyricsVoteHint(null);
+                          void api
+                            .lyricsFeedback(current.id, 'correct', hints)
+                            .then(() => setLyricsVoteHint('Paroles confirmées pour tout le monde'))
+                            .catch(() => setLyricsVoteHint('Impossible d’enregistrer le vote'))
+                            .finally(() => setLyricsVoteBusy(false));
+                        }}
+                        className="shrink-0 rounded-full border border-emerald-700/60 px-2 py-0.5 text-[11px] text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-40"
+                      >
+                        Bonnes paroles
+                      </button>
+                      <button
+                        type="button"
+                        disabled={lyricsVoteBusy || !current?.id}
+                        onClick={() => {
+                          if (!current?.id) return;
+                          const hints = {
+                            title: current.title,
+                            artist: artistNames(current) !== 'Artiste' ? artistNames(current) : undefined,
+                          };
+                          setLyricsVoteBusy(true);
+                          setLyricsVoteHint('Recherche de nouvelles paroles…');
+                          void api
+                            .lyricsFeedback(current.id, 'wrong', hints)
+                            .then((r) => {
+                              setLyricsText(r.lyrics || null);
+                              setLyricsTimed(r.timed || null);
+                              setLyricsSource(r.source ?? null);
+                              setLyricsNonce((n) => n + 1);
+                              setLyricsVoteHint(
+                                r.lyrics
+                                  ? 'Nouvelles paroles chargées (tous les utilisateurs)'
+                                  : 'Aucune meilleure source pour l’instant',
+                              );
+                            })
+                            .catch(() => setLyricsVoteHint('Recherche impossible pour le moment'))
+                            .finally(() => setLyricsVoteBusy(false));
+                        }}
+                        className="shrink-0 rounded-full border border-amber-700/60 px-2 py-0.5 text-[11px] text-amber-200 hover:bg-amber-900/30 disabled:opacity-40"
+                      >
+                        Mauvaises paroles
+                      </button>
+                    </div>
+                    {lyricsVoteHint && (
+                      <p className="mt-1 px-2 text-center text-[11px] text-yt-muted">{lyricsVoteHint}</p>
+                    )}
+                    {!lyricsText && (
+                      <div className="mt-3 space-y-3 px-2">
+                        {lyricsSuggestions.length > 0 && (
+                          <div className="space-y-1.5">
+                            <p className="text-center text-[11px] uppercase tracking-wide text-yt-muted">
+                              Propositions proches
+                            </p>
+                            {lyricsSuggestions.map((s) => (
+                              <a
+                                key={s.url}
+                                href={s.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded-lg border border-yt-border px-3 py-2 text-xs hover:bg-white/10"
+                              >
+                                <span className="font-medium text-white">
+                                  {s.title}
+                                  {s.artist ? ` — ${s.artist}` : ''}
+                                </span>
+                                <span className="mt-0.5 block text-yt-muted">{s.reason}</span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap justify-center gap-2">
+                          {(lyricsSearchUrls.length
+                            ? lyricsSearchUrls
+                            : [
+                                {
+                                  label: 'Genius',
+                                  url: `https://genius.com/search?q=${encodeURIComponent(
+                                    [artistNames(current) !== 'Artiste' ? artistNames(current) : '', current.title]
+                                      .filter(Boolean)
+                                      .join(' '),
+                                  )}`,
+                                },
+                              ]
+                          ).map((l) => (
+                            <a
+                              key={l.url}
+                              href={l.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-full border border-yt-border px-3 py-1.5 text-xs text-yt-muted hover:bg-white/10 hover:text-white"
+                            >
+                              {l.label}
+                            </a>
+                          ))}
+                        </div>
+                        <form
+                          className="space-y-2"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            if (!current?.id || lyricsSaving) return;
+                            const draft = lyricsDraft.trim();
+                            if (draft.length < 40) return;
+                            setLyricsSaving(true);
+                            const artist = artistNames(current);
+                            void api
+                              .saveLyrics(current.id, draft, {
+                                title: current.title,
+                                artist: artist !== 'Artiste' ? artist : undefined,
+                              })
+                              .then((r) => {
+                                setLyricsText(r.lyrics || draft);
+                                setLyricsTimed(r.timed || null);
+                                setLyricsSource(r.source || 'user');
+                                setLyricsDraft('');
+                                setLyricsSuggestions([]);
+                              })
+                              .finally(() => setLyricsSaving(false));
+                          }}
+                        >
+                          <textarea
+                            value={lyricsDraft}
+                            onChange={(e) => setLyricsDraft(e.target.value)}
+                            rows={5}
+                            placeholder="Coller les paroles ici si tu les as (partagées pour tout le monde)"
+                            className="w-full resize-y rounded-lg border border-yt-border bg-black/30 px-3 py-2 text-xs text-white placeholder:text-yt-muted"
+                          />
+                          <button
+                            type="submit"
+                            disabled={lyricsSaving || lyricsDraft.trim().length < 40}
+                            className="mx-auto block rounded-full border border-yt-border px-3 py-1.5 text-xs text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-40"
+                          >
+                            {lyricsSaving ? 'Enregistrement…' : 'Enregistrer ces paroles'}
+                          </button>
+                        </form>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             )}
@@ -1124,7 +1241,7 @@ export function NowPlaying({
                     <p className="px-2 text-sm text-yt-muted">Aucune suggestion pour l’instant.</p>
                   )}
                   {(relatedSeedId === current?.id ? related : []).slice(0, similarVisible).map((t) => (
-                    <TrackRow key={`rel-${t.id}`} track={t} queue={related} hideIndex />
+                    <TrackRow key={`rel-${t.id}`} track={t} queue={related} hideIndex prefetch />
                   ))}
                   {relatedSeedId === current?.id && similarVisible < related.length && (
                     <button

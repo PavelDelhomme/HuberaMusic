@@ -4,7 +4,7 @@
  * Avance karaoké par défaut (~0,10 s perçue pour lire / chanter dessus).
  * 180 ms bruts : absorbe latence UI / horloge lecteur (~50–80 ms) sans toucher la sync manuelle.
  */
-export const LYRIC_LEAD_SEC = 0.18;
+export const LYRIC_LEAD_SEC = 0.16;
 
 /**
  * Plus de lag client LRCLIB : l’API étire / décale déjà les timed (v6).
@@ -12,6 +12,7 @@ export const LYRIC_LEAD_SEC = 0.18;
  */
 export const LRCLIB_BASE_LAG_SEC = 0;
 
+const LYRIC_OFFSET_CLAMP_MS = 90_000;
 const STORAGE_KEY = 'plm_lyric_sync_v1';
 const SEGMENTS_KEY = 'plm_lyric_segments_v1';
 
@@ -160,7 +161,7 @@ export function setLyricUserOffsetMs(
   opts?: { atMs?: number; durationMs?: number; source?: string },
 ) {
   const map = readMap();
-  const clamped = Math.max(-15_000, Math.min(15_000, Math.round(offsetMs)));
+  const clamped = Math.max(-LYRIC_OFFSET_CLAMP_MS, Math.min(LYRIC_OFFSET_CLAMP_MS, Math.round(offsetMs)));
   if (clamped === 0) delete map[trackId];
   else map[trackId] = clamped;
   writeMap(map);
@@ -182,7 +183,7 @@ export function mergeLyricOffsetsFromServer(offsets: Record<string, number> | nu
     const v = typeof raw === 'number' && Number.isFinite(raw) ? Math.round(raw) : 0;
     if (!id || v === 0) continue;
     if (map[id] == null || map[id] === 0) {
-      map[id] = Math.max(-15_000, Math.min(15_000, v));
+      map[id] = Math.max(-LYRIC_OFFSET_CLAMP_MS, Math.min(LYRIC_OFFSET_CLAMP_MS, v));
       changed = true;
     }
   }
@@ -195,7 +196,7 @@ export function applyServerOffsetIfUnset(trackId: string, offsetMs: number | nul
   const v = typeof offsetMs === 'number' && Number.isFinite(offsetMs) ? Math.round(offsetMs) : 0;
   if (v === 0) return 0;
   const map = readMap();
-  map[trackId] = Math.max(-15_000, Math.min(15_000, v));
+  map[trackId] = Math.max(-LYRIC_OFFSET_CLAMP_MS, Math.min(LYRIC_OFFSET_CLAMP_MS, v));
   writeMap(map);
   return map[trackId];
 }
@@ -217,7 +218,7 @@ export function applyServerSegments(
       bucket: s.bucket,
       startRatio: s.startRatio,
       endRatio: s.endRatio,
-      offsetMs: Math.max(-15_000, Math.min(15_000, Math.round(s.offsetMs))),
+      offsetMs: Math.max(-LYRIC_OFFSET_CLAMP_MS, Math.min(LYRIC_OFFSET_CLAMP_MS, Math.round(s.offsetMs))),
     })),
   );
 }
@@ -250,8 +251,13 @@ export function estimateTimedFromPlain(
   const lines = sungLines(raw);
   if (lines.length < 2) return [];
   const dur = durationSec && durationSec >= 20 ? durationSec : Math.max(lines.length * 3.2, 60);
-  const intro = Math.min(Math.max(dur * 0.035, 2.2), 10);
-  const outro = Math.min(Math.max(dur * 0.06, 4), 14);
+  const dense = lines.length >= 36;
+  const intro = dense
+    ? Math.min(Math.max(dur * 0.02, 1.4), 5)
+    : Math.min(Math.max(dur * 0.035, 2.0), 8);
+  const outro = dense
+    ? Math.min(Math.max(dur * 0.04, 2.5), 9)
+    : Math.min(Math.max(dur * 0.055, 3.5), 12);
   const window = Math.max(dur - intro - outro, lines.length * 1.2);
   const weights = lines.map((l) => Math.max(8, l.length));
   const total = weights.reduce((a, b) => a + b, 0);

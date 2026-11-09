@@ -92,15 +92,38 @@ export function sanitizeTrack(track: Track): Track {
     }
   }
 
+  const cleanedTitle = (() => {
+    const cleaned = cleanMusicTitle(String(track.title || ''));
+    return cleaned || track.title;
+  })();
+  let artists = Array.isArray(track.artists)
+    ? track.artists
+        .filter((a) => a?.name && isPlausibleArtistName(String(a.name)))
+        .map((a) => ({ ...a, name: prettifyArtistName(String(a.name)) }))
+    : track.artists;
+  // Titre « Artiste - Morceau » sans artiste propre → sépare.
+  if (
+    Array.isArray(artists) &&
+    artists.length === 0 &&
+    typeof cleanedTitle === 'string' &&
+    /\s[-–—]\s/.test(cleanedTitle)
+  ) {
+    const parts = cleanedTitle.split(/\s[-–—]\s/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2 && isPlausibleArtistName(parts[0]) && parts[1].length >= 2) {
+      artists = [{ name: prettifyArtistName(parts[0]) }];
+      return {
+        ...track,
+        title: parts.slice(1).join(' — '),
+        artists,
+        duration,
+        durationSeconds,
+      };
+    }
+  }
   return {
     ...track,
-    title: (() => {
-      const cleaned = cleanMusicTitle(String(track.title || ''));
-      return cleaned || track.title;
-    })(),
-    artists: Array.isArray(track.artists)
-      ? track.artists.filter((a) => a?.name && isPlausibleArtistName(String(a.name)))
-      : track.artists,
+    title: cleanedTitle,
+    artists,
     duration,
     durationSeconds,
   };
@@ -321,6 +344,23 @@ export function isPlausibleArtistName(name: string) {
     return false;
   }
   return true;
+}
+
+/**
+ * Sépare les collages camelCase type « AronChupa » → « Aron Chupa ».
+ * Laisse les acronymes / tout-majuscule (CAZZETTE) intacts.
+ */
+export function prettifyArtistName(name: string): string {
+  const raw = String(name || '').trim();
+  if (!raw) return raw;
+  if (/\s/.test(raw)) return raw;
+  if (/^[A-Z0-9]{2,}$/.test(raw)) return raw;
+  if (!/[a-z][A-Z]/.test(raw) && !/[A-Z]{2,}[a-z]/.test(raw)) return raw;
+  return raw
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 export function isWeakTitle(title: string | undefined | null, id?: string) {

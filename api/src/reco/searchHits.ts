@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db } from '../library/db.js';
+import { durationsByIds } from '../library/searchIndex.js';
 import { foldText } from './searchRank.js';
 import type { Track } from '../youtube/types.js';
 
@@ -49,6 +51,22 @@ export function ensureSearchHitsSchema() {
       duration_text TEXT,
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS search_feedback (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      query TEXT NOT NULL,
+      query_fold TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      wrong_video_id TEXT,
+      correct_video_id TEXT,
+      title TEXT,
+      artist TEXT,
+      note TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_search_feedback_fold ON search_feedback(query_fold);
+    CREATE INDEX IF NOT EXISTS idx_search_feedback_created ON search_feedback(created_at);
   `);
   schemaReady = true;
 }
@@ -104,9 +122,26 @@ export function loadSearchHitsSeed() {
       }
     });
     insert(raw);
+    try {
+      db.prepare(
+        `DELETE FROM search_canonical_hits
+         WHERE video_id IN ('6LaKZ9YKSs0', 'zJxwRMK_ISY', 'te6K9qC6Sxg')
+            OR lower(title || ' ' || artist) LIKE '%grace ellis%'
+            OR lower(title || ' ' || artist) LIKE '%sant andreu%'
+            OR lower(title || ' ' || artist) LIKE '%alba armengou%'`,
+      ).run();
+    } catch {
+      /* ignore */
+    }
   } catch (err) {
     console.warn('[searchHits] seed load failed', err);
   }
+}
+
+/** Recharge le seed (après overlay JSON sans recreate process). */
+export function reloadSearchHitsSeed() {
+  seedLoaded = false;
+  loadSearchHitsSeed();
 }
 
 /**
@@ -139,6 +174,142 @@ export function recordSearchHitClick(query: string, videoId: string, meta?: { ti
        artist = CASE WHEN length(excluded.artist) > 0 THEN excluded.artist ELSE search_canonical_hits.artist END,
        updated_at = excluded.updated_at`,
   ).run(fold, id, title, artist, source, nextScore, now);
+}
+
+function artistBlob(t: { artists?: Array<{ name?: string } | string>; artist?: string }): string {
+  if (t.artist) return String(t.artist);
+  const arts = t.artists || [];
+  return arts
+    .map((a) => (typeof a === 'string' ? a : a?.name || ''))
+    .filter(Boolean)
+    .join(', ');
+}
+
+/** Indexe un titre biblio comme hit canonique (titre, titre+artiste, artiste+titre). */
+export function indexLibraryTrackAsHit(
+  track: { id: string; title?: string; artists?: Array<{ name?: string } | string>; artist?: string },
+  source: 'library' | 'feedback' | 'click' = 'library',
+  baseScore = 600,
+) {
+  ensureSearchHitsSchema();
+  const id = String(track.id || '').trim();
+  const title = String(track.title || '').trim();
+  if (!id || id.length < 6 || !title || title === 'Sans titre') return;
+  const artist = artistBlob(track);
+  const aliases = new Set<string>();
+  aliases.add(foldText(title));
+  if (artist) {
+    aliases.add(foldText(`${artist} ${title}`));
+    aliases.add(foldText(`${title} ${artist}`));
+  }
+  // Titre sans parenthèses « (feat. …) » — requêtes courtes
+  const bare = title.replace(/\s*[\(\[\{].*$/, '').trim();
+  if (bare && bare.length >= 3 && foldText(bare) !== foldText(title)) {
+    aliases.add(foldText(bare));
+    if (artist) aliases.add(foldText(`${bare} ${artist}`));
+  }
+  for (const key of aliases) {
+    if (!key || key.length < 2) continue;
+    upsertHit(key, id, title, artist, source, baseScore);
+  }
+}
+
+export function indexLibraryTracksAsHits(
+  tracks: Array<{ id: string; title?: string; artists?: Array<{ name?: string } | string>; artist?: string }>,
+  source: 'library' | 'feedback' | 'click' = 'library',
+) {
+  const tx = db.transaction((rows: typeof tracks) => {
+    for (const t of rows) indexLibraryTrackAsHit(t, source, source === 'feedback' ? 900 : 600);
+  });
+  ensureSearchHitsSchema();
+  tx(tracks);
+}
+
+export type SearchFeedbackKind = 'empty' | 'wrong' | 'confirm' | 'correct_pick';
+
+/**
+ * Feedback utilisateur recherche :
+ * - empty : rien trouvé
+ * - wrong : le top / un résultat n’est pas le bon
+ * - confirm / correct_pick : ce videoId EST la bonne réponse pour la query
+ */
+export function recordSearchFeedback(opts: {
+  userId: string;
+  query: string;
+  kind: SearchFeedbackKind;
+  wrongVideoId?: string;
+  correctVideoId?: string;
+  title?: string;
+  artist?: string;
+  note?: string;
+}): { ok: boolean; learned: boolean } {
+  ensureSearchHitsSchema();
+  loadSearchHitsSeed();
+  const q = String(opts.query || '').trim().replace(/\s+/g, ' ');
+  const fold = foldText(q);
+  if (!q || fold.length < 2) return { ok: false, learned: false };
+  const kind = opts.kind;
+  if (!['empty', 'wrong', 'confirm', 'correct_pick'].includes(kind)) {
+    return { ok: false, learned: false };
+  }
+  db.prepare(
+    `INSERT INTO search_feedback
+      (id, user_id, query, query_fold, kind, wrong_video_id, correct_video_id, title, artist, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    randomUUID(),
+    opts.userId,
+    q,
+    fold,
+    kind,
+    opts.wrongVideoId || null,
+    opts.correctVideoId || null,
+    opts.title || null,
+    opts.artist || null,
+    opts.note || null,
+    Date.now(),
+  );
+
+  let learned = false;
+  const correctId = String(opts.correctVideoId || '').trim();
+  if ((kind === 'confirm' || kind === 'correct_pick' || kind === 'wrong') && correctId.length >= 6) {
+    indexLibraryTrackAsHit(
+      {
+        id: correctId,
+        title: opts.title || correctId,
+        artist: opts.artist || '',
+      },
+      'feedback',
+      950,
+    );
+    // Alias exact de la query tapée (fautes incluses) → le bon ID
+    upsertHit(fold, correctId, opts.title || correctId, opts.artist || '', 'feedback', 980);
+    recordSearchHitClick(q, correctId, { title: opts.title, artist: opts.artist });
+    learned = true;
+  }
+  // Mauvais résultat sans correction : baisse le score du mapping query→wrong
+  if (kind === 'wrong' && opts.wrongVideoId && !correctId) {
+    const wrong = String(opts.wrongVideoId).trim();
+    try {
+      db.prepare(
+        `UPDATE search_canonical_hits SET score = MAX(0, score - 120), updated_at = ?
+         WHERE query_fold = ? AND video_id = ?`,
+      ).run(Date.now(), fold, wrong);
+    } catch {
+      /* */
+    }
+  }
+  return { ok: true, learned };
+}
+
+export function listSearchFeedback(limit = 40): Array<Record<string, unknown>> {
+  ensureSearchHitsSchema();
+  return db
+    .prepare(
+      `SELECT id, user_id, query, kind, wrong_video_id, correct_video_id, title, artist, note, created_at
+       FROM search_feedback ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(limit) as Array<Record<string, unknown>>;
 }
 
 export type ResolvedHit = {
@@ -182,6 +353,13 @@ export function resolveSearchHit(query: string): ResolvedHit | null {
   }
 
   if (!row) return null;
+  const blob = foldText(`${row.title} ${row.artist}`);
+  if (
+    (/\btes triste\b/.test(fold) || fold.includes('testriste')) &&
+    /grace ellis|sant andreu|alba armengou|nick monteiro|jazz revival/.test(blob)
+  ) {
+    return null;
+  }
   // Clics : exiger un minimum sauf seed
   if (row.source === 'click' && row.score < 100) return null;
 
@@ -229,18 +407,55 @@ export function getCachedTrackDuration(videoId: string): { seconds: number; text
   return { seconds: row.duration_seconds, text: row.duration_text || undefined };
 }
 
-/** Applique les durées cachées sur une liste de pistes. */
+function clockFromSeconds(total: number): string {
+  const whole = Math.floor(total);
+  const s = whole % 60;
+  const m = Math.floor(whole / 60) % 60;
+  const h = Math.floor(whole / 3600);
+  const ss = String(s).padStart(2, '0');
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${ss}`;
+  return `${m}:${ss}`;
+}
+
+function secondsFromClock(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const parts = raw.trim().split(':').map((p) => Number(p));
+  if (!parts.length || parts.some((n) => !Number.isFinite(n) || n < 0)) return undefined;
+  if (parts.length === 2 && parts[1] < 60) return parts[0] * 60 + parts[1];
+  if (parts.length === 3 && parts[1] < 60 && parts[2] < 60) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  if (parts.length === 1 && parts[0] > 0 && parts[0] < 60 * 60 * 6) return parts[0];
+  return undefined;
+}
+
+/** Applique les durées déjà connues (cache, bibliothèque) et une horloge lisible. */
 export function applyCachedDurations<T extends Track>(tracks: T[]): T[] {
   ensureSearchHitsSchema();
+  const need = tracks
+    .filter((t) => !(t.durationSeconds && t.durationSeconds > 0 && t.duration))
+    .map((t) => t.id);
+  const meta = durationsByIds(need);
   return tracks.map((t) => {
-    if (t.durationSeconds && t.durationSeconds > 0 && t.duration) return t;
-    const cached = getCachedTrackDuration(t.id);
-    if (!cached) return t;
-    return {
-      ...t,
-      durationSeconds: t.durationSeconds || cached.seconds,
-      duration: t.duration || cached.text || undefined,
-    };
+    let seconds = t.durationSeconds && t.durationSeconds > 0 ? Math.floor(t.durationSeconds) : undefined;
+    let text = typeof t.duration === 'string' && /\d/.test(t.duration) ? t.duration.trim() : undefined;
+    if (!seconds && text) seconds = secondsFromClock(text);
+    if (!seconds || !text) {
+      const cached = getCachedTrackDuration(t.id);
+      if (cached) {
+        seconds = seconds || cached.seconds;
+        text = text || cached.text;
+      }
+    }
+    const fromMeta = meta.get(t.id);
+    if (fromMeta && (!seconds || !text)) {
+      text = text || fromMeta;
+      seconds = seconds || secondsFromClock(fromMeta);
+    }
+    if (seconds && seconds > 0 && !text) text = clockFromSeconds(seconds);
+    if (!seconds || !text) return t;
+    if (t.duration === text && t.durationSeconds === seconds) return t;
+    return { ...t, durationSeconds: seconds, duration: text };
   });
 }
 

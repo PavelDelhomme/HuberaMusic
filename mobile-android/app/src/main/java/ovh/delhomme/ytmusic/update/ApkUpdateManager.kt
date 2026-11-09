@@ -12,6 +12,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,6 +29,7 @@ import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.player.PlaybackService
 import java.io.File
 import java.util.Calendar
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -34,7 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Vérifie / télécharge / installe l’APK publiée sur le serveur (`/api/deploy/apk`)
  * — toujours la **dernière** version seule (pas de chaîne d’intermédiaires).
  *
- * L’APK OTA est **PLM prod** (`ovh.delhomme.ytmusic`). Depuis PLM Dev / Preprod,
+ * L’APK OTA est **Hubera Music prod** (`cloud.hubera.music`). Depuis Music Dev / Preprod,
  * la MAJ met à jour l’autre icône (pas le package courant) — messages + relaunch
  * ciblent donc le paquet de l’APK, pas `context.packageName`.
  *
@@ -48,6 +51,118 @@ class ApkUpdateManager(
     private val prefs = context.getSharedPreferences("ytm_updates", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var updateJob: Job? = null
+
+    private fun installId(): String {
+        val existing = prefs.getString("hubera_install_id", null)
+        if (!existing.isNullOrBlank()) return existing
+        val created = UUID.randomUUID().toString()
+        prefs.edit().putString("hubera_install_id", created).apply()
+        return created
+    }
+
+    private suspend fun fetchApkInfo(): ApkInfoResponse = withContext(Dispatchers.IO) {
+        val pkg = context.packageName
+        val bases = container.prodApiFallbacks()
+        // Race parallèle (hosts morts ne bloquent plus 12–22 s en séquentiel).
+        coroutineScope {
+            val jobs = bases.map { base ->
+                async {
+                    try {
+                        fetchApkInfoFrom(base, pkg)
+                    } catch (e: Exception) {
+                        AppLog.w("apk-update", "apk/info $base: ${e.message}")
+                        null
+                    }
+                }
+            }
+            for (job in jobs) {
+                val info = job.await()
+                if (info != null) {
+                    jobs.forEach { it.cancel() }
+                    return@coroutineScope info
+                }
+            }
+        }
+        throw java.io.IOException("apk/info indisponible")
+    }
+
+    private suspend fun fetchApkInfoFrom(base: String, pkg: String): ApkInfoResponse {
+        if (base == container.resolvedApiBase()) {
+            val info = container.api.apkInfo(
+                clientVersion = BuildConfig.VERSION_NAME,
+                clientVersionCode = BuildConfig.VERSION_CODE,
+                install = installId(),
+                huberaAware = 1,
+                clientPackage = pkg,
+            )
+            lastHubera = info.hubera?.message?.takeIf { it.isNotBlank() }
+            return info
+        }
+        val url = "$base/api/deploy/apk/info" +
+            "?clientVersion=${java.net.URLEncoder.encode(BuildConfig.VERSION_NAME, "UTF-8")}" +
+            "&clientVersionCode=${BuildConfig.VERSION_CODE}" +
+            "&install=${installId()}" +
+            "&huberaAware=1" +
+            "&clientPackage=${java.net.URLEncoder.encode(pkg, "UTF-8")}"
+        val req = Request.Builder().url(url).get().build()
+        // Client court dédié OTA (évite readTimeout 45 s du client principal).
+        val client = container.httpAuth.newBuilder()
+            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code} $base")
+            val raw = resp.body?.string().orEmpty()
+            val o = org.json.JSONObject(raw)
+            val info = ApkInfoResponse(
+                ready = o.optBoolean("ready"),
+                versionName = o.optString("versionName").takeIf { it.isNotBlank() },
+                versionCode = o.optInt("versionCode").takeIf { it > 0 },
+                apiBaseUrl = o.optString("apiBaseUrl").takeIf { it.isNotBlank() },
+                builtAt = o.optString("builtAt").takeIf { it.isNotBlank() },
+                sizeBytes = o.optLong("sizeBytes").takeIf { it > 0 },
+                downloadPath = o.optString("downloadPath").takeIf { it.isNotBlank() },
+                downloadUrl = o.optString("downloadUrl").takeIf { it.isNotBlank() },
+                packageName = o.optString("package").takeIf { it.isNotBlank() },
+            )
+            lastHubera = o.optJSONObject("hubera")?.optString("message")?.takeIf { it.isNotBlank() }
+            return info
+        }
+    }
+
+    fun lastHuberaMessage(): String? = lastHubera
+
+    private fun loadVersionNotesFor(versionName: String?): String? {
+        val version = versionName?.replace(Regex("^[pbd]\\+"), "")?.trim().orEmpty()
+        if (version.isBlank()) return lastLoadedNotes
+        val raw = runCatching {
+            context.assets.open("version-notes.json").bufferedReader().use { it.readText() }
+        }.getOrNull() ?: return lastLoadedNotes
+        val arr = org.json.JSONObject(raw).optJSONArray("versions") ?: return lastLoadedNotes
+        fun fmt(o: org.json.JSONObject): String {
+            val title = o.optString("title").trim()
+            val bullets = buildString {
+                val n = o.optJSONArray("notes") ?: return@buildString
+                for (j in 0 until n.length()) {
+                    n.optString(j).takeIf { it.isNotBlank() }?.let {
+                        append("• ").append(it).append('\n')
+                    }
+                }
+            }.trim()
+            return listOf(title, bullets).filter { it.isNotBlank() }.joinToString("\n\n")
+        }
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val v = o.optString("version").replace(Regex("^[pbd]\\+"), "")
+            if (v == version) return fmt(o).ifBlank { null }
+        }
+        return arr.optJSONObject(0)?.let { fmt(it).ifBlank { null } }
+    }
+
+    private var lastLoadedNotes: String? = null
+
+    private var lastHubera: String? = null
     private val busy = AtomicBoolean(false)
     private val notifier = UpdateProgressNotifier(context.applicationContext)
     /** Paquet cible de la dernière session d’install (persisté pour SUCCESS après kill). */
@@ -74,6 +189,8 @@ class ApkUpdateManager(
         val remoteName: String? = null,
         val remoteCode: Int = 0,
         val available: Boolean = false,
+        /** Nouveautés de la version distante (VERSION_NOTES), pas le message Hubera générique. */
+        val releaseNotes: String? = null,
     )
 
     private val _ui = MutableStateFlow(restoreUi())
@@ -161,7 +278,7 @@ class ApkUpdateManager(
             return tryOpenConfirmUi("reopen-intent") {
                 UpdateRelaunch.launchConfirm(context, confirm)
                 notifier.show(
-                    "Mise à jour PLM",
+                    "Mise à jour Hubera Music",
                     "Écran d’installation — Rouvrir",
                     100,
                     indeterminate = false,
@@ -241,19 +358,25 @@ class ApkUpdateManager(
         }
         val message = when (safe) {
             Phase.UpToDate -> "À jour — ${BuildConfig.VERSION_NAME}"
-            Phase.Available ->
-                prefs.getString(KEY_UI_MESSAGE, "")?.takeIf { it.isNotBlank() }
-                    ?: "Nouvelle version prête — appuie pour installer"
+            Phase.Available -> {
+                val remoteLabel = prefs.getString(KEY_LAST_REMOTE_NAME, null)
+                    ?: remoteCode.takeIf { it > 0 }?.let { "build $it" }
+                val stored = prefs.getString(KEY_UI_MESSAGE, "")?.takeIf { it.isNotBlank() }
+                if (stored != null && !stored.startsWith("À jour")) stored
+                else "Nouvelle version ${remoteLabel ?: ""} — ${BuildConfig.VERSION_NAME} déjà installée.".trim()
+            }
             else -> prefs.getString(KEY_UI_MESSAGE, "") ?: ""
         }
+        val remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null)
         return UiState(
             phase = safe,
             progress = 0f,
             message = message,
-            remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
+            remoteName = remoteName,
             remoteCode = remoteCode,
             available = safe == Phase.Available ||
                 (safe == Phase.Error && remoteCode > BuildConfig.VERSION_CODE),
+            releaseNotes = loadVersionNotesFor(remoteName),
         )
     }
 
@@ -304,11 +427,11 @@ class ApkUpdateManager(
             busy.set(false)
             publish(
                 UiState(
-                    phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.Idle,
+                    phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.UpToDate,
                     message = if (remote > BuildConfig.VERSION_CODE) {
                         "Mise à jour prête — appuie pour télécharger"
                     } else {
-                        "Installée ${BuildConfig.VERSION_NAME}"
+                        "Application à jour — ${BuildConfig.VERSION_NAME}"
                     },
                     remoteName = prefs.getString(KEY_LAST_REMOTE_NAME, null),
                     remoteCode = remote,
@@ -350,10 +473,13 @@ class ApkUpdateManager(
     }
 
     private fun publish(state: UiState) {
-        _ui.value = state
+        val notes = state.releaseNotes ?: loadVersionNotesFor(state.remoteName)
+        lastLoadedNotes = notes
+        val out = if (notes == state.releaseNotes) state else state.copy(releaseNotes = notes)
+        _ui.value = out
         prefs.edit()
-            .putString(KEY_UI_PHASE, state.phase.name)
-            .putString(KEY_UI_MESSAGE, state.message)
+            .putString(KEY_UI_PHASE, out.phase.name)
+            .putString(KEY_UI_MESSAGE, out.message)
             .apply()
     }
 
@@ -525,7 +651,7 @@ class ApkUpdateManager(
             ),
         )
         try {
-            val result = withTimeout(22_000L) {
+            val result = withTimeout(8_000L) {
                 check(force = true, respectSnooze = false)
             }
             val remote = result.info?.versionCode ?: 0
@@ -605,8 +731,8 @@ class ApkUpdateManager(
                 else -> {
                     publish(
                         UiState(
-                            phase = Phase.Idle,
-                            message = result.message ?: "Installée ${BuildConfig.VERSION_NAME}",
+                            phase = Phase.UpToDate,
+                            message = result.message ?: "Application à jour — ${BuildConfig.VERSION_NAME}",
                             available = false,
                         ),
                     )
@@ -614,11 +740,15 @@ class ApkUpdateManager(
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             // Quitter Compte pendant « Vérification… » ne doit PAS laisser l’UI coincée.
-            if (_ui.value.phase == Phase.Checking) {
+                if (_ui.value.phase == Phase.Checking) {
                 publish(
                     UiState(
-                        phase = Phase.Idle,
-                        message = "Installée ${BuildConfig.VERSION_NAME}",
+                        phase = if (current.available) Phase.Available else Phase.UpToDate,
+                        message = if (current.available) {
+                            "Mise à jour prête — appuie pour télécharger"
+                        } else {
+                            "Application à jour — ${BuildConfig.VERSION_NAME}"
+                        },
                         remoteName = current.remoteName,
                         remoteCode = current.remoteCode,
                         available = current.available,
@@ -652,7 +782,7 @@ class ApkUpdateManager(
             ?: prefs.getInt(KEY_LAST_REMOTE_CODE, 0)
         publish(
             UiState(
-                phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.Idle,
+                phase = if (remote > BuildConfig.VERSION_CODE) Phase.Available else Phase.UpToDate,
                 message = if (remote > BuildConfig.VERSION_CODE) {
                     "Mise à jour prête — appuie pour télécharger"
                 } else {
@@ -672,6 +802,46 @@ class ApkUpdateManager(
      * Si une feuille Confirmer est déjà ouverte : on la rouvre — **jamais** une 2ᵉ session
      * (c’était la cause des multi-fenêtres quand on avait plusieurs versions de retard).
      */
+    /** Installe le fichier déjà en cache. Ne retélécharge pas. */
+    fun installCachedApkWithoutDownload(): Boolean {
+        val dir = File(context.cacheDir, "apk-updates")
+        val file = dir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".apk") && it.length() > 1_000_000L && looksLikeZip(it) }
+            ?.maxByOrNull { it.lastModified() }
+            ?: return false
+        val remote = Regex("plm-update-(\\d+)").find(file.name)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: return false
+        if (!busy.compareAndSet(false, true)) return true
+        updateJob?.cancel()
+        updateJob = scope.launch {
+            try {
+                publish(
+                    UiState(
+                        phase = Phase.Installing,
+                        message = "Installation du fichier déjà téléchargé…",
+                        remoteCode = remote,
+                        available = true,
+                        progress = 1f,
+                    ),
+                )
+                val msg = launchInstall(file, remote)
+                val ok = msg.startsWith("Installation")
+                publish(
+                    UiState(
+                        phase = if (ok) Phase.AwaitingConfirm else Phase.Error,
+                        message = msg,
+                        remoteCode = remote,
+                        available = true,
+                        progress = 1f,
+                    ),
+                )
+            } finally {
+                busy.set(false)
+            }
+        }
+        return true
+    }
+
     fun startManualUpdate() {
         val phase = _ui.value.phase
         if (phase == Phase.AwaitingConfirm) {
@@ -695,7 +865,7 @@ class ApkUpdateManager(
                 available = true,
             ),
         )
-        notifier.show("Mise à jour PLM", "Vérification de la version…", null, indeterminate = true)
+        notifier.show("Mise à jour Hubera Music", "Vérification de la version…", null, indeterminate = true)
         updateJob?.cancel()
         updateJob = scope.launch {
             try {
@@ -728,7 +898,7 @@ class ApkUpdateManager(
                         ),
                     )
                     notifier.show(
-                        "Mise à jour PLM",
+                        "Mise à jour Hubera Music",
                         "Préparation de l’installateur…",
                         0,
                         indeterminate = true,
@@ -737,7 +907,7 @@ class ApkUpdateManager(
                     val okInstall = msg.startsWith("Installation")
                     if (okInstall) {
                         notifier.show(
-                            "Mise à jour PLM",
+                            "Mise à jour Hubera Music",
                             "Écran d’installation ouvert",
                             100,
                             indeterminate = false,
@@ -749,7 +919,7 @@ class ApkUpdateManager(
                         UiState(
                             phase = if (okInstall) Phase.AwaitingConfirm else Phase.Error,
                             message = if (okInstall) {
-                                "Valide l’installation système — PLM se relancera ensuite"
+                                "Valide l’installation système — Hubera Music se relancera ensuite"
                             } else {
                                 msg
                             },
@@ -771,7 +941,7 @@ class ApkUpdateManager(
                         progress = 0f,
                     ),
                 )
-                notifier.show("Mise à jour PLM", "Téléchargement… 0 %", 0, indeterminate = false)
+                notifier.show("Mise à jour Hubera Music", "Téléchargement… 0 %", 0, indeterminate = false)
                 val msg = downloadAndInstall(check.info) { p ->
                     val pct = (p * 100).toInt().coerceIn(0, 99)
                     val line = "Téléchargement ${remoteName ?: remote}… $pct %"
@@ -785,12 +955,12 @@ class ApkUpdateManager(
                             available = true,
                         )
                     }
-                    notifier.show("Mise à jour PLM", line, pct, indeterminate = false)
+                    notifier.show("Mise à jour Hubera Music", line, pct, indeterminate = false)
                 }
                 val ok = msg.startsWith("Installation")
                 if (ok) {
                     notifier.show(
-                        "Mise à jour PLM",
+                        "Mise à jour Hubera Music",
                         "Écran d’installation ouvert",
                         100,
                         indeterminate = false,
@@ -807,7 +977,7 @@ class ApkUpdateManager(
                             else -> Phase.Error
                         },
                         message = when {
-                            ok -> "Valide l’installation système — PLM se relancera ensuite"
+                            ok -> "Valide l’installation système — Hubera Music se relancera ensuite"
                             else -> msg
                         },
                         remoteName = remoteName,
@@ -830,7 +1000,7 @@ class ApkUpdateManager(
                                 phase = if (remote > BuildConfig.VERSION_CODE) {
                                     Phase.Available
                                 } else {
-                                    Phase.Idle
+                                    Phase.UpToDate
                                 },
                                 message = "Mise à jour interrompue — réessaie",
                                 remoteName = _ui.value.remoteName,
@@ -861,18 +1031,40 @@ class ApkUpdateManager(
         return File(dir, "plm-update-$remoteCode.apk")
     }
 
+    private fun looksLikeZip(file: File): Boolean {
+        if (!file.isFile || file.length() < 4L) return false
+        return runCatching {
+            file.inputStream().use { input ->
+                val b = ByteArray(2)
+                input.read(b) == 2 && b[0] == 0x50.toByte() && b[1] == 0x4B.toByte()
+            }
+        }.getOrDefault(false)
+    }
+
+    /** Vrai seulement si l’archive se lit comme une APK et, si connue, a la taille publiée. */
+    private fun apkReady(file: File, expectedBytes: Long?): Boolean {
+        if (!looksLikeZip(file)) return false
+        if (file.length() < 1_000_000L) return false
+        if (expectedBytes != null && file.length() != expectedBytes) return false
+        return packageNameFromApk(file) != null
+    }
+
     private suspend fun launchInstall(file: File, remote: Int): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
             UpdateRelaunch.markPendingAfterPermission(context)
-            withContext(Dispatchers.Main) {
-                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
-                    .setData(Uri.parse("package:${context.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
+            val last = prefs.getLong(KEY_PERM_ASKED_AT, 0L)
+            if (System.currentTimeMillis() - last > 90_000L) {
+                prefs.edit().putLong(KEY_PERM_ASKED_AT, System.currentTimeMillis()).apply()
+                withContext(Dispatchers.Main) {
+                    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                        .setData(Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                }
             }
-            return "Autorise l’installation pour PLM, puis reviens — on relance auto"
+            return "Autorise l’installation pour Hubera Music, puis reviens — on relance auto"
         }
         withContext(Dispatchers.Main) {
             runCatching {
@@ -905,7 +1097,7 @@ class ApkUpdateManager(
             false
         }
         if (!ok) installInFlight.set(false)
-        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur — réessaie ou plm.delhomme.ovh/install"
+        return if (ok) "Installation lancée (v$remote)" else "Échec lancement installateur — réessaie ou music.hubera.cloud/install"
     }
 
     /**
@@ -961,7 +1153,7 @@ class ApkUpdateManager(
             }
             runCatching {
                 container.ensureFreshToken()
-                val info = container.api.apkInfo()
+                val info = fetchApkInfo()
                 prefs.edit()
                     .putLong(KEY_LAST_CHECK, System.currentTimeMillis())
                     .putInt(KEY_LAST_REMOTE_CODE, info.versionCode ?: 0)
@@ -1014,13 +1206,17 @@ class ApkUpdateManager(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
-            withContext(Dispatchers.Main) {
-                val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
-                    .setData(Uri.parse("package:${context.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
+            val last = prefs.getLong(KEY_PERM_ASKED_AT, 0L)
+            if (System.currentTimeMillis() - last > 90_000L) {
+                prefs.edit().putLong(KEY_PERM_ASKED_AT, System.currentTimeMillis()).apply()
+                withContext(Dispatchers.Main) {
+                    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                        .setData(Uri.parse("package:${context.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                }
             }
-            return@withContext "Autorise l’installation pour PLM, puis réessaie"
+            return@withContext "Autorise l’installation pour Hubera Music, puis réessaie — rien n’a encore été téléchargé"
         }
 
         // Pause + stop service avant DL (évite ANR + « rien en lecture » + vol Netflix)
@@ -1033,7 +1229,7 @@ class ApkUpdateManager(
         }
 
         container.ensureFreshToken()
-        val meta = info ?: container.api.apkInfo()
+        val meta = info ?: fetchApkInfo()
         if (meta.ready != true) return@withContext "APK pas encore publiée"
         val remote = meta.versionCode ?: 0
         val metaPkg = meta.packageName?.takeIf { it.isNotBlank() } ?: PROD_PACKAGE
@@ -1046,7 +1242,7 @@ class ApkUpdateManager(
             // Même versionCode que le serveur, mais autre package (ex. d+198 vs p+198) :
             // pas de DL — l’utilisateur doit ouvrir l’icône PLM.
             return@withContext crossPackageHint(metaPkg)
-                ?: "Ouvre l’app PLM (prod) — cette build Dev est déjà au même code $remote"
+                ?: "Ouvre Hubera Music (prod) — cette build Dev est déjà au même code $remote"
         }
         lastTargetPackage = metaPkg
         prefs.edit().putString(KEY_TARGET_PACKAGE, metaPkg).apply()
@@ -1061,12 +1257,6 @@ class ApkUpdateManager(
             )
         }
 
-        val base = container.resolvedApiBase().trimEnd('/')
-        val path = meta.downloadPath?.takeIf { it.startsWith("/") } ?: "/api/deploy/apk"
-        // Toujours passer par l’API résolue (même host que le JWT) — évite 401 si
-        // downloadUrl pointe vers un alias (plm vs ytmusic) mal authentifié.
-        val url = "$base$path"
-
         val dir = File(context.cacheDir, "apk-updates").apply { mkdirs() }
         dir.listFiles()?.forEach { f ->
             if (f.name.startsWith("plm-update-") && f.name != "plm-update-$remote.apk") {
@@ -1074,45 +1264,102 @@ class ApkUpdateManager(
             }
         }
         val out = apkFileFor(remote)
-        if (out.exists()) out.delete()
+        val expected = meta.sizeBytes?.toLong()?.takeIf { it > 1_000_000L }
+        if (apkReady(out, expected)) {
+            publish(
+                _ui.value.copy(
+                    phase = Phase.Installing,
+                    progress = 1f,
+                    message = "Fichier déjà téléchargé — installation, sans nouveau téléchargement",
+                    available = true,
+                ),
+            )
+            notifier.show(
+                "Mise à jour Hubera Music",
+                "Fichier déjà là — installation",
+                100,
+                indeterminate = false,
+            )
+            return@withContext launchInstall(out, remote)
+        }
+        if (out.exists()) {
+            AppLog.w("apk-update", "cache APK inutilisable ${out.length()} o — on le jette")
+            out.delete()
+            publish(
+                _ui.value.copy(
+                    phase = Phase.Downloading,
+                    progress = 0f,
+                    message = "Le fichier en cache n’est pas une APK valide. Nouveau téléchargement affiché.",
+                    available = true,
+                ),
+            )
+        }
 
-        val req = Request.Builder().url(url).get().build()
-        container.httpAuth.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                return@withContext "Téléchargement HTTP ${resp.code}"
-            }
-            val body = resp.body ?: return@withContext "Réponse vide"
-            val total = body.contentLength().takeIf { it > 0 }
-                ?: meta.sizeBytes?.toLong()?.takeIf { it > 0 }
-                ?: -1L
-            out.outputStream().use { os ->
-                body.byteStream().use { input ->
-                    val buf = ByteArray(64 * 1024)
-                    var read = 0L
-                    var lastPct = -1
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        os.write(buf, 0, n)
-                        read += n
-                        if (total > 0) {
-                            val p = (read.toFloat() / total.toFloat()).coerceIn(0f, 0.99f)
-                            val pct = (p * 100).toInt()
-                            if (pct != lastPct) {
-                                lastPct = pct
-                                onProgress?.invoke(p)
+        val path = meta.downloadPath?.takeIf { it.startsWith("/") } ?: "/api/deploy/apk"
+        val pkgQ = meta.packageName?.takeIf { it.isNotBlank() } ?: context.packageName
+        val withPkg = if (path.contains("package=")) path else {
+            path + (if (path.contains("?")) "&" else "?") + "package=" +
+                java.net.URLEncoder.encode(pkgQ, "UTF-8")
+        }
+        var lastHttp: String? = null
+        var downloaded = false
+        hostLoop@ for (tryBase in container.prodApiFallbacks()) {
+            val url = "$tryBase$withPkg"
+            val req = Request.Builder().url(url).get().build()
+            val ok = try {
+                container.httpAuth.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        lastHttp = "HTTP ${resp.code} $tryBase"
+                        false
+                    } else {
+                        val body = resp.body ?: return@use false
+                        val total = body.contentLength().takeIf { it > 0 }
+                            ?: meta.sizeBytes?.toLong()?.takeIf { it > 0 }
+                            ?: -1L
+                        out.outputStream().use { os ->
+                            body.byteStream().use { input ->
+                                val buf = ByteArray(64 * 1024)
+                                var read = 0L
+                                var lastPct = -1
+                                while (true) {
+                                    val n = input.read(buf)
+                                    if (n < 0) break
+                                    os.write(buf, 0, n)
+                                    read += n
+                                    if (total > 0) {
+                                        val p = (read.toFloat() / total.toFloat()).coerceIn(0f, 0.99f)
+                                        val pct = (p * 100).toInt()
+                                        if (pct != lastPct) {
+                                            lastPct = pct
+                                            onProgress?.invoke(p)
+                                        }
+                                    } else if (read % (512 * 1024L) < buf.size) {
+                                        onProgress?.invoke((read / (8f * 1024f * 1024f)).coerceIn(0f, 0.9f))
+                                    }
+                                }
                             }
-                        } else if (read % (512 * 1024L) < buf.size) {
-                            onProgress?.invoke((read / (8f * 1024f * 1024f)).coerceIn(0f, 0.9f))
                         }
+                        true
                     }
                 }
+            } catch (e: Exception) {
+                lastHttp = e.message
+                false
             }
-            onProgress?.invoke(1f)
+            if (ok) {
+                downloaded = true
+                break@hostLoop
+            }
+            AppLog.w("apk-update", "download fail $tryBase: $lastHttp")
         }
-        if (out.length() < 1_000_000L) {
+        if (!downloaded) {
+            return@withContext lastHttp ?: "Téléchargement impossible"
+        }
+        onProgress?.invoke(1f)
+        if (!apkReady(out, expected)) {
+            val why = if (!looksLikeZip(out)) "le serveur n’a pas envoyé une APK" else "fichier incomplet ou illisible"
             out.delete()
-            return@withContext "APK trop petite (${out.length()} o)"
+            return@withContext "Téléchargement rejeté ($why). Rien n’a été installé."
         }
         AppLog.i("apk-update", "downloaded ${out.length()} bytes → install v$remote")
         publish(
@@ -1122,7 +1369,7 @@ class ApkUpdateManager(
                 message = "Préparation de l’installateur (v$remote)… 0 %",
             ),
         )
-        notifier.show("Mise à jour PLM", "Préparation de l’installateur… 0 %", 0, indeterminate = false)
+        notifier.show("Mise à jour Hubera Music", "Préparation de l’installateur… 0 %", 0, indeterminate = false)
         launchInstall(out, remote)
     }
 
@@ -1150,8 +1397,8 @@ class ApkUpdateManager(
     private fun crossPackageHint(target: String): String? {
         if (target == context.packageName) return null
         return when (BuildConfig.APP_CHANNEL) {
-            "d" -> "Tu es sur PLM Dev — la MAJ installe/met à jour l’app PLM (icône sans « Dev »)."
-            "b" -> "Tu es sur PLM Preprod — la MAJ installe/met à jour l’app PLM (prod)."
+            "d" -> "Tu es sur Hubera Music Dev — la MAJ met à jour l’app Hubera Music (sans « Dev »)."
+            "b" -> "Tu es sur Hubera Music Preprod — la MAJ met à jour l’app Hubera Music (prod)."
             else -> "La MAJ cible $target (pas cette app)."
         }
     }
@@ -1212,7 +1459,7 @@ class ApkUpdateManager(
                                     available = true,
                                 ),
                             )
-                            notifier.show("Mise à jour PLM", line, pct, indeterminate = false)
+                            notifier.show("Mise à jour Hubera Music", line, pct, indeterminate = false)
                         }
                     }
                     session.fsync(out)
@@ -1227,7 +1474,7 @@ class ApkUpdateManager(
                 ),
             )
             notifier.show(
-                "Mise à jour PLM",
+                "Mise à jour Hubera Music",
                 "Installation en cours…",
                 100,
                 indeterminate = true,
@@ -1271,13 +1518,13 @@ class ApkUpdateManager(
                 publish(
                     _ui.value.copy(
                         phase = Phase.AwaitingConfirm,
-                        message = "Valide l’installation — si l’écran est derrière PLM, appuie sur la vignette",
+                        message = "Valide l’installation — si l’écran est derrière l’app, appuie sur la vignette",
                         available = true,
                         progress = 1f,
                     ),
                 )
                 notifier.show(
-                    "Mise à jour PLM",
+                    "Mise à jour Hubera Music",
                     "Écran d’installation ouvert",
                     100,
                     indeterminate = false,
@@ -1292,14 +1539,14 @@ class ApkUpdateManager(
                     ?: context.packageName
                 val cross = target != context.packageName
                 notifier.done(
-                    if (cross) "PLM mis à jour — ouvre l’icône PLM"
+                    if (cross) "Hubera Music mis à jour — ouvre l’icône Hubera Music"
                     else "Installée — réouverture…",
                 )
                 publish(
                     UiState(
                         phase = Phase.Done,
                         message = if (cross) {
-                            "PLM (prod) installé — ouvre l’icône « PLM », pas PLM Dev"
+                            "Hubera Music (prod) installé — ouvre l’icône « Hubera Music », pas Dev"
                         } else {
                             "Mise à jour installée — réouverture…"
                         },
@@ -1319,7 +1566,7 @@ class ApkUpdateManager(
                 publish(
                     _ui.value.copy(
                         phase = Phase.Error,
-                        message = "Installation annulée — réessaie ou ouvre plm.delhomme.ovh/install",
+                        message = "Installation annulée — réessaie ou ouvre music.hubera.cloud/install",
                         available = true,
                     ),
                 )
@@ -1351,7 +1598,7 @@ class ApkUpdateManager(
                 publish(
                     _ui.value.copy(
                         phase = Phase.Error,
-                        message = "Installation $human${statusMsg?.let { " ($it)" } ?: ""} — réessaie ou plm.delhomme.ovh/install",
+                        message = "Installation $human${statusMsg?.let { " ($it)" } ?: ""} — réessaie ou music.hubera.cloud/install",
                         available = true,
                     ),
                 )
@@ -1378,6 +1625,7 @@ class ApkUpdateManager(
         private const val KEY_SNOOZED_CODE = "snoozed_version_code"
         private const val KEY_SNOOZE_CODE = "snooze_version_code"
         private const val KEY_SNOOZE_UNTIL = "snooze_until_ms"
+        private const val KEY_PERM_ASKED_AT = "perm_asked_at"
         private const val KEY_REPROMPT_INSTALL = "reprompt_after_install_cancel"
         private const val KEY_PROMPTED_SLOT = "prompted_slot"
         private const val KEY_LAST_REMOTE_CODE = "last_remote_code"
@@ -1386,7 +1634,7 @@ class ApkUpdateManager(
         private const val KEY_UI_MESSAGE = "ui_message"
         private const val KEY_CONFIRM_OPENED_AT = "confirm_opened_at_ms"
         private const val KEY_TARGET_PACKAGE = "ota_target_package"
-        private const val PROD_PACKAGE = "ovh.delhomme.ytmusic"
+        private const val PROD_PACKAGE = "cloud.hubera.music"
         /** Fenêtre anti double-popup (broadcasts OEM / recreation Activity). */
         private const val CONFIRM_DEBOUNCE_MS = 45_000L
         private val WINDOW_HALF_MS = TimeUnit.MINUTES.toMillis(45)

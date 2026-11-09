@@ -44,6 +44,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.auth.DeviceLoginQr
 import ovh.delhomme.ytmusic.data.AppContainer
 
@@ -122,7 +123,7 @@ fun LoginScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            "PLM",
+            "Hubera Music",
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
@@ -132,25 +133,58 @@ fun LoginScreen(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (container.apiEnvKind() == "prod") {
-            Text(
-                "PROD · plm (défaut) + ytmusic",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
+        if (BuildConfig.DEBUG || BuildConfig.APP_CHANNEL != "p") {
             Text(
                 container.apiEnvLabel(),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(
+                container.resolvedApiBase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        Text(
-            container.resolvedApiBase(),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         Spacer(modifier = Modifier.height(20.dp))
+
+        val showPicker = state.deviceAccounts.isNotEmpty() &&
+            !state.hideDevicePicker &&
+            !state.registerMode &&
+            !state.forgotMode
+        if (showPicker) {
+            Text(
+                "Continuer avec un compte Hubera",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            for (acc in state.deviceAccounts) {
+                Button(
+                    onClick = { vm.continueWithAccount(acc) },
+                    enabled = !state.loading,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp),
+                ) {
+                    Text("Continuer avec ${acc.email}")
+                }
+            }
+            TextButton(
+                onClick = vm::hideDevicePicker,
+                enabled = !state.loading,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Utiliser un autre compte")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "ou avec e-mail",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
 
         if (!state.registerMode && !state.forgotMode) {
             Text(
@@ -206,7 +240,7 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(10.dp))
             Text(
                 "Important : après connexion, ouvre Compte → Aide & limites. " +
-                    "Ça explique le chargement des titres, le hors-ligne et les limites de PLM.",
+                    "Ça explique Hubera Music, le chargement des titres, le hors-ligne et les limites.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier

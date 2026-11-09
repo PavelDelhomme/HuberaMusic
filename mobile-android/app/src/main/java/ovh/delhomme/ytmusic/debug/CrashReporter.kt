@@ -9,6 +9,7 @@ object CrashReporter {
 
     fun install(context: Context) {
         AppLog.init(context.applicationContext)
+        PlaybackTrace.init(context.applicationContext)
         if (previous != null) return
         previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -30,6 +31,7 @@ object CrashReporter {
                 return@setDefaultUncaughtExceptionHandler
             }
             runCatching { AppLog.crash(throwable, fatal = true) }
+            runCatching { PlaybackTrace.crash(throwable.message ?: throwable.javaClass.simpleName, fatal = true) }
             // Sync disque déjà fait ; POST télémétrie sync (~1.4s) dans AppLog.crash
             try {
                 Thread.sleep(200)
@@ -42,6 +44,10 @@ object CrashReporter {
 
     fun coroutineHandler(tag: String = "coroutine"): CoroutineExceptionHandler =
         CoroutineExceptionHandler { _: CoroutineContext, t: Throwable ->
+            if (ovh.delhomme.ytmusic.player.CancellationPolicy.isScopeCancellation(t)) {
+                AppLog.w(tag, "coroutine annulée (scope UI) — lecture non cassée")
+                return@CoroutineExceptionHandler
+            }
             // Timeouts / DNS pendant offline ou warm : jamais « fatal » mail — stream down.
             val soft = isSoftNetworkFailure(t)
             AppLog.e(tag, "exception non catchée${if (soft) " (réseau soft)" else ""}", t)
@@ -59,6 +65,7 @@ object CrashReporter {
                 )
             } else {
                 AppLog.crash(t, fatal = false)
+                runCatching { PlaybackTrace.crash(t.message ?: t.javaClass.simpleName, fatal = false) }
             }
         }
 
@@ -67,8 +74,12 @@ object CrashReporter {
         while (cur != null) {
             if (cur is java.net.SocketTimeoutException) return true
             if (cur is java.net.UnknownHostException) return true
+            if (cur is javax.net.ssl.SSLPeerUnverifiedException) return true
+            if (cur is javax.net.ssl.SSLHandshakeException) return true
             val m = cur.message.orEmpty()
             if (m.contains("timeout", ignoreCase = true)) return true
+            if (m.contains("not verified", ignoreCase = true)) return true
+            if (m.contains("Trust anchor", ignoreCase = true)) return true
             if (m.contains("Unable to resolve host", ignoreCase = true)) return true
             if (m.contains("HTTP 502") || m.contains("HTTP 503") || m.contains("HTTP 504")) return true
             cur = cur.cause

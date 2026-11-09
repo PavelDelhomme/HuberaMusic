@@ -144,7 +144,8 @@ export function parseDeviceLoginQr(raw: string): {
       ? new URL(text)
       : new URL(text, window.location.origin);
     const host = url.hostname.toLowerCase();
-    const isCustomScheme = url.protocol === 'ytmusic:' || url.protocol === 'plm:';
+    const isCustomScheme =
+      url.protocol === 'ytmusic:' || url.protocol === 'plm:' || url.protocol === 'hubera:';
     const pathOk =
       url.pathname.startsWith('/login-device') ||
       (isCustomScheme &&
@@ -155,6 +156,9 @@ export function parseDeviceLoginQr(raw: string): {
       host === 'plm.delhomme.ovh' ||
       host === 'ytmusic.delhomme.ovh' ||
       host === 'pue-la-merde.delhomme.ovh' ||
+      host === 'music.hubera.cloud' ||
+      host.endsWith('.hubera.cloud') ||
+      host.endsWith('.delhomme.ovh') ||
       host === window.location.hostname.toLowerCase();
     const hasParams =
       !!url.searchParams.get('claim') ||

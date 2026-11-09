@@ -20,23 +20,27 @@ import kotlinx.coroutines.sync.withPermit
 import ovh.delhomme.ytmusic.YtMusicApp
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.data.VisualIdCache
+import ovh.delhomme.ytmusic.data.VisualIds
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Prefetch clips (mode Vidéo uniquement), calqué sur le prefetch audio :
+ * Prefetch clips (mode Vidéo + tête légère hors mode) :
  * - resolve visualId pour le titre courant + N suivants
  * - précharge une grosse tête de chaque clip dans le cache Exo
  *
- * Inactif hors mode Vidéo → zéro impact musique seule.
+ * Hors mode Vidéo : seulement le titre courant + 1, tête plus petite
+ * (bascule Titre → Vidéo quasi instantanée).
  * Respecte [BatterySaver] (fenêtre / taille tête / parallélisme).
  */
 @OptIn(UnstableApi::class)
 object VisualClipPrefetcher {
     private const val TAG = "YTMVideoPrefetch"
-    /** ~8–12 s vidéo 360p — démarrage instantané au skip. */
-    private const val HEAD_BYTES = 3_500L * 1024L
+    /** ~12–18 s vidéo 360p — démarrage instantané au skip. */
+    private const val HEAD_BYTES = 5_500L * 1024L
+    private const val HEAD_BYTES_AUDIO = 1_800L * 1024L
     /** Courant + suivants (comme StreamPrefetcher window). */
     private const val AHEAD = 5
+    private const val AHEAD_AUDIO = 1
     private const val PARALLEL = 2
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -53,17 +57,27 @@ object VisualClipPrefetcher {
         context: Context,
         queue: List<TrackDto>,
         index: Int,
+        videoMode: Boolean = true,
     ) {
         val myGen = gen.incrementAndGet()
         job?.cancel()
         job = scope.launch {
-            // Court délai : laisser le clip courant prendre le réseau d’abord
-            delay(if (ovh.delhomme.ytmusic.data.BatterySaver.isActive()) 700L else 350L)
+            delay(
+                when {
+                    ovh.delhomme.ytmusic.data.BatterySaver.isActive() -> 700L
+                    videoMode -> 80L
+                    else -> 450L
+                },
+            )
             if (myGen != gen.get()) return@launch
             val appCtx = context.applicationContext
             val container = runCatching { YtMusicApp.instance.container }.getOrNull() ?: return@launch
-            val ahead = ovh.delhomme.ytmusic.data.BatterySaver.videoPrefetchAhead(AHEAD)
-            val headBytes = ovh.delhomme.ytmusic.data.BatterySaver.videoPrefetchHeadBytes(HEAD_BYTES)
+            val ahead = ovh.delhomme.ytmusic.data.BatterySaver.videoPrefetchAhead(
+                if (videoMode) AHEAD else AHEAD_AUDIO,
+            )
+            val headBytes = ovh.delhomme.ytmusic.data.BatterySaver.videoPrefetchHeadBytes(
+                if (videoMode) HEAD_BYTES else HEAD_BYTES_AUDIO,
+            )
             val parallel = ovh.delhomme.ytmusic.data.BatterySaver.videoPrefetchParallel(PARALLEL)
             val start = index.coerceAtLeast(0)
             val end = (index + ahead).coerceAtMost(queue.lastIndex)
@@ -76,29 +90,35 @@ object VisualClipPrefetcher {
                         sem.withPermit {
                             if (myGen != gen.get()) return@async
                             runCatching {
-                                // Fichier offline déjà là → pas de prefetch réseau
                                 if (container.offlineStore.hasVideo(track.id)) return@runCatching
-                                var vid = VisualIdCache.get(appCtx, track.id)
-                                    ?.takeIf { it.isNotBlank() && it != track.id }
-                                if (vid == null) {
+                                var vid = VisualIds.pick(
+                                    track.id,
+                                    VisualIdCache.get(appCtx, track.id),
+                                )
+                                if (vid != null) {
+                                    runCatching { container.api.streamResolveUrl(vid, "video") }
+                                    prefetchHead(appCtx, container.videoStreamUrl(vid), vid, headBytes, myGen)
+                                }
+                                if (VisualIdCache.get(appCtx, track.id) == null) {
                                     container.ensureFreshToken()
                                     val vis = container.api.trackVisual(
                                         track.id,
                                         title = track.title,
                                         artist = track.artistLine().takeIf { it != "Artiste" },
                                         durationSeconds = track.durationSeconds,
-                                        waitMs = if (i == index) 2_500 else 4_500,
+                                        waitMs = if (i == index) 1_200 else 2_500,
                                         refresh = null,
                                     )
-                                    vid = vis.visualId?.takeIf { it.isNotBlank() && it != track.id }
-                                    if (vid != null) {
-                                        VisualIdCache.put(appCtx, track.id, vid)
-                                        Log.i(TAG, "resolved +${i - index} ${track.title.take(28)} → $vid")
+                                    val better = VisualIds.pick(track.id, vis.visualId, vis.source)
+                                    if (better != null) {
+                                        VisualIdCache.put(appCtx, track.id, better)
+                                        Log.i(TAG, "resolved +${i - index} ${track.title.take(28)} → $better")
+                                        if (better != vid) {
+                                            runCatching { container.api.streamResolveUrl(better, "video") }
+                                            prefetchHead(appCtx, container.videoStreamUrl(better), better, headBytes, myGen)
+                                        }
                                     }
                                 }
-                                val visualId = vid ?: return@runCatching
-                                runCatching { container.api.streamResolveUrl(visualId, "video") }
-                                prefetchHead(appCtx, container.videoStreamUrl(visualId), visualId, headBytes, myGen)
                             }.onFailure {
                                 Log.w(TAG, "prefetch ${track.id}: ${it.message}")
                             }

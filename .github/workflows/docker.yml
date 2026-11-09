@@ -38,7 +38,10 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # HuberaMusic.git pousse huberamusic ; le stack VPS tire encore ytmusic:latest.
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/ytmusic
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/prod' }}
             type=raw,value=prod,enable=${{ github.ref == 'refs/heads/prod' }}
@@ -71,14 +74,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PKG="ytmusic"
           OWNER="${{ github.repository_owner }}"
-          if gh api --method PATCH "/user/packages/container/${PKG}" -f visibility=public; then
-            echo "OK — package user ${PKG} → public"
-          elif gh api --method PATCH "/orgs/${OWNER}/packages/container/${PKG}" -f visibility=public; then
-            echo "OK — package org ${PKG} → public"
-          else
-            echo "::warning::API visibility KO — passe le package en Public manuellement :"
-            echo "https://github.com/users/${OWNER}/packages/container/${PKG}/settings"
-            exit 0
-          fi
+          for PKG in huberamusic ytmusic; do
+            if gh api --method PATCH "/user/packages/container/${PKG}" -f visibility=public; then
+              echo "OK — package user ${PKG} → public"
+            elif gh api --method PATCH "/orgs/${OWNER}/packages/container/${PKG}" -f visibility=public; then
+              echo "OK — package org ${PKG} → public"
+            else
+              echo "::warning::API visibility KO — ${PKG} :"
+              echo "https://github.com/users/${OWNER}/packages/container/${PKG}/settings"
+            fi
+          done

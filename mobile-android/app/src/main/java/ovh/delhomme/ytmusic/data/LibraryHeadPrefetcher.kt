@@ -33,14 +33,16 @@ class LibraryHeadPrefetcher(
         started = true
         scope.launch(Dispatchers.IO) {
             delay(START_DELAY_MS)
-            // Têtes Aléatoire d’abord (ids en prefs) — avant le burst formats qui peut être long
-            runCatching { warmServerShuffleHeads(force = true, warmClient = true) }
-            runCatching { warmFormatsBurst() }
-            runCatching { warmServerRecentHeads() }
             while (true) {
-                runCatching { tick(reason = "periodic") }
-                runCatching { warmServerShuffleHeads(force = false) }
+                // Même pendant une écoute : le VPS doit garder les têtes « récents / 48 h ».
                 runCatching { warmServerRecentHeads() }
+                runCatching { warmServerListHeads(force = false) }
+                runCatching { warmServerPins() }
+                if (playerBusy()) {
+                    delay(8_000L)
+                    continue
+                }
+                runCatching { tick(reason = "periodic") }
                 delay(INTERVAL_MS)
             }
         }
@@ -50,9 +52,14 @@ class LibraryHeadPrefetcher(
      * Tire le batch serveur (~100 têtes rotatives) et warm léger côté Android.
      * Refresh quand le créneau expire (~30 min, plusieurs dizaines×/jour).
      */
+    private fun playerBusy(): Boolean =
+        StreamPrefetcher.isQuiet() ||
+            StreamPrefetcher.isStreamDown() ||
+            PlaybackService.Holder.isPlaybackActiveSafe()
+
     private suspend fun warmServerShuffleHeads(force: Boolean, warmClient: Boolean = true) {
         if (!NetworkMonitor.isOnline()) return
-        if (StreamPrefetcher.isStreamDown()) return
+        if (playerBusy()) return
         val now = System.currentTimeMillis()
         val expires = prefs.getLong(KEY_SHUFFLE_EXPIRES, 0L)
         if (!force && expires > now + 60_000L) return
@@ -83,9 +90,8 @@ class LibraryHeadPrefetcher(
     /** Warm ciblé « Enregistré récemment » (scope=recent) — ne remplace pas la tête Aléatoire globale. */
     private suspend fun warmServerRecentHeads() {
         if (!NetworkMonitor.isOnline()) return
-        if (StreamPrefetcher.isStreamDown()) return
         val now = System.currentTimeMillis()
-        if (now - prefs.getLong(KEY_RECENT_FETCH, 0L) < 8 * 60_000L) return
+        if (now - prefs.getLong(KEY_RECENT_FETCH, 0L) < 4 * 60_000L) return
         runCatching { container.ensureFreshToken() }
         val r = runCatching { container.api.shuffleHeads(warm = 1, scope = "recent") }.getOrNull() ?: return
         val ids = r.ids.filter { it.length == 11 }.distinct()
@@ -93,11 +99,76 @@ class LibraryHeadPrefetcher(
         prefs.edit().putLong(KEY_RECENT_FETCH, now).apply()
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
-        StreamPrefetcher.warmFormatsLight(base, ids.take(20), limit = 20)
-        if (!StreamPrefetcher.isQuiet() && !PlaybackService.Holder.isPlaybackActiveSafe()) {
-            StreamPrefetcher.warmHeads3s(base, ids.take(10), limit = 10)
+        StreamPrefetcher.warmFormatsLight(base, ids.take(24), limit = 24)
+        if (!playerBusy()) {
+            StreamPrefetcher.warmHeads3s(base, ids.take(12), limit = 12)
         }
-        AppLog.i("LibHeads", "shuffle-heads recent n=${ids.size} pool=${r.poolSize}")
+        AppLog.i("LibHeads", "shuffle-heads recent n=${ids.size} pool=${r.poolSize} exo=${!playerBusy()}")
+    }
+
+    /** A–Z / récents / aimés : 20 débuts sur le VPS + têtes téléphone. */
+    private suspend fun warmServerListHeads(force: Boolean) {
+        if (!NetworkMonitor.isOnline()) return
+        val now = System.currentTimeMillis()
+        if (!force && now - prefs.getLong(KEY_LIST_FETCH, 0L) < 3 * 60_000L) return
+        runCatching { container.ensureFreshToken() }
+        val az = runCatching { container.api.listHeads(warm = 1, scope = "az") }.getOrNull()?.ids.orEmpty()
+        val recent = runCatching { container.api.listHeads(warm = 1, scope = "recent") }.getOrNull()?.ids.orEmpty()
+        val liked = runCatching { container.api.listHeads(warm = 1, scope = "liked") }.getOrNull()?.ids.orEmpty()
+        val ids = (az + recent + liked).filter { it.length == 11 }.distinct()
+        if (ids.isEmpty()) return
+        prefs.edit().putLong(KEY_LIST_FETCH, now).apply()
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return
+        StreamPrefetcher.warmFormatsLight(base, ids.take(24), limit = 24)
+        if (!playerBusy()) {
+            StreamPrefetcher.warmHeads3s(base, ids.take(16), limit = 16)
+        }
+        AppLog.i("LibHeads", "list-heads az=${az.size} recent=${recent.size} liked=${liked.size} exo=${!playerBusy()}")
+    }
+
+    /** Accès rapide : fichiers complets sur le VPS, même pendant une écoute. */
+    private suspend fun warmServerPins() {
+        if (!NetworkMonitor.isOnline()) return
+        if (StreamPrefetcher.isStreamDown()) return
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong(KEY_PINS_FETCH, 0L) < 2 * 60_000L) return
+        val pins = runCatching {
+            container.quickAccess.pins.first().map { it.id }.filter { it.length == 11 }.distinct()
+        }.getOrDefault(emptyList())
+        if (pins.isEmpty()) return
+        prefs.edit().putLong(KEY_PINS_FETCH, now).apply()
+        runCatching { container.ensureFreshToken() }
+        runCatching { container.api.postListHeads(ListHeadsBody(pins.take(24))) }
+        val base = container.resolvedApiBase()
+        if (base.isBlank()) return
+        StreamPrefetcher.warmFormatsLight(base, pins, limit = 24)
+        AppLog.i("LibHeads", "pins-prefix n=${pins.size}")
+    }
+
+    /**
+     * File affichée (Tout lire, album, artiste, singles) : VPS + téléphone en parallèle.
+     */
+    fun warmDisplayedList(ids: List<String>) {
+        val clean = ids.filter { it.length == 11 }.distinct().take(20)
+        if (clean.isEmpty()) return
+        boostVisible(clean)
+        scope.launch(Dispatchers.IO) {
+            if (!NetworkMonitor.isOnline()) return@launch
+            if (StreamPrefetcher.isStreamDown()) return@launch
+            runCatching { container.ensureFreshToken() }
+            runCatching { container.api.postListHeads(ListHeadsBody(clean)) }
+            val base = container.resolvedApiBase()
+            if (base.isBlank()) return@launch
+            StreamPrefetcher.warmFormatsLight(base, clean, limit = 20)
+            StreamPrefetcher.warmHeads3s(
+                base,
+                clean.take(8),
+                limit = 8,
+                ignoreQuiet = true,
+            )
+            AppLog.i("LibHeads", "visible-list n=${clean.size}")
+        }
     }
 
     /** Ids serveur pour amorcer Aléatoire (null si créneau périmé / vide). */
@@ -123,7 +194,7 @@ class LibraryHeadPrefetcher(
     /** POST /api/stream/warm pour les 1ers titres biblio (petits comptes inclus). */
     private suspend fun warmFormatsBurst() {
         if (!NetworkMonitor.isOnline()) return
-        if (PlaybackService.Holder.isPlaybackActiveSafe()) return
+        if (playerBusy()) return
         val base = container.resolvedApiBase()
         if (base.isBlank()) return
         // Petit burst : assez pour fluidité, pas assez pour saturer radio/batterie
@@ -164,8 +235,7 @@ class LibraryHeadPrefetcher(
 
     private suspend fun tick(reason: String) = tickMutex.withLock {
         if (!NetworkMonitor.isOnline()) return
-        if (StreamPrefetcher.isStreamDown()) return
-        if (StreamPrefetcher.isQuiet()) return
+        if (playerBusy()) return
         if (!BatterySaver.allowBackgroundDownloads()) return
         if (!NetworkMonitor.isUnmeteredPreferred(context) && reason == "periodic") {
             // Données mobiles : seulement boost viewport, petit lot
@@ -187,6 +257,7 @@ class LibraryHeadPrefetcher(
         if (base.isBlank()) return
 
         drainBoost(limit = 8)
+        if (playerBusy()) return
 
         // Aimés manquants en tête (après boost) — prioritaire pour Aléatoire / hors-ligne
         val likedWarm = likedIds().filter { !container.offlineStore.has(it) }.take(6)
@@ -204,6 +275,7 @@ class LibraryHeadPrefetcher(
             prefs.edit().putInt(KEY_CURSOR, 0).putLong(KEY_LAST, System.currentTimeMillis()).apply()
             return
         }
+        if (playerBusy()) return
         StreamPrefetcher.prefetchLibraryHeads(base, batch, limit = BATCH)
         val next = (start + batch.size) % ids.size.coerceAtLeast(1)
         prefs.edit()
@@ -241,10 +313,17 @@ class LibraryHeadPrefetcher(
             container.libraryRepo.ensureLoaded(force = false)
             container.libraryRepo.library.value
         }.getOrNull()
+        val azSongs = (lib?.songs.orEmpty() + lib?.liked.orEmpty())
+            .filter { it.id.length == 11 }
+            .sortedBy { it.title.lowercase() }
+            .map { it.id }
+            .distinct()
+            .take(20)
         if (lib == null) {
             val remote = runCatching { container.api.library() }.getOrNull()
-                ?: return pins.filter { it.length == 11 }
+                ?: return (pins.filter { it.length == 11 } + azSongs).distinct()
             return buildList {
+                addAll(azSongs)
                 addAll(pins)
                 addAll(remote.liked.orEmpty().map { it.id })
                 addAll(remote.songs.orEmpty().map { it.id })
@@ -254,7 +333,7 @@ class LibraryHeadPrefetcher(
                 .distinct()
         }
         return buildList {
-            // pins → liked → songs → history
+            addAll(azSongs)
             addAll(pins)
             addAll(lib.liked.map { it.id })
             addAll(lib.songs.map { it.id })
@@ -266,7 +345,7 @@ class LibraryHeadPrefetcher(
 
     companion object {
         /** Têtes Aléatoire tôt ; burst formats plus tard / plus léger (batterie). */
-        private const val START_DELAY_MS = 900L
+        private const val START_DELAY_MS = 8_000L
         private const val INTERVAL_MS = 90_000L
         private const val BATCH = 8
         private const val KEY_CURSOR = "cursor"
@@ -275,5 +354,7 @@ class LibraryHeadPrefetcher(
         private const val KEY_SHUFFLE_EXPIRES = "shuffle_head_expires"
         private const val KEY_SHUFFLE_FETCH = "shuffle_head_fetch"
         private const val KEY_RECENT_FETCH = "shuffle_recent_fetch"
+        private const val KEY_LIST_FETCH = "list_head_fetch"
+        private const val KEY_PINS_FETCH = "pins_disk_fetch"
     }
 }

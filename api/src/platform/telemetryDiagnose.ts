@@ -144,7 +144,7 @@ export function diagnoseTelemetryEvent(ev: {
       likelyCause:
         'YouTube bloque l’IP datacenter (LOGIN_REQUIRED / unavailable) → Innertube ne trouve pas de format audio → l’API répond 502. Autres causes : reverse proxy timeout, OAuth TV non validé, cookies vides, upstream mort.',
       actions: [
-        'curl -I « https://ytmusic.delhomme.ovh/api/stream/<trackId> » -H « Range: bytes=0-1 » : 502 = serveur, pas Android',
+        'curl -I « https://music.hubera.cloud/api/stream/<trackId> » -H « Range: bytes=0-1 » : 502 = serveur, pas Android',
         'Comparer avec dQw4w9WgXcQ (souvent 206) vs le titre listé dans « Titres concernés »',
         'Valider OAuth TV : POST /api/admin/youtube-stream-oauth/start puis https://www.google.com/device (docs/STREAM-VPS-OAUTH.md)',
         'Logs API au timestamp du mail : LOGIN_REQUIRED / NO_UPSTREAM / getAudioFormat vide',
@@ -175,9 +175,9 @@ export function diagnoseTelemetryEvent(ev: {
   if (player && (is403 || /Source error.*403|HTTP.*403|Response code: 403/i.test(core))) {
     return {
       family: 'stream-midrange-403',
-      title: '403 googlevideo / mid-range (pas une session PLM)',
+      title: '403 googlevideo / mid-range (pas une session Hubera Music)',
       summary:
-        'Exo a reçu un 403 sur le flux audio (souvent Range mid après ~1 Mo). Ce n’est en général pas un logout PLM : YouTube coupe le relais googlevideo ; le correctif est le cache progressif / proxies.',
+        'Exo a reçu un 403 sur le flux audio (souvent Range mid après ~1 Mo). Ce n’est en général pas un logout Hubera Music : YouTube coupe le relais googlevideo ; le correctif est le cache progressif / proxies.',
       likelyCause:
         'URL googlevideo expirée, IP datacenter, ou seek mid-range sans .m4a disque.',
       actions: [
@@ -193,10 +193,10 @@ export function diagnoseTelemetryEvent(ev: {
     return {
       family: 'auth-or-blocked',
       title: 'Accès refusé (401/403) ou LOGIN_REQUIRED YouTube',
-      summary: 'Soit la session PLM a expiré, soit YouTube refuse la résolution de format depuis cette IP.',
-      likelyCause: 'Token PLM périmé, cookies YouTube absents, ou IP datacenter bloquée.',
+      summary: 'Soit la session Hubera Music a expiré, soit YouTube refuse la résolution de format depuis cette IP.',
+      likelyCause: 'Token Hubera Music périmé, cookies YouTube absents, ou IP datacenter bloquée.',
       actions: [
-        'Revérifier login PLM / refresh token',
+        'Revérifier login Hubera Music / refresh token',
         'Session OAuth TV stream (docs/STREAM-VPS-OAUTH.md)',
         'Ne pas confondre avec un 403 googlevideo en fin de piste (EOS)',
       ],
@@ -265,9 +265,31 @@ export function diagnoseTelemetryEvent(ev: {
     };
   }
 
+  const progressive = /Aucun format vidéo progressif/i.exec(core);
+  if (progressive) {
+    const id = /\bid=([a-zA-Z0-9_-]{11})\b/.exec(core)?.[1] || '';
+    return {
+      family: 'video-format',
+      title: id ? `Pas de vidéo progressive · ${id}` : 'Pas de vidéo progressive',
+      summary: id
+        ? `Le titre ${id} n’a pas de MP4 progressif. La lecture ne démarre pas sur ce format.`
+        : 'Un titre n’a pas de MP4 progressif, et l’identifiant n’était pas dans l’erreur.',
+      likelyCause: 'YouTube ne propose pas itag 18/22 pour ce videoId, ou le déchiffrement a échoué.',
+      actions: [
+        'Lire id= dans le message : c’est le videoId, pour tous les comptes',
+        'Réessayer un autre itag audio avant de conclure que le titre est mort',
+      ],
+      surface: 'server',
+    };
+  }
+
+  const taggedId =
+    /\bid=([a-zA-Z0-9_-]{11})\b/.exec(text)?.[1] ||
+    /\/cache\/([a-zA-Z0-9_-]{11})\.(?:m4a|mp4)\b/.exec(text)?.[1] ||
+    '';
   return {
-    family: 'generic',
-    title: 'Erreur applicative',
+    family: taggedId ? 'track' : 'generic',
+    title: taggedId ? `Erreur sur ${taggedId}` : 'Erreur applicative',
     summary: ev.message?.trim() || 'Pas de message — voir stack et logs récents.',
     likelyCause: 'À classer d’après kind + stack (pas assez de signatures connues).',
     actions: [

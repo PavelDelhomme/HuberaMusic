@@ -140,13 +140,11 @@ fun SyncedVideoSurface(
                 if (saver) 2_000 else 3_000,
             )
             .build()
-        val local = streamUrl.startsWith("file:") || streamUrl.startsWith("/")
-        val builder = ExoPlayer.Builder(context).setLoadControl(loadControl)
-        if (!local) {
-            val factory = PlayerCache.videoCacheDataSourceFactory(context)
-            builder.setMediaSourceFactory(DefaultMediaSourceFactory(factory))
-        }
-        builder
+        // Pas le SimpleCache audio : octets titre ≠ piste vidéo → image noire / POSITION coincée.
+        val factory = PlayerCache.videoDataSourceFactory(context)
+        ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(factory))
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -154,6 +152,7 @@ fun SyncedVideoSurface(
                     .build(),
                 /* handleAudioFocus= */ false,
             )
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
             .apply {
                 volume = if (useClipAudio) 1f else 0f
@@ -190,6 +189,7 @@ fun SyncedVideoSurface(
             .setCustomCacheKey(cacheKey)
             .build()
         exo.setMediaItem(item)
+        exo.playWhenReady = latestPlaying
         exo.prepare()
         val listener = object : Player.Listener {
             private var announcedReady = false
@@ -199,9 +199,12 @@ fun SyncedVideoSurface(
                     error = null
                     if (!announcedReady) {
                         announcedReady = true
-                        runCatching { seekClipSafe(exo, latestPos) }
+                        if (latestPos > 1_200L) {
+                            runCatching { seekClipSafe(exo, latestPos) }
+                        }
+                        exo.volume = if (latestUseClip) 1f else 0f
                         if (latestPlaying) {
-                            exo.volume = if (latestUseClip) 1f else 0f
+                            exo.playWhenReady = true
                             exo.play()
                         }
                         Log.i(TAG, "video ready clipAudio=$latestUseClip url=${streamUrl.take(80)}")
@@ -346,22 +349,26 @@ fun SyncedVideoSurface(
     ) {
         AndroidView(
             factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    isClickable = false
-                    isFocusable = false
-                    player = exo
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                }
+                android.view.LayoutInflater.from(ctx)
+                    .inflate(ovh.delhomme.ytmusic.R.layout.hubera_clip_player, null)
+                    .also { v ->
+                        val view = v as PlayerView
+                        view.useController = false
+                        view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        view.setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        view.isClickable = false
+                        view.isFocusable = false
+                        view.player = exo
+                        view.layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                    }
             },
             update = { view ->
-                view.player = exo
-                view.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                val pv = view as PlayerView
+                if (pv.player !== exo) pv.player = exo
+                pv.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             },
             modifier = Modifier.fillMaxSize(),
         )

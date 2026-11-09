@@ -36,13 +36,24 @@ object TelemetryBuffer {
     }
 
     /**
-     * Sous la contrainte de taille, on sacrifie d'abord le journal des entrées
-     * les plus anciennes : perdre du contexte vaut mieux que perdre l'erreur.
+     * Sous la contrainte de taille : d’abord jeter les **plus anciennes** erreurs
+     * entières, puis seulement rogner logs/crumbs des entrées restantes (jamais
+     * la plus récente — c’est elle qui alimente le mail au retour réseau).
      */
     private fun persist(ctx: Context, arr: JSONArray) {
         var raw = arr.toString()
+        while (raw.length > MAX_BYTES && arr.length() > 1) {
+            arr.remove(0)
+            raw = arr.toString()
+        }
         var i = 0
+        val last = (arr.length() - 1).coerceAtLeast(0)
         while (raw.length > MAX_BYTES && i < arr.length()) {
+            if (i == last && arr.length() == 1) break
+            if (i == last) {
+                i++
+                continue
+            }
             val item = arr.optJSONObject(i)
             if (item != null && (item.has("recentLogs") || item.has("breadcrumbs"))) {
                 item.remove("recentLogs")
@@ -51,9 +62,14 @@ object TelemetryBuffer {
             }
             i++
         }
-        while (raw.length > MAX_BYTES && arr.length() > 1) {
-            arr.remove(0)
-            raw = arr.toString()
+        // Dernier recours : tronquer les logs de la dernière entrée (garder breadcrumbs).
+        if (raw.length > MAX_BYTES) {
+            val item = arr.optJSONObject(last)
+            if (item != null && item.has("recentLogs")) {
+                val logs = item.optString("recentLogs")
+                if (logs.length > 4_000) item.put("recentLogs", logs.takeLast(4_000))
+                raw = arr.toString()
+            }
         }
         file(ctx).writeText(raw.take(MAX_BYTES))
     }
@@ -75,6 +91,11 @@ object TelemetryBuffer {
                     if (times.length() < MAX_TIMES) times.put(now)
                     it.put("times", times)
                     if (compact.has("message")) it.put("message", compact.optString("message"))
+                    // Rafraîchir crumbs/logs avec la dernière occurrence (sinon mail vide).
+                    if (compact.has("breadcrumbs")) it.put("breadcrumbs", compact.get("breadcrumbs"))
+                    if (compact.has("recentLogs")) it.put("recentLogs", compact.get("recentLogs"))
+                    if (compact.has("stack")) it.put("stack", compact.optString("stack"))
+                    if (compact.has("diagnosis")) it.put("diagnosis", compact.optString("diagnosis"))
                     persist(ctx, arr)
                     return
                 }

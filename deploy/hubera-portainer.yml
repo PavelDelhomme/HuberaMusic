@@ -1,0 +1,13 @@
+# Overlay Hubera — documentation exécutable (extension Compose).
+# NE PAS créer une nouvelle stack. NE PAS down -v.
+# NE PAS renommer ytmusic ni le volume ytmusic_ytmusic_data.
+# Updates: https://hubera.cloud/updates/music.json
+
+x-hubera:
+  slug: music
+  update_channel: music
+  update_url: https://hubera.cloud/updates/music.json
+  immutable_volumes:
+    - ytmusic_ytmusic_data
+  live_containers:
+    - ytmusic

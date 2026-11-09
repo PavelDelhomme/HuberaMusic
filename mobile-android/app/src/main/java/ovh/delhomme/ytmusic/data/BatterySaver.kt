@@ -38,10 +38,14 @@ object BatterySaver {
 
     fun batteryPercent(): Int = batteryPct
 
+    /** Branché / pleine charge : on peut précharger plus loin sans vider la batterie. */
+    fun isCharging(): Boolean = charging
+
     fun start(context: Context) {
         if (started) return
         started = true
         val app = context.applicationContext
+        BatteryHistory.start(app)
         refresh(app, reason = "boot")
         val filter = IntentFilter().apply {
             addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)
@@ -79,6 +83,7 @@ object BatterySaver {
                 status == BatteryManager.BATTERY_STATUS_FULL ||
                 sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
         }
+        BatteryHistory.record(app, sticky = sticky)
 
         // Actif = économiseur système OU batterie faible (hors charge)
         val next = powerSave || (!charging && batteryPct <= 20)
@@ -116,11 +121,12 @@ object BatterySaver {
 
     fun allowBackgroundDownloads(): Boolean = !isActive()
 
-    /** Nombre de titres à prefetch en avant (stream). */
+    /** Nombre de titres à prefetch en avant (stream). Fenêtre glissante, pas 32 en charge USB. */
     fun streamPrefetchAhead(normal: Int): Int {
-        if (isActive()) return 1.coerceAtMost(normal)
-        if (isSoft()) return (normal / 2).coerceAtLeast(1).coerceAtMost(normal)
-        return normal
+        val want = normal.coerceAtLeast(3)
+        val cap = 6
+        if (isActive()) return want.coerceAtMost(cap)
+        return want.coerceAtMost(cap)
     }
 
     /** Prefetch clips vidéo : combien d’avance. */

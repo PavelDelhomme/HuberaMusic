@@ -84,6 +84,14 @@ export function QueuePanel() {
     ? queue.slice(boundary)
     : queue.slice(queueIndex + 1);
   const autoStart = playingUser ? boundary : queueIndex + 1;
+  const playedShown = playedBefore.slice(-24);
+  const playedRest = playedBefore.length - playedShown.length;
+  const playedShownStart = playedRest;
+  const UPCOMING_UI = 80;
+  const userUpcomingShown = userUpcoming.slice(0, UPCOMING_UI);
+  const userUpcomingRest = userUpcoming.length - userUpcomingShown.length;
+  const autoShown = autoTracks.slice(0, UPCOMING_UI);
+  const autoRest = autoTracks.length - autoShown.length;
 
   return (
     <aside className="fixed bottom-[calc(var(--ytm-player-h,5.5rem)+var(--ytm-nav-h,0px))] right-0 top-0 z-30 flex w-full max-w-xl flex-col border-l border-yt-border bg-yt-surface shadow-2xl md:static md:bottom-auto md:z-10 md:max-w-lg lg:max-w-xl">
@@ -282,18 +290,24 @@ export function QueuePanel() {
                 <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-yt-muted">
                   Déjà joués
                 </p>
-                {playedBefore.map((track, i) => (
-                  <TrackRow
-                    key={`played-${track.id}-${i}`}
-                    track={track}
-                    queue={queue}
-                    queueIndex={i}
-                    hideIndex
-                    draggable
-                    alwaysActions
-                    onPlay={() => void playAt(i)}
-                  />
-                ))}
+                {playedRest > 0 && (
+                  <p className="px-2 py-1 text-[11px] text-yt-muted">+{playedRest} précédents</p>
+                )}
+                {playedShown.map((track, i) => {
+                  const abs = playedShownStart + i;
+                  return (
+                    <TrackRow
+                      key={`played-${track.id}-${abs}`}
+                      track={track}
+                      queue={queue}
+                      queueIndex={abs}
+                      hideIndex
+                      draggable
+                      alwaysActions
+                      onPlay={() => void playAt(abs)}
+                    />
+                  );
+                })}
               </div>
             )}
 
@@ -318,7 +332,7 @@ export function QueuePanel() {
                 <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wide text-yt-muted">
                   Ensuite dans ta file
                 </p>
-                {userUpcoming.map((track, i) => {
+                {userUpcomingShown.map((track, i) => {
                   const abs = queueIndex + 1 + i;
                   return (
                     <TrackRow
@@ -333,6 +347,9 @@ export function QueuePanel() {
                     />
                   );
                 })}
+                {userUpcomingRest > 0 && (
+                  <p className="px-2 py-1 text-[11px] text-yt-muted">+{userUpcomingRest} autres</p>
+                )}
               </div>
             )}
 
@@ -366,7 +383,7 @@ export function QueuePanel() {
                   Lecture auto désactivée — stop en fin de file ; Suivant charge la suite.
                 </p>
               )}
-              {autoTracks.map((track, i) => {
+              {autoShown.map((track, i) => {
                   const abs = autoStart + i;
                   return (
                     <TrackRow
@@ -381,6 +398,9 @@ export function QueuePanel() {
                     />
                   );
                 })}
+              {autoRest > 0 && (
+                <p className="px-2 py-1 text-[11px] text-yt-muted">+{autoRest} autres</p>
+              )}
               {autoTracks.length === 0 && autoRadioLoading && (
                 <p className="px-2 py-3 text-center text-xs text-yt-muted">
                   Chargement des suggestions…

@@ -435,7 +435,7 @@ export function ProfilePage() {
         </div>
         <p className="mb-4 text-sm text-yt-muted">
           Scanne ce QR pour ouvrir la page d’installation. Sur Xiaomi, télécharge{' '}
-          <strong className="text-white">PLM.apk</strong> — ne choisis pas « Ajouter à l’écran
+          <strong className="text-white">MHC.apk</strong> — ne choisis pas « Ajouter à l’écran
           d’accueil ».
         </p>
         <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">

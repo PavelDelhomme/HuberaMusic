@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { db } from './db.js';
 import { isJunkArtistName } from '../youtube/mappers.js';
 import { recordSearchHitClick } from '../reco/searchHits.js';
+import { aliasIdsFor, getReplacementId } from '../media/trackReplacement.js';
 
 export function ensureRecoSchema() {
   db.exec(`
@@ -241,7 +242,15 @@ export function unfollowArtist(userId: string, artistId: string) {
   db.prepare('DELETE FROM artist_follows WHERE user_id = ? AND artist_id = ?').run(userId, artistId);
 }
 
-export function listFollows(userId: string) {
+export function listFollows(userId: string, limit?: number) {
+  const cap = Number(limit) || 0;
+  if (cap > 0) {
+    return db
+      .prepare(
+        'SELECT * FROM artist_follows WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+      )
+      .all(userId, cap) as any[];
+  }
   return db
     .prepare('SELECT * FROM artist_follows WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId) as any[];
@@ -343,10 +352,85 @@ export function listListenEventsDetailed(userId: string, limit = 500) {
   });
 }
 
+/** Compteurs d’écoute (agrégat SQLite, pas de push client). */
+export function listenStatsSummary(userId: string) {
+  const now = Date.now();
+  const dayMs = 24 * 3600 * 1000;
+  const startOfLocalDay = () => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const dayStart = startOfLocalDay();
+  const weekStart = now - 7 * dayMs;
+  const monthStart = now - 30 * dayMs;
+
+  const countSince = (since: number) => {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM listen_events
+         WHERE user_id = ? AND created_at >= ?
+           AND event IN ('start', 'progress', 'complete')`,
+      )
+      .get(userId, since) as { c: number };
+    return Number(row?.c || 0);
+  };
+
+  const distinctSince = (since: number) => {
+    const row = db
+      .prepare(
+        `SELECT COUNT(DISTINCT track_id) AS c FROM listen_events
+         WHERE user_id = ? AND created_at >= ?
+           AND event IN ('start', 'progress', 'complete')`,
+      )
+      .get(userId, since) as { c: number };
+    return Number(row?.c || 0);
+  };
+
+  const topRow = db
+    .prepare(
+      `SELECT e.track_id AS trackId, COUNT(*) AS plays,
+              MAX(t.payload) AS payload
+       FROM listen_events e
+       LEFT JOIN tracks_cache t ON t.id = e.track_id
+       WHERE e.user_id = ? AND e.created_at >= ?
+         AND e.event IN ('start', 'progress', 'complete')
+       GROUP BY e.track_id
+       ORDER BY plays DESC
+       LIMIT 1`,
+    )
+    .get(userId, weekStart) as
+    | { trackId: string; plays: number; payload?: string | null }
+    | undefined;
+
+  let topTitle: string | null = null;
+  if (topRow?.payload) {
+    try {
+      const t = JSON.parse(String(topRow.payload)) as { title?: string };
+      topTitle = t.title || null;
+    } catch {
+      topTitle = null;
+    }
+  }
+
+  return {
+    day: countSince(dayStart),
+    week: countSince(weekStart),
+    month: countSince(monthStart),
+    distinctDay: distinctSince(dayStart),
+    distinctWeek: distinctSince(weekStart),
+    distinctMonth: distinctSince(monthStart),
+    topWeek: topRow
+      ? { trackId: topRow.trackId, plays: Number(topRow.plays || 0), title: topTitle }
+      : null,
+    generatedAt: now,
+  };
+}
+
 export function addSearchHistory(
   userId: string,
   query: string,
-  clicked?: { id?: string; kind?: string },
+  clicked?: { id?: string; kind?: string; title?: string; artist?: string },
 ) {
   const q = query.trim().replace(/\s+/g, ' ');
   // Ignore frappes trop courtes (pollution « K », « Ke », « Ken »)
@@ -375,7 +459,10 @@ export function addSearchHistory(
 
   if (clicked?.id) {
     try {
-      recordSearchHitClick(q, clicked.id);
+      recordSearchHitClick(q, clicked.id, {
+        title: clicked.title,
+        artist: clicked.artist,
+      });
     } catch {
       /* non-bloquant */
     }
@@ -542,8 +629,11 @@ export function addPin(
   targetId: string,
   payload: unknown,
 ) {
-  const tid = String(targetId || '').trim();
+  let tid = String(targetId || '').trim();
   if (!tid) return listPins(userId);
+  // Extended / Radio morts → original jouable (même seed que stream).
+  const repl = getReplacementId(tid);
+  if (repl) tid = repl;
   const kindNorm = normalizePinKind(kind, tid);
   const enriched = enrichPinPayload(
     userId,
@@ -671,7 +761,9 @@ export function removePin(userId: string, pinId: string) {
 }
 
 export function removePinByTarget(userId: string, targetId: string) {
-  db.prepare('DELETE FROM pins WHERE user_id = ? AND target_id = ?').run(userId, targetId);
+  for (const id of aliasIdsFor(String(targetId || ''))) {
+    db.prepare('DELETE FROM pins WHERE user_id = ? AND target_id = ?').run(userId, id);
+  }
   return listPins(userId);
 }
 

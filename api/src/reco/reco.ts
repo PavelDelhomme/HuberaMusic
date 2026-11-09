@@ -1424,7 +1424,13 @@ export function warmCategoryMixes(userId: string, count = 3) {
   }
 }
 
-export async function homeReco(userId: string) {
+export async function homeReco(userId: string, opts?: { budgetMs?: number }) {
+  // Budget total pour Accueil : shelves locales toujours, extras YT best-effort.
+  // Sans plafond, Promise.all(search×N) + hydrate peut dépasser 20–40s sur prod.
+  const budgetMs = Math.max(500, opts?.budgetMs ?? 3_000);
+  const deadline = Date.now() + budgetMs;
+  const remaining = () => Math.max(0, deadline - Date.now());
+
   const prefs = getPrefs(userId);
   const pins = listPins(userId);
   let history = getHistory(userId, 60);
@@ -1433,16 +1439,25 @@ export async function homeReco(userId: string) {
   const searches = listSearchHistory(userId, 10);
 
   // Cache history parfois figé « Sans titre » alors que getTrack hydrate OK.
+  // Cap court : ne pas bloquer /api/home si Innertube est lent.
   const weakHist = history.filter(
     (t) => isWeakTitle(t.title, t.id) || !(t.artists || []).length,
   );
   if (weakHist.length) {
     try {
-      const fixed = await hydrateTracks(weakHist, { limit: 24, concurrency: 4 });
-      const byId = new Map(fixed.map((t) => [t.id, t]));
-      history = history.map((t) => byId.get(t.id) || t);
-      for (const t of fixed) {
-        if (!isWeakTitle(t.title, t.id)) upsertTrack(t);
+      const hydrateMs = Math.min(700, remaining());
+      if (hydrateMs > 0) {
+        await Promise.race([
+          (async () => {
+            const fixed = await hydrateTracks(weakHist, { limit: 12, concurrency: 4 });
+            const byId = new Map(fixed.map((t) => [t.id, t]));
+            history = history.map((t) => byId.get(t.id) || t);
+            for (const t of fixed) {
+              if (!isWeakTitle(t.title, t.id)) upsertTrack(t);
+            }
+          })(),
+          new Promise<void>((resolve) => setTimeout(resolve, hydrateMs)),
+        ]);
       }
     } catch (err) {
       console.warn('[home] hydrate history', (err as Error).message);
@@ -1611,7 +1626,15 @@ export async function homeReco(userId: string) {
     );
   }
 
-  await Promise.all(jobs);
+  // Best-effort : on prend les shelves YT terminées dans le budget restant.
+  // Les jobs en cours continuent en fond (pas d’abort) pour le prochain hit / cache.
+  const ytMs = remaining();
+  if (jobs.length && ytMs > 0) {
+    await Promise.race([
+      Promise.all(jobs),
+      new Promise<void>((resolve) => setTimeout(resolve, ytMs)),
+    ]);
+  }
   extras.sort((a, b) => a.order - b.order);
   for (const s of extras) shelves.push({ title: s.title, items: s.items });
 

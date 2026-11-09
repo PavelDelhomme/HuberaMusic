@@ -32,6 +32,7 @@ EXPECTED_SERIALS=(
 # IPs LAN connues (Débogage sans fil = port dynamique ≠ 5555)
 KNOWN_LAN_IPS=(
   "R5CT7263YJL:192.168.1.184"
+  "R5CT7263YJL:192.168.1.177"
   "00145153K001434:192.168.1.44"
 )
 

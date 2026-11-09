@@ -49,9 +49,11 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import ovh.delhomme.ytmusic.BuildConfig
 import ovh.delhomme.ytmusic.data.AppContainer
+import ovh.delhomme.ytmusic.data.BatteryHistory
 import ovh.delhomme.ytmusic.data.NetworkMonitor
 import ovh.delhomme.ytmusic.debug.AppLog
 import ovh.delhomme.ytmusic.debug.PerfSnapshot
+import ovh.delhomme.ytmusic.debug.PlaybackTrace
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,7 +64,7 @@ fun DebugLogsScreen(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableStateOf(0) } // 0 crash, 1 log, 2 perf
+    var tab by remember { mutableStateOf(0) } // 0 crash, 1 log, 2 perf, 3 trace
     var content by remember { mutableStateOf("") }
     var apiUrl by remember { mutableStateOf(container.resolvedApiBase()) }
     var probeMsg by remember { mutableStateOf<String?>(null) }
@@ -72,6 +74,7 @@ fun DebugLogsScreen(
         content = when (tab) {
             0 -> AppLog.lastCrashText()
             2 -> PerfSnapshot.capture(context)
+            3 -> PlaybackTrace.recentText()
             else -> AppLog.recentLogText()
         }
     }
@@ -269,7 +272,7 @@ fun DebugLogsScreen(
 
             Spacer(Modifier.height(12.dp))
             Text(
-                "Récupération PC : make android-logs · make battery-report-mail",
+                "Le % batterie ne bouge pas en 1 s. L’e-mail couvre ~10 min d’échantillons (pas un instantané 0 %). PC : make battery-report-mail",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -277,9 +280,7 @@ fun DebugLogsScreen(
                 onClick = {
                     scope.launch {
                         runCatching {
-                            val bm = context.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
-                            val level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                            val chargeCounter = bm.getLongProperty(android.os.BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
+                            val report = BatteryHistory.buildReport(context)
                             val body = mapOf(
                                 "device" to mapOf(
                                     "model" to android.os.Build.MODEL,
@@ -293,31 +294,26 @@ fun DebugLogsScreen(
                                     "package" to context.packageName,
                                     "apiBase" to BuildConfig.API_BASE_URL,
                                 ),
-                                "session" to mapOf(
-                                    "stamp" to java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date()),
-                                    "durationSec" to 0,
-                                    "unplugged" to true,
-                                ),
-                                "stats" to mapOf(
-                                    "levelStart" to level,
-                                    "levelEnd" to level,
-                                    "levelDelta" to 0,
-                                    "chargeCounterStart" to chargeCounter,
-                                    "chargeCounterEnd" to chargeCounter,
-                                ),
-                                "notes" to "Snapshot manuel Debug → email BATTERY_REPORT_TO / SEED_EMAIL",
-                                "samples" to mapOf(
-                                    "exportBundle" to AppLog.exportBundle().take(10_000),
+                                "session" to report.session,
+                                "stats" to report.stats,
+                                "notes" to report.notes,
+                                "samples" to report.samples + mapOf(
+                                    "exportBundle" to AppLog.exportBundle().take(8_000),
                                 ),
                             )
                             container.api.batteryReport(body)
-                            Toast.makeText(context, "Rapport batterie envoyé par email", Toast.LENGTH_LONG).show()
+                            val msg = if (report.reliable) {
+                                "Rapport batterie ${report.durationSec / 60} min envoyé"
+                            } else {
+                                "Mail envoyé — fenêtre ${report.durationSec}s (pas un 0 % instantané). Laisse l’app ~10 min puis renvoie pour un %/h fiable."
+                            }
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }.onFailure {
                             Toast.makeText(context, it.message ?: "Échec envoi", Toast.LENGTH_LONG).show()
                         }
                     }
                 },
-            ) { Text("Email rapport batterie") }
+            ) { Text("Email rapport batterie (10 min)") }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (tab == 0) Button(onClick = { tab = 0 }) { Text("Crash") }
@@ -326,6 +322,8 @@ fun DebugLogsScreen(
                 else OutlinedButton(onClick = { tab = 1 }) { Text("Journal") }
                 if (tab == 2) Button(onClick = { tab = 2 }) { Text("Perf") }
                 else OutlinedButton(onClick = { tab = 2 }) { Text("Perf") }
+                if (tab == 3) Button(onClick = { tab = 3 }) { Text("Trace") }
+                else OutlinedButton(onClick = { tab = 3 }) { Text("Trace") }
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -343,7 +341,7 @@ fun DebugLogsScreen(
                     onClick = {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, "PLM debug logs")
+                            putExtra(Intent.EXTRA_SUBJECT, "Hubera Music debug logs")
                             putExtra(Intent.EXTRA_TEXT, AppLog.exportBundle())
                         }
                         context.startActivity(Intent.createChooser(send, "Partager les logs"))

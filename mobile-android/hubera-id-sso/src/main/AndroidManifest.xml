@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <permission
+        android:name="cloud.hubera.permission.READ_ID_ACCOUNT"
+        android:protectionLevel="signature" />
+    <permission
+        android:name="cloud.hubera.permission.WRITE_ID_ACCOUNT"
+        android:protectionLevel="signature" />
+
+    <uses-permission android:name="cloud.hubera.permission.READ_ID_ACCOUNT" />
+    <uses-permission android:name="cloud.hubera.permission.WRITE_ID_ACCOUNT" />
+    <uses-permission android:name="fr.cloudity.permission.READ_AUTH_BROKER" />
+    <uses-permission android:name="fr.cloudity.permission.WRITE_AUTH_BROKER" />
+    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+    <uses-permission android:name="android.permission.MANAGE_ACCOUNTS" />
+    <uses-permission android:name="android.permission.AUTHENTICATE_ACCOUNTS" />
+    <uses-permission android:name="android.permission.USE_CREDENTIALS" />
+
+    <queries>
+        <package android:name="cloud.hubera.id" />
+        <package android:name="cloud.hubera.music" />
+        <package android:name="cloud.hubera.music.dev" />
+        <package android:name="cloud.hubera.music.preprod" />
+        <package android:name="ovh.delhomme.ytmusic" />
+        <package android:name="cloud.hubera.docs" />
+        <package android:name="cloud.hubera.maps" />
+        <package android:name="ovh.delhomme.maps" />
+        <package android:name="cloud.hubera.fuel" />
+        <package android:name="cloud.hubera.pass" />
+        <package android:name="cloud.hubera.mail" />
+        <package android:name="cloud.hubera.drive" />
+        <package android:name="cloud.hubera.photos" />
+        <package android:name="cloud.hubera.calendar" />
+        <package android:name="cloud.hubera.contacts" />
+        <package android:name="cloud.hubera.notes" />
+        <package android:name="cloud.hubera.tasks" />
+        <package android:name="cloud.hubera.cook" />
+        <package android:name="cloud.hubera.admin" />
+        <package android:name="cloud.hubera.jobs" />
+        <package android:name="cloud.hubera.office" />
+        <package android:name="cloud.hubera.row" />
+        <package android:name="cloud.hubera.office.docs" />
+        <package android:name="cloud.hubera.slides" />
+        <package android:name="cloud.hubera.budget" />
+        <package android:name="cloud.hubera.stream" />
+        <package android:name="cloud.hubera.cms" />
+        <package android:name="fr.cloudity.cloudity_mail" />
+        <package android:name="fr.cloudity.cloudity_drive" />
+        <package android:name="fr.cloudity.cloudity_photos" />
+        <package android:name="com.cloudity.cloudity_pass" />
+        <package android:name="fr.cloudity.cloudity_calendar" />
+        <package android:name="fr.cloudity.cloudity_contacts" />
+        <package android:name="fr.cloudity.cloudity_notes" />
+        <package android:name="fr.cloudity.cloudity_tasks" />
+        <package android:name="fr.cloudity.cloudity_cook" />
+        <package android:name="fr.cloudity.admin_app" />
+        <provider android:authorities="cloud.hubera.id.hubera.id" />
+        <provider android:authorities="cloud.hubera.music.hubera.id" />
+        <provider android:authorities="cloud.hubera.music.dev.hubera.id" />
+        <provider android:authorities="cloud.hubera.music.preprod.hubera.id" />
+        <provider android:authorities="ovh.delhomme.ytmusic.hubera.id" />
+        <provider android:authorities="cloud.hubera.docs.hubera.id" />
+        <provider android:authorities="cloud.hubera.maps.hubera.id" />
+        <provider android:authorities="ovh.delhomme.maps.hubera.id" />
+        <provider android:authorities="cloud.hubera.fuel.hubera.id" />
+        <provider android:authorities="cloud.hubera.pass.hubera.id" />
+        <provider android:authorities="cloud.hubera.mail.hubera.id" />
+        <provider android:authorities="cloud.hubera.drive.hubera.id" />
+        <provider android:authorities="cloud.hubera.photos.hubera.id" />
+        <provider android:authorities="cloud.hubera.calendar.hubera.id" />
+        <provider android:authorities="cloud.hubera.contacts.hubera.id" />
+        <provider android:authorities="cloud.hubera.jobs.hubera.id" />
+        <provider android:authorities="cloud.hubera.notes.hubera.id" />
+        <provider android:authorities="cloud.hubera.cook.hubera.id" />
+        <provider android:authorities="cloud.hubera.office.hubera.id" />
+        <provider android:authorities="cloud.hubera.row.hubera.id" />
+        <provider android:authorities="cloud.hubera.office.docs.hubera.id" />
+        <provider android:authorities="cloud.hubera.slides.hubera.id" />
+        <provider android:authorities="cloud.hubera.budget.hubera.id" />
+        <provider android:authorities="cloud.hubera.stream.hubera.id" />
+        <provider android:authorities="cloud.hubera.cms.hubera.id" />
+        <provider android:authorities="cloud.hubera.mail.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.drive.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.photos.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.pass.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.calendar.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.contacts.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.notes.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.tasks.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.cook.cloudity.auth" />
+        <provider android:authorities="cloud.hubera.admin.cloudity.auth" />
+        <intent>
+            <action android:name="android.accounts.AccountAuthenticator" />
+        </intent>
+    </queries>
+
+    <application>
+        <provider
+            android:name="cloud.hubera.id.sso.HuberaIdProvider"
+            android:authorities="${applicationId}.hubera.id"
+            android:exported="true"
+            android:readPermission="cloud.hubera.permission.READ_ID_ACCOUNT"
+            android:writePermission="cloud.hubera.permission.WRITE_ID_ACCOUNT" />
+        <service
+            android:name="cloud.hubera.id.sso.HuberaIdAuthService"
+            android:exported="true"
+            android:permission="android.permission.ACCOUNT_MANAGER">
+            <intent-filter>
+                <action android:name="android.accounts.AccountAuthenticator" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accounts.AccountAuthenticator"
+                android:resource="@xml/hubera_id_authenticator" />
+        </service>
+    </application>
+</manifest>

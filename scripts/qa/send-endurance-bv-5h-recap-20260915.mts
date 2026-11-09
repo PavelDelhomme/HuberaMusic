@@ -245,7 +245,7 @@ async function buildPdf(): Promise<{ path: string; pages: number }> {
 const { path: pdfPath, pages } = await buildPdf();
 const pdfBuf = readFileSync(pdfPath);
 
-const subject = `[PLM] Rapport endurance BV 5h — p+${version} · ${slows.length} SLOW · 417 skips`;
+const subject = `[Hubera Music] Rapport endurance BV 5h — p+${version} · ${slows.length} SLOW · 417 skips`;
 const html = `
 <div style="font-family:system-ui,sans-serif;line-height:1.45;color:#111">
   <h2 style="margin:0 0 8px">Endurance Blackview 5 h — récap densifié</h2>

@@ -70,7 +70,7 @@ class AppContainer(context: Context) {
                 runCatching {
                     val req = okhttp3.Request.Builder()
                         .url(warmStreamUrl(id))
-                        .header("User-Agent", "PLM-Android")
+                        .header("User-Agent", "HuberaMusic-Android")
                         .header("X-YTM-Client", "android")
                         .get()
                         .build()
@@ -83,7 +83,7 @@ class AppContainer(context: Context) {
             videoStreamUrl = { id -> this.videoStreamUrl(id) },
             resolveVisualId = { track ->
                 val cached = VisualIdCache.get(appContext, track.id)
-                    ?.takeIf { it.length == 11 && it != track.id }
+                    ?.takeIf { it.length == 11 }
                 if (cached != null) {
                     cached
                 } else {
@@ -98,7 +98,7 @@ class AppContainer(context: Context) {
                             refresh = null,
                         )
                     }.getOrNull()
-                    val vid = vis?.visualId?.takeIf { it.isNotBlank() && it != track.id }
+                    val vid = VisualIds.pick(track.id, vis?.visualId, vis?.source)
                     if (vid != null) VisualIdCache.put(appContext, track.id, vid)
                     vid
                 }
@@ -171,7 +171,32 @@ class AppContainer(context: Context) {
                 return baked
             }
         }
-        return raw
+        val canonical = run {
+            val host = raw.substringAfter("://").substringBefore("/").lowercase()
+            if (host in setOf(
+                    "plm.delhomme.ovh",
+                    "www.plm.delhomme.ovh",
+                    "ytmusic.delhomme.ovh",
+                    "ytm.delhomme.ovh",
+                    "pue-la-merde.delhomme.ovh",
+                    "peule-la-merde.delhomme.ovh",
+                    "plm.hubera.cloud",
+                )
+            ) "https://music.hubera.cloud" else raw
+        }
+        return canonical
+    }
+
+    /** Hosts prod équivalents — si plm casse, on retente music.hubera.cloud. */
+    fun prodApiFallbacks(): List<String> {
+        val primary = resolvedApiBase()
+        return listOf(
+            primary,
+            "https://music.hubera.cloud",
+            "https://plm.delhomme.ovh",
+            "https://ytmusic.delhomme.ovh",
+            "https://ytm.delhomme.ovh",
+        ).map { it.trimEnd('/') }.distinct()
     }
 
     fun apiBaseOverride(): String? =
@@ -191,9 +216,13 @@ class AppContainer(context: Context) {
         val ha = host(a) ?: return false
         val hb = host(b) ?: return false
         val aliases = setOf(
+            "music.hubera.cloud",
             "plm.delhomme.ovh",
             "ytmusic.delhomme.ovh",
+            "ytm.delhomme.ovh",
             "pue-la-merde.delhomme.ovh",
+            "peule-la-merde.delhomme.ovh",
+            "plm.hubera.cloud",
         )
         return ha in aliases && hb in aliases
     }
@@ -331,6 +360,14 @@ class AppContainer(context: Context) {
                 chain.withReadTimeout(180, TimeUnit.SECONDS)
                     .withWriteTimeout(60, TimeUnit.SECONDS)
                     .proceed(chain.request())
+            } else if (path.contains("/api/search")) {
+                chain.withReadTimeout(70, TimeUnit.SECONDS)
+                    .withConnectTimeout(20, TimeUnit.SECONDS)
+                    .proceed(chain.request())
+            } else if (path.contains("/lyrics")) {
+                chain.withReadTimeout(20, TimeUnit.SECONDS)
+                    .withConnectTimeout(8, TimeUnit.SECONDS)
+                    .proceed(chain.request())
             } else {
                 chain.proceed(chain.request())
             }
@@ -370,21 +407,15 @@ class AppContainer(context: Context) {
         .create(YtMusicApi::class.java)
 
     fun streamUrl(trackId: String): String {
+        // Déjà téléchargé + probe OK → jouer le .m4a local même en ligne
+        // (évite un proxy qui stall puis purge le fichier).
+        val localUri = offlineStore.playUri(trackId)?.toString()
+        if (localUri != null) return localUri
         val now = System.currentTimeMillis()
         streamUrlCache[trackId]?.let { (url, ts) ->
             if (now - ts < STREAM_URL_TTL_MS) return url
         }
-        val online = runCatching {
-            ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()
-        }.getOrDefault(true)
-        // En ligne : toujours le proxy (têtes SimpleCache = démarrage rapide).
-        // Les .m4a locaux ne servent qu’hors-ligne — en online ils bloquent parfois
-        // Exo en BUFFERING plusieurs minutes sans erreur.
-        val resolved = if (!online) {
-            offlineStore.playUri(trackId)?.toString()
-        } else {
-            null
-        } ?: run {
+        val resolved = run {
             val base = resolvedApiBase() + "/api/stream/$trackId"
             val token = tokenStore.peekAccess()
             if (!token.isNullOrBlank()) {

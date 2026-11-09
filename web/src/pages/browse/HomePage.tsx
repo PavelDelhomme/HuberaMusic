@@ -8,13 +8,27 @@ import { usePins } from '../../store/pins';
 import { useLibrary } from '../../store/library';
 import { useAuth } from '../../store/auth';
 import { useItemActions } from '../../store/itemActions';
-import { Pin, Play, Radio, GripVertical, ChevronUp, ChevronDown } from 'lucide-react';
+import { Pin, Play, Radio, GripVertical, ChevronUp, ChevronDown, Shuffle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { warmFormats } from '../../lib/audio/streamPrefetch';
 import { perfStart } from '../../lib/util/perf';
 import { getCachedMix, mixCacheKey, setCachedMix } from '../../lib/util/mixCache';
+import { formatTrackDuration } from '../../lib/util/time';
 
 const HOME_CACHE_KEY = 'ytm_home_v1';
+
+function shuffleTracks<T>(items: T[]): T[] {
+  const pool = [...items];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool;
+}
+
+function isPlayableSongId(id: string) {
+  return /^[a-zA-Z0-9_-]{11}$/.test(id) || id.startsWith('local:');
+}
 
 type HomeCache = {
   shelves: Shelf[];
@@ -71,6 +85,7 @@ export function HomePage() {
   const refreshPins = usePins((s) => s.refresh);
   const reorderPins = usePins((s) => s.reorderPins);
   const [pinReorder, setPinReorder] = useState(false);
+  const [pinPlayBusy, setPinPlayBusy] = useState<'play' | 'shuffle' | null>(null);
   const userId = useAuth((s) => s.user?.id);
   const hasMix = useLibrary((s) => s.hasMix);
   const saveMix = useLibrary((s) => s.saveMix);
@@ -344,18 +359,74 @@ export function HomePage() {
 
       {quickAccessItems.length > 0 && (
         <section className="mb-8">
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <Pin className="h-4 w-4 text-yt-muted" />
             <h2 className="font-display text-lg font-semibold">Accès rapide</h2>
-            {quickAccessItems.length > 1 && (
+            <div className="ml-auto flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className="ml-auto rounded-full bg-white/8 px-3 py-1 text-xs text-yt-muted hover:bg-white/12 hover:text-white"
-                onClick={() => setPinReorder((v) => !v)}
+                disabled={Boolean(pinPlayBusy)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-yt-red px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                onClick={() => {
+                  if (pinPlayBusy) return;
+                  setPinPlayBusy('play');
+                  void Promise.resolve(
+                    quickAccessItems.filter(
+                      (t) =>
+                        isPlayableSongId(t.id) &&
+                        t.type !== 'album' &&
+                        t.type !== 'playlist' &&
+                        t.type !== 'artist' &&
+                        t.type !== 'mix',
+                    ),
+                  )
+                    .then((songs) => {
+                      if (!songs.length) return;
+                      void playQueue(songs, 0, { sourceKind: 'pins' });
+                    })
+                    .finally(() => setPinPlayBusy(null));
+                }}
               >
-                {pinReorder ? 'Terminé' : 'Réordonner'}
+                <Play className="h-3.5 w-3.5 fill-white" />
+                {pinPlayBusy === 'play' ? '…' : 'Tout lire'}
               </button>
-            )}
+              <button
+                type="button"
+                disabled={Boolean(pinPlayBusy)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/8 px-3 py-1.5 text-xs font-medium text-yt-muted hover:bg-white/12 hover:text-white disabled:opacity-50"
+                onClick={() => {
+                  if (pinPlayBusy) return;
+                  setPinPlayBusy('shuffle');
+                  void Promise.resolve(
+                    quickAccessItems.filter(
+                      (t) =>
+                        isPlayableSongId(t.id) &&
+                        t.type !== 'album' &&
+                        t.type !== 'playlist' &&
+                        t.type !== 'artist' &&
+                        t.type !== 'mix',
+                    ),
+                  )
+                    .then((songs) => {
+                      if (!songs.length) return;
+                      void playQueue(shuffleTracks(songs), 0, { sourceKind: 'pins' });
+                    })
+                    .finally(() => setPinPlayBusy(null));
+                }}
+              >
+                <Shuffle className="h-3.5 w-3.5" />
+                {pinPlayBusy === 'shuffle' ? '…' : 'Aléatoire'}
+              </button>
+              {quickAccessItems.length > 1 && (
+                <button
+                  type="button"
+                  className="rounded-full bg-white/8 px-3 py-1 text-xs text-yt-muted hover:bg-white/12 hover:text-white"
+                  onClick={() => setPinReorder((v) => !v)}
+                >
+                  {pinReorder ? 'Terminé' : 'Réordonner'}
+                </button>
+              )}
+            </div>
           </div>
           {pinReorder ? (
             <ul className="space-y-1 rounded-xl border border-yt-border bg-yt-elevated/60 p-2">
@@ -368,7 +439,12 @@ export function HomePage() {
                   className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/5"
                 >
                   <GripVertical className="h-4 w-4 shrink-0 text-yt-muted" />
-                  <span className="min-w-0 flex-1 truncate text-sm">{item.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">
+                    {item.title}
+                    {formatTrackDuration(item) ? (
+                      <span className="text-yt-muted"> · {formatTrackDuration(item)}</span>
+                    ) : null}
+                  </span>
                   <button
                     type="button"
                     className="rounded p-1 text-yt-muted hover:bg-white/10 hover:text-white disabled:opacity-30"
@@ -405,7 +481,7 @@ export function HomePage() {
               ))}
             </ul>
           ) : (
-            <ShelfRow title="" items={quickAccessItems} />
+            <ShelfRow title="" items={quickAccessItems} sourceKind="pins" />
           )}
         </section>
       )}

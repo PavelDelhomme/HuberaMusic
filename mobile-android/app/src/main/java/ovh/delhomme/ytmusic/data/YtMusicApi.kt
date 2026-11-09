@@ -4,11 +4,13 @@ import com.squareup.moshi.JsonClass
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
+import okhttp3.RequestBody
 
 @JsonClass(generateAdapter = false)
 data class PlaylistDto(
@@ -60,6 +62,18 @@ data class ShuffleHeadsResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class ListHeadsResponse(
+    val ids: List<String> = emptyList(),
+    val scope: String? = null,
+    val headN: Int? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class ListHeadsBody(
+    val ids: List<String> = emptyList(),
+)
+
+@JsonClass(generateAdapter = false)
 data class LikeResponse(val liked: Boolean, val library: LibraryResponse? = null)
 
 @JsonClass(generateAdapter = false)
@@ -89,6 +103,19 @@ data class DeviceLoginInviteResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class HuberaNotice(
+    val brand: String? = null,
+    val message: String? = null,
+    @com.squareup.moshi.Json(name = "canonical_url")
+    val canonicalUrl: String? = null,
+    @com.squareup.moshi.Json(name = "legacy_url")
+    val legacyUrl: String? = null,
+    @com.squareup.moshi.Json(name = "keep_package")
+    val keepPackage: String? = null,
+    val channel: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class ApkInfoResponse(
     val ready: Boolean? = false,
     val versionName: String? = null,
@@ -101,10 +128,34 @@ data class ApkInfoResponse(
     /** Package de l’APK OTA (toujours `ovh.delhomme.ytmusic` = PLM prod). */
     @com.squareup.moshi.Json(name = "package")
     val packageName: String? = null,
+    val hubera: HuberaNotice? = null,
 )
 
 @JsonClass(generateAdapter = false)
 data class LibrarySongResponse(val saved: Boolean, val library: LibraryResponse? = null)
+
+@JsonClass(generateAdapter = false)
+data class TrackReplacementResponse(
+    val ok: Boolean? = null,
+    val available: Boolean? = null,
+    val deadId: String? = null,
+    val replacementId: String? = null,
+    val cached: Boolean? = null,
+    val message: String? = null,
+    val error: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class ImportFileResponse(
+    val kind: String? = null,
+    val id: String? = null,
+    val title: String? = null,
+    val metaSource: String? = null,
+    val youtubeId: String? = null,
+    val track: TrackDto? = null,
+    val library: LibraryResponse? = null,
+    val error: String? = null,
+)
 
 @JsonClass(generateAdapter = false)
 data class CreatePlaylistBody(val name: String, val description: String? = null)
@@ -246,6 +297,36 @@ data class TimedLyricLine(
 }
 
 @JsonClass(generateAdapter = false)
+data class LyricSuggestionDto(
+    val title: String? = null,
+    val artist: String? = null,
+    val url: String? = null,
+    val source: String? = null,
+    val reason: String? = null,
+    val score: Int? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class LyricSearchUrlDto(
+    val label: String? = null,
+    val url: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class SaveLyricsBody(
+    val lyrics: String,
+    val title: String? = null,
+    val artist: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class LyricsFeedbackBody(
+    val vote: String,
+    val title: String? = null,
+    val artist: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class LyricsResponse(
     val lyrics: String? = null,
     val timed: List<TimedLyricLine>? = null,
@@ -256,6 +337,9 @@ data class LyricsResponse(
     val personalOffsetMs: Long? = null,
     val segments: List<LyricSegmentDto>? = null,
     val segmentsFromUser: Boolean? = null,
+    val suggestions: List<LyricSuggestionDto>? = null,
+    val searchUrls: List<LyricSearchUrlDto>? = null,
+    val pending: Boolean? = null,
 )
 
 @JsonClass(generateAdapter = false)
@@ -462,6 +546,26 @@ data class HistoryDetailedResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class ListenStatsTopDto(
+    val trackId: String? = null,
+    val plays: Int? = null,
+    val title: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class ListenStatsResponse(
+    val ok: Boolean? = null,
+    val day: Int = 0,
+    val week: Int = 0,
+    val month: Int = 0,
+    val distinctDay: Int = 0,
+    val distinctWeek: Int = 0,
+    val distinctMonth: Int = 0,
+    val topWeek: ListenStatsTopDto? = null,
+    val generatedAt: Long? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class YtmAccountDto(
     val connected: Boolean = false,
     val canSyncLibrary: Boolean = false,
@@ -530,6 +634,9 @@ interface YtMusicApi {
     @POST("api/auth/login")
     suspend fun login(@Body body: LoginBody): AuthResponse
 
+    @POST("api/auth/login/hubera-sso")
+    suspend fun loginHuberaSso(@Body body: HuberaSsoBody): AuthResponse
+
     @POST("api/auth/register")
     suspend fun register(@Body body: RegisterBody): AuthResponse
 
@@ -570,7 +677,13 @@ interface YtMusicApi {
     suspend fun deviceLoginPoll(@Body body: Map<String, String>): DeviceLoginPollResponse
 
     @GET("api/deploy/apk/info")
-    suspend fun apkInfo(): ApkInfoResponse
+    suspend fun apkInfo(
+        @Query("clientVersion") clientVersion: String,
+        @Query("clientVersionCode") clientVersionCode: Int,
+        @Query("install") install: String,
+        @Query("huberaAware") huberaAware: Int = 1,
+        @Query("clientPackage") clientPackage: String,
+    ): ApkInfoResponse
 
     @GET("api/home")
     suspend fun home(): HomeResponse
@@ -602,6 +715,14 @@ interface YtMusicApi {
     @GET("api/track/{id}")
     suspend fun track(@Path("id") id: String): TrackInfoResponse
 
+    /** ID mort → original jouable (seed / recherche titre+artiste). */
+    @GET("api/track/{id}/replacement")
+    suspend fun trackReplacement(
+        @Path("id") id: String,
+        @Query("title") title: String? = null,
+        @Query("artist") artist: String? = null,
+    ): TrackReplacementResponse
+
     @GET("api/track/{id}/related")
     suspend fun related(
         @Path("id") id: String,
@@ -613,7 +734,23 @@ interface YtMusicApi {
     suspend fun upNext(@Path("id") id: String): TracksResponse
 
     @GET("api/track/{id}/lyrics")
-    suspend fun lyrics(@Path("id") id: String): LyricsResponse
+    suspend fun lyrics(
+        @Path("id") id: String,
+        @Query("title") title: String? = null,
+        @Query("artist") artist: String? = null,
+    ): LyricsResponse
+
+    @POST("api/track/{id}/lyrics")
+    suspend fun saveLyrics(
+        @Path("id") id: String,
+        @Body body: SaveLyricsBody,
+    ): LyricsResponse
+
+    @POST("api/track/{id}/lyrics/feedback")
+    suspend fun lyricsFeedback(
+        @Path("id") id: String,
+        @Body body: LyricsFeedbackBody,
+    ): LyricsResponse
 
     @GET("api/lyric-offsets")
     suspend fun lyricOffsets(): LyricOffsetsResponse
@@ -639,11 +776,29 @@ interface YtMusicApi {
         @Query("scope") scope: String? = null,
     ): ShuffleHeadsResponse
 
+    @GET("api/library/list-heads")
+    suspend fun listHeads(
+        @Query("warm") warm: Int? = 1,
+        @Query("scope") scope: String? = null,
+    ): ListHeadsResponse
+
+    @POST("api/library/list-heads")
+    suspend fun postListHeads(@Body body: ListHeadsBody): ListHeadsResponse
+
     @POST("api/library/like")
     suspend fun like(@Body track: TrackDto): LikeResponse
 
     @POST("api/library/songs")
     suspend fun toggleLibrarySong(@Body track: TrackDto): LibrarySongResponse
+
+    @POST("api/import/file")
+    suspend fun importFile(
+        @Query("title") title: String? = null,
+        @Query("artist") artist: String? = null,
+        @Query("filename") filename: String? = null,
+        @Header("Content-Type") contentType: String,
+        @Body body: RequestBody,
+    ): ImportFileResponse
 
     @DELETE("api/library/songs/{id}")
     suspend fun removeLibrarySong(@Path("id") id: String): LibrarySongResponse
@@ -788,6 +943,10 @@ interface YtMusicApi {
 
     @GET("api/history/detailed")
     suspend fun historyDetailed(): HistoryDetailedResponse
+
+    /** Jour / 7 j / 30 j — uniquement à l’ouverture Compte (économe). */
+    @GET("api/history/stats")
+    suspend fun historyStats(): ListenStatsResponse
 
     @POST("api/history/entity")
     suspend fun recordEntityPlay(@Body body: HistoryEntityBody): HistoryEntityResponse

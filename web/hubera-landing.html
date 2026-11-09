@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hubera Music</title>
+  <meta name="description" content="Écoute ta musique et tes playlists." />
+  <meta name="theme-color" content="#0c1014" />
+  <link rel="icon" type="image/svg+xml" href="https://hubera.cloud/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://hubera.cloud/styles.css?v=20260924-landings" />
+  
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        return Promise.all(rs.map(function (r) { return r.unregister(); }));
+      }).then(function () { return caches.keys(); }).then(function (keys) {
+        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      });
+    }
+  </script>
+
+</head>
+<body>
+  <div class="wrap">
+    <header class="site-header">
+      <a class="brand" href="https://hubera.cloud/">
+        <img src="https://hubera.cloud/favicon.svg" alt="" width="32" height="32" />
+        Hubera
+      </a>
+      <nav>
+        <a href="https://hubera.cloud/">Accueil</a>
+        <a href="/#produits">Apps</a>
+      </nav>
+    </header>
+    
+    <article class="product">
+      <p class="eyebrow"><a href="https://hubera.cloud/">Hubera</a> · music</p>
+      <h1>Hubera Music</h1>
+      <p class="lede">Écoute ta musique et tes playlists.</p>
+      <ul class="features">
+        <li>Playlists, bibliothèque, paroles.</li>
+        <li>Application Android via /install.</li>
+        <li>Connexion à ton compte Hubera Music.</li>
+      </ul>
+      <div class="actions">
+        <a class="btn primary" href="https://music.hubera.cloud/app">Connexion</a> <a class="btn admin" href="https://music.hubera.cloud/app">Administration</a> <a class="btn" href="https://hubera.cloud/#produits">Toutes les apps</a>
+      </div>
+      <a class="edit-press" href="https://press.hubera.cloud/admin/projects">Éditer ce site dans HuberaPress</a>
+    </article>
+    
+    <footer class="site-footer">
+      <span>© Hubera · hubera.cloud</span>
+      <span>Tes apps, une même maison</span>
+    </footer>
+  </div>
+</body>
+</html>

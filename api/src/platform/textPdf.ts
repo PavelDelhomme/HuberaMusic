@@ -63,7 +63,7 @@ export function buildTextPdf(opts: {
     });
     ops.push('ET');
     // footer
-    ops.push('BT', `/F1 8 Tf`, `${margin} 24 Td`, `(${esc(`PLM telemetry · page ${pageIdx + 1}/${pages.length}`)}) Tj`, 'ET');
+    ops.push('BT', `/F1 8 Tf`, `${margin} 24 Td`, `(${esc(`Hubera Music telemetry · page ${pageIdx + 1}/${pages.length}`)}) Tj`, 'ET');
     return ops.join('\n');
   });
 

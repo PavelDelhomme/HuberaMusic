@@ -47,6 +47,12 @@ data class LoginBody(
 )
 
 @JsonClass(generateAdapter = false)
+data class HuberaSsoBody(
+    val accessToken: String? = null,
+    val refreshToken: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class RegisterBody(
     val email: String,
     val password: String,
@@ -90,6 +96,9 @@ data class TrackDto(
     val durationSeconds: Int? = null,
     val thumbnails: List<Thumb>? = emptyList(),
     val type: String? = "song",
+    val source: String? = null,
+    val playable: Boolean? = null,
+    val canonicalId: String? = null,
 ) {
     fun artistLine(): String {
         val names = artists?.mapNotNull { it.name.trim().takeIf { n -> n.isNotEmpty() } }
@@ -123,6 +132,7 @@ data class TrackDto(
             val raw = pick?.url?.takeIf { it.isNotBlank() }
             if (raw != null) {
                 val upsized = resizeGoogleThumb(raw, sizeHint)
+                ThumbLedger.remember(id, upsized)
                 CoverUrlProxy.remote(upsized, s)?.let { return it }
                 return upsized
             }
@@ -134,7 +144,7 @@ data class TrackDto(
                 else -> "https://i.ytimg.com/vi/$id/hqdefault.jpg"
             }
         }
-        return null
+        return ThumbLedger.get(id)
     }
 
     private fun resizeGoogleThumb(url: String, sizeHint: Int): String {
@@ -168,10 +178,10 @@ data class TrackDto(
         return copy(durationSeconds = sec, duration = formatDurationLabel(ms))
     }
 
-    /** Durée en ms pour MediaSession / lockscreen (si connue). */
+    /** Durée en ms pour MediaSession / lockscreen (si connue). Jamais négative. */
     fun durationMsOrNull(): Long? {
-        durationSeconds?.takeIf { it > 0 }?.let { return it * 1000L }
-        val raw = duration?.trim().orEmpty()
+        durationSeconds?.takeIf { it != 0 }?.let { return kotlin.math.abs(it) * 1000L }
+        val raw = duration?.trim().orEmpty().removePrefix("-").removePrefix("−")
         if (raw.isEmpty()) return null
         raw.toLongOrNull()?.takeIf { it > 0 }?.let {
             return if (it < 10_000) it * 1000L else it // secondes vs déjà ms
@@ -200,7 +210,8 @@ data class TrackDto(
 
     /** Titre audio (pas playlist / artiste / album / mix). Les vidéos YT restent jouables. */
     fun isPlayable(): Boolean =
-        !isPlaylist() && !isArtist() && !isAlbum() && !isMix() &&
+        playable != false &&
+            !isPlaylist() && !isArtist() && !isAlbum() && !isMix() &&
             id.matches(Regex("^[a-zA-Z0-9_-]{11}$"))
 
     /** Préféré pour Accueil / autoplay (évite Shorts, hors-musique, talk). */

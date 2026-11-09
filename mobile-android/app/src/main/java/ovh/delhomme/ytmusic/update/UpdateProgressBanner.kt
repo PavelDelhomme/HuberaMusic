@@ -57,7 +57,7 @@ fun UpdateProgressBanner(
         ApkUpdateManager.Phase.Checking -> "Vérification de la version…"
         ApkUpdateManager.Phase.AwaitingConfirm -> "Confirmer l’installation"
         ApkUpdateManager.Phase.Error -> "Installation bloquée — réessayer"
-        else -> "Mise à jour PLM"
+        else -> "Mise à jour Hubera Music"
     }
     val cta = when (phase) {
         ApkUpdateManager.Phase.AwaitingConfirm -> "Confirmer"

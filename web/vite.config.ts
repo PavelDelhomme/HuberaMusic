@@ -41,9 +41,10 @@ export default defineConfig(({ mode }) => {
       devOptions: { enabled: false },
       includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
-        name: 'PLM',
-        short_name: 'PLM',
-        description: 'PLM — musique sans pubs, web et mobile',
+        id: 'cloud.hubera.music',
+        name: 'Hubera Music',
+        short_name: 'MHC',
+        description: 'MHC — Music Hubera Cloud (anciennement PLM)',
         theme_color: '#030303',
         background_color: '#030303',
         display: 'standalone',
@@ -55,7 +56,7 @@ export default defineConfig(({ mode }) => {
         related_applications: [
           {
             platform: 'webapp',
-            url: 'https://ytmusic.delhomme.ovh/install',
+            url: 'https://music.hubera.cloud/install',
           },
         ],
         icons: [
@@ -82,9 +83,23 @@ export default defineConfig(({ mode }) => {
         ],
       },
       workbox: {
-        navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        // Ne jamais précacher index.html : sinon F5 ressert l’ancien shell à l’infini.
+        globIgnores: ['**/index.html', '**/refresh.html'],
+        navigateFallback: '',
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: 'NetworkOnly',
+          },
+          {
+            urlPattern: ({ url }) =>
+              url.pathname === '/api/health' ||
+              url.pathname.startsWith('/api/health/') ||
+              url.pathname === '/api/version' ||
+              url.pathname.startsWith('/api/version'),
+            handler: 'NetworkOnly',
+          },
           {
             // Streams audio : jamais CacheFirst (sinon un prefetch Range empoisonne la piste)
             urlPattern: ({ url }) => url.pathname.startsWith('/api/stream/'),
@@ -98,14 +113,26 @@ export default defineConfig(({ mode }) => {
             handler: 'NetworkOnly',
           },
           {
+            // Accueil / auth : NetworkOnly — NetworkFirst 5s renvoyait un cache 401/vide
+            // pendant que /api/home mettait 17–40s → Accueil bloqué sur « Chargement… ».
+            urlPattern: ({ url }) =>
+              url.pathname === '/api/home' ||
+              url.pathname.startsWith('/api/home/') ||
+              url.pathname.startsWith('/api/auth/'),
+            handler: 'NetworkOnly',
+          },
+          {
             urlPattern: ({ url }) =>
               url.pathname.startsWith('/api/') &&
               !url.pathname.startsWith('/api/stream/') &&
-              !url.pathname.startsWith('/api/search'),
+              !url.pathname.startsWith('/api/search') &&
+              url.pathname !== '/api/home' &&
+              !url.pathname.startsWith('/api/home/') &&
+              !url.pathname.startsWith('/api/auth/'),
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-cache',
-              networkTimeoutSeconds: 5,
+              networkTimeoutSeconds: 8,
               expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
             },
           },

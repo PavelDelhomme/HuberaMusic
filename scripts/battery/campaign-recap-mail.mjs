@@ -127,7 +127,7 @@ const to =
   process.env.SEED_EMAIL ||
   'dev@delhomme.ovh';
 
-const subject = `[PLM] Récap campagne batterie/perf ${stamp} — ${globalOk ? 'OK' : 'ATTENTION'}`;
+const subject = `[Hubera Music] Récap campagne batterie/perf ${stamp} — ${globalOk ? 'OK' : 'ATTENTION'}`;
 
 const text = `Récap campagne tests PLM — ${now.toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })} (UTC+2)
 

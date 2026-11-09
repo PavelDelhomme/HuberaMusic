@@ -152,7 +152,7 @@ const transporter = nodemailer.createTransport({
 });
 
 const info = await transporter.sendMail({
-  from: process.env.SMTP_FROM || 'PLM <noreply@maily.ovh>',
+  from: process.env.SMTP_FROM || 'Hubera Music <noreply@maily.ovh>',
   to: to.join(', '),
   subject: 'PLM — Rapport campagne 120 min + DNS/stream (27/08 · p+1.3.81)',
   text,

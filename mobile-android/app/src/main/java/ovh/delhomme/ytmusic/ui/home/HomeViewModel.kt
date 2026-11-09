@@ -97,13 +97,25 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             if (!NetworkMonitor.isOnline()) {
+                val cached = if (_state.value.shelves.isEmpty() && _state.value.radios.isEmpty()) {
+                    container.homeCache.read()
+                } else {
+                    null
+                }
+                val shelves = _state.value.shelves.ifEmpty { cached?.shelves.orEmpty() }
+                val radios = _state.value.radios.ifEmpty { cached?.radios.orEmpty() }
+                val previews = _state.value.radioPreviews.ifEmpty { cached?.radioPreviews.orEmpty() }
                 _state.value = _state.value.copy(
                     loading = false,
                     refreshing = false,
-                    radios = emptyList(),
-                    shelves = emptyList(),
-                    radioPreviews = emptyMap(),
-                    error = "Hors ligne — ouvre Bibliothèque → Téléchargés",
+                    shelves = shelves,
+                    radios = radios,
+                    radioPreviews = previews,
+                    error = if (shelves.isEmpty() && radios.isEmpty()) {
+                        "Hors ligne — ouvre Bibliothèque → Téléchargés"
+                    } else {
+                        null
+                    },
                 )
                 return@launch
             }
@@ -193,8 +205,13 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                             .filter { it.isPlayable() && it.id.length == 11 }
                             .map { it.id }
                     }.getOrDefault(emptyList())
+                    val base = container.resolvedApiBase()
                     if (pinSongIds.isNotEmpty()) {
                         container.libraryHeadPrefetcher.boostVisible(pinSongIds)
+                        container.libraryHeadPrefetcher.warmDisplayedList(pinSongIds.take(20))
+                    }
+                    if (base.isNotBlank() && pinSongIds.isNotEmpty()) {
+                        StreamPrefetcher.warmFormatsLight(base, pinSongIds, limit = 24)
                     }
                     val ids = buildList {
                         addAll(pinSongIds)
@@ -206,12 +223,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                             }
                         }
                     }.distinct().filter { it.length == 11 }.take(24)
-                    if (ids.isNotEmpty()) {
-                        val base = container.resolvedApiBase()
-                        if (base.isNotBlank()) {
-                            StreamPrefetcher.warmTracks(base, ids)
-                            StreamPrefetcher.prefetchLibraryHeads(base, ids, limit = 10)
-                        }
+                    if (ids.isNotEmpty() && base.isNotBlank()) {
+                        StreamPrefetcher.warmFormatsLight(base, ids, limit = 24)
+                        StreamPrefetcher.prefetchLibraryHeads(base, ids, limit = 10)
                     }
                 }
 

@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLibrary } from '../../store/library';
-import { TrackRow } from '../../components/media/TrackRow';
+import { VirtualTrackList } from '../../components/media/VirtualTrackList';
 import { Heart, Play, Plus, Shuffle, Trash2, X } from 'lucide-react';
 import { usePlayer } from '../../store/player';
 import { MediaCard } from '../../components/media/MediaCard';
@@ -13,6 +13,12 @@ import { api, type Track } from '../../api';
 import { formatTotalDuration, sumTracksDurationSeconds } from '../../lib/util/time';
 import { warmFormats } from '../../lib/audio/streamPrefetch';
 
+const PLAY_QUEUE_CAP = 400;
+
+function isPlayableTrack(t: Track) {
+  return t.type === 'song' || t.type === 'video' || t.type === 'unknown' || /^[a-zA-Z0-9_-]{11}$/.test(t.id);
+}
+
 function shuffleTracks(tracks: Track[]) {
   const copy = [...tracks];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -21,6 +27,19 @@ function shuffleTracks(tracks: Track[]) {
   }
   return copy;
 }
+
+/**
+ * File biblio : shuffle d’abord, fenêtre RAM.
+ * Lancer avec sourceKind=playlist → pas de radio / similaires auto
+ * (userQueueEnd = longueur file ; autoplay suggestions coupées).
+ */
+function capPlayQueue(tracks: Track[], shuffle: boolean) {
+  const playable = tracks.filter(isPlayableTrack);
+  const ordered = shuffle ? shuffleTracks(playable) : playable;
+  return ordered.slice(0, PLAY_QUEUE_CAP);
+}
+
+const LIB_QUEUE_OPTS = { sourceId: 'lib:songs', sourceKind: 'playlist' as const };
 
 function LibraryListSkeleton({ rows = 8 }: { rows?: number }) {
   return (
@@ -40,9 +59,34 @@ function LibraryListSkeleton({ rows = 8 }: { rows?: number }) {
 
 export function LibraryPage() {
   const navigate = useNavigate();
-  const { songs, liked, playlists, history, recentEntities, albums, artists, mixes, likedPlaylists, createPlaylist, deletePlaylist, hasMix, loaded, error, refresh } =
-    useLibrary();
+  const {
+    songs,
+    liked,
+    playlists,
+    history,
+    recentEntities,
+    albums,
+    artists,
+    mixes,
+    likedPlaylists,
+    createPlaylist,
+    deletePlaylist,
+    hasMix,
+    loaded,
+    error,
+    refresh,
+    partial,
+    totalSongs,
+  } = useLibrary();
+  const titreCount = totalSongs || songs.length;
   const playQueue = usePlayer((s) => s.playQueue);
+  const titresDurationLabel = useMemo(() => {
+    if (partial) return null;
+    const sec = sumTracksDurationSeconds(songs);
+    if (sec < 60) return null;
+    const h = sec / 3600;
+    return ` · ${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
+  }, [songs, partial]);
   const openActions = useItemActions((s) => s.open);
   const [tab, setTab] = useState<'ajouts' | 'titres' | 'liked' | 'playlists' | 'albums' | 'artists' | 'mixes' | 'history' | 'podcasts' | 'audiobooks'>('ajouts');
   const [name, setName] = useState('');
@@ -143,9 +187,7 @@ export function LibraryPage() {
             <p className="text-yt-muted">Rien d&apos;enregistré pour l&apos;instant.</p>
           ) : (
             <>
-              {[...songs.slice(0, 30)].map((t) => (
-                <TrackRow key={t.id} track={t} queue={songs} showAlbum />
-              ))}
+              <VirtualTrackList tracks={songs.slice(0, 30)} showAlbum />
               {albums.slice(0, 12).length > 0 && (
                 <div className="mt-6 shelf-scroll">
                   {albums.slice(0, 12).map((a) => (
@@ -162,21 +204,14 @@ export function LibraryPage() {
         <div>
           <p className="mb-4 text-sm text-yt-muted">
             Titres enregistrés dans ta bibliothèque (indépendant des J&apos;aime).
-            {songs.length > 0 && (
+            {titreCount > 0 && (
               <>
                 {' '}
                 —{' '}
                 <span className="text-white/80">
-                  {songs.length.toLocaleString('fr-FR')} titre{songs.length > 1 ? 's' : ''}
-                  {(() => {
-                    const sec = songs.reduce(
-                      (a, t) => a + (Number(t.durationSeconds) || 0),
-                      0,
-                    );
-                    if (sec < 60) return null;
-                    const h = sec / 3600;
-                    return ` · ${h >= 10 ? Math.round(h) : h.toFixed(1)} h`;
-                  })()}
+                  {titreCount.toLocaleString('fr-FR')} titre{titreCount > 1 ? 's' : ''}
+                  {partial ? '…' : ''}
+                  {!partial && titresDurationLabel}
                 </span>
               </>
             )}
@@ -190,22 +225,25 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(songs, 0)}
+                  onClick={() => void playQueue(capPlayQueue(songs, false), 0, LIB_QUEUE_OPTS)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(shuffleTracks(songs), 0)}
+                  onClick={() => void playQueue(capPlayQueue(songs, true), 0, LIB_QUEUE_OPTS)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
                 </button>
               </div>
-              {songs.map((t) => (
-                <TrackRow key={t.id} track={t} queue={songs} showAlbum />
-              ))}
+              {songs.length > PLAY_QUEUE_CAP && (
+                <p className="mb-3 text-xs text-yt-muted">
+                  File limitée à 400 titres (biblio seule, sans similaires). Relance Aléatoire pour la suite non entendue.
+                </p>
+              )}
+              <VirtualTrackList tracks={songs} showAlbum />
             </>
           )}
         </div>
@@ -223,22 +261,20 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(liked, 0)}
+                  onClick={() => void playQueue(capPlayQueue(liked, false), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(shuffleTracks(liked), 0)}
+                  onClick={() => void playQueue(capPlayQueue(liked, true), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
                 </button>
               </div>
-              {liked.map((t) => (
-                <TrackRow key={t.id} track={t} queue={liked} showAlbum />
-              ))}
+              <VirtualTrackList tracks={liked} showAlbum />
             </>
           )}
         </div>
@@ -271,22 +307,20 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(history, 0)}
+                  onClick={() => void playQueue(capPlayQueue(history, false), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(shuffleTracks(history), 0)}
+                  onClick={() => void playQueue(capPlayQueue(history, true), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
                 </button>
               </div>
-              {history.map((t) => (
-                <TrackRow key={t.id} track={t} queue={history} showAlbum />
-              ))}
+              <VirtualTrackList tracks={history} showAlbum />
             </>
           )}
         </div>
@@ -449,14 +483,14 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(unique, 0)}
+                  onClick={() => void playQueue(capPlayQueue(unique, false), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(shuffleTracks(unique), 0)}
+                  onClick={() => void playQueue(capPlayQueue(unique, true), 0)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
@@ -561,24 +595,20 @@ export function LibraryPage() {
                 <div className="mb-4 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => void playQueue(items, 0)}
+                    onClick={() => void playQueue(capPlayQueue(items, false), 0)}
                     className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                   >
                     <Play className="h-4 w-4 fill-white" /> Tout lire
                   </button>
                   <button
                     type="button"
-                    onClick={() => void playQueue(shuffleTracks(items), 0)}
+                    onClick={() => void playQueue(capPlayQueue(items, true), 0)}
                     className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium"
                   >
                     <Shuffle className="h-4 w-4" /> Aléatoire
                   </button>
                 </div>
-                <div className="space-y-0.5">
-                  {items.map((t) => (
-                    <TrackRow key={t.id} track={t} queue={items} showAlbum />
-                  ))}
-                </div>
+                <VirtualTrackList tracks={items} showAlbum />
               </>
             );
           })()}

@@ -182,7 +182,7 @@ async function main() {
   const slow = results.filter((r) => r.ok && r.slow);
   const okFast = results.filter((r) => r.ok && !r.slow);
 
-  const subject = `[PLM] Probe Aléatoire — ${ko.length} KO · ${slow.length} lents · ${okFast.length} OK (${results.length})`;
+  const subject = `[Hubera Music] Probe Aléatoire — ${ko.length} KO · ${slow.length} lents · ${okFast.length} OK (${results.length})`;
   const text = [
     `Probe shuffle-heads @ ${API}`,
     `Date: ${new Date().toLocaleString('fr-FR')}`,

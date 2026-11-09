@@ -63,6 +63,94 @@ function verifyPassword(password: string, stored: string) {
   return prev.length === next.length && timingSafeEqual(prev, next);
 }
 
+const HUBERA_ID_LOGIN_URLS = [
+  'https://id.hubera.cloud/auth/login',
+  'https://api.cloudity.delhomme.ovh/auth/login',
+  'https://calendar.hubera.cloud/auth/login',
+  'https://contacts.hubera.cloud/auth/login',
+  'https://mail.hubera.cloud/auth/login',
+];
+
+const HUBERA_ID_VALIDATE_URLS = [
+  'https://id.hubera.cloud/auth/validate',
+  'https://api.cloudity.delhomme.ovh/auth/validate',
+  'https://mail.hubera.cloud/auth/validate',
+  'https://calendar.hubera.cloud/auth/validate',
+];
+
+function emailFromProbeJson(j: Record<string, unknown> | null): string {
+  if (!j) return '';
+  const direct = String(j.email || '').trim().toLowerCase();
+  if (direct) return direct;
+  const user = j.user as Record<string, unknown> | undefined;
+  return String(user?.email || '').trim().toLowerCase();
+}
+
+/** Access token Hubera ID / Cloudity / JWT Music déjà émis. Ne crée pas de compte. */
+export async function loginWithHuberaAccessToken(
+  accessToken: string,
+  opts?: { deviceLabel?: string },
+) {
+  const token = String(accessToken || '').trim();
+  if (!token) throw new Error('token requis');
+  let email = '';
+  try {
+    const local = await verifyToken(token);
+    email = String(local.email || '').trim().toLowerCase();
+  } catch {
+    /* pas un JWT Music — sonder Hubera ID */
+  }
+  if (!email) {
+    for (const url of HUBERA_ID_VALIDATE_URLS) {
+      try {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 8000);
+        const r = await fetch(url, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          signal: ac.signal,
+        });
+        clearTimeout(t);
+        if (!r.ok) continue;
+        email = emailFromProbeJson(
+          (await r.json().catch(() => null)) as Record<string, unknown> | null,
+        );
+        if (email) break;
+      } catch {
+        /* hôte suivant */
+      }
+    }
+  }
+  if (!email) throw new Error('Jeton Hubera ID invalide ou expiré');
+  assertEmailAllowed(email);
+  const user = findUserByEmail(email);
+  if (!user) throw new Error('Pas de compte Music pour cet e-mail — connexion mot de passe une fois.');
+  return issueSession(user, opts?.deviceLabel || 'hubera-sso');
+}
+
+/** Mot de passe Hubera ID : ne crée pas de compte Music. Relie seulement un user déjà existant. */
+async function huberaIdPasswordOk(email: string, password: string): Promise<boolean> {
+  for (const url of HUBERA_ID_LOGIN_URLS) {
+    try {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 8000);
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email, password, tenant_id: '1' }),
+        signal: ac.signal,
+      });
+      clearTimeout(t);
+      if (!r.ok) continue;
+      const j = (await r.json().catch(() => null)) as Record<string, unknown> | null;
+      if (j && (j.access_token || j.token || j.refresh_token)) return true;
+    } catch {
+      /* hôte suivant */
+    }
+  }
+  return false;
+}
+
 export async function signToken(user: UserRow) {
   return new SignJWT({
     sub: user.id,
@@ -82,15 +170,25 @@ export async function issueSession(user: UserRow, deviceLabel?: string) {
   return { user: publicUser(user), token, refreshToken: refresh.token };
 }
 
-export function sessionCookieOptions() {
+export function sessionCookieOptions(req?: Request) {
   const env = process.env.APP_ENV || 'local';
   const secure =
     process.env.NODE_ENV === 'production' ||
     process.env.COOKIE_SECURE === '1' ||
     env === 'production' ||
     env === 'preprod';
-  // Partage session plm / ytmusic / pue-la-merde (ex. COOKIE_DOMAIN=.delhomme.ovh)
-  const domain = (process.env.COOKIE_DOMAIN || '').trim() || undefined;
+  const host = String(req?.headers['x-forwarded-host'] || req?.headers.host || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
+  let domain = (process.env.COOKIE_DOMAIN || '').trim() || undefined;
+  // Ne jamais poser Domain=.delhomme.ovh sur hubera.cloud (le navigateur ignore le cookie).
+  if (host === 'hubera.cloud' || host.endsWith('.hubera.cloud')) {
+    domain = '.hubera.cloud';
+  } else if (host.endsWith('.delhomme.ovh') || host === 'delhomme.ovh') {
+    domain = domain || '.delhomme.ovh';
+  }
   return {
     httpOnly: true,
     sameSite: 'lax' as const,
@@ -118,8 +216,11 @@ export function authOptional(req: Request, _res: Response, next: NextFunction) {
       : typeof req.query?.token === 'string'
         ? req.query.token
         : undefined;
-  // Query token : lecteurs média (ExoPlayer / <audio>) qui n’envoient pas Authorization
-  const token = header?.startsWith('Bearer ') ? header.slice(7) : cookie || q;
+  // Ordre : Bearer > query (média <audio>/Exo) > cookie.
+  // Avant : cookie avant query → cookie HttpOnly périmé faisait ignorer access_token
+  // → 401 JSON dans <audio> → MEDIA_ELEMENT_ERROR Format error sur tout le site web.
+  const bearer = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
+  const token = bearer || q || cookie;
   if (!token) return next();
   verifyToken(token)
     .then((user) => {
@@ -127,7 +228,23 @@ export function authOptional(req: Request, _res: Response, next: NextFunction) {
       req.userId = user.id;
       next();
     })
-    .catch(() => next());
+    .catch(() => {
+      // Token primaire KO : retenter query/cookie restants (ex. cookie mort + access_token OK)
+      const fallbacks = [bearer, q, cookie].filter(
+        (t): t is string => Boolean(t) && t !== token,
+      );
+      const tryNext = (i: number) => {
+        if (i >= fallbacks.length) return next();
+        verifyToken(fallbacks[i]!)
+          .then((user) => {
+            req.user = publicUser(user);
+            req.userId = user.id;
+            next();
+          })
+          .catch(() => tryNext(i + 1));
+      };
+      tryNext(0);
+    });
 }
 
 export function authRequired(req: Request, res: Response, next: NextFunction) {
@@ -283,8 +400,16 @@ export async function loginLocal(
   opts?: { totp?: string; deviceLabel?: string },
 ) {
   assertEmailAllowed(email);
-  const user = findUserByEmail(email);
-  if (!user?.password_hash || !verifyPassword(password, user.password_hash)) {
+  let user = findUserByEmail(email);
+  let passwordOk = Boolean(user?.password_hash && verifyPassword(password, user.password_hash));
+  if (!passwordOk) {
+    const idOk = await huberaIdPasswordOk(email, password);
+    if (idOk) {
+      user = findUserByEmail(email);
+      passwordOk = Boolean(user);
+    }
+  }
+  if (!user || !passwordOk) {
     throw new Error('Identifiants invalides');
   }
   if (userRequiresTotp(user.id)) {

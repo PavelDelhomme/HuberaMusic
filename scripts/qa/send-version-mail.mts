@@ -31,7 +31,7 @@ const notes = notesRaw
   .filter(Boolean);
 
 const to = process.env.MAIL_TO || '';
-const subject = `[PLM] ${version} — ${title}`;
+const subject = `[Hubera Music] ${version} — ${title}`;
 const when = new Date().toISOString();
 
 const text = `PLM — Nouvelle version ${version}

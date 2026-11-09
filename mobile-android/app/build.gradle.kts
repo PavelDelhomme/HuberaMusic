@@ -98,6 +98,20 @@ fun resolveDevApiBase(): String {
     }
 }
 
+fun canonicalizeProdApiUrl(url: String): String {
+    val host = url.substringAfter("://").substringBefore("/")
+    return if (host in setOf(
+            "plm.delhomme.ovh",
+            "www.plm.delhomme.ovh",
+            "ytmusic.delhomme.ovh",
+            "ytm.delhomme.ovh",
+            "pue-la-merde.delhomme.ovh",
+            "peule-la-merde.delhomme.ovh",
+            "plm.hubera.cloud",
+        )
+    ) "https://music.hubera.cloud" else url
+}
+
 /** API HTTPS publique pour le flavor `prod` — indépendant du flavor `dev`. */
 fun resolveProdApiBase(): String {
     val fromProp = (project.findProperty("API_BASE_URL") as String?)?.trim()?.trimEnd('/').orEmpty()
@@ -105,11 +119,9 @@ fun resolveProdApiBase(): String {
         !fromProp.contains("127.0.0.1") &&
         !fromProp.contains("localhost")
     ) {
-        return fromProp
+        return canonicalizeProdApiUrl(fromProp)
     }
-    return publicApiBase.ifBlank {
-        error("PUBLIC_API_URL / DEPLOY_URL HTTPS manquant pour assembleProd*")
-    }
+    return canonicalizeProdApiUrl(publicApiBase.ifBlank { "https://music.hubera.cloud" })
 }
 
 /** API HTTPS preprod (beta) — défaut ytmusic-preprod / override -PAPI_BASE_URL. */
@@ -131,7 +143,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "ovh.delhomme.ytmusic"
+        applicationId = if (project.hasProperty("legacyAppId")) "ovh.delhomme.ytmusic" else "cloud.hubera.music"
         minSdk = 26
         targetSdk = 35
         versionCode = appVersionCode
@@ -149,14 +161,14 @@ android {
     }
 
     // Trois APK côte à côte sur le même téléphone :
-    //   prod    → ovh.delhomme.ytmusic         (PLM)        · p+ · API HTTPS prod
-    //   preprod → ovh.delhomme.ytmusic.preprod (PLM Preprod)· b+ · API HTTPS preprod (beta)
-    //   dev     → ovh.delhomme.ytmusic.dev     (PLM Dev)    · d+ · API LAN / serveur :dev
+    //   prod    → cloud.hubera.music         (Hubera Music) · p+ · API HTTPS prod
+    //   preprod → cloud.hubera.music.preprod                · b+ · API HTTPS preprod (beta)
+    //   dev     → cloud.hubera.music.dev                    · d+ · API LAN / serveur :dev
     flavorDimensions += "channel"
     productFlavors {
         create("prod") {
             dimension = "channel"
-            resValue("string", "app_name", "PLM")
+            resValue("string", "app_name", "Music")
             manifestPlaceholders["usesCleartext"] = "false"
             val api = resolveProdApiBase()
             versionName = "p+$appSemver"
@@ -169,7 +181,7 @@ android {
         create("preprod") {
             dimension = "channel"
             applicationIdSuffix = ".preprod"
-            resValue("string", "app_name", "PLM Preprod")
+            resValue("string", "app_name", "Music Preprod")
             manifestPlaceholders["usesCleartext"] = "false"
             val api = resolvePreprodApiBase()
             versionName = "b+$appSemver"
@@ -182,7 +194,7 @@ android {
         create("dev") {
             dimension = "channel"
             applicationIdSuffix = ".dev"
-            resValue("string", "app_name", "PLM Dev")
+            resValue("string", "app_name", "Music Dev")
             manifestPlaceholders["usesCleartext"] = "true"
             val api = resolveDevApiBase()
             versionName = "d+$appSemver"
@@ -228,6 +240,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":hubera-id-sso"))
+    implementation(project(":hubera-chrome"))
     val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)
@@ -262,6 +276,8 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    testImplementation("junit:junit:4.13.2")
 
     // QR login : génération (ZXing) + scan (CameraX + ML Kit)
     implementation("com.google.zxing:core:3.5.3")

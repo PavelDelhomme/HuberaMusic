@@ -1,0 +1,28 @@
+{
+  "appId": "cloud.hubera.music",
+  "appName": "Hubera Music",
+  "webDir": "web/dist",
+  "ios": {
+    "scheme": "huberamusic",
+    "contentInset": "automatic",
+    "backgroundColor": "#0b0b0f",
+    "preferredContentMode": "mobile",
+    "limitsNavigationsToAppBoundDomains": true,
+    "minVersion": "15.1"
+  },
+  "android": {
+    "scheme": "huberamusic"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "backgroundColor": "#0b0b0f"
+    }
+  },
+  "server": {
+    "hostname": "music.hubera.cloud",
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "allowNavigation": ["music.hubera.cloud", "*.hubera.cloud", "id.hubera.cloud"]
+  }
+}

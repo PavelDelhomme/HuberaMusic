@@ -78,7 +78,7 @@ type PlayerState = {
   userQueueEnd: number;
   /** Collection d’où vient la file (album / playlist / mix…) — overlay « en lecture ». */
   sourceId: string | null;
-  sourceKind: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
+  sourceKind: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | 'pins' | null;
   /** Suggestions automatiques après la file (style YTM). */
   autoplay: boolean;
   isPlaying: boolean;
@@ -101,7 +101,7 @@ type PlayerState = {
   mediaPresentation: 'cover' | 'video';
   lyrics: string | null;
   lyricsTimed: { startMs: number; text: string }[] | null;
-  lyricsSource: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null;
+  lyricsSource: string | null;
   related: Track[];
   /** Seed pour lequel `related` a été fetché (évite de réinjecter une vieille liste). */
   relatedSeedId: string | null;
@@ -122,7 +122,7 @@ type PlayerState = {
       /** Nouvelle playlist / titre depuis l’UI : remplace la file et repart de 0. */
       forceRestart?: boolean;
       sourceId?: string | null;
-      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
+      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | 'pins' | null;
     },
   ) => Promise<void>;
   playQueue: (
@@ -130,7 +130,7 @@ type PlayerState = {
     startIndex?: number,
     opts?: {
       sourceId?: string | null;
-      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | null;
+      sourceKind?: 'album' | 'playlist' | 'mix' | 'artist' | 'radio' | 'history' | 'pins' | null;
     },
   ) => Promise<void>;
   playAt: (index: number) => Promise<void>;
@@ -775,10 +775,10 @@ function schedulePrefetch(queue: Track[], queueIndex: number) {
   const durationsSec = playable.map((t) => trackDurationSeconds(t));
   // Pendant la lecture : peu de full-prefetch (évite de voler la bande du titre long)
   prefetchAround(ids, idx, {
-    ahead: saveData ? 3 : 6,
+    ahead: saveData ? 4 : 8,
     behind: 0,
-    fullAhead: saveData || loopOne ? 0 : 2,
-    delayFullMs: saveData ? 5000 : 1800,
+    fullAhead: saveData || loopOne ? 0 : 3,
+    delayFullMs: saveData ? 4000 : 900,
     durationsSec,
     loopOne,
   });
@@ -798,6 +798,7 @@ function schedulePrefetch(queue: Track[], queueIndex: number) {
 
 /** Génère un id de « bras » standby pour ignorer les armements obsolètes. */
 let standbyArmGen = 0;
+let lastNearEndPrefetchMs = 0;
 
 async function armStandby(trackId: string) {
   if (!/^[a-zA-Z0-9_-]{11}$/.test(trackId) || isStreamDown()) return;
@@ -839,6 +840,7 @@ function mergeAutoTracks(seedId: string, pool: Track[], relatedUpdate?: Track[])
   const state = usePlayer.getState();
   // Toujours remplir « À suivre » (affichage) — autoplay ne contrôle que l’auto-avance en fin de file user
   // Ignore les réponses obsolètes (titre déjà changé)
+  if (state.sourceKind === 'pins') return;
   if (state.current?.id && state.current.id !== seedId) return;
   const boundary = Math.max(state.userQueueEnd || 0, state.queueIndex + 1);
   const autoLen = state.queue.length - boundary;
@@ -1032,12 +1034,17 @@ async function playLocal(track: Track, state: PlayerState, gen: number) {
 
   const targetVol = Math.max(0, Math.min(1, state.volume > 0 ? state.volume : 0.9));
 
-  // Si le même titre est déjà chargé sur le primary → seek 0 + play (skip/loop rapide)
+  // Si le même titre est déjà chargé sur le primary → seek 0 + play (skip/loop rapide).
+  // Ne pas comparer à location.pathname (casse la reprise après navigation SPA).
+  const srcLooksPlayable =
+    Boolean(audio.src) &&
+    (audio.src.includes('/api/stream/') ||
+      audio.src.startsWith('blob:') ||
+      /^https?:\/\//i.test(audio.src));
   if (
     audio.dataset.trackId === track.id &&
-    audio.src &&
-    audio.readyState >= 2 &&
-    !audio.src.endsWith(window.location.pathname)
+    srcLooksPlayable &&
+    audio.readyState >= 2
   ) {
     try {
       audio.muted = false;
@@ -1403,6 +1410,19 @@ function attachAudioRuntime(
       })
     ) {
       void get().next({ fromEnded: true });
+      return;
+    }
+    const dur = Number(el.duration);
+    const t = Number(el.currentTime);
+    if (Number.isFinite(dur) && dur > 20 && Number.isFinite(t)) {
+      const rem = dur - t;
+      if (rem >= 8 && rem <= 40) {
+        const now = Date.now();
+        if (now - lastNearEndPrefetchMs > 3500) {
+          lastNearEndPrefetchMs = now;
+          schedulePrefetch(s.queue, s.queueIndex);
+        }
+      }
     }
   });
   el.addEventListener('loadeddata', () => {
@@ -1696,7 +1716,9 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       return;
     }
     const idx = Math.min(Math.max(0, startIndex), playable.length - 1);
+    const pinLoop = opts?.sourceKind === 'pins';
     const precomputed =
+      pinLoop ||
       opts?.sourceKind === 'mix' ||
       opts?.sourceKind === 'radio' ||
       opts?.sourceKind === 'album' ||
@@ -1711,9 +1733,13 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       forceRestart: true,
       sourceId: opts?.sourceId,
       sourceKind: opts?.sourceKind,
-      noAutoRadio: Boolean(precomputed && (opts?.sourceKind === 'history' || opts?.sourceKind === 'playlist' || playable.length >= 20)),
+      noAutoRadio: Boolean(
+        pinLoop ||
+          (precomputed &&
+            (opts?.sourceKind === 'history' || opts?.sourceKind === 'playlist' || playable.length >= 20)),
+      ),
     });
-    if (precomputed && (opts?.sourceKind === 'history' || playable.length >= 20)) {
+    if (!pinLoop && precomputed && (opts?.sourceKind === 'history' || playable.length >= 20)) {
       set({ autoplay: false });
     }
     end(`${playable.length} tracks`);
@@ -1847,8 +1873,12 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         void ensureAutoRadio(seedId);
       }
       // Paroles timed en fond → aide le skip de silence de fin
+      const artist = artistNames(playTrack);
       void api
-        .lyrics(seedId)
+        .lyrics(seedId, {
+          title: playTrack.title,
+          artist: artist !== 'Artiste' ? artist : undefined,
+        })
         .then((r) => {
           if (get().current?.id !== seedId) return;
           void import('../lib/player/lyricSync').then((m) => {
@@ -1858,7 +1888,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
           set({
             lyrics: r.lyrics || get().lyrics,
             lyricsTimed: r.timed || null,
-            lyricsSource: (r as { source?: 'youtube' | 'lrclib' | 'lrc' | 'captions' | 'genius' | 'estimated' | 'aligned' | null }).source ?? null,
+            lyricsSource: (r as { source?: string | null }).source ?? null,
           });
         })
         .catch(() => undefined);
@@ -2077,7 +2107,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
       }
     }
 
-    const { queue, queueIndex, repeat, shuffle, current, progress } = get();
+    const { queue, queueIndex, repeat, current, progress } = get();
     if (!queue.length) {
       if (current?.id) {
         await ensureAutoRadio(current.id);
@@ -2111,6 +2141,11 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     }
     let nextIndex = queueIndex + 1;
     const end = get().userQueueEnd || 0;
+    if (get().sourceKind === 'pins' && (nextIndex >= end || nextIndex >= queue.length)) {
+      nextIndex = 0;
+      await get().playAt(nextIndex);
+      return;
+    }
     // Fin naturelle sur le dernier titre « user » : stop si lecture auto OFF (suggestions restent visibles)
     if (
       opts?.fromEnded &&
@@ -2177,16 +2212,8 @@ export const usePlayer = create<PlayerState>((set, get) => ({
         return;
       }
     }
-    if (shuffle && queue.length > 1) {
-      const candidates = queue
-        .map((t, i) => ({ t, i }))
-        .filter((x) => x.i !== queueIndex);
-      const pick = candidates[Math.floor(Math.random() * candidates.length)];
-      if (pick) {
-        await get().playAt(pick.i);
-        return;
-      }
-    }
+    // File déjà mélangée (toggle / Aléatoire) : idx+1 = suivant chaud.
+    // Un pick random ici visait un titre jamais prefetché → « Chargement » infini.
     await get().playAt(nextIndex);
   },
 
@@ -2340,7 +2367,28 @@ export const usePlayer = create<PlayerState>((set, get) => ({
 
   toggleShuffle: () => {
     const turningOn = !get().shuffle;
-    if (turningOn) {
+    if (turningOn && get().sourceKind === 'pins') {
+      set((s) => {
+        const end = Math.min(s.userQueueEnd || s.queue.length, s.queue.length);
+        const qi = Math.min(s.queueIndex, Math.max(0, end - 1));
+        const cur = s.queue[qi];
+        if (!cur || end <= 1) return { shuffle: true };
+        const others = s.queue.slice(0, end).filter((_, i) => i !== qi);
+        for (let i = others.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const tmp = others[i]!;
+          others[i] = others[j]!;
+          others[j] = tmp;
+        }
+        return {
+          shuffle: true,
+          queue: [cur, ...others],
+          queueIndex: 0,
+          userQueueEnd: end,
+          shuffleNatural: s.queue.slice(0, end),
+        };
+      });
+    } else if (turningOn) {
       // Réordonne uniquement la suite — snapshot naturel pour restore
       set((s) => {
         const qi = s.queueIndex;
@@ -2455,7 +2503,11 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     set({ showLyrics: true, showQueue: false });
     if (current) {
       try {
-        const { lyrics, timed, source, userOffsetMs, segments } = await api.lyrics(current.id);
+        const artist = artistNames(current);
+        const { lyrics, timed, source, userOffsetMs, segments } = await api.lyrics(current.id, {
+          title: current.title,
+          artist: artist !== 'Artiste' ? artist : undefined,
+        });
         const { applyServerOffsetIfUnset, applyServerSegments } = await import('../lib/player/lyricSync');
         applyServerOffsetIfUnset(current.id, userOffsetMs);
         applyServerSegments(current.id, segments);
@@ -2646,6 +2698,7 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   },
 
   appendRelated: (tracks) => {
+    if (get().sourceKind === 'pins') return;
     set((s) => {
       const ids = new Set(s.queue.map((t) => t.id));
       const extra = tracks.filter((t) => isPlayable(t) && !ids.has(t.id));

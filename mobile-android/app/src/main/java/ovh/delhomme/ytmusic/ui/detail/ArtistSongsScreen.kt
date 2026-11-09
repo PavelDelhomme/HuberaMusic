@@ -1,5 +1,6 @@
 package ovh.delhomme.ytmusic.ui.detail
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,6 +16,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
@@ -32,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,6 +43,9 @@ import ovh.delhomme.ytmusic.data.AppContainer
 import ovh.delhomme.ytmusic.data.TrackDto
 import ovh.delhomme.ytmusic.ui.components.MediaCover
 import ovh.delhomme.ytmusic.ui.components.TrackRow
+import ovh.delhomme.ytmusic.ui.library.playQueueWithLead
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 /** Liste complète des titres d’un artiste (page dédiée depuis « Plus »). */
 @Composable
@@ -56,6 +63,8 @@ fun ArtistSongsScreen(
     var name by remember { mutableStateOf("Artiste") }
     var cover by remember { mutableStateOf<TrackDto?>(null) }
     var tracks by remember { mutableStateOf<List<TrackDto>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     LaunchedEffect(artistId, reloadToken) {
         loading = true
@@ -69,6 +78,12 @@ fun ArtistSongsScreen(
             error = it.message ?: "Impossible de charger les titres"
         }
         loading = false
+    }
+
+    LaunchedEffect(tracks) {
+        val ids = tracks.map { it.id }.filter { it.length == 11 }.take(20)
+        if (ids.isEmpty()) return@LaunchedEffect
+        container.libraryHeadPrefetcher.warmDisplayedList(ids)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -141,7 +156,11 @@ fun ArtistSongsScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     Button(
-                                        onClick = { onPlay(tracks, 0) },
+                                        onClick = {
+                                            scope.launch {
+                                                playQueueWithLead(container, tracks, 0, onPlay)
+                                            }
+                                        },
                                         modifier = Modifier.weight(1f),
                                     ) {
                                         Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
@@ -157,6 +176,58 @@ fun ArtistSongsScreen(
                                         Text("Aléatoire")
                                     }
                                 }
+                                Spacer(Modifier.height(8.dp))
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                runCatching {
+                                                    val saved = container.api.saveArtist(
+                                                        TrackDto(
+                                                            id = artistId,
+                                                            title = name,
+                                                            type = "artist",
+                                                            thumbnails = cover?.thumbnails,
+                                                        ),
+                                                    )
+                                                    val added = (saved["tracksAdded"] as? Number)?.toInt()
+                                                        ?: tracks.size
+                                                    Toast.makeText(
+                                                        context,
+                                                        "$added titres ajoutés — lecture",
+                                                        Toast.LENGTH_LONG,
+                                                    ).show()
+                                                    playQueueWithLead(container, tracks, 0, onPlay)
+                                                }.onFailure {
+                                                    Toast.makeText(context, it.message ?: "Échec", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Icon(Icons.Default.LibraryAdd, null, Modifier.size(18.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Biblio")
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            val n = container.downloadManager.enqueueMany(tracks)
+                                            Toast.makeText(
+                                                context,
+                                                if (n > 0) "Téléchargement de $n titres…" else "Déjà en téléchargement",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Icon(Icons.Default.Download, null, Modifier.size(18.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Télécharger")
+                                    }
+                                }
                             }
                         }
                         Spacer(Modifier.height(8.dp))
@@ -165,7 +236,11 @@ fun ArtistSongsScreen(
                     itemsIndexed(tracks, key = { i, t -> "all-${t.id}-$i" }) { index, track ->
                         TrackRow(
                             track = track,
-                            onClick = { onPlay(tracks, index) },
+                            onClick = {
+                                scope.launch {
+                                    playQueueWithLead(container, tracks, index, onPlay)
+                                }
+                            },
                             onMore = { onMore(track) },
                             onOpenArtist = { id, n ->
                                 if (id != null && id != artistId) {

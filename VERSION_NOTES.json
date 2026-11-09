@@ -1,6 +1,1430 @@
 {
-  "updatedAt": "2026-09-18",
+  "updatedAt": "2026-11-09T14:50:00+01:00",
   "versions": [
+    {
+      "version": "1.3.413",
+      "date": "2026-11-09",
+      "time": "14:50",
+      "at": "2026-11-09T14:50:00+01:00",
+      "title": "DASH froid + reprise mic + OTA rapide",
+      "notes": [
+        "Serveur : titres froids — relais DASH googlevideo si yt-dlp KO (plus de chargement ~100 s).",
+        "Reprise lecture après Assistant / micro Google (duck + focus).",
+        "Restore / notif : charge le titre sans autoplay parasite.",
+        "Compte : vérification de version OTA beaucoup plus rapide (hosts en parallèle)."
+      ]
+    },
+    {
+      "version": "1.3.412",
+      "date": "2026-11-09",
+      "time": "14:14",
+      "at": "2026-11-09T14:14:51+01:00",
+      "title": "Stats écoute + resolve stream renforcé",
+      "notes": [
+        "Compte : stats écoute aujourd’hui / 7 j / 30 j (GET /api/history/stats, sans push batterie).",
+        "« Ça n’a pas marché » : message clair si nouveau titre audio disponible ou non.",
+        "Serveur : resolve stream avec routes fraîches + yt-dlp après échec ; kickStart ignore streamDown."
+      ]
+    },
+    {
+      "version": "1.3.411",
+      "date": "2026-10-30",
+      "time": "17:09",
+      "at": "2026-10-30T17:09:27+01:00",
+      "title": "Heal auto continu (403 / no-stream)",
+      "notes": [
+        "Balayage jouabilité toutes les ~45 min sans intervention : d’abord d’autres routes audio (client/itag/relais), remplacement d’id seulement si la vidéo est vraiment morte.",
+        "Les 403 / LOGIN_REQUIRED / no-stream-url restent visibles et sont re-tentés au prochain passage — pas de faux « titre mort »."
+      ]
+    },
+    {
+      "version": "1.3.410",
+      "date": "2026-10-30",
+      "time": "13:51",
+      "at": "2026-10-30T13:51:08+01:00",
+      "title": "Ça n a pas marché → alternative",
+      "notes": [
+        "Menu titre : action « Ça n a pas marché » cherche une autre adresse (remplacement) et reprend la lecture.",
+        "API trackReplacement côté Android + remap like/biblio déjà en 1.3.409."
+      ]
+    },
+    {
+      "version": "1.3.409",
+      "date": "2026-10-30",
+      "time": "13:37",
+      "at": "2026-10-30T13:37:25+01:00",
+      "title": "Like / biblio / pin / DL sur IDs remplacés",
+      "notes": [
+        "Extended Mix Rekkt (et tout ID mort seed) : j’aime, bibliothèque, accès rapide et téléchargement ciblent l’original jouable.",
+        "Pin n’appelle plus getFullLibrary (timeout pendant un DL) — libraryContains léger.",
+        "Actions survivent à la fermeture du menu et à un téléchargement en cours."
+      ]
+    },
+    {
+      "version": "1.3.404",
+      "date": "2026-10-30",
+      "time": "09:35",
+      "at": "2026-10-30T09:31:14+01:00",
+      "title": "Cache + préchauffage file (roadmap heal)",
+      "notes": [
+        "À chaud : 2 titres suivants en tête (plus un seul), jamais un burst de fichiers entiers.",
+        "Serveur : preflight 3 titres ; 2 .m4a complets au repos, 0 pendant l’écoute.",
+        "Aligné roadmap : catalogue YT + cache local + heal/replace (voir Docs 2026-10-30)."
+      ]
+    },
+    {
+      "version": "1.3.403",
+      "date": "2026-10-30",
+      "time": "09:15",
+      "at": "2026-10-30T09:14:48+01:00",
+      "title": "Rekkt Laisse Nous Raver — alternatives auto",
+      "notes": [
+        "Extended Mix / Radio Mix (IDs morts timeout) redirigés vers Laisse Nous Raver jouable (PcpOcHlHiog).",
+        "Remplacement soft : Extended/radio/remix → original si le même artiste+titre joue.",
+        "Heal télémétrie 5xx lance aussi un remplacement après ensure (plus seulement load_skip).",
+        "Pins seed persistés en base au boot."
+      ]
+    },
+    {
+      "version": "1.3.398",
+      "date": "2026-10-26",
+      "time": "21:27",
+      "at": "2026-10-26T21:27:06+02:00",
+      "title": "Artiste/titre + reprise flux après navigation",
+      "notes": [
+        "Les noms collés type AronChupa s’affichent correctement (Aron Chupa).",
+        "Titres « Artiste - Morceau » sans artiste sont séparés.",
+        "La lecture ne se cale plus sur l’URL de page après une navigation dans l’app.",
+        "Recherche : un titre exact d’un autre artiste ne passe plus devant Stromae quand la requête nomme Stromae (typo ostromae)."
+      ]
+    },
+    {
+      "version": "1.3.397",
+      "date": "2026-10-26",
+      "time": "19:41",
+      "at": "2026-10-26T19:41:45+02:00",
+      "title": "Recherche : artistes récents et versions tendances",
+      "notes": [
+        "La recherche trouve mieux les artistes récents (Lenaïg, Lorette…) même sans fiche YouTube Music.",
+        "Pour un même titre (« la maison brûle »), plusieurs versions / artistes apparaissent en tête.",
+        "Les pubs « bientôt dispo sur les plateformes » sont écartées.",
+        "Les titres multi-mots passent toujours par YouTube (plus seulement l’index local figé)."
+      ]
+    },
+    {
+      "version": "1.3.396",
+      "date": "2026-10-26",
+      "time": "14:00",
+      "at": "2026-10-26T14:00:00+02:00",
+      "title": "Aléatoire : moins de titres morts",
+      "notes": [
+        "La file aléatoire écarte les titres déjà marqués morts ou remplacés.",
+        "Le serveur chauffe plus de têtes pour limiter les trous au démarrage."
+      ]
+    },
+    {
+      "version": "1.3.394",
+      "date": "2026-10-23",
+      "time": "22:05",
+      "at": "2026-10-23T22:05:00+02:00",
+      "title": "La ligne de paroles remonte encore",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour laisser voir les paroles qui suivent."
+      ]
+    },
+    {
+      "version": "1.3.393",
+      "date": "2026-10-23",
+      "time": "21:40",
+      "at": "2026-10-23T21:40:00+02:00",
+      "title": "La ligne de paroles remonte",
+      "notes": [
+        "La ligne en cours se place plus haut dans le bloc, pour voir tout de suite les paroles suivantes."
+      ]
+    },
+    {
+      "version": "1.3.392",
+      "date": "2026-10-23",
+      "time": "09:10",
+      "at": "2026-10-23T09:10:00+02:00",
+      "title": "Les pochettes reviennent",
+      "notes": [
+        "Album, titre et file réaffichent la pochette déjà vue, et une vignette ne reste plus bloquée au chargement."
+      ]
+    },
+    {
+      "version": "1.3.391",
+      "date": "2026-10-23",
+      "time": "02:40",
+      "at": "2026-10-23T02:40:00+02:00",
+      "title": "L’icône de compte liste les adresses",
+      "notes": [
+        "L’icône en haut à droite liste les adresses Hubera ID connectées."
+      ]
+    },
+    {
+      "version": "1.3.390",
+      "date": "2026-10-22",
+      "time": "23:58",
+      "at": "2026-10-22T23:58:00+02:00",
+      "title": "Le titre suivant est déjà prêt",
+      "notes": [
+        "En radio, en mix ou en aléatoire, seul le titre suivant prépare son début, pour enchaîner sans trou."
+      ]
+    },
+    {
+      "version": "1.3.389",
+      "date": "2026-10-22",
+      "time": "23:55",
+      "at": "2026-10-22T23:55:00+02:00",
+      "title": "La bio suit la langue du téléphone",
+      "notes": [
+        "Sur une page d’artiste, le texte déjà reçu s’affiche tout de suite. S’il existe une version dans la langue du téléphone, elle la remplace ensuite."
+      ]
+    },
+    {
+      "version": "1.3.388",
+      "date": "2026-10-22",
+      "time": "23:50",
+      "at": "2026-10-22T23:50:00+02:00",
+      "title": "Suivre change tout de suite",
+      "notes": [
+        "Sur une page d’artiste, Suivre et Biblio changent d’état tout de suite. L’enregistrement se fait ensuite. En cas d’échec, le bouton revient à l’état précédent."
+      ]
+    },
+    {
+      "version": "1.3.387",
+      "date": "2026-10-22",
+      "time": "23:45",
+      "at": "2026-10-22T23:45:00+02:00",
+      "title": "La suggestion suit le nom tapé",
+      "notes": [
+        "Une recherche d’artiste en minuscules propose ce nom, pas un artiste sans rapport. « stromae » ne met plus Madonna en premier."
+      ]
+    },
+    {
+      "version": "1.3.386",
+      "date": "2026-10-22",
+      "time": "23:35",
+      "at": "2026-10-22T23:35:00+02:00",
+      "title": "La recherche ne montre plus Réessayer pendant la frappe",
+      "notes": [
+        "Pendant qu’on tape, le champ reste. Réessayer n’apparaît qu’une fois la recherche terminée, et seulement si elle a vraiment échoué."
+      ]
+    },
+    {
+      "version": "1.3.385",
+      "date": "2026-10-22",
+      "time": "23:25",
+      "at": "2026-10-22T23:25:00+02:00",
+      "title": "Lecteur en pause reste en barre",
+      "notes": [
+        "Si la lecture est en pause, rouvrir l’application laisse le lecteur en barre. Le plein écran ne revient pas tout seul et le son ne reprend pas."
+      ]
+    },
+    {
+      "version": "1.3.384",
+      "date": "2026-10-22",
+      "time": "23:15",
+      "at": "2026-10-22T23:15:00+02:00",
+      "title": "Tout voir sous la barre d’état",
+      "notes": [
+        "Tout voir ouvre l’accès rapide dans la zone sûre. Le titre et le retour restent visibles sous la barre d’état."
+      ]
+    },
+    {
+      "version": "1.3.383",
+      "date": "2026-10-22",
+      "time": "23:05",
+      "at": "2026-10-22T23:05:00+02:00",
+      "title": "Corbeille de l’accès rapide",
+      "notes": [
+        "Chaque ligne de l’accès rapide a une corbeille. Confirmer retire le titre de l’accès rapide. Il reste dans la bibliothèque."
+      ]
+    },
+    {
+      "version": "1.3.382",
+      "date": "2026-10-22",
+      "time": "22:50",
+      "at": "2026-10-22T22:50:00+02:00",
+      "title": "Pochettes gardées",
+      "notes": [
+        "Une pochette de titre, d’album ou d’artiste déjà vue reste sur l’appareil. Rouvrir l’accueil la réaffiche sans attendre le réseau."
+      ]
+    },
+    {
+      "version": "1.3.381",
+      "date": "2026-10-22",
+      "time": "22:40",
+      "at": "2026-10-22T22:40:00+02:00",
+      "title": "Boutons des vignettes",
+      "notes": [
+        "Sur une vignette de titre, de mix ou de playlist : lire en bas à droite, ajouter à la bibliothèque en bas à gauche, trois points en haut à droite."
+      ]
+    },
+    {
+      "version": "1.3.380",
+      "date": "2026-10-22",
+      "time": "20:45",
+      "at": "2026-10-22T20:45:00+02:00",
+      "title": "Fermer le tiroir",
+      "notes": [
+        "Le menu se ferme avec le bouton, un glissement, ou un tap sur Compte."
+      ]
+    },
+    {
+      "version": "1.3.378",
+      "date": "2026-10-21",
+      "time": "14:40",
+      "at": "2026-10-21T14:40:00+02:00",
+      "title": "Tiroir depuis le bord gauche",
+      "notes": [
+        "Le menu s’ouvre en glissant depuis le bord gauche de l’écran. Ouvrir l’application ne lance pas une lecture."
+      ]
+    },
+    {
+      "version": "1.3.376",
+      "date": "2026-10-19",
+      "time": "18:30",
+      "at": "2026-10-19T18:30:00+02:00",
+      "title": "Accès rapide en boucle, aléatoire plus vite",
+      "notes": [
+        "L’accès rapide ne joue et ne boucle que les titres épinglés. « À suivre » et les similaires ne s’y ajoutent plus. L’aléatoire de l’accès rapide mélange tous les titres épinglés. L’aléatoire de la bibliothèque prépare plusieurs centaines de titres différents puis charge le reste."
+      ]
+    },
+    {
+      "version": "1.3.375",
+      "date": "2026-10-18",
+      "time": "18:45",
+      "at": "2026-10-18T18:45:00+02:00",
+      "title": "Autre itag si la lecture échoue",
+      "notes": [
+        "Si un titre ne part pas, le serveur essaie un autre client et un autre format, pour chaque compte. La suite en aléatoire ne précharge plus qu’un titre à la fois pendant l’écoute."
+      ]
+    },
+    {
+      "version": "1.3.373",
+      "date": "2026-10-17",
+      "time": "14:30",
+      "at": "2026-10-17T14:30:00+02:00",
+      "title": "Pause respectée au retour",
+      "notes": [
+        "Revenir dans l’app, rallumer l’écran ou rouvrir Hubera Music ne relance plus le son si la lecture était en pause, en chargement sans son, ou avait échoué. La musique ne reprend que si elle jouait vraiment."
+      ]
+    },
+    {
+      "version": "1.3.372",
+      "date": "2026-10-16",
+      "time": "07:10",
+      "at": "2026-10-16T07:10:00+02:00",
+      "title": "Durée toujours positive",
+      "notes": [
+        "Un titre n’affiche plus une durée négative. Le temps restant et la durée totale restent à l’écran en positif."
+      ]
+    },
+    {
+      "version": "1.3.367",
+      "date": "2026-10-10",
+      "time": "13:00",
+      "at": "2026-10-10T13:00:00+02:00",
+      "title": "Partager : lien Hubera Music et YouTube",
+      "notes": [
+        "Partager un titre envoie les deux liens : Hubera Music et YouTube."
+      ]
+    },
+    {
+      "version": "1.3.366",
+      "date": "2026-10-09",
+      "time": "17:10",
+      "at": "2026-10-09T17:10:00+02:00",
+      "title": "OTA : autoriser d’abord, puis télécharger",
+      "notes": [
+        "La mise à jour demande d’abord d’autoriser l’installation depuis cette source, puis télécharge l’APK. Plus de boucle."
+      ]
+    },
+    {
+      "version": "1.3.365",
+      "date": "2026-10-08",
+      "time": "22:35",
+      "at": "2026-10-08T22:35:00+02:00",
+      "title": "En-tête Music d’avant le tiroir grille",
+      "notes": [
+        "Plus de menu hamburger avec la grille d’apps Hubera. Accueil retrouve le logo et le titre, comme avant. Les autres apps s’ouvrent depuis Compte si besoin."
+      ]
+    },
+    {
+      "version": "1.3.364",
+      "date": "2026-10-08",
+      "time": "21:40",
+      "at": "2026-10-08T21:40:00+02:00",
+      "title": "Barres hors des boutons système, notes de MAJ",
+      "notes": [
+        "La barre du haut et du bas restent au-dessus des boutons Retour / Accueil / récents et sous les notifications.",
+        "Le champ Recherche n’est plus collé ni décalé.",
+        "Pendant le téléchargement d’une mise à jour, tu vois les nouveautés de cette version."
+      ]
+    },
+    {
+      "version": "1.3.363",
+      "date": "2026-10-08",
+      "time": "21:10",
+      "at": "2026-10-08T21:10:00+02:00",
+      "title": "Drawer : app installée, sinon le site",
+      "notes": [
+        "Le menu Apps Hubera ouvre l’application déjà installée (Maps, Fuel, Docs…). Si elle n’est pas là, le site s’ouvre."
+      ]
+    },
+    {
+      "version": "1.3.362",
+      "date": "2026-10-08",
+      "time": "20:30",
+      "at": "2026-10-08T20:30:00+02:00",
+      "title": "Seek hors-ligne, clip officiel, lecture stable",
+      "notes": [
+        "Un titre déjà téléchargé reste en local après un seek — plus de blocage à 0:00. Le clip officiel avance (image + position). La lecture n’est plus annulée par l’écran."
+      ]
+    },
+    {
+      "version": "1.3.361",
+      "date": "2026-10-08",
+      "time": "18:40",
+      "at": "2026-10-08T18:40:00+02:00",
+      "title": "Recherche quasi instantanée (index musique)",
+      "notes": [
+        "Les titres déjà vus (biblio, recherches) sortent tout de suite via un index local. YouTube Music complète en fond."
+      ]
+    },
+    {
+      "version": "1.3.360",
+      "date": "2026-10-08",
+      "time": "16:40",
+      "at": "2026-10-08T16:40:00+02:00",
+      "title": "Menu suite Hubera, comme Gmail",
+      "notes": [
+        "Hamburger à gauche, compte à droite, bas Accueil / Recherche / Biblio. Le tiroir ouvre les autres apps Hubera."
+      ]
+    },
+    {
+      "version": "1.3.359",
+      "date": "2026-10-08",
+      "time": "16:20",
+      "at": "2026-10-08T16:20:00+02:00",
+      "title": "Titres déjà téléchargés : lecture locale, plus de blocage",
+      "notes": [
+        "Un titre déjà sur le téléphone se joue vraiment en local, même en Wi‑Fi : on ne le recâble plus vers le serveur (ça coincait le chargement et abîmait le son)."
+      ]
+    },
+    {
+      "version": "1.3.358",
+      "date": "2026-10-08",
+      "time": "15:50",
+      "at": "2026-10-08T15:50:00+02:00",
+      "title": "Continuer avec un compte Hubera déjà sur le téléphone",
+      "notes": [
+        "Si tu es déjà connecté dans une autre app Hubera (ID, Mail, Docs…), Music propose Continuer avec ton e-mail."
+      ]
+    },
+    {
+      "version": "1.3.357",
+      "date": "2026-10-07",
+      "time": "17:00",
+      "at": "2026-10-07T17:00:00+02:00",
+      "title": "Paroles calées, next en karaoké, titres déjà téléchargés",
+      "notes": [
+        "Ton calage paroles reste le calage : plus d’écrasement par le rythme des autres. Next / précédent depuis les bords ou le chip, sans fermer le karaoké. Un titre déjà téléchargé se joue en local même en ligne."
+      ]
+    },
+    {
+      "version": "1.3.356",
+      "date": "2026-10-07",
+      "time": "16:20",
+      "at": "2026-10-07T16:20:00+02:00",
+      "title": "Paroles : tu peux faire défiler, retour auto après 8 s",
+      "notes": [
+        "Toutes les lignes sont scrollables (avant / après). La ligne chantée reste en évidence. Si tu ne touches plus, ça revient à la ligne en cours au bout de 8 secondes — plus un blocage sur 3 lignes."
+      ]
+    },
+    {
+      "version": "1.3.355",
+      "date": "2026-10-07",
+      "time": "13:15",
+      "at": "2026-10-07T13:15:00+02:00",
+      "title": "Karaoké : la ligne chantée reste à l’écran",
+      "notes": [
+        "Les paroles synchronisées affichent la ligne en cours au centre (précédente / actuelle / suivante), plus un mur qui défile hors cadre."
+      ]
+    },
+    {
+      "version": "1.3.354",
+      "date": "2026-10-06",
+      "time": "20:45",
+      "at": "2026-10-06T20:45:00+02:00",
+      "title": "Lecture à froid + paroles de nouveau calées",
+      "notes": [
+        "Un titre jamais écouté attend que le fichier soit prêt (~30 s) au lieu d’un refus immédiat. Les paroles déjà en cache restent synchronisées : une réponse vide ne les efface plus."
+      ]
+    },
+    {
+      "version": "1.3.353",
+      "date": "2026-10-06",
+      "time": "20:20",
+      "at": "2026-10-06T20:20:00+02:00",
+      "title": "Lecture froide : plus de skip pendant le chargement YouTube",
+      "notes": [
+        "Un titre jamais écouté attend le flux YouTube (~40 s) au lieu d’être sauté à 5–18 s. Les paroles ne bloquent plus le son."
+      ]
+    },
+    {
+      "version": "1.3.352",
+      "date": "2026-10-06",
+      "time": "16:10",
+      "at": "2026-10-06T16:10:00+02:00",
+      "title": "Titres froids jouables, suivant préparé sans noyer YouTube",
+      "notes": [
+        "La bibliothèque ne lance plus des dizaines de téléchargements complets : seules les premières secondes se préparent, et les 3 titres suivants pendant l’écoute. Les titres jamais écoutés partent à nouveau."
+      ]
+    },
+    {
+      "version": "1.3.351",
+      "date": "2026-10-06",
+      "time": "03:50",
+      "at": "2026-10-06T03:50:00+02:00",
+      "title": "Accès rapide et titres déjà écoutés : lecture depuis le serveur",
+      "notes": [
+        "Un clic Accès rapide ou un titre déjà écouté part du fichier déjà sur le serveur — plus de rechargement YouTube. Pendant l’écoute, les 3 suivants se préparent sur d’autres relais."
+      ]
+    },
+    {
+      "version": "1.3.350",
+      "date": "2026-10-05",
+      "time": "20:50",
+      "at": "2026-10-05T20:50:00+02:00",
+      "title": "Enregistré récemment : les premières secondes déjà sur le serveur",
+      "notes": [
+        "Les titres enregistrés récemment, déjà écoutés (48 h) ou ajoutés en « lire ensuite » gardent leurs premières secondes sur le serveur, même pendant une autre écoute. Changement de relais automatique sans couper le son en cours."
+      ]
+    },
+    {
+      "version": "1.3.349",
+      "date": "2026-10-05",
+      "time": "20:20",
+      "at": "2026-10-05T20:20:00+02:00",
+      "title": "Enchaînement auto : 6 titres d’avance, relais si un son bloque",
+      "notes": [
+        "Le lecteur prépare 6 titres devant (au lieu de 4) pour l’auto-avance « à suivre », et change de relais si un titre froid reste coincé. abcdefu / titres qui chargeaient sans partir sont retentés au lieu de rester en BUFFERING.",
+        ""
+      ]
+    },
+    {
+      "version": "1.3.348",
+      "date": "2026-10-05",
+      "time": "19:20",
+      "at": "2026-10-05T19:20:00+02:00",
+      "title": "Paroles en pause, biblio artiste complète, DL sans casser l’écoute",
+      "notes": [
+        "En pause tu fais défiler les paroles sans bouger la lecture. Le bouton Biblio d’un artiste ajoute tout son catalogue et lance la lecture. Les téléchargements (titre, album, artiste) passent par d’autres relais que le son en cours, pour ne plus rendre tes favoris inécoutables.",
+        ""
+      ]
+    },
+    {
+      "version": "1.3.347",
+      "date": "2026-10-05",
+      "time": "15:10",
+      "at": "2026-10-05T15:10:00+02:00",
+      "title": "3 titres d’avance sans noyer le son en cours",
+      "notes": [
+        "Pendant l’écoute, les 3 suivants se préparent sans voler la bande au titre actuel. Skip et retour arrière restent fluides, sans brûler toute la file.",
+        ""
+      ]
+    },
+    {
+      "version": "1.3.346",
+      "date": "2026-10-05",
+      "time": "15:05",
+      "at": "2026-10-05T15:05:00+02:00",
+      "title": "Skip immédiat, 3 titres déjà en buffer",
+      "notes": [
+        "Pendant l’écoute les 3 suivants se chargent. Un skip va tout de suite sur un titre déjà prêt (pas d’attente, pas de file brûlée). Le retour arrière garde le cache.",
+        ""
+      ]
+    },
+    {
+      "version": "1.3.345",
+      "date": "2026-10-05",
+      "time": "15:00",
+      "at": "2026-10-05T15:00:00+02:00",
+      "title": "Skip : on enchaîne sur un titre déjà prêt",
+      "notes": [
+        "Les 3 suivants se chargent pendant l’écoute. Si un titre refuse de démarrer, on passe à celui d’après déjà en buffer — plus de file entière brûlée, plus d’attente infinie.",
+        "Retour arrière : les titres déjà entendus restent en cache."
+      ]
+    },
+    {
+      "version": "1.3.344",
+      "date": "2026-10-05",
+      "time": "14:50",
+      "at": "2026-10-05T14:50:00+02:00",
+      "title": "Les 3 titres suivants se chargent vraiment pendant l’écoute",
+      "notes": [
+        "Pendant que tu écoutes, les 3 suivants (et le 4ᵉ en marge) se préparent. Si tu sautes 1, 2, 3, 4 puis tu reviens au premier, le buffer reste et la suite continue de charger.",
+        "Plus de skip qui brûle toute la file sur Samsung."
+      ]
+    },
+    {
+      "version": "1.3.343",
+      "date": "2026-10-05",
+      "time": "14:40",
+      "at": "2026-10-05T14:40:00+02:00",
+      "title": "Toujours 3 titres d’avance, même en skippant",
+      "notes": [
+        "Pendant l’écoute : les 3 suivants se chargent. Si tu en sautes plusieurs, la fenêtre avance avec toi. Si tu reviens au premier, on garde le buffer et on continue à préparer la suite.",
+        "Plus de skip auto en chaîne qui brûle toute la file."
+      ]
+    },
+    {
+      "version": "1.3.342",
+      "date": "2026-10-05",
+      "time": "14:20",
+      "at": "2026-10-05T14:20:00+02:00",
+      "title": "Le titre suivant se prépare pendant que tu écoutes",
+      "notes": [
+        "Pendant chaque morceau, le suivant est chargé en avance (tête + fichier), sans noyer le titre en cours.",
+        "Skip et accès rapide : on enchaîne sans rester coincé en chargement."
+      ]
+    },
+    {
+      "version": "1.3.341",
+      "date": "2026-10-04",
+      "time": "18:50",
+      "at": "2026-10-04T18:50:00+02:00",
+      "title": "Plus de trou : skip immédiat et 40 titres d’avance",
+      "notes": [
+        "Si un titre refuse de charger, on passe au suivant tout de suite et on continue à préparer la suite (pas d’attente bloquante).",
+        "Le serveur précharge le début puis le fichier entier des ~40 titres suivants, via plusieurs proxies. Accès rapide, bibliothèque et aléatoire."
+      ]
+    },
+    {
+      "version": "1.3.340",
+      "date": "2026-10-02",
+      "time": "08:30",
+      "at": "2026-10-02T08:30:00+02:00",
+      "title": "Le titre en cours d’abord, puis les suivants",
+      "notes": [
+        "Tant qu’un titre charge ou joue, le bouton Aléatoire ne relance plus le flux : il mélange seulement la suite.",
+        "Préchargement dans l’ordre : ce que tu écoutes, puis le titre d’après, puis les plus proches."
+      ]
+    },
+    {
+      "version": "1.3.339",
+      "date": "2026-10-02",
+      "time": "08:20",
+      "at": "2026-10-02T08:20:00+02:00",
+      "title": "Mode titre : audio extrait du clip YouTube",
+      "notes": [
+        "Si YouTube ne donne que la vidéo, Hubera extrait le son pour le mode titre (la piste, pas le clip).",
+        "L’onglet Vidéo garde le clip. Mise à jour APK proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.338",
+      "date": "2026-10-02",
+      "time": "05:45",
+      "at": "2026-10-02T05:45:00+02:00",
+      "title": "Paroles : blanc d’intro, Fils de joie, Laisse Nous Raver",
+      "notes": [
+        "Les paroles collent au premier chant réel du clip (captions YouTube), pas au début du LRC. Fils de joie (Stromae) : intro cinéma ~+37 s, plus besoin de décaler à la main.",
+        "Laisse Nous Raver Rekkt & NIVK forcé en tête de recherche (clip + Extended Mix).",
+        "Anciens réglages de synchro paroles réinitialisés (nouveau cache). Mise à jour APK proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.337",
+      "date": "2026-10-02",
+      "time": "05:20",
+      "at": "2026-10-02T05:20:00+02:00",
+      "title": "Flux Gen2 parallèle, T’es Triste, aléatoire",
+      "notes": [
+        "Au démarrage d’un titre : 2–3 proxies Gen2 en parallèle (le plus rapide gagne), plus de file 8 s × 3.",
+        "« T’es Triste » : plus le jazz Grace Ellis. Versions complètes N’to / Køni, recherche Rekkt/NIVK/Helen Ka.",
+        "Laisse Nous Raver Extended Mix (Rekkt & NIVK) épinglé. Suite de file chauffée pendant la lecture.",
+        "Aléatoire Accueil : si l’accès rapide est vide, ça lance la biblio. Mise à jour APK proposée, pas forcée."
+      ]
+    },
+    {
+      "version": "1.3.336",
+      "date": "2026-10-01",
+      "time": "22:50",
+      "at": "2026-10-01T22:50:00+02:00",
+      "title": "Paroles recollées à chaque titre",
+      "notes": [
+        "Les paroles d’un autre morceau (titre proche) ne sont plus réutilisées. Timings recollés à la durée de CE clip.",
+        "Karaoké sur la vidéo (ligne active). LRCLIB refuse une version trop longue/courte.",
+        "Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.335",
+      "date": "2026-10-01",
+      "time": "22:00",
+      "at": "2026-10-01T22:00:00+02:00",
+      "title": "Connexion Hubera ID (compte existant)",
+      "notes": [
+        "Le mot de passe Hubera ID ouvre aussi Music si le compte email existe déjà — aucune donnée n’est copiée ni recréée.",
+        "id.hubera.cloud est interrogé en premier. Pas de nouveau compte automatique.",
+        "Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.334",
+      "date": "2026-10-01",
+      "time": "21:40",
+      "at": "2026-10-01T21:40:00+02:00",
+      "title": "Import MP3 sur le compte",
+      "notes": [
+        "Tu peux envoyer un MP3 : il est stocké sur le serveur, uniquement pour ton compte, playlist Importés + bibliothèque.",
+        "Titre, artiste et pochette : recherche YouTube automatique, sinon tags ID3, nom du fichier, ou le titre que tu saisis.",
+        "Lecture : le fichier importé est streamé (pas yt-dlp). Le clip YouTube reste dispo si le morceau a été reconnu.",
+        "Web /import et Android Compte Google → Choisir un MP3. Max 40 Mo, 200 titres par compte. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.333",
+      "date": "2026-10-01",
+      "time": "20:35",
+      "at": "2026-10-01T20:35:00+02:00",
+      "title": "Fin de la boucle « recharge pour aligner »",
+      "notes": [
+        "Le bandeau web ne ressert plus un ancien index.html via le service worker : vidage SW + caches, puis vrai rechargement.",
+        "Un seul auto-reload par version. /api/health et les navigations ne sont plus cachés 24 h.",
+        "Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.332",
+      "date": "2026-10-01",
+      "time": "20:05",
+      "at": "2026-10-01T20:05:00+02:00",
+      "title": "Clips YouTube = titres, Laisse Nous Raver",
+      "notes": [
+        "Une vidéo YouTube (Rekkt & NIVK — Laisse Nous Raver) se joue aussi comme titre, s’épingle, se télécharge en 360p compressé.",
+        "Mode Vidéo : paroles en overlay synchronisées, prefetch tête clip, plus de « Pas de clip » quand l’ID est le même.",
+        "Overlay -r Nothing + Blackview. Samsung via OTA. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.330",
+      "date": "2026-10-01",
+      "time": "19:20",
+      "at": "2026-10-01T19:20:00+02:00",
+      "title": "Recherche YouTube web + digest 12h30",
+      "notes": [
+        "La recherche ne s’arrête plus aux homonymes YTM : fallback YouTube web + variantes apostrophes.",
+        "Overlay -r Samsung + Blackview. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.322",
+      "date": "2026-09-30",
+      "time": "03:40",
+      "at": "2026-09-30T03:40:00+02:00",
+      "title": "Précédent Maps : seek direct, plus de boucle 3 s",
+      "notes": [
+        "Le bouton précédent ne passe plus par seekToPreviousMediaItem (restart 3 s / boucle MediaController).",
+        "Maps et la notif reculent d’un titre via l’index de file. Overlay -r Samsung + Blackview. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.321",
+      "date": "2026-09-30",
+      "time": "03:35",
+      "at": "2026-09-30T03:35:00+02:00",
+      "title": "Précédent change vraiment de titre (Maps, notif)",
+      "notes": [
+        "Plus de restart à 3 s : le bouton précédent saute au titre d’avant, comme suivant.",
+        "Reculer dans la piste : appui long. Overlay -r Samsung + Blackview. Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.320",
+      "date": "2026-09-29",
+      "time": "19:50",
+      "at": "2026-09-29T19:50:00+02:00",
+      "title": "Dialogue MAJ : plus de « À jour » quand une version est dispo",
+      "notes": [
+        "Le popup ne mélange plus « Mise à jour disponible » et « À jour — p+1.3.317 ».",
+        "Texte clair : version installée vs version serveur. Pas de forceUpdate.",
+        "Overlay -r Samsung + Blackview. Nothing plus tard."
+      ]
+    },
+    {
+      "version": "1.3.319",
+      "date": "2026-09-29",
+      "time": "04:00",
+      "at": "2026-09-29T04:00:00+02:00",
+      "title": "Suivant change vraiment de titre (Maps, notif, Nothing)",
+      "notes": [
+        "Skip immédiat : plus d’attente 6 s d’une tête AAC qui bloquait le bouton suivant.",
+        "Un seul titre en file : « À suivre » s’ajoute et on passe au suivant même si la piste n’est pas finie.",
+        "Pas de forceUpdate — installe via MAJ in-app."
+      ]
+    },
+    {
+      "version": "1.3.318",
+      "date": "2026-09-28",
+      "time": "03:40",
+      "at": "2026-09-28T03:40:00+02:00",
+      "title": "Bilan biblio : les totaux somment enfin",
+      "notes": [
+        "État actuel = lisibles + remplacés + en attente + sans solution + pas vérifiés.",
+        "Les copies déjà trouvées ne passent plus pour des « lisibles » d’origine.",
+        "Overlay -r inutile (API). Pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.317",
+      "date": "2026-09-28",
+      "time": "03:20",
+      "at": "2026-09-28T03:20:00+02:00",
+      "title": "Paroles karaoké : 3 lignes, texte plus gros",
+      "notes": [
+        "À l’écran : ligne d’avant, ligne actuelle au milieu, ligne d’après.",
+        "La ligne chantée est beaucoup plus grosse — plus un mur de petit texte.",
+        "Options sync toujours sur une ligne repliable. Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.316",
+      "date": "2026-09-27",
+      "time": "22:15",
+      "at": "2026-09-27T22:15:00+02:00",
+      "title": "Paroles lisibles : options sur une ligne, moins d’espace",
+      "notes": [
+        "Barre sync repliable (−1 / +1). Le reste (gros pas, vote) se déplie.",
+        "Moins de vide entre les lignes — tu vois plus de paroles.",
+        "Cadencement auto un peu plus serré sur les titres denses.",
+        "Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.315",
+      "date": "2026-09-27",
+      "time": "22:00",
+      "at": "2026-09-27T22:00:00+02:00",
+      "title": "Rapport batterie sur 10 min, plus un 0 % instantané",
+      "notes": [
+        "API & logs : l’e-mail batterie mesure une fenêtre (~10 min), pas un tap.",
+        "Le % Android ne descend pas en 1 s — plus de mail « 0 % consommé ».",
+        "Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.314",
+      "date": "2026-09-27",
+      "time": "21:25",
+      "at": "2026-09-27T21:25:00+02:00",
+      "title": "Chargement du flux : plus de storm yt-dlp sur le même titre",
+      "notes": [
+        "2e stall lance encore l’ensure disque, mais un seul à la fois par titre.",
+        "Plus de 8 ensure en parallèle qui timeout tous.",
+        "Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.313",
+      "date": "2026-09-27",
+      "time": "21:00",
+      "at": "2026-09-27T21:00:00+02:00",
+      "title": "Nouvelle playlist fiable + sync paroles jusqu’à ±90 s",
+      "notes": [
+        "Créer une playlist depuis un titre : plus de dialogue cassé ni timeout biblio.",
+        "Paroles : plus bloqué à −15 s (Ruelle sombre). Gros pas ±1 / ±5 / ±15 s.",
+        "Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.312",
+      "date": "2026-09-27",
+      "time": "20:50",
+      "at": "2026-09-27T20:50:00+02:00",
+      "title": "Heal systémique : 2e stall prépare le fichier, plus seulement le format",
+      "notes": [
+        "Prefetch manqué signale vraiment le serveur (plus en info ignorée).",
+        "Deuxième « Chargement du flux » sur le même titre → ensure .m4a sur disque.",
+        "Skip : 2e fenêtre de tête AAC avant le seek. Digest jusqu’à 64 titres.",
+        "Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.310",
+      "date": "2026-09-25",
+      "time": "22:20",
+      "at": "2026-09-25T22:20:00+02:00",
+      "title": "Skip notif / clavier : même attente AAC que le bouton UI",
+      "notes": [
+        "Le suivant (casque, notif, KEYCODE) passait directement dans Exo → BUFFERING à froid.",
+        "Il passe maintenant par skipNext : tête 280 Ko avant le seek. Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.309",
+      "date": "2026-09-25",
+      "time": "22:00",
+      "at": "2026-09-25T22:00:00+02:00",
+      "title": "Skip : attendre vraiment la tête AAC (~280 Ko / 2,8 s)",
+      "notes": [
+        "Plus de skip à 160 Ko : on attend jusqu’à 2,8 s une tête de 280 Ko.",
+        "Le titre suivant précharge ~20 s (5,6 Mo) avant le seek. Fenêtre Wi‑Fi 8 titres.",
+        "Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.308",
+      "date": "2026-09-25",
+      "time": "21:45",
+      "at": "2026-09-25T21:45:00+02:00",
+      "title": "Skip : attendre la tête AAC avant le seek",
+      "notes": [
+        "Plus de seek à froid : jusqu’à 1,4 s d’attente tête (~220 Ko) avant skip.",
+        "Prefetch rolling 8 titres pendant la lecture. Overlay -r, pas de forceUpdate."
+      ]
+    },
+    {
+      "version": "1.3.307",
+      "date": "2026-09-25",
+      "time": "20:20",
+      "at": "2026-09-25T20:20:00+02:00",
+      "title": "MediaSession en pause pour Maps",
+      "notes": [
+        "La file restaurée sans play expose encore titre, artiste et session (dock Maps).",
+        "Overlay -r, pas de forceUpdate, pas de recreate API."
+      ]
+    },
+    {
+      "version": "1.3.306",
+      "date": "2026-09-25",
+      "time": "18:45",
+      "at": "2026-09-25T18:45:00+02:00",
+      "title": "Froid Android : plus de 503 JSON, live ≠ warm",
+      "notes": [
+        "Exo ne reçoit plus un JSON 503/502 (Source error → skip). On attend le préfixe AAC sur disque.",
+        "getAudioFormat live n’hérite plus d’un inflight warm déjà presque mort.",
+        "Grace BUFFERING allongée sur un titre jamais entendu. Overlay -r, pas de forceUpdate.",
+        "Le warm biblio s’efface si une lecture est en cours."
+      ]
+    },
+    {
+      "version": "1.3.303",
+      "date": "2026-09-25",
+      "time": "09:14",
+      "at": "2026-09-25T09:14:00+02:00",
+      "title": "Retry froid 0,9 s si le DL a déjà commencé",
+      "notes": [
+        "Le 2e Range Android n’attend plus 4 s : 503 immédiat ou préfixe."
+      ]
+    },
+    {
+      "version": "1.3.302",
+      "date": "2026-09-25",
+      "time": "09:12",
+      "at": "2026-09-25T09:12:00+02:00",
+      "title": "Skip froid : 503 et réessai, plus le vide",
+      "notes": [
+        "Si le préfixe AAC n’est pas là en 4 s, l’API répond 503 Retry-After 1 s (pas 410). Exo réessaie, le téléchargement continue.",
+        "Innertube itag 140 et yt-dlp partent en parallèle (1.3.301)."
+      ]
+    },
+    {
+      "version": "1.3.301",
+      "date": "2026-09-25",
+      "time": "09:05",
+      "at": "2026-09-25T09:05:00+02:00",
+      "title": "Froid AAC : Innertube 140 et yt-dlp en même temps",
+      "notes": [
+        "Plus d’attendre qu’Innertube échoue 5 s avant yt-dlp : les deux partent ensemble, itag 140 (M4A).",
+        "Le téléphone attend jusqu’à 12 s le préfixe jouable — un skip trop tôt ne part plus dans le vide."
+      ]
+    },
+    {
+      "version": "1.3.300",
+      "date": "2026-09-25",
+      "time": "08:36",
+      "at": "2026-09-25T08:36:00+02:00",
+      "title": "AAC progressif, plus de DASH que le Samsung refuse",
+      "notes": [
+        "Le hedge Innertube ANDROID écrivait ftyp=dash — ExoPlayer reste en BUFFERING.",
+        "On ne garde que itag 140/139/141 (M4A isom). Sinon yt-dlp sur le même proxy."
+      ]
+    },
+    {
+      "version": "1.3.299",
+      "date": "2026-09-25",
+      "time": "08:32",
+      "at": "2026-09-25T08:32:00+02:00",
+      "title": "Préfixe conservé, biblio en pause pendant l’écoute",
+      "notes": [
+        "yt-dlp ne passe plus par-dessus un hedge 256 Ko (le fichier disparaissait, BUFFERING).",
+        "Pendant PLAYING, le balayage biblio s’arrête — les proxies servent le titre en cours."
+      ]
+    },
+    {
+      "version": "1.3.298",
+      "date": "2026-09-25",
+      "time": "08:28",
+      "at": "2026-09-25T08:28:00+02:00",
+      "title": "Ne plus jeter le préfixe 256 Ko",
+      "notes": [
+        "Le hedge écrivait 256 Ko puis une autre requête le supprimait (seuil 768 Ko) — le Samsung restait en BUFFERING.",
+        "yt-dlp ne gomme plus un préfixe déjà jouable."
+      ]
+    },
+    {
+      "version": "1.3.297",
+      "date": "2026-09-25",
+      "time": "08:25",
+      "at": "2026-09-25T08:25:00+02:00",
+      "title": "Plus de 410 après un hedge réussi + rotation vraie",
+      "notes": [
+        "Un préfixe lent n’ouvre plus le circuit 410 — c’est ça qui laissait le Samsung en BUFFERING après un skip.",
+        "Dès qu’un proxy gagne le hedge, le circuit de cet id est levé.",
+        "Le pool ne se réduit plus au premier IP gagnant : au moins 12 proxies, cooldown 25 s entre deux résolutions."
+      ]
+    },
+    {
+      "version": "1.3.296",
+      "date": "2026-09-25",
+      "time": "08:20",
+      "at": "2026-09-25T08:20:00+02:00",
+      "title": "Rotation des proxies + swarm qui finit le fichier",
+      "notes": [
+        "Ce n’est plus toujours le même proxy qui parle à YouTube — rotation dans le pool chaud.",
+        "4 Ranges en parallèle (8 saturait l’IP vers 1 Mo). Les bouts ratés sont retentés."
+      ]
+    },
+    {
+      "version": "1.3.295",
+      "date": "2026-09-25",
+      "time": "08:05",
+      "at": "2026-09-25T08:05:00+02:00",
+      "title": "8 bouts en parallèle sur une seule URL",
+      "notes": [
+        "Plus de 3 résolutions YouTube : le 1er proxy qui répond gagne, l’autre s’arrête.",
+        "Dès les en-têtes HTTP, 8 Ranges partent ensemble sur la même URL (même proxy) — le chargement est vraiment en parallèle.",
+        "Le téléphone peut démarrer à 256 Ko pendant que le reste du morceau se remplit."
+      ]
+    },
+    {
+      "version": "1.3.294",
+      "date": "2026-09-25",
+      "time": "07:30",
+      "at": "2026-09-25T07:30:00+02:00",
+      "title": "Plusieurs utilisateurs, bouts en parallèle, biblio préchauffée",
+      "notes": [
+        "Même morceau : chaque proxy a sa propre URL, puis télécharge un autre bout — pas 3 fois la même URL (403).",
+        "Innertube passe par le proxy (plus besoin d’attendre yt-dlp pour démarrer).",
+        "Jusqu’à 10 yt-dlp dont 6 pour l’écoute live : deux téléphones en même temps ne se bloquent plus.",
+        "Toute la biblio se préchauffe en débuts 256 Ko partagés (tous les comptes)."
+      ]
+    },
+    {
+      "version": "1.3.293",
+      "date": "2026-09-24",
+      "time": "23:05",
+      "at": "2026-09-24T23:05:00+02:00",
+      "title": "Plus d’attente 10 s au milieu d’un titre",
+      "notes": [
+        "L’attente du début 256 Ko ne s’applique plus qu’au tout début — plus de BUFFERING bloqué à 3 min.",
+        "Si YouTube ne répond pas en 6 s, le titre est sauté au lieu de retenter 10 s en boucle."
+      ]
+    },
+    {
+      "version": "1.3.292",
+      "date": "2026-09-24",
+      "time": "21:50",
+      "at": "2026-09-24T21:50:00+02:00",
+      "title": "Le début 512 Ko n’est plus pris pour tout le morceau",
+      "notes": [
+        "Le premier bloc (512 Ko) n’est plus annoncé comme fichier complet — le reste continue via le même proxy.",
+        "Sur Android, on attend jusqu’à 10 s le début disque avant de laisser le lecteur skip.",
+        "Course proxy : 2 jambes (pas 3) pour ne plus saturer YouTube."
+      ]
+    },
+    {
+      "version": "1.3.291",
+      "date": "2026-09-24",
+      "time": "21:40",
+      "at": "2026-09-24T21:40:00+02:00",
+      "title": "Tout lire : 20 premiers débuts toujours au chaud",
+      "notes": [
+        "Les 20 premiers titres d’une liste (A–Z, album, artiste, singles) sont préchargés sur le VPS et le téléphone dès qu’ils s’affichent.",
+        "Seuls les débuts (512 Ko) restent en mémoire par compte, mis à jour régulièrement — le reste se charge via le même proxy avant le trou.",
+        "L’aléatoire garde son batch rotatif ; Tout lire ne part plus à froid."
+      ]
+    },
+    {
+      "version": "1.3.290",
+      "date": "2026-09-24",
+      "time": "21:20",
+      "at": "2026-09-24T21:20:00+02:00",
+      "title": "L’écoute passe devant le préchargement",
+      "notes": [
+        "Les slots YouTube de l’écoute ne sont plus pris par le préchargement.",
+        "Pendant que ça joue, on ne précharge plus les recherches — seulement le titre suivant."
+      ]
+    },
+    {
+      "version": "1.3.289",
+      "date": "2026-09-24",
+      "time": "20:45",
+      "at": "2026-09-24T20:45:00+02:00",
+      "title": "Premier chunk 512 Ko tout de suite, plus de file unique",
+      "notes": [
+        "Le gagnant de la course écrit 512 Ko sur le disque — plus un probe vide bytes=0-0.",
+        "Les morceaux suivants arrivent en parallèle sur le même proxy (comme un torrent, une seule IP).",
+        "Un titre froid n’attend plus que le titre d’avant ait fini YouTube."
+      ]
+    },
+    {
+      "version": "1.3.288",
+      "date": "2026-09-24",
+      "time": "20:25",
+      "at": "2026-09-24T20:25:00+02:00",
+      "title": "Hedge 5 s, search-warm remplacé, atlas durée client",
+      "notes": [
+        "Titre jamais écouté : 3e proxy à 5 s si les deux premiers n’ont pas encore de 206.",
+        "Une nouvelle recherche annule le préchargement du 1er hit précédent (fichier < 256 Ko seulement).",
+        "La durée envoyée par le téléphone est enregistrée dans l’atlas (moins de mauvais remix)."
+      ]
+    },
+    {
+      "version": "1.3.287",
+      "date": "2026-09-24",
+      "time": "19:50",
+      "at": "2026-09-24T19:50:00+02:00",
+      "title": "Hot pool persisté, skip avorté, atlas client, hedge 2,5 s",
+      "notes": [
+        "Les meilleurs proxies googlevideo (HTTP 206) sont sauvés dans hot_pool.json.",
+        "Un skip coupe seulement ta résolution YouTube, pas le fichier déjà en cache pour les autres.",
+        "Si le même morceau existe déjà sur le VPS (titre + artiste + durée), lecture immédiate.",
+        "Titre jamais écouté : course de 2 proxies (0 s / 2,5 s), timeout 12 s, même IP pour tout le fichier."
+      ]
+    },
+    {
+      "version": "1.3.281",
+      "date": "2026-09-23",
+      "time": "14:05",
+      "at": "2026-09-23T14:05:00+02:00",
+      "title": "Galactic et titres morts : skip en quelques secondes",
+      "notes": [
+        "Skip tampon Android ~6 s (plus 7×16 s).",
+        "Circuit format YouTube saturé → 410 immédiat.",
+        "PC maison offline = normal."
+      ]
+    },
+    {
+      "version": "1.3.279",
+      "date": "2026-09-23",
+      "time": "13:20",
+      "at": "2026-09-23T13:20:00+02:00",
+      "title": "Le titre suivant s’écrit tout de suite sur le VPS",
+      "notes": [
+        "Le .m4a grossit pendant le téléchargement (plus de fichier caché).",
+        "Une seule URL YouTube à la fois (8 s).",
+        "PC maison offline = normal."
+      ]
+    },
+    {
+      "version": "1.3.278",
+      "date": "2026-09-22",
+      "time": "20:05",
+      "at": "2026-09-22T20:05:00+02:00",
+      "title": "Pool proxies stable (plus de 502 en boucle)",
+      "notes": [
+        "Les listes de proxies publics ne se relancent plus toutes les 8 s.",
+        "Source morte proxy-list.download (502) retirée.",
+        "PC maison offline = normal. Hubera ID demandé, login local conservé."
+      ]
+    },
+    {
+      "version": "1.3.277",
+      "date": "2026-09-22",
+      "time": "19:00",
+      "at": "2026-09-22T19:00:00+02:00",
+      "title": "Plus de deadline swarm + pause écran",
+      "notes": [
+        "Swarm uniquement si l’URL est déjà en mémoire — plus de getAudioFormat 16 s.",
+        "PC maison offline = normal : audio = VPS + proxies gratuits + cache disque."
+      ]
+    },
+    {
+      "version": "1.3.276",
+      "date": "2026-09-21",
+      "time": "15:50",
+      "at": "2026-09-21T15:50:00+02:00",
+      "title": "Flux qui démarre même sans relais maison",
+      "notes": [
+        "Si le relais audio renvoie un fichier vide, on change de proxy tout de suite au lieu d’attendre",
+        "La résolution d’un titre n’avale plus tout le délai — le lecteur reçoit des octets plus tôt",
+        "Paroles : Genius / sites lyrics aussi via proxy, plus Textyl / ChartLyrics, et on mémorise ce qui a marché"
+      ]
+    },
+    {
+      "version": "1.3.275",
+      "date": "2026-09-21",
+      "time": "15:35",
+      "at": "2026-09-21T15:35:00+02:00",
+      "title": "Flux qui charge vraiment + nom Music",
+      "notes": [
+        "Rebind sans vider le cache : plus de boucle « Chargement du flux… » sur Samsung / Blackview",
+        "Icône lanceur : Music (Preprod / Dev), pas un pavé Hubera Music",
+        "Paroles : catalogue Spotify/Deezer/Apple + LRCLIB élargi"
+      ]
+    },
+    {
+      "version": "1.3.274",
+      "date": "2026-09-21",
+      "title": "APK à jour + paroles via catalogue Spotify",
+      "notes": [
+        "L’app mobile et le serveur affichent la même version — plus d’APK plus vieille que le téléphone",
+        "Paroles : on cherche aussi le titre sur Spotify / Deezer / Apple pour coller le bon morceau",
+        "Si le catalogue n’a pas le texte : propositions + collage, partagé pour tout le monde"
+      ]
+    },
+    {
+      "version": "1.3.273",
+      "date": "2026-09-21",
+      "title": "Meilleures paroles, sinon propositions + collage",
+      "notes": [
+        "Le serveur choisit le meilleur texte (Genius, lyrics.ovh, Musixmatch, pages web)",
+        "Si rien ne correspond au titre exact : propositions + liens Genius / Google / Musixmatch",
+        "Tu peux coller les paroles : elles sont partagées compressées pour tous les comptes"
+      ]
+    },
+    {
+      "version": "1.3.272",
+      "date": "2026-09-21",
+      "title": "Paroles Genius partagées + flux déjà prêts",
+      "notes": [
+        "Paroles trouvées une fois (Genius / LRCLIB) : stockées compressées pour tous les comptes",
+        "InTheLight / ABCD ADHD : plus confondu avec le tube ADHD, slugs Genius In The Light + ADAH",
+        "Les .m4a déjà complets sur le serveur sont indexés et resservis sans re-télécharger"
+      ]
+    },
+    {
+      "version": "1.3.271",
+      "date": "2026-09-21",
+      "title": "Tout lire 14k fluide, suivants préchargés, vrais albums",
+      "notes": [
+        "Bibliothèque mobile : liste virtualisée (pas de gel Tout lire / 14k titres)",
+        "File limitée en mémoire (400) — la suite se charge au fil de l’écoute",
+        "Le titre suivant a ~20 s de tête, un seul flux à la fois (plus de rush proxy)",
+        "Album YouTube KO : on reconstitue les titres depuis ta bibliothèque"
+      ]
+    },
+    {
+      "version": "1.3.270",
+      "date": "2026-09-21",
+      "title": "Plus de coupure mid-titre ni de remplacement paroles",
+      "notes": [
+        "Un timeout proxy ne remplace plus le morceau par une autre vidéo (paroles / cover)",
+        "On ne change d’identifiant que si YouTube dit vraiment que la vidéo est morte",
+        "Les titres suivants restent le même flux, sans saut au milieu",
+        "Si le relais maison est coupé, on résout d’abord via Innertube (pas yt-dlp seul)"
+      ]
+    },
+    {
+      "version": "1.3.269",
+      "date": "2026-09-21",
+      "title": "Le titre en cours se résout, plus un toast puis skip",
+      "notes": [
+        "Chargement long : on retente le même titre (proxy frais), plus « Serveur audio temporairement indisponible » au bout de 2 s",
+        "Un 502 transitoire ne fait plus passer au suivant",
+        "Le serveur ne lance plus de téléchargement / remplacement pendant que tu attends le flux"
+      ]
+    },
+    {
+      "version": "1.3.268",
+      "date": "2026-09-21",
+      "title": "Reprise du titre en cours, pas un saut au suivant",
+      "notes": [
+        "Si tu fermes l’app pendant le premier chargement, à la réouverture c’est le même titre qui est rechauffé (URL + flux)",
+        "On ne passe plus au suivant juste parce que le suivant était déjà en cache",
+        "Fin à 0 s sur un titre jamais écouté = nouvel essai, pas un skip"
+      ]
+    },
+    {
+      "version": "1.3.267",
+      "date": "2026-09-20",
+      "title": "Enchaînement aléatoire sans chargement bloqué",
+      "notes": [
+        "Fin d’un titre en aléatoire : le suivant est celui déjà préchargé (plus de tirage au sort à froid)",
+        "Aléatoire : préchargement immédiat de la nouvelle suite (+1…+6)",
+        "Tête du titre suivant plus large, surtout en charge, pour éviter « Chargement du flux… »",
+        "Hors charge / économiseur : prefetch allégé pour la batterie"
+      ]
+    },
+    {
+      "version": "1.3.266",
+      "date": "2026-09-20",
+      "title": "Bibliothèque fluide (file 400, listes virtualisées)",
+      "notes": [
+        "Tout lire / Aléatoire : file limitée à 400 titres pour rester fluide",
+        "Albums, playlists, artistes, mixes : listes longues sans geler le défilement",
+        "Connexion : un seul rafraîchissement de la bibliothèque"
+      ]
+    },
+    {
+      "version": "1.3.262",
+      "date": "2026-09-20",
+      "title": "Paroles Genius : le bon titre",
+      "notes": [
+        "Recherche de paroles avec l’artiste et le titre en lecture (ex. InTheLight — ABCD ADAH), plus le titre seul",
+        "Un tube populaire au nom proche (ADHD) n’est plus pris à la place du morceau en cours",
+        "Le bouton Chercher sur Genius ouvre artiste + titre, sur le web comme sur Android"
+      ]
+    },
+    {
+      "version": "1.3.261",
+      "date": "2026-09-20",
+      "title": "MHC + Accès rapide web",
+      "notes": [
+        "PLM s’appelle désormais MHC (Music Hubera Cloud). Hubera Music reste le nom long",
+        "Identité manifeste : cloud.hubera.music — le package Android ovh.delhomme.ytmusic ne change pas (comptes conservés)",
+        "Accès rapide web : boutons Tout lire et Aléatoire comme sur Android"
+      ]
+    },
+    {
+      "version": "1.3.260",
+      "date": "2026-09-20",
+      "title": "Hubera Music + signaler un problème",
+      "notes": [
+        "Nom affiché : Hubera Music partout (icône, accueil, notifs)",
+        "Compte → Signaler un problème : envoie un journal de l’appareil",
+        "Le package Android reste le même : tes comptes ne bougent pas"
+      ]
+    },
+    {
+      "version": "1.3.259",
+      "date": "2026-09-20",
+      "title": "QR connexion : music.hubera.cloud",
+      "notes": [
+        "Le scan QR reconnaît music.hubera.cloud (plus seulement PLM)",
+        "Cookies / CORS Hubera pour connecter un navigateur depuis l’app"
+      ]
+    },
+    {
+      "version": "1.3.258",
+      "date": "2026-09-18",
+      "title": "Streams fluides : disque early + proxies sans PC maison",
+      "notes": [
+        "Serveur autonome : proxies HTTP gratuits — écoute OK même PC éteint",
+        "Cache disque servi immédiatement (early) — moins de « Chargement… » interminable",
+        "Anti-DASH Android : URL yt-dlp progressive ; soft-fail ne bloque plus les titres déjà en cache",
+        "Remplacements : fini le ping-pong A↔B (ex. Brisa) ; seuil score 70",
+        "Prefetch / cold start adoucis (suite 1.3.256)"
+      ]
+    },
+    {
+      "version": "1.3.256",
+      "date": "2026-09-18",
+      "title": "1er titre : plus de skip trop tôt + charge prioritaire",
+      "notes": [
+        "Cold start : jusqu’à ~42 s avant abandon (yt-dlp VPS), plus de skip au 2e stall",
+        "Prefetch des suivants bloqué ~12 s pour laisser le 1er titre charger",
+        "Serveur : budget format audio 55 s (moins de 502 sur titres froids)",
+        "Fenêtre prefetch Wi‑Fi réduite (6) pour ne pas saturer"
+      ]
+    },
+    {
+      "version": "1.3.255",
+      "date": "2026-09-18",
+      "title": "Moins de coupures maison + moins de mails stall",
+      "notes": [
+        "Relais maison : le timeout ne coupe plus le flux mid-titre (AbortSignal limité au 1er octet)",
+        "Un titre lent / 410 ne marque plus le PC hors-ligne 45 s — pause courte seulement après série de soft-fails",
+        "Android : prefetch un peu moins agressif ; stalls / recover en warn (plus d’avalanche d’emails)",
+        "Alertes serveur : 1 mail stall/recover max toutes les 4 min"
+      ]
+    },
+    {
+      "version": "1.3.254",
+      "date": "2026-09-18",
+      "title": "Web : lecture rétablie + Accueil rapide",
+      "notes": [
+        "Web : cookie HttpOnly périmé ne bloque plus access_token du lecteur <audio> (fin du Format error)",
+        "Accueil : budgets 3s — plus de « Chargement… » de 17–40 s",
+        "Service Worker : /api/home et /api/auth en NetworkOnly (plus de cache 401)"
+      ]
+    },
+    {
+      "version": "1.3.253",
+      "date": "2026-09-18",
+      "title": "Maison : un DASH ne coupe plus tout le tunnel",
+      "notes": [
+        "Relais maison : un titre en DASH ne marque plus le PC hors-ligne 45 s (évite file entière en 502)",
+        "Reprise après appel (1.3.252) : soft rebind + toast « Reprise du flux… »"
+      ]
+    },
+    {
+      "version": "1.3.252",
+      "date": "2026-09-18",
+      "title": "Reprise après appel sans faux « Serveur audio indisponible »",
+      "notes": [
+        "Fin d’appel : soft rebind du flux (plus de play() à l’aveugle sur sockets morts)",
+        "Pendant ~20 s après l’appel : toast « Reprise du flux… » au lieu de « Serveur audio indisponible »",
+        "DNS / fausse hors-ligne juste après un appel : retente le titre, ne gèle plus le prefetch"
+      ]
+    },
+    {
+      "version": "1.3.251",
+      "date": "2026-09-18",
+      "title": "Compte : retour remis en place + DL offline plus fluide",
+      "notes": [
+        "Écran Compte : flèche retour réalignée (plus de double inset avec le mini-lecteur)",
+        "Téléchargement offline : plus de faux 12 % figé — « Préparation serveur… » puis vraie progression",
+        "Serveur : offline saute le gate Exo 410 et ne bloque plus sur le probe Range 0-0"
+      ]
+    },
+    {
+      "version": "1.3.250",
+      "date": "2026-09-18",
+      "title": "Anti-stall Blue : remux OAuth + 410 rapide",
+      "notes": [
+        "Titres morts (Blue / unavailable) : 410 immédiat côté Android — plus de stall / mail stream-5xx après 40 s",
+        "Téléchargement progressif : OAuth googlevideo + remux ffmpeg si DASH (cookies yt-dlp morts)",
+        "Taste warm : plus de saturation getAudioFormat pendant une écoute"
+      ]
+    },
+    {
+      "version": "1.3.249",
+      "date": "2026-09-18",
+      "title": "Pré-validation flux avant écoute (anti-coupure)",
+      "notes": [
+        "Avant play Android : le serveur assure un .m4a complet (proxies + contrôle ftyp) ou un remplaçant jouable",
+        "Warm / heal stall : téléchargement intégral disque, plus seulement une tête RAM",
+        "Réduit les 502 / coupures mid-piste quand le VPS est bot-bloqué"
+      ]
+    },
+    {
+      "version": "1.3.248",
+      "date": "2026-09-18",
+      "title": "Slim Shady sans PC maison + remplacements sains",
+      "notes": [
+        "Cache disque servi avant les redirections de remplacement (fin des chaînes vers titres morts)",
+        "Plus de remplacement « non vérifié » qui redirige vers un medley/live KO",
+        "Écoute live : Innertube/OAuth prioritaire sur yt-dlp (VPS sans tunnel maison)",
+        "Warm : slot yt-dlp réservé à l’écoute ; taste/library ne saturent plus le lecteur"
+      ]
+    },
+    {
+      "version": "1.3.247",
+      "date": "2026-09-18",
+      "title": "Écoute prioritaire vs warm + proxies VPS",
+      "notes": [
+        "Stream live : priorité yt-dlp (slot réservé) + vidage warm pendant l’écoute",
+        "VPS bot-bloqué : proxies YouTube d’abord pour Slim Shady / Aléatoire (plus de timeout 40 s sur IP directe)",
+        "Taste/library warm : pas de téléchargement .m4a pendant une lecture active"
+      ]
+    },
     {
       "version": "1.3.246",
       "date": "2026-09-18",
@@ -1392,5 +2816,33 @@
         "Probe durée + refus des DL incomplets"
       ]
     }
-  ]
+  ],
+  "1.3.400": "Next/Prev media keys au premier plan → skipTo*FromExternal (plus de ViewPostIme silencieux).",
+  "1.3.401": "Mails erreur : breadcrumbs+logs toujours (buffer hors-ligne + batch alert) · heal android.player 5xx · Next media keys 1.3.400.",
+  "1.3.402": "Précédent : seuil hold 520ms (tap lent n’avale plus le skip) · politique prev testée (SkipQueuePolicy) · jamais restart si titre d’avant existe.",
+  "1.3.403": "Laisse Nous Raver Extended/Radio → original jouable · soft version fallback · heal 5xx lance remplacement · seeds Rekkt.",
+  "1.3.404": "Préfixe chaud 2 suivants · preflight serveur ×3 · .m4a×2 au repos · roadmap cache+heal (pas YT direct à chaque lecture).",
+  "1.3.409": {
+    "version": "1.3.409",
+    "date": "2026-10-30",
+    "time": "13:37",
+    "at": "2026-10-30T13:37:25+01:00",
+    "title": "Like / biblio / pin / DL sur IDs remplacés",
+    "notes": [
+      "Extended Mix Rekkt (et tout ID mort seed) : j’aime, bibliothèque, accès rapide et téléchargement ciblent l’original jouable.",
+      "Pin n’appelle plus getFullLibrary (timeout pendant un DL) — libraryContains léger.",
+      "Actions survivent à la fermeture du menu et à un téléchargement en cours."
+    ]
+  },
+  "1.3.410": {
+    "version": "1.3.410",
+    "date": "2026-10-30",
+    "time": "13:51",
+    "at": "2026-10-30T13:51:08+01:00",
+    "title": "Ça n a pas marché → alternative",
+    "notes": [
+      "Menu titre : action « Ça n a pas marché » cherche une autre adresse (remplacement) et reprend la lecture.",
+      "API trackReplacement côté Android + remap like/biblio déjà en 1.3.409."
+    ]
+  }
 }

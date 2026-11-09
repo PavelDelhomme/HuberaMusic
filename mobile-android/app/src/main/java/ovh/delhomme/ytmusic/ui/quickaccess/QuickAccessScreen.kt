@@ -1,26 +1,35 @@
 package ovh.delhomme.ytmusic.ui.quickaccess
 
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -60,6 +69,7 @@ fun QuickAccessScreen(
     val pinsRemote by container.quickAccess.pins.collectAsState(initial = emptyList())
     var order by remember { mutableStateOf(pinsRemote) }
     var shuffleBusy by remember { mutableStateOf(false) }
+    var pendingRemove by remember { mutableStateOf<TrackDto?>(null) }
     val listState = rememberLazyListState()
     val reorderState = rememberDragReorderState(
         listState = listState,
@@ -85,7 +95,12 @@ fun QuickAccessScreen(
         reorderState.configure(keys) { keyToIndex[it] }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+    ) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -203,16 +218,34 @@ fun QuickAccessScreen(
                             },
                             onMore = { onMore(track) },
                             pinned = true,
-                            onTogglePin = {
-                                scope.launch {
-                                    container.quickAccess.toggle(track, container.api)
-                                }
-                            },
+                            onTogglePin = { pendingRemove = track },
                             modifier = Modifier.weight(1f),
                         )
+                        IconButton(onClick = { pendingRemove = track }) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Retirer de l’accès rapide",
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+    pendingRemove?.let { track ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text("Retirer de l’accès rapide ?") },
+            text = { Text(track.title.ifBlank { "Ce titre" }) },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRemove = null
+                    scope.launch { container.quickAccess.toggle(track, container.api) }
+                }) { Text("Retirer") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemove = null }) { Text("Annuler") }
+            },
+        )
     }
 }

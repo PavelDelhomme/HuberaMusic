@@ -3,6 +3,7 @@ import {
   Disc3,
   Download,
   ExternalLink,
+  Flag,
   Heart,
   Library,
   ListEnd,
@@ -23,7 +24,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, type Track } from '../../api';
 import { listCachedIds } from '../../lib/offline/offlineCache';
 import { applySleepPick, SLEEP_TIMER_OPTIONS } from '../../lib/player/sleepTimer';
@@ -75,6 +76,8 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
   const opts = useItemActions((s) => s.opts);
   const close = useItemActions((s) => s.close);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const searchQuery = (searchParams.get('q') || '').trim();
   const addNext = usePlayer((s) => s.addNext);
   const addToQueue = usePlayer((s) => s.addToQueue);
   const removeFromQueue = usePlayer((s) => s.removeFromQueue);
@@ -566,6 +569,67 @@ export function ItemActionsSheet({ onOpenEqualizer }: { onOpenEqualizer?: () => 
                   }
                 })();
               }}
+            />
+          )}
+
+          {/* 2b. Feedback recherche / métadonnées */}
+          {playable && (
+            <Row
+              icon={<Flag className="h-4 w-4" />}
+              label={
+                searchQuery
+                  ? 'C’est le bon résultat pour ma recherche'
+                  : 'Confirmer titre / artiste (améliore la recherche)'
+              }
+              sub={
+                searchQuery
+                  ? `Pour « ${searchQuery.slice(0, 48)}${searchQuery.length > 48 ? '…' : ''} »`
+                  : 'Apprend ce mapping pour tout le monde'
+              }
+              disabled={busy}
+              onClick={() =>
+                after(async () => {
+                  try {
+                    const q = searchQuery || `${item.title || ''} ${artistsAll[0]?.name || ''}`.trim();
+                    if (!q) return;
+                    await api.searchFeedback({
+                      query: q,
+                      kind: 'confirm',
+                      correctVideoId: item.id,
+                      title: item.title,
+                      artist: artistsAll.map((a) => a.name).filter(Boolean).join(', '),
+                    });
+                    setPlaylistMsg('Merci — recherche améliorée');
+                  } catch (e) {
+                    setPlaylistMsg(String((e as Error)?.message || e));
+                  }
+                })
+              }
+            />
+          )}
+          {playable && searchQuery && (
+            <Row
+              icon={<Flag className="h-4 w-4" />}
+              label="Ce n’est PAS le bon titre / artiste"
+              sub="On baissera ce résultat pour cette recherche"
+              disabled={busy}
+              onClick={() =>
+                after(async () => {
+                  try {
+                    await api.searchFeedback({
+                      query: searchQuery,
+                      kind: 'wrong',
+                      wrongVideoId: item.id,
+                      title: item.title,
+                      artist: artistsAll.map((a) => a.name).filter(Boolean).join(', '),
+                    });
+                    setPlaylistMsg('Signalé — choisis le bon titre dans les résultats');
+                    navigate(`/search?q=${encodeURIComponent(searchQuery)}`);
+                  } catch (e) {
+                    setPlaylistMsg(String((e as Error)?.message || e));
+                  }
+                })
+              }
             />
           )}
 

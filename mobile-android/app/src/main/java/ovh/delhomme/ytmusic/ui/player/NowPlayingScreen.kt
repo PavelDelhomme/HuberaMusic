@@ -21,6 +21,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -55,6 +56,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
@@ -72,6 +75,7 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
@@ -127,6 +131,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
@@ -160,6 +165,7 @@ import ovh.delhomme.ytmusic.ui.components.DownloadStatusIcon
 import ovh.delhomme.ytmusic.ui.components.EqualizerSheet
 import ovh.delhomme.ytmusic.ui.components.HoldSeekIconButton
 import ovh.delhomme.ytmusic.ui.components.MediaCover
+import ovh.delhomme.ytmusic.ui.components.rememberCoverRequest
 import ovh.delhomme.ytmusic.ui.components.dragReorderHandle
 import ovh.delhomme.ytmusic.ui.components.dragReorderItem
 import ovh.delhomme.ytmusic.ui.components.dragReorderLongPress
@@ -279,6 +285,8 @@ fun NowPlayingScreen(
     // (sinon setMediaItems+prepare → coupe l’audio). Clear seulement si le seed change.
     var lastAutoplaySeed by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(ui.track?.id, ui.sourceKind, ui.userQueueEnd, ui.queueIndex) {
+        // Accès rapide : pas de « À suivre » hors des titres épinglés.
+        if (ui.sourceKind == "pins") return@LaunchedEffect
         // Toujours remplir « À suivre » pour l’affichage — autoplay = auto-avance seulement
         val seed = ui.track?.id ?: return@LaunchedEffect
         val remainingUser = (ui.userQueueEnd - ui.queueIndex - 1).coerceAtLeast(0)
@@ -621,7 +629,7 @@ fun NowPlayingScreen(
         // Ambient blur — fond unifié sous cover + chrome (sheet visible uniquement)
         if (sheetVisible) {
             AsyncImage(
-                model = track.coverUrl(160),
+                model = rememberCoverRequest(track, 160),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -828,14 +836,17 @@ fun NowPlayingScreen(
                                     ),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
-                                // Paroles = même emplacement / hauteur que cover|vidéo ; titre + artiste restent dessous.
-                                if (showLyrics) {
+                                // Paroles = overlay sur le clip (mode Vidéo) ; sinon même emplacement que la cover.
+                                if (showLyrics && !(SessionMediaMode.video && !videoFullscreen)) {
                                     InlineSyncedLyrics(
                                         container = container,
                                         track = track,
                                         positionMs = ui.positionMs,
                                         durationMs = ui.durationMs,
+                                        playing = ui.playing,
                                         onSeek = { player.seek(it) },
+                                        onSkipNext = { skipNextFromSwipe() },
+                                        onSkipPrev = { skipPrevFromSwipe() },
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(lyricsH)
@@ -843,6 +854,12 @@ fun NowPlayingScreen(
                                             .background(Color.Black.copy(alpha = 0.42f)),
                                     )
                                 } else if (SessionMediaMode.video && !videoFullscreen) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .height(coverH)
+                                            .clip(RoundedCornerShape(12.dp)),
+                                    ) {
                                     when {
                                         video.streamUrl != null -> SyncedVideoSurface(
                                             streamUrl = video.streamUrl!!,
@@ -880,13 +897,19 @@ fun NowPlayingScreen(
                                                         )
                                                     }.getOrNull()
                                                     val alt = retried?.visualId?.takeIf {
-                                                        it.isNotBlank() && it != used && it != tid
+                                                        it.isNotBlank() && it != used
                                                     }
-                                                    if (alt != null && SessionMediaMode.video && ui.track?.id == tid) {
+                                                    if (alt != null && alt != tid && SessionMediaMode.video && ui.track?.id == tid) {
                                                         VisualIdCache.put(context, tid, alt)
                                                         video.visualId = alt
                                                         video.error = null
                                                         video.streamUrl = container.videoStreamUrl(alt)
+                                                    } else if (used != null && used != tid && SessionMediaMode.video && ui.track?.id == tid) {
+                                                        // Clip « officiel » introuvable → on rejoue la vidéo du titre (Laisse Nous Raver).
+                                                        VisualIdCache.put(context, tid, tid)
+                                                        video.visualId = tid
+                                                        video.error = null
+                                                        video.streamUrl = container.videoStreamUrl(tid)
                                                     } else {
                                                         video.streamUrl = null
                                                         video.visualId = null
@@ -913,7 +936,7 @@ fun NowPlayingScreen(
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             AsyncImage(
-                                                model = track.coverUrl(400),
+                                                model = rememberCoverRequest(track, 400),
                                                 contentDescription = track.title,
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier
@@ -939,7 +962,7 @@ fun NowPlayingScreen(
                                         ) {
                                             // Pochette tout de suite — plus d’écran « Recherche du clip… »
                                             AsyncImage(
-                                                model = track.coverUrl(400),
+                                                model = rememberCoverRequest(track, 400),
                                                 contentDescription = track.title,
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier
@@ -976,6 +999,22 @@ fun NowPlayingScreen(
                                                     }
                                                 }
                                             }
+                                        }
+                                    }
+                                        if (showLyrics) {
+                                            InlineSyncedLyrics(
+                                                container = container,
+                                                track = track,
+                                                positionMs = ui.positionMs,
+                                                durationMs = ui.durationMs,
+                                                playing = ui.playing,
+                                                onSeek = { player.seek(it) },
+                                                onSkipNext = { skipNextFromSwipe() },
+                                                onSkipPrev = { skipPrevFromSwipe() },
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(Color.Black.copy(alpha = 0.38f)),
+                                            )
                                         }
                                     }
                                 } else {
@@ -1062,20 +1101,24 @@ fun NowPlayingScreen(
                                             showLabel = false,
                                         ) {
                                             val was = liked
+                                            val aliases = ovh.delhomme.ytmusic.data.TrackCanonical.aliasIds(track.id)
                                             onLikedChanged(
-                                                if (was) likedIds - track.id else likedIds + track.id,
+                                                if (was) likedIds - aliases else likedIds + aliases,
                                             )
                                             container.appScope().launch {
                                                 runCatching {
-                                                    AppLog.breadcrumb("like", track.id)
-                                                    val r = container.api.like(track)
+                                                    val target = ovh.delhomme.ytmusic.data.TrackCanonical
+                                                        .resolveForActions(container, track)
+                                                    AppLog.breadcrumb("like", target.id)
+                                                    val r = container.api.like(target)
+                                                    val ids = ovh.delhomme.ytmusic.data.TrackCanonical
+                                                        .aliasIds(target.id) + aliases
                                                     onLikedChanged(
-                                                        if (r.liked) likedIds + track.id
-                                                        else likedIds - track.id,
+                                                        if (r.liked) likedIds + ids else likedIds - ids,
                                                     )
                                                     container.api.recoFeedback(
                                                         RecoFeedbackBody(
-                                                            track.id,
+                                                            target.id,
                                                             if (r.liked) "good" else "bad",
                                                             "now_playing_like",
                                                         ),
@@ -1083,7 +1126,7 @@ fun NowPlayingScreen(
                                                 }.onFailure { e ->
                                                     if (e is kotlinx.coroutines.CancellationException) throw e
                                                     onLikedChanged(
-                                                        if (was) likedIds + track.id else likedIds - track.id,
+                                                        if (was) likedIds + aliases else likedIds - aliases,
                                                     )
                                                     AppLog.e("like", "échec like ${track.id}", e)
                                                 }
@@ -1288,35 +1331,32 @@ fun NowPlayingScreen(
                                             .fillMaxWidth()
                                             .zIndex(5f)
                                             .background(Color.Black.copy(alpha = 0.72f))
-                                            .then(
-                                                if (showLyrics) Modifier
-                                                else Modifier.nowPlayingMediaGestures(
-                                                    key = "chrome-${track.id}",
-                                                    onDismissDelta = { delta ->
-                                                        if (queueProgress.value > 0.02f) {
-                                                            onQueueDrag(delta)
-                                                        } else if (!dismissArmed) {
-                                                            dragOffset = 0f
-                                                        } else {
-                                                            dragOffset = (dragOffset + delta).coerceAtLeast(0f)
-                                                        }
-                                                    },
-                                                    onDismissEnd = {
-                                                        if (queueProgress.value > 0.02f) settleQueue(0f)
-                                                        else settleOrClose()
-                                                    },
-                                                    onHorizontalDelta = { dx ->
-                                                        mediaSlideX = (mediaSlideX + dx).coerceIn(-120f, 120f)
-                                                    },
-                                                    onHorizontalEnd = { totalX ->
-                                                        when {
-                                                            totalX < -72f -> skipNextFromSwipe()
-                                                            totalX > 72f -> skipPrevFromSwipe()
-                                                            else -> mediaSlideX = 0f
-                                                        }
-                                                    },
-                                                    onHorizontalCancel = { mediaSlideX = 0f },
-                                                ),
+                                            .nowPlayingMediaGestures(
+                                                key = "chrome-${track.id}",
+                                                onDismissDelta = { delta ->
+                                                    if (queueProgress.value > 0.02f) {
+                                                        onQueueDrag(delta)
+                                                    } else if (!dismissArmed) {
+                                                        dragOffset = 0f
+                                                    } else {
+                                                        dragOffset = (dragOffset + delta).coerceAtLeast(0f)
+                                                    }
+                                                },
+                                                onDismissEnd = {
+                                                    if (queueProgress.value > 0.02f) settleQueue(0f)
+                                                    else settleOrClose()
+                                                },
+                                                onHorizontalDelta = { dx ->
+                                                    mediaSlideX = (mediaSlideX + dx).coerceIn(-120f, 120f)
+                                                },
+                                                onHorizontalEnd = { totalX ->
+                                                    when {
+                                                        totalX < -72f -> skipNextFromSwipe()
+                                                        totalX > 72f -> skipPrevFromSwipe()
+                                                        else -> mediaSlideX = 0f
+                                                    }
+                                                },
+                                                onHorizontalCancel = { mediaSlideX = 0f },
                                             )
                                             .padding(horizontal = 18.dp)
                                             .padding(top = 10.dp, bottom = 0.dp),
@@ -1776,7 +1816,7 @@ private fun NowPlayingSeekTransport(
             }
             val remainingMs = (ui.durationMs - scrubPos).coerceAtLeast(0L)
             Text(
-                "-${formatMs(remainingMs)}",
+                formatMs(remainingMs),
                 style = MaterialTheme.typography.labelSmall,
                 color = PlayerMuted,
             )
@@ -1820,7 +1860,7 @@ private fun NowPlayingSeekTransport(
                     }
                     PlayerChromeAction.PlayPause -> IconButton(onClick = player::toggle) {
                         Icon(
-                            if (ui.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            if (ui.playing || ui.buffering) Icons.Default.Pause else Icons.Default.PlayArrow,
                             slot.label,
                             tint = PlayerFg,
                             modifier = Modifier.size(if (landscape) 48.dp else 56.dp),
@@ -2859,7 +2899,7 @@ private fun QueueExpandedBody(
                                 color = PlayerMuted,
                             )
                         }
-                        if (similarTracks.isNotEmpty()) {
+                        if (similarTracks.isNotEmpty() && ui.sourceKind != "pins") {
                             TextButton(
                                 onClick = {
                                     similarTracks.take(30).forEach { player.addToQueue(it) }
@@ -3027,6 +3067,64 @@ private fun Modifier.nowPlayingMediaGestures(
     )
 }
 
+@Composable
+private fun BoxScope.LyricsSkipOverlays(
+    onSkipNext: () -> Unit,
+    onSkipPrev: () -> Unit,
+) {
+    val edgeSwipe = { isRight: Boolean ->
+        Modifier
+            .align(if (isRight) Alignment.CenterEnd else Alignment.CenterStart)
+            .fillMaxHeight()
+            .width(48.dp)
+            .zIndex(10f)
+            .pointerInput(isRight) {
+                var totalX = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { totalX = 0f },
+                    onDragEnd = {
+                        when {
+                            totalX < -72f -> onSkipNext()
+                            totalX > 72f -> onSkipPrev()
+                        }
+                    },
+                    onHorizontalDrag = { change, dx ->
+                        change.consume()
+                        totalX += dx
+                    },
+                )
+            }
+    }
+    Box(edgeSwipe(false))
+    Box(edgeSwipe(true))
+    Row(
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(6.dp)
+            .zIndex(12f)
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .clickable(onClick = onSkipNext)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            Icons.Default.SkipNext,
+            contentDescription = "Titre suivant",
+            tint = Color.White,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            "Next",
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QueueTrackRow(
@@ -3170,7 +3268,10 @@ private fun InlineSyncedLyrics(
     track: TrackDto,
     positionMs: Long,
     durationMs: Long = 0L,
+    playing: Boolean = true,
     onSeek: (Long) -> Unit,
+    onSkipNext: () -> Unit = {},
+    onSkipPrev: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -3180,8 +3281,20 @@ private fun InlineSyncedLyrics(
     var lyricsSource by remember(track.id) { mutableStateOf<String?>(null) }
     var loading by remember(track.id) { mutableStateOf(true) }
     var lyricsReloadToken by remember(track.id) { mutableIntStateOf(0) }
-    val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v1") }
-    val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v1") }
+    var suggestions by remember(track.id) {
+        mutableStateOf<List<ovh.delhomme.ytmusic.data.LyricSuggestionDto>>(emptyList())
+    }
+    var searchUrls by remember(track.id) {
+        mutableStateOf<List<ovh.delhomme.ytmusic.data.LyricSearchUrlDto>>(emptyList())
+    }
+    var pasteOpen by remember(track.id) { mutableStateOf(false) }
+    var pasteDraft by remember(track.id) { mutableStateOf("") }
+    var pasteSaving by remember(track.id) { mutableStateOf(false) }
+    var voteBusy by remember(track.id) { mutableStateOf(false) }
+    var voteHint by remember(track.id) { mutableStateOf<String?>(null) }
+    var toolsOpen by remember(track.id) { mutableStateOf(false) }
+    val syncPrefs = remember { container.sharedPrefs("plm_lyric_sync_v2") }
+    val segPrefs = remember { container.sharedPrefs("plm_lyric_segments_v2") }
     var userOffsetMs by remember(track.id) {
         mutableLongStateOf(syncPrefs.getLong(track.id, 0L))
     }
@@ -3196,7 +3309,7 @@ private fun InlineSyncedLyrics(
         lyricsSource = null
         userOffsetMs = syncPrefs.getLong(track.id, 0L)
         segments = loadLyricSegments(segPrefs, track.id)
-        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v5")
+        val lyricsCache = container.sharedPrefs("plm_lyrics_cache_v6")
         val cachedText = lyricsCache.getString("t_${track.id}", null)
         val cachedTimed = lyricsCache.getString("l_${track.id}", null)
         if (!cachedText.isNullOrBlank() && lyricsReloadToken == 0) {
@@ -3224,22 +3337,42 @@ private fun InlineSyncedLyrics(
         if (!ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline() && !cachedText.isNullOrBlank()) {
             return@LaunchedEffect
         }
-        runCatching { container.api.lyrics(track.id) }
+        runCatching {
+            container.api.lyrics(
+                track.id,
+                track.title,
+                track.artistLine().takeIf { it != "Artiste" },
+            )
+        }
             .onSuccess { first ->
                 fun applyLyrics(it: ovh.delhomme.ytmusic.data.LyricsResponse) {
-                    val learned = it.userOffsetMs ?: 0L
-                    if (learned != 0L && syncPrefs.getLong(track.id, 0L) == 0L) {
-                        userOffsetMs = learned.coerceIn(-15_000L, 15_000L)
+                    if (it.lyrics.isNullOrBlank()) return
+                    val localOff = syncPrefs.getLong(track.id, 0L)
+                    val personal = it.personalOffsetMs ?: 0L
+                    if (localOff != 0L) {
+                        userOffsetMs = localOff.coerceIn(-90_000L, 90_000L)
+                    } else if (personal != 0L) {
+                        userOffsetMs = personal.coerceIn(-90_000L, 90_000L)
                         syncPrefs.edit().putLong(track.id, userOffsetMs).apply()
                     }
-                    it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
-                        if (segments.size < 2) {
+                    val hasCalibrated = userOffsetMs != 0L || localOff != 0L || personal != 0L
+                    if (it.segmentsFromUser == true) {
+                        it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
                             segments = segs
                             saveLyricSegments(segPrefs, track.id, segs)
+                        }
+                    } else if (!hasCalibrated) {
+                        it.segments?.takeIf { s -> s.size >= 2 }?.let { segs ->
+                            if (segments.size < 2) {
+                                segments = segs
+                                saveLyricSegments(segPrefs, track.id, segs)
+                            }
                         }
                     }
                     text = it.lyrics
                     lyricsSource = it.source
+                    suggestions = it.suggestions.orEmpty()
+                    searchUrls = it.searchUrls.orEmpty()
                     val apiTimed = it.timed.orEmpty()
                     val raw = if (apiTimed.isNotEmpty()) apiTimed else parseLrcLines(it.lyrics)
                     timed = normalizeTimedLines(raw, durationMs.coerceAtLeast(0L))
@@ -3269,13 +3402,20 @@ private fun InlineSyncedLyrics(
                     }
                 }
                 applyLyrics(first)
-                // Auto-fallback : 2ᵉ passe API si vide (TTL cache null court côté serveur)
-                if (first.lyrics.isNullOrBlank()) {
-                    delay(500)
-                    runCatching { container.api.lyrics(track.id) }
-                        .getOrNull()
-                        ?.takeIf { !it.lyrics.isNullOrBlank() }
-                        ?.let { applyLyrics(it) }
+                var pending = first.pending == true || first.lyrics.isNullOrBlank()
+                var attempt = 0
+                while (pending && attempt < 4) {
+                    delay(3_000)
+                    attempt += 1
+                    val next = runCatching {
+                        container.api.lyrics(
+                            track.id,
+                            track.title,
+                            track.artistLine().takeIf { it != "Artiste" },
+                        )
+                    }.getOrNull() ?: continue
+                    applyLyrics(next)
+                    pending = next.pending == true || next.lyrics.isNullOrBlank()
                 }
             }
             .onFailure {
@@ -3289,7 +3429,9 @@ private fun InlineSyncedLyrics(
     }
 
     // Re-calage dès que la durée réelle est connue (évite estimation figée à ~60 s).
-    LaunchedEffect(durationMs, track.id, text, lyricsSource) {
+    // Interdit si l’utilisateur a déjà calé : ne pas réécrire le cache v6.
+    LaunchedEffect(durationMs, track.id, text, lyricsSource, userOffsetMs) {
+        if (userOffsetMs != 0L) return@LaunchedEffect
         if (durationMs < 20_000L || text.isNullOrBlank() || timed.size < 2) return@LaunchedEffect
         val src = lyricsSource.orEmpty()
         val last = timed.last().startMsLong()
@@ -3305,7 +3447,7 @@ private fun InlineSyncedLyrics(
         timed = re
         lyricsSource = "estimated"
         runCatching {
-            container.sharedPrefs("plm_lyrics_cache_v5").edit()
+            container.sharedPrefs("plm_lyrics_cache_v6").edit()
                 .putString(
                     "l_${track.id}",
                     re.joinToString("\n") { l -> "${l.startMsLong()}|${l.text}" },
@@ -3317,42 +3459,16 @@ private fun InlineSyncedLyrics(
     }
 
     // Avance karaoké : un peu plus pour l’estimation (souvent en retard ressenti).
-    val leadMs = if (lyricsSource == "estimated") 320L else 180L
+    val leadMs = if (lyricsSource == "estimated") 220L else 160L
     val sourceLagMs = 0L
     val effectiveOffsetMs = lyricOffsetAtMs(userOffsetMs, segments, positionMs, durationMs)
     val syncPos = positionMs + leadMs - effectiveOffsetMs - sourceLagMs
     // Ne PAS forcer l’index 0 avant la 1ʳᵉ ligne (sinon « désync » totale en intro)
     val active = if (timed.isEmpty()) -1
     else timed.indexOfLast { it.startMsLong() <= syncPos }
-    // Nouvelle chanson, nouveau défilement : sans cela le panneau garde la position de
-    // la fin des paroles précédentes jusqu'à ce que la lecture atteigne la première
-    // ligne synchronisée.
-    val listState = remember(track.id) { LazyListState() }
-    LaunchedEffect(active, track.id) {
-        if (active < 0) return@LaunchedEffect
-        runCatching {
-            listState.animateScrollToItem(
-                index = active.coerceIn(0, timed.lastIndex),
-                scrollOffset = -120,
-            )
-        }
-    }
-    LaunchedEffect(positionMs / 2_000L, track.id) {
-        if (active < 0 || timed.isEmpty()) return@LaunchedEffect
-        val visible = listState.layoutInfo.visibleItemsInfo
-        val onScreen = visible.any { it.index == active }
-        if (!onScreen) {
-            runCatching {
-                listState.animateScrollToItem(
-                    index = active.coerceIn(0, timed.lastIndex),
-                    scrollOffset = -120,
-                )
-            }
-        }
-    }
 
     fun persistOffset(next: Long, source: String = "nudge") {
-        val clamped = next.coerceIn(-15_000L, 15_000L)
+        val clamped = next.coerceIn(-90_000L, 90_000L)
         userOffsetMs = clamped
         syncPrefs.edit().putLong(track.id, clamped).apply()
         scope.launch {
@@ -3366,9 +3482,11 @@ private fun InlineSyncedLyrics(
                         source = source,
                     ),
                 )
-                resp.segments?.takeIf { it.size >= 2 }?.let { segs ->
-                    segments = segs
-                    saveLyricSegments(segPrefs, track.id, segs)
+                if (resp.segmentsFromUser == true || clamped == 0L) {
+                    resp.segments?.takeIf { it.size >= 2 }?.let { segs ->
+                        segments = segs
+                        saveLyricSegments(segPrefs, track.id, segs)
+                    }
                 }
             }
         }
@@ -3388,50 +3506,106 @@ private fun InlineSyncedLyrics(
         ).show()
     }
 
-    Column(modifier = modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
-        // Sync compact : ±0,25 s et ±0,20 s (pas ±0,75 / ±1 — trop gros).
+    Column(modifier = modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
         if (timed.isNotEmpty()) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 2.dp),
+                    .height(28.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(
-                    onClick = { nudgeOffset(250L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) {
-                    Text("−0,25", style = MaterialTheme.typography.labelSmall)
-                }
-                TextButton(
-                    onClick = { nudgeOffset(200L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) {
-                    Text("−0,20", style = MaterialTheme.typography.labelSmall)
-                }
+                LyricNudgeChip("−1") { nudgeOffset(1_000L) }
                 Text(
-                    if (effectiveOffsetMs == 0L) "sync" else String.format("%+.2f s", effectiveOffsetMs / 1000.0),
+                    if (effectiveOffsetMs == 0L) "sync" else String.format("%+.1f", effectiveOffsetMs / 1000.0),
                     color = if (effectiveOffsetMs == 0L) PlayerMuted else SeekRed,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
                     modifier = Modifier
-                        .padding(horizontal = 2.dp)
+                        .padding(horizontal = 6.dp)
                         .clickable { persistOffset(0L) },
                 )
-                TextButton(
-                    onClick = { nudgeOffset(-200L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                LyricNudgeChip("+1") { nudgeOffset(-1_000L) }
+                Icon(
+                    if (toolsOpen) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (toolsOpen) "Replier les options" else "Options paroles",
+                    tint = PlayerMuted,
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clickable { toolsOpen = !toolsOpen },
+                )
+            }
+            if (toolsOpen) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(26.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("+0,20", style = MaterialTheme.typography.labelSmall)
-                }
-                TextButton(
-                    onClick = { nudgeOffset(-250L) },
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                ) {
-                    Text("+0,25", style = MaterialTheme.typography.labelSmall)
+                    LyricNudgeChip("−15") { nudgeOffset(15_000L) }
+                    LyricNudgeChip("−5") { nudgeOffset(5_000L) }
+                    LyricNudgeChip("−0,2") { nudgeOffset(200L) }
+                    LyricNudgeChip("+0,2") { nudgeOffset(-200L) }
+                    LyricNudgeChip("+5") { nudgeOffset(-5_000L) }
+                    LyricNudgeChip("+15") { nudgeOffset(-15_000L) }
+                    LyricNudgeChip("OK") {
+                        if (voteBusy) return@LyricNudgeChip
+                        voteBusy = true
+                        voteHint = null
+                        scope.launch {
+                            runCatching {
+                                container.api.lyricsFeedback(
+                                    track.id,
+                                    ovh.delhomme.ytmusic.data.LyricsFeedbackBody(
+                                        vote = "correct",
+                                        title = track.title,
+                                        artist = track.artistLine().takeIf { it != "Artiste" },
+                                    ),
+                                )
+                            }.onSuccess {
+                                voteHint = "Paroles confirmées"
+                                Toast.makeText(context, voteHint, Toast.LENGTH_SHORT).show()
+                            }.onFailure { voteHint = "Vote impossible" }
+                            voteBusy = false
+                        }
+                    }
+                    LyricNudgeChip("KO") {
+                        if (voteBusy) return@LyricNudgeChip
+                        voteBusy = true
+                        voteHint = "Recherche…"
+                        scope.launch {
+                            runCatching {
+                                container.api.lyricsFeedback(
+                                    track.id,
+                                    ovh.delhomme.ytmusic.data.LyricsFeedbackBody(
+                                        vote = "wrong",
+                                        title = track.title,
+                                        artist = track.artistLine().takeIf { it != "Artiste" },
+                                    ),
+                                )
+                            }.onSuccess { r ->
+                                lyricsReloadToken += 1
+                                voteHint = if (!r.lyrics.isNullOrBlank()) "Nouvelles paroles" else "Aucune meilleure source"
+                                Toast.makeText(context, voteHint, Toast.LENGTH_SHORT).show()
+                            }.onFailure { voteHint = "Recherche impossible" }
+                            voteBusy = false
+                        }
+                    }
                 }
             }
+        }
+        if (!voteHint.isNullOrBlank() && toolsOpen) {
+            Text(
+                voteHint!!,
+                color = PlayerMuted,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+            )
         }
         when {
             loading -> Text(
@@ -3440,105 +3614,271 @@ private fun InlineSyncedLyrics(
                 modifier = Modifier.padding(top = 24.dp),
             )
             timed.isNotEmpty() -> {
-                LazyColumn(
-                    state = listState,
-                    contentPadding = PaddingValues(horizontal = 2.dp, vertical = 12.dp),
-                    modifier = Modifier.fillMaxSize(),
-                    userScrollEnabled = true,
-                ) {
-                    itemsIndexed(timed) { i, line ->
-                        val isActive = i == active
-                        val past = active >= 0 && i < active
-                        Text(
-                            line.text.ifBlank { " " },
-                            style = if (isActive) {
-                                MaterialTheme.typography.headlineSmall
-                            } else {
-                                MaterialTheme.typography.titleMedium
-                            },
-                            fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.Normal,
-                            color = when {
-                                isActive -> Color.White
-                                past -> PlayerMuted.copy(alpha = 0.28f)
-                                else -> PlayerMuted.copy(alpha = 0.72f)
-                            },
-                            textAlign = TextAlign.Start,
-                            softWrap = true,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (isActive) SeekRed.copy(alpha = 0.22f) else Color.Transparent,
-                                )
-                                .combinedClickable(
-                                    onClick = { onSeek(line.startMsLong()) },
-                                    onLongClick = { calibrateToLine(line.startMsLong()) },
-                                )
-                                .padding(horizontal = 8.dp)
-                                .padding(vertical = if (isActive) 12.dp else 6.dp),
-                        )
+                val lyricsListState = rememberLazyListState()
+                var followLyrics by remember(track.id) { mutableStateOf(true) }
+                var programmaticScroll by remember { mutableStateOf(false) }
+                var lastUserScrollAt by remember(track.id) { mutableLongStateOf(0L) }
+
+                LaunchedEffect(lyricsListState, track.id) {
+                    snapshotFlow { lyricsListState.isScrollInProgress }
+                        .collect { scrolling ->
+                            if (scrolling && !programmaticScroll) {
+                                followLyrics = false
+                                lastUserScrollAt = SystemClock.elapsedRealtime()
+                            }
+                        }
+                }
+
+                LaunchedEffect(followLyrics, lastUserScrollAt, track.id) {
+                    if (followLyrics) return@LaunchedEffect
+                    delay(8_000L)
+                    if (
+                        !lyricsListState.isScrollInProgress &&
+                        SystemClock.elapsedRealtime() - lastUserScrollAt >= 7_500L
+                    ) {
+                        followLyrics = true
                     }
+                }
+
+                val lyricViewH = (
+                    lyricsListState.layoutInfo.viewportEndOffset -
+                        lyricsListState.layoutInfo.viewportStartOffset
+                    ).coerceAtLeast(0)
+                LaunchedEffect(active, followLyrics, timed.size, track.id, lyricViewH) {
+                    if (!followLyrics || timed.isEmpty() || lyricViewH <= 0) return@LaunchedEffect
+                    val target = active.coerceAtLeast(0).coerceAtMost(timed.lastIndex)
+                    programmaticScroll = true
+                    runCatching {
+                        val info = lyricsListState.layoutInfo
+                        val viewH = (info.viewportEndOffset - info.viewportStartOffset).coerceAtLeast(1)
+                        val known = info.visibleItemsInfo.firstOrNull { it.index == target }?.size
+                        val lineH = (known ?: (viewH / 4)).coerceAtLeast(1)
+                        val top = ovh.delhomme.ytmusic.player.LyricAnchor.desiredTopPx(viewH, lineH)
+                        lyricsListState.scrollToItem(target, scrollOffset = -top)
+                        val placed = lyricsListState.layoutInfo
+                        val view2 = (placed.viewportEndOffset - placed.viewportStartOffset).coerceAtLeast(1)
+                        val item = placed.visibleItemsInfo.firstOrNull { it.index == target }
+                        val size = item?.size ?: lineH
+                        val top2 = ovh.delhomme.ytmusic.player.LyricAnchor.desiredTopPx(view2, size)
+                        val offsetNow = item?.offset
+                        if (
+                            offsetNow != null &&
+                            ovh.delhomme.ytmusic.player.LyricAnchor.shouldRecenter(offsetNow, size, view2)
+                        ) {
+                            lyricsListState.scroll {
+                                scrollBy((offsetNow - top2).toFloat())
+                            }
+                        }
+                    }
+                    delay(40)
+                    programmaticScroll = false
+                }
+
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(
+                        state = lyricsListState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(vertical = 28.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        userScrollEnabled = true,
+                    ) {
+                        itemsIndexed(
+                            timed,
+                            key = { i, line -> "${track.id}-$i-${line.startMsLong()}" },
+                        ) { i, line ->
+                            val isCurrent = i == active.coerceAtLeast(0)
+                            FocusLyricLine(
+                                text = line.text,
+                                current = isCurrent,
+                                onClick = if (playing) {
+                                    { onSeek(line.startMsLong()) }
+                                } else {
+                                    null
+                                },
+                                onLongClick = { calibrateToLine(line.startMsLong()) },
+                            )
+                        }
+                    }
+                    LyricsSkipOverlays(onSkipNext = onSkipNext, onSkipPrev = onSkipPrev)
                 }
             }
             !text.isNullOrBlank() -> {
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    item {
-                        Text(
-                            text!!,
-                            color = PlayerFg,
-                            style = MaterialTheme.typography.bodyLarge,
-                            softWrap = true,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
-                        )
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        item {
+                            Text(
+                                text!!,
+                                color = PlayerFg,
+                                style = MaterialTheme.typography.bodyLarge,
+                                softWrap = true,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+                            )
+                        }
                     }
+                    LyricsSkipOverlays(onSkipNext = onSkipNext, onSkipPrev = onSkipPrev)
                 }
             }
             else -> Column(
                 Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp),
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 24.dp, bottom = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("Paroles indisponibles", color = PlayerMuted)
-                Spacer(Modifier.height(12.dp))
+                Text("Paroles introuvables pour ce titre exact", color = PlayerMuted)
+                Spacer(Modifier.height(8.dp))
+                if (suggestions.isNotEmpty()) {
+                    Text(
+                        "Propositions proches — pas forcément le bon titre",
+                        color = PlayerMuted,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    suggestions.take(5).forEach { s ->
+                        val url = s.url.orEmpty()
+                        if (url.isBlank()) return@forEach
+                        TextButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(url),
+                                        ),
+                                    )
+                                }
+                            },
+                        ) {
+                            Text(
+                                buildString {
+                                    append(s.title.orEmpty().ifBlank { "Lien" })
+                                    if (!s.artist.isNullOrBlank()) {
+                                        append(" — ")
+                                        append(s.artist)
+                                    }
+                                },
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
                 TextButton(
                     onClick = { lyricsReloadToken += 1 },
                     enabled = ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline(),
                 ) {
                     Text("Réessayer")
                 }
-                TextButton(
-                    onClick = {
-                        val artist = track.artistLine().takeIf { it != "Artiste" }.orEmpty()
-                        val q = buildString {
-                            append(track.title)
-                            if (artist.isNotBlank()) append(' ').append(artist)
+                val links = searchUrls.filter { !it.url.isNullOrBlank() }
+                if (links.isNotEmpty()) {
+                    links.forEach { link ->
+                        TextButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        android.content.Intent(
+                                            android.content.Intent.ACTION_VIEW,
+                                            android.net.Uri.parse(link.url),
+                                        ),
+                                    )
+                                }
+                            },
+                        ) {
+                            Text(link.label?.ifBlank { "Web" } ?: "Web")
                         }
-                        // Genius d’abord (souvent mieux que Google pour les paroles)
-                        val geniusUri = android.net.Uri.parse(
-                            "https://genius.com/search?q=" +
-                                java.net.URLEncoder.encode(q, Charsets.UTF_8.name()),
-                        )
-                        val googleUri = android.net.Uri.parse(
-                            "https://www.google.com/search?q=" +
-                                java.net.URLEncoder.encode("$q paroles", Charsets.UTF_8.name()),
-                        )
-                        runCatching {
-                            context.startActivity(
-                                android.content.Intent(android.content.Intent.ACTION_VIEW, geniusUri),
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            val artist = track.artistLine().takeIf { it != "Artiste" }.orEmpty()
+                            val q = buildString {
+                                if (artist.isNotBlank()) {
+                                    append(artist)
+                                    append(' ')
+                                }
+                                append(track.title)
+                            }
+                            val geniusUri = android.net.Uri.parse(
+                                "https://genius.com/search?q=" +
+                                    java.net.URLEncoder.encode(q, Charsets.UTF_8.name()),
                             )
-                        }.onFailure {
                             runCatching {
                                 context.startActivity(
-                                    android.content.Intent(android.content.Intent.ACTION_VIEW, googleUri),
+                                    android.content.Intent(android.content.Intent.ACTION_VIEW, geniusUri),
                                 )
                             }
-                        }
-                    },
-                ) {
-                    Text("Chercher sur Genius / le web")
+                        },
+                    ) {
+                        Text("Chercher sur Genius / le web")
+                    }
+                }
+                TextButton(onClick = { pasteOpen = true }) {
+                    Text("Coller les paroles")
                 }
             }
+        }
+        if (pasteOpen) {
+            AlertDialog(
+                onDismissRequest = { if (!pasteSaving) pasteOpen = false },
+                title = { Text("Coller les paroles") },
+                text = {
+                    OutlinedTextField(
+                        value = pasteDraft,
+                        onValueChange = { pasteDraft = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp),
+                        placeholder = { Text("Colle le texte ici — il sera partagé pour tout le monde") },
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = !pasteSaving && pasteDraft.trim().length >= 40,
+                        onClick = {
+                            pasteSaving = true
+                            scope.launch {
+                                val saved = runCatching {
+                                    container.api.saveLyrics(
+                                        track.id,
+                                        ovh.delhomme.ytmusic.data.SaveLyricsBody(
+                                            lyrics = pasteDraft.trim(),
+                                            title = track.title,
+                                            artist = track.artistLine().takeIf { it != "Artiste" },
+                                        ),
+                                    )
+                                }.getOrNull()
+                                pasteSaving = false
+                                val pasted = saved?.lyrics
+                                if (pasted.isNullOrBlank()) {
+                                    Toast.makeText(
+                                        context,
+                                        "Paroles trop courtes ou refusées",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                    return@launch
+                                }
+                                text = pasted
+                                lyricsSource = saved.source ?: "user"
+                                timed = estimateTimedFromPlain(
+                                    pasted,
+                                    durationMs.coerceAtLeast(0L),
+                                )
+                                suggestions = emptyList()
+                                pasteOpen = false
+                                pasteDraft = ""
+                            }
+                        },
+                    ) {
+                        Text(if (pasteSaving) "…" else "Enregistrer")
+                    }
+                },
+                dismissButton = {
+                    TextButton(enabled = !pasteSaving, onClick = { pasteOpen = false }) {
+                        Text("Annuler")
+                    }
+                },
+            )
         }
     }
 }
@@ -3553,6 +3893,7 @@ private fun lyricOffsetAtMs(
     atMs: Long,
     durationMs: Long,
 ): Long {
+    if (baseOffsetMs != 0L) return baseOffsetMs
     if (segments.size < 2 || durationMs <= 0L) return baseOffsetMs
     val r = (atMs.toDouble() / durationMs.toDouble()).coerceIn(0.0, 1.0)
     val pts = segments
@@ -3621,6 +3962,58 @@ private fun normalizeTimedLines(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FocusLyricLine(
+    text: String?,
+    current: Boolean,
+    onClick: (() -> Unit)?,
+    onLongClick: (() -> Unit)?,
+) {
+    val body = text?.ifBlank { " " } ?: " "
+    Text(
+        body,
+        color = if (current) Color.White else PlayerMuted.copy(alpha = 0.48f),
+        fontSize = if (current) 20.sp else 15.sp,
+        fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+        lineHeight = if (current) 24.sp else 20.sp,
+        textAlign = TextAlign.Center,
+        softWrap = true,
+        maxLines = if (current) 4 else 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = if (current) 14.dp else 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (current && !text.isNullOrBlank()) SeekRed.copy(alpha = 0.22f) else Color.Transparent)
+            .then(
+                when {
+                    onClick != null && onLongClick != null ->
+                        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                    onClick != null -> Modifier.clickable(onClick = onClick)
+                    onLongClick != null ->
+                        Modifier.combinedClickable(onClick = {}, onLongClick = onLongClick)
+                    else -> Modifier
+                },
+            )
+            .padding(horizontal = 10.dp, vertical = if (current) 10.dp else 4.dp),
+    )
+}
+
+@Composable
+private fun LyricNudgeChip(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall,
+        color = PlayerMuted,
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    )
+}
+
 /**
  * Même idée que le serveur : sans LRC, on répartit les lignes sur la durée
  * pour que le suivi avance — comme sur un titre qui a des timings officiels.
@@ -3643,10 +4036,10 @@ private fun estimateTimedFromPlain(raw: String?, durationMs: Long): List<TimedLy
         }
     }
     if (lines.size < 2) return emptyList()
+    val dense = lines.size >= 36
     val durSec = if (durationMs >= 20_000L) durationMs / 1000.0 else (lines.size * 3.2).coerceAtLeast(60.0)
-    // Intro courte : évite « paroles trop tard » (rap / covers dense).
-    val intro = (durSec * 0.035).coerceIn(2.2, 10.0)
-    val outro = (durSec * 0.06).coerceIn(4.0, 14.0)
+    val intro = if (dense) (durSec * 0.02).coerceIn(1.4, 5.0) else (durSec * 0.035).coerceIn(2.0, 8.0)
+    val outro = if (dense) (durSec * 0.04).coerceIn(2.5, 9.0) else (durSec * 0.055).coerceIn(3.5, 12.0)
     val window = (durSec - intro - outro).coerceAtLeast(lines.size * 1.2)
     val weights = lines.map { it.length.coerceAtLeast(8) }
     val total = weights.sum().coerceAtLeast(1)
@@ -3829,17 +4222,8 @@ private fun NowPlayingHeroCover(
     landscape: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     val fullPx = if (landscape) 720 else 900
-    val fullUrl = track.coverUrl(fullPx)
-    val thumbUrl = track.coverUrl(520)
-    val cacheTag = if (landscape) "np-l" else "np-hero-v5"
-    fun coverRequest(url: String?, px: Int) = ImageRequest.Builder(context)
-        .data(url)
-        .size(px)
-        .memoryCacheKey("$cacheTag:$url")
-        .diskCacheKey("$cacheTag:$url")
-        .build()
+    val request = rememberCoverRequest(track, fullPx)
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
@@ -3856,13 +4240,7 @@ private fun NowPlayingHeroCover(
             else -> 1f
         }
         SubcomposeAsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(fullUrl)
-                .size(fullPx)
-                .memoryCacheKey("$cacheTag:$fullUrl")
-                .diskCacheKey("$cacheTag:$fullUrl")
-                .crossfade(80)
-                .build(),
+            model = request,
             contentDescription = track.title,
             contentScale = ContentScale.Crop,
             alignment = Alignment.Center,
@@ -3878,46 +4256,8 @@ private fun NowPlayingHeroCover(
                         Modifier
                     },
                 ),
-            loading = {
-                AsyncImage(
-                    model = coverRequest(thumbUrl, 520),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.Center,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .then(
-                            if (zoom > 1.01f) {
-                                Modifier.graphicsLayer {
-                                    scaleX = zoom
-                                    scaleY = zoom
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                )
-            },
-            error = {
-                AsyncImage(
-                    model = coverRequest(thumbUrl, 520),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.Center,
-                    modifier = Modifier
-                        .matchParentSize()
-                        .then(
-                            if (zoom > 1.01f) {
-                                Modifier.graphicsLayer {
-                                    scaleX = zoom
-                                    scaleY = zoom
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                )
-            },
+            loading = {},
+            error = {},
         )
     }
 }

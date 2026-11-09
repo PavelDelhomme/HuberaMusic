@@ -1,8 +1,8 @@
 {
-  "name": "ytmusic",
-  "version": "1.3.246",
+  "name": "@hubera/music",
+  "version": "1.3.413",
   "private": true,
-  "description": "PLM — musique web, API, Android & desktop",
+  "description": "Hubera Music / MHC (anciennement PLM) — web, API, Android & desktop",
   "scripts": {
     "dev": "npm run dev:web",
     "dev:all": "concurrently -n api,web -c red,cyan \"npm run dev -w api\" \"npm run dev -w web\"",
@@ -17,7 +17,8 @@
     "docker:dev": "docker compose -f docker-compose.dev.yml up --build -d",
     "docker:dev:down": "docker compose -f docker-compose.dev.yml down",
     "docker:build": "docker build -t ytmusic:local .",
-    "seed-users": "node scripts/dev/seed-users.mjs"
+    "seed-users": "node scripts/dev/seed-users.mjs",
+    "playability:sweep": "npm run playability:sweep -w api"
   },
   "workspaces": [
     "api",

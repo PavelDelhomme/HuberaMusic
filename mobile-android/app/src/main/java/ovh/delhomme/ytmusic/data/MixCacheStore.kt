@@ -63,6 +63,8 @@ data class CachedMixEntry(
 )
 
 fun isPrecomputedMixSource(sourceKind: String?, remainingUserTracks: Int): Boolean {
+    // Accès rapide : boucle fermée, jamais de « À suivre » ni de similaires dans la file.
+    if (sourceKind == "pins") return true
     // Historique / playlist explicite : rester dans la file choisie jusqu’à la fin
     // (pas d’injection related tant qu’il reste des titres « user »).
     if (sourceKind == "history" || sourceKind == "playlist") {

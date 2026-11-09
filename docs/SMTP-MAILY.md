@@ -9,7 +9,7 @@ Configure le SMTP **uniquement dans `.env`** (jamais dans git).
 | `SMTP_SECURE` / `SMTP_USE_SSL` | `1` si SSL |
 | `SMTP_USER` | Compte technique |
 | `SMTP_PASS` | Mot de passe (`.env` seulement) |
-| `SMTP_FROM` | Ex. `"PLM <noreply@ton-domaine>"` |
+| `SMTP_FROM` | Ex. `"Hubera Music <noreply@ton-domaine>"` |
 | `SMTP_REPLY_TO` | Optionnel |
 
 ## Local

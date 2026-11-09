@@ -111,6 +111,19 @@ function diskPut(key: string, hit: ImgHit) {
   }
 }
 
+/** Même pochette si l’URL Google ne change que de taille. Les vidéos gardent la clé déjà en cache. */
+export function coverCacheIdentity(videoId: string, candidate: string): string {
+  if (/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return `v3:${videoId}|${candidate}`;
+  return `v3:u|${normalizeCoverUrl(candidate)}`;
+}
+
+function normalizeCoverUrl(url: string): string {
+  const noQuery = url.split('?')[0] || url;
+  return noQuery
+    .replace(/=s\d+[^/]*$/i, '')
+    .replace(/=w\d+-h\d+[^/]*$/i, '');
+}
+
 function sendImage(res: Response, buf: Buffer, type: string, hit: string) {
   res.setHeader('Content-Type', type);
   res.setHeader('Cache-Control', `public, max-age=${HTTP_MAX_AGE}, stale-while-revalidate=86400`);
@@ -166,7 +179,7 @@ export async function handleImageProxy(req: Request, res: Response) {
       return;
     }
 
-    const cacheKey = createHash('sha1').update(`v3:${videoId}|${candidates[0] || ''}`).digest('hex');
+    const cacheKey = createHash('sha1').update(coverCacheIdentity(videoId, candidates[0] || '')).digest('hex');
     const ram = memGet(cacheKey);
     if (ram) {
       sendImage(res, ram.buf, ram.type, 'mem');

@@ -544,7 +544,7 @@ console.log('PDF →', pdfPath, `pages=${pages}`);
   }
 }
 
-const subject = `[PLM] Rapport densifié (~${pages} p.) + VerifyError corrigé — p+${version}`;
+const subject = `[Hubera Music] Rapport densifié (~${pages} p.) + VerifyError corrigé — p+${version}`;
 
 const text = `PLM — Rapport technique densifié
 Date: ${iso}
