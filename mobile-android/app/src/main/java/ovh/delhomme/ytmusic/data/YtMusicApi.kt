@@ -137,9 +137,11 @@ data class LibrarySongResponse(val saved: Boolean, val library: LibraryResponse?
 @JsonClass(generateAdapter = false)
 data class TrackReplacementResponse(
     val ok: Boolean? = null,
+    val available: Boolean? = null,
     val deadId: String? = null,
     val replacementId: String? = null,
     val cached: Boolean? = null,
+    val message: String? = null,
     val error: String? = null,
 )
 
@@ -544,6 +546,26 @@ data class HistoryDetailedResponse(
 )
 
 @JsonClass(generateAdapter = false)
+data class ListenStatsTopDto(
+    val trackId: String? = null,
+    val plays: Int? = null,
+    val title: String? = null,
+)
+
+@JsonClass(generateAdapter = false)
+data class ListenStatsResponse(
+    val ok: Boolean? = null,
+    val day: Int = 0,
+    val week: Int = 0,
+    val month: Int = 0,
+    val distinctDay: Int = 0,
+    val distinctWeek: Int = 0,
+    val distinctMonth: Int = 0,
+    val topWeek: ListenStatsTopDto? = null,
+    val generatedAt: Long? = null,
+)
+
+@JsonClass(generateAdapter = false)
 data class YtmAccountDto(
     val connected: Boolean = false,
     val canSyncLibrary: Boolean = false,
@@ -921,6 +943,10 @@ interface YtMusicApi {
 
     @GET("api/history/detailed")
     suspend fun historyDetailed(): HistoryDetailedResponse
+
+    /** Jour / 7 j / 30 j — uniquement à l’ouverture Compte (économe). */
+    @GET("api/history/stats")
+    suspend fun historyStats(): ListenStatsResponse
 
     @POST("api/history/entity")
     suspend fun recordEntityPlay(@Body body: HistoryEntityBody): HistoryEntityResponse

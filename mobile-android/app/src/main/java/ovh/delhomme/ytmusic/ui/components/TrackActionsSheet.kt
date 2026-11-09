@@ -882,6 +882,7 @@ fun TrackActionsSheet(
                                 force = true,
                             )
                         }
+                        val serverMsg = r.message?.trim().orEmpty()
                         if (repl.length == 11 && repl != deadId) {
                             TrackCanonical.remember(deadId, repl)
                             val alt = enriched.copy(id = repl, canonicalId = deadId, playable = true)
@@ -890,6 +891,8 @@ fun TrackActionsSheet(
                             val aliases = TrackCanonical.aliasIds(deadId)
                             val q = st.queue.toMutableList()
                             val idx = q.indexOfFirst { it.id in aliases }
+                            val okMsg =
+                                serverMsg.ifBlank { "Nouveau titre audio disponible — lecture reprise" }
                             if (idx >= 0) {
                                 q[idx] = alt
                                 player.play(
@@ -899,13 +902,15 @@ fun TrackActionsSheet(
                                     sourceId = st.sourceId,
                                     sourceKind = st.sourceKind,
                                 )
-                                context.toastMain("Alternative trouvée — lecture reprise")
+                                context.toastMain(okMsg)
                             } else {
                                 player.play(listOf(alt), 0, title = enriched.title)
-                                context.toastMain("Alternative trouvée — lecture")
+                                context.toastMain(okMsg)
                             }
                         } else {
-                            context.toastMain("Pas d’alternative trouvée pour l’instant")
+                            context.toastMain(
+                                serverMsg.ifBlank { "Pas de nouveau titre audio pour l’instant" },
+                            )
                         }
                     }.onFailure { e ->
                         if (e is kotlinx.coroutines.CancellationException) throw e

@@ -27,9 +27,10 @@ const DEFAULT_PATH = join(DATA_DIR, 'playability.db');
 const VIDEO_ID = /^[a-zA-Z0-9_-]{11}$/;
 
 const STALE_MS = Number(process.env.PLAYABILITY_STALE_MS || 24 * 3600_000);
-const INTERVAL_MS = Number(process.env.PLAYABILITY_SWEEP_INTERVAL_MS || 6 * 3600_000);
-const START_DELAY_MS = Number(process.env.PLAYABILITY_SWEEP_START_DELAY_MS || 180_000);
-const DEFAULT_BATCH = Number(process.env.PLAYABILITY_SWEEP_BATCH || 40);
+/** Toutes les ~45 min (sauf lecture chaude) — sans intervention. */
+const INTERVAL_MS = Number(process.env.PLAYABILITY_SWEEP_INTERVAL_MS || 45 * 60_000);
+const START_DELAY_MS = Number(process.env.PLAYABILITY_SWEEP_START_DELAY_MS || 90_000);
+const DEFAULT_BATCH = Number(process.env.PLAYABILITY_SWEEP_BATCH || 24);
 const DEFAULT_CONCURRENCY = Math.max(1, Math.min(4, Number(process.env.PLAYABILITY_CONCURRENCY || 2)));
 const SLEEP_MS = Number(process.env.PLAYABILITY_SLEEP_MS || 750);
 const PROBE_TIMEOUT_MS = Number(process.env.PLAYABILITY_PROBE_MS || 10_000);
@@ -193,7 +194,7 @@ export function canonicalVideoId(videoId: string): string {
 }
 
 const TRANSIENT_PROBE =
-  /no-stream-url|http-401|http-403|http-429|http-502|http-503|http-504|probe-timeout|probe-net|end-http-401|end-http-403|end-http-429|end-http-502|end-net|resolve-timeout|streaming data not available/;
+  /no-stream-url|http-401|http-403|http-429|http-502|http-503|http-504|probe-timeout|probe-net|end-http-401|end-http-403|end-http-429|end-http-502|end-net|resolve-timeout|streaming data not available|LOGIN_REQUIRED|sign in to confirm|not a bot|format is not available|requested format|pas de format|empty stream url|getAudioFormat deadline|audio format indisponible/i;
 
 export function isTransientProbeError(error?: string | null): boolean {
   return TRANSIENT_PROBE.test(error || '');
@@ -687,8 +688,44 @@ export async function recoverTrack(
   return { videoId: item.videoId, status: 'fail', error: 'aucun-candidat-jouable' };
 }
 
+const DEAD_VIDEO_MSG =
+  /this video is unavailable|video unavailable|private video|removed by the uploader|no longer available|has been removed|copyright|content.?not.?available/i;
+
+function looksLikeDeadVideo(error?: string | null): boolean {
+  return DEAD_VIDEO_MSG.test(String(error || ''));
+}
+
+/** Autre client / itag / relais — sans chercher un autre morceau. */
+async function tryFreshRoutesThenProbe(
+  item: LibrarySweepItem,
+  deps: SweepDeps,
+): Promise<ProbeResult | null> {
+  void deps;
+  if (String(process.env.PLAYABILITY_FRESH_ON_TRANSIENT || '1') === '0') return null;
+  try {
+    const { tryFreshAudioRoutes } = await import('../media/freshAudioRoutes.js');
+    const { attemptProductionFreshRoute, rememberFreshAudio } = await import(
+      '../media/freshAudioRoutesLive.js'
+    );
+    const fresh = await tryFreshAudioRoutes(
+      item.videoId,
+      attemptProductionFreshRoute,
+      rememberFreshAudio,
+    );
+    if (!fresh.ok) return null;
+    return probeVideo(item.videoId, item.durationMs, deps);
+  } catch (err) {
+    console.warn(
+      '[playability] fresh-routes',
+      item.videoId,
+      String((err as Error).message || err).slice(0, 100),
+    );
+    return null;
+  }
+}
+
 export async function sweepOne(item: LibrarySweepItem, deps: SweepDeps, recover = true): Promise<TrackSweepResult> {
-  const probe = await probeVideo(item.videoId, item.durationMs, deps);
+  let probe = await probeVideo(item.videoId, item.durationMs, deps);
   if (probe.ok) {
     const row: PlayabilityRow = {
       videoId: item.videoId,
@@ -701,7 +738,36 @@ export async function sweepOne(item: LibrarySweepItem, deps: SweepDeps, recover 
     savePlayability(row);
     return { videoId: item.videoId, status: 'ok', durationMs: row.durationMs };
   }
-  if (!recover || isTransientProbeError(probe.error)) {
+
+  // Transitoire (bot / cookies / 403) : d’abord d’autres routes, PAS un autre titre.
+  if (isTransientProbeError(probe.error) && !looksLikeDeadVideo(probe.error)) {
+    const retried = await tryFreshRoutesThenProbe(item, deps);
+    if (retried?.ok) {
+      const row: PlayabilityRow = {
+        videoId: item.videoId,
+        status: 'ok',
+        replacementVideoId: null,
+        lastChecked: Date.now(),
+        error: null,
+        durationMs: retried.durationMs ?? item.durationMs ?? null,
+      };
+      savePlayability(row);
+      return { videoId: item.videoId, status: 'ok', durationMs: row.durationMs, recovered: true };
+    }
+    // Toujours transitoire → on note le fail ; le cron reviendra (cookies/proxies).
+    savePlayability({
+      videoId: item.videoId,
+      status: 'fail',
+      replacementVideoId: null,
+      lastChecked: Date.now(),
+      error: retried?.error || probe.error || 'probe-fail',
+      durationMs: item.durationMs ?? null,
+    });
+    return { videoId: item.videoId, status: 'fail', error: retried?.error || probe.error };
+  }
+
+  // Vidéo vraiment morte (ou erreur non-transitoire) → chercher un autre videoId.
+  if (!recover) {
     savePlayability({
       videoId: item.videoId,
       status: 'fail',
@@ -909,7 +975,7 @@ export function startPlayabilitySweep(): void {
     }
   }
   console.info(
-    `[playability] cron every ${Math.round(every / 3600_000)} h (start in ${Math.round(start / 1000)} s, batch=${DEFAULT_BATCH})`,
+    `[playability] cron every ${Math.round(every / 60_000)} min (start in ${Math.round(start / 1000)} s, batch=${DEFAULT_BATCH})`,
   );
 }
 

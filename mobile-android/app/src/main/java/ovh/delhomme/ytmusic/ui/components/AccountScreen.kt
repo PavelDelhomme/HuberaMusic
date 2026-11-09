@@ -152,22 +152,25 @@ fun AccountScreen(
         listenStats = withContext(Dispatchers.IO) {
             runCatching {
                 container.ensureFreshToken()
-                val detailed = container.api.historyDetailed()
-                val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
-                val recent = detailed.events.filter { it.createdAt >= weekAgo }
-                if (recent.isEmpty()) {
-                    val hist = container.api.history().history
-                    if (hist.isEmpty()) null
-                    else "Historique · ${hist.size} titres récents"
-                } else {
-                    val top = recent
-                        .groupingBy { it.track?.title?.takeIf { t -> t.isNotBlank() } ?: it.trackId }
-                        .eachCount()
-                        .maxByOrNull { it.value }
-                    val topLabel = top?.key?.let { " · top : $it" }.orEmpty()
-                    "${recent.size} écoutes (7 j)$topLabel"
-                }
-            }.getOrNull()
+                val s = container.api.historyStats()
+                val top = s.topWeek?.title?.takeIf { it.isNotBlank() }
+                    ?: s.topWeek?.trackId?.takeIf { !it.isNullOrBlank() }
+                val topLabel = top?.let { " · top : $it" }.orEmpty()
+                "Aujourd’hui ${s.day} · 7 j ${s.week} · 30 j ${s.month}$topLabel"
+            }.getOrElse {
+                runCatching {
+                    val detailed = container.api.historyDetailed()
+                    val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+                    val recent = detailed.events.filter { it.createdAt >= weekAgo }
+                    if (recent.isEmpty()) {
+                        val hist = container.api.history().history
+                        if (hist.isEmpty()) null
+                        else "Historique · ${hist.size} titres récents"
+                    } else {
+                        "${recent.size} écoutes (7 j)"
+                    }
+                }.getOrNull()
+            }
         }
     }
 

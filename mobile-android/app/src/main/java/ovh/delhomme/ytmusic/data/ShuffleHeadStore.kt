@@ -65,10 +65,11 @@ object ShuffleHeadStore {
     }
 
     private const val RECENT_KEY = "recent_played_ids"
-    private const val RECENT_MAX = 500
+    /** Couvre une session biblio large avant de réautoriser les déjà-entendus. */
+    private const val RECENT_MAX = 8_000
 
     /** Ids joués récemment (anti-répétition shuffle biblio). */
-    fun loadRecentPlayed(ctx: Context, max: Int = 400): List<String> {
+    fun loadRecentPlayed(ctx: Context, max: Int = 4_000): List<String> {
         val raw = prefs(ctx).getString(RECENT_KEY, null) ?: return emptyList()
         return runCatching {
             val arr = JSONArray(raw)

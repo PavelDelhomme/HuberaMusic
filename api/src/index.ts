@@ -218,6 +218,7 @@ import {
   listFollows,
   listListenEvents,
   listListenEventsDetailed,
+  listenStatsSummary,
   listPins,
   listSearchHistory,
   listWeights,
@@ -2498,7 +2499,14 @@ app.get('/api/track/:id/replacement', accountRequired, async (req, res) => {
     const { getReplacementId, findReplacementId } = await import('./media/trackReplacement.js');
     const known = getReplacementId(id);
     if (known) {
-      res.json({ ok: true, deadId: id, replacementId: known, cached: true });
+      res.json({
+        ok: true,
+        available: true,
+        deadId: id,
+        replacementId: known,
+        cached: true,
+        message: 'Autre adresse audio disponible — lecture possible',
+      });
       return;
     }
     const title = typeof req.query.title === 'string' ? req.query.title : undefined;
@@ -2512,12 +2520,25 @@ app.get('/api/track/:id/replacement', accountRequired, async (req, res) => {
       const { enqueueStreamWarm, enqueueDiskWarm } = await import('./media/stream.js');
       enqueueStreamWarm([replacement], uid);
       enqueueDiskWarm([replacement]);
-      res.json({ ok: true, deadId: id, replacementId: replacement, cached: false });
+      res.json({
+        ok: true,
+        available: true,
+        deadId: id,
+        replacementId: replacement,
+        cached: false,
+        message: 'Nouveau titre audio trouvé — lecture reprise',
+      });
       return;
     }
-    res.json({ ok: true, deadId: id, replacementId: null });
+    res.json({
+      ok: true,
+      available: false,
+      deadId: id,
+      replacementId: null,
+      message: 'Pas de nouveau titre audio pour l’instant',
+    });
   } catch (err) {
-    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+    res.status(500).json({ ok: false, available: false, error: String((err as Error).message || err) });
   }
 });
 
@@ -2623,6 +2644,11 @@ app.post('/api/history/entity', accountRequired, (req, res) => {
 
 app.get('/api/history/detailed', accountRequired, (req, res) => {
   res.json({ events: listListenEventsDetailed(req.userId!, 500) });
+});
+
+/** Stats écoute jour / 7 j / 30 j — agrégat serveur, appelé à l’ouverture Compte (pas de push). */
+app.get('/api/history/stats', accountRequired, (req, res) => {
+  res.json({ ok: true, ...listenStatsSummary(req.userId!) });
 });
 
 app.post('/api/listen', accountRequired, (req, res) => {
