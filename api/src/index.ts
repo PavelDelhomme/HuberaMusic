@@ -97,6 +97,9 @@ import {
 } from './reco/searchHits.js';
 import { upsertIndexedTracks } from './library/searchIndex.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, replaceSearchWarm, enqueueListHeadWarm, enqueueNextDiskWarm, isPlaybackHot } from './media/stream.js';
+import { speculativePrewarm, fastStartStats, recentPlaybackFailures } from './media/fastStart.js';
+import { healTrackForEveryone, streamHealthHubStats } from './media/streamHealthHub.js';
+import { streamIncidentStats } from './media/streamIncident.js';
 import {
   scheduleUserTasteWarm,
   startGlobalTasteWarmScheduler,
@@ -1641,6 +1644,45 @@ app.get('/api/admin/playback-trace', requireAdmin, (req, res) => {
   });
 });
 
+/**
+ * Santé du démarrage rapide : compteurs de préchargement, échecs récents,
+ * incidents Docs/mail. Permet au cockpit Hubera de voir si le pipeline
+ * « instantané » fonctionne, sans se connecter au VPS.
+ */
+app.get('/api/admin/fast-start', requireAdmin, (_req, res) => {
+  res.json({
+    ok: true,
+    fastStart: fastStartStats(),
+    healthHub: streamHealthHubStats(),
+    incidents: streamIncidentStats(),
+    failures: recentPlaybackFailures(40),
+  });
+});
+
+/**
+ * Réparation à la demande d'un titre, pour tout le monde.
+ * `POST /api/admin/heal-track` { videoId, title?, artist?, reason? }
+ */
+app.post('/api/admin/heal-track', requireAdmin, async (req, res) => {
+  const videoId = String(req.body?.videoId || req.body?.id || '').trim();
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    res.status(400).json({ ok: false, error: 'videoId invalide' });
+    return;
+  }
+  try {
+    const out = await healTrackForEveryone(videoId, {
+      userId: req.userId,
+      title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+      artist: typeof req.body?.artist === 'string' ? req.body.artist : undefined,
+      reason: String(req.body?.reason || 'admin'),
+      record: req.body?.record !== false,
+    });
+    res.json({ ok: Boolean(out?.ok), result: out });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+  }
+});
+
 app.get('/api/admin/library-health', requireAdmin, async (_req, res) => {
   try {
     const { sharedCatalogStats } = await import('./library/sharedCatalog.js');
@@ -2331,6 +2373,9 @@ app.get('/api/search', accountRequired, async (req, res) => {
       const ahead = isPlaybackHot(90_000) ? 3 : 5;
       replaceSearchWarm(uniq.slice(0, ahead), req.userId!);
       ensurePlayableQueueAhead(uniq.slice(0, ahead), { userId: req.userId! });
+      // Préchargement agressif : la réponse HTTP est déjà partie, on chauffe
+      // toute la fenêtre visible (formats) + quelques .m4a pour un play instantané.
+      speculativePrewarm(uniq, { userId: req.userId!, source: 'search' });
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });
