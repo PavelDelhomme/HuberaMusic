@@ -72,46 +72,50 @@ class PlayerAudioFocus(
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS -> {
                 val call = inCall()
-                AppLog.i("audio-focus", "LOSS permanent → pause (appel=$call)")
+                val wasPlaying = p.isEffectivePlayback()
+                AppLog.i("audio-focus", "LOSS permanent → pause (appel=$call playing=$wasPlaying)")
                 cancelDuckTimeout()
                 unduck(p)
-                val wasPlaying = p.isEffectivePlayback()
                 focusPauseAtMs = android.os.SystemClock.elapsedRealtime()
+                // Marquer AVANT pause() pour que YtmForwardingPlayer n'enregistre pas
+                // une « pause utilisateur » (Assistant / mic Google).
+                resumeOnGain = wasPlaying
+                waitingTransientGain = wasPlaying
                 runCatching { p.pause() }
                 held = false
                 if (call) {
-                    // Retirés de la pile audio : aucun GAIN ne viendra, il faut guetter
-                    // la fin de l'appel nous-mêmes.
-                    resumeOnGain = false
-                    waitingTransientGain = false
+                    // Retirés de la pile audio : souvent aucun GAIN → guetter la fin d'appel.
                     if (wasPlaying) watchCallEnd()
-                } else {
-                    resumeOnGain = false
-                    waitingTransientGain = false
-                    if (wasPlaying) probeCallAfterLoss(pauseIfCall = false)
+                } else if (wasPlaying) {
+                    // Assistant / micro : LOSS « permanent » mais GAIN revient souvent.
+                    probeCallAfterLoss(pauseIfCall = false)
+                    watchAudioModeResume()
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
                 val wasPlaying = p.isEffectivePlayback()
                 waitingTransientGain = true
+                // Armer la reprise dès maintenant (pas seulement au timeout duck).
+                resumeOnGain = wasPlaying
                 if (inCall()) {
                     AppLog.i("audio-focus", "LOSS_TRANSIENT appel → pause")
                     cancelDuckTimeout()
                     unduck(p)
-                    resumeOnGain = wasPlaying
                     focusPauseAtMs = android.os.SystemClock.elapsedRealtime()
                     runCatching { p.pause() }
                     if (wasPlaying) watchCallEnd()
                 } else {
-                    // Bip de notification : baisser plutôt que couper.
-                    AppLog.i("audio-focus", "LOSS_TRANSIENT court → volume bas")
+                    // Bip / Assistant court : baisser plutôt que couper.
+                    AppLog.i("audio-focus", "LOSS_TRANSIENT court → volume bas resume=$wasPlaying")
                     duck(p)
                     scheduleDuckTimeout(wasPlaying)
                     probeCallAfterLoss(pauseIfCall = wasPlaying)
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                val wasPlaying = p.isEffectivePlayback()
                 AppLog.i("audio-focus", "CAN_DUCK → volume bas")
+                if (wasPlaying) resumeOnGain = true
                 duck(p)
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
@@ -126,14 +130,14 @@ class PlayerAudioFocus(
                 held = true
                 waitingTransientGain = false
                 pendingDelayedGain = false
-                if (resumeOnGain && PlaybackResume.mayAutoPlay()) {
+                if (resumeOnGain) {
+                    // Contourne un userPaused posé à tort par pause MediaSession (Assistant).
+                    PlaybackResume.noteUserPlay()
                     resumeOnGain = false
                     runCatching {
                         p.playWhenReady = true
                         p.play()
                     }
-                } else {
-                    resumeOnGain = false
                 }
             }
         }
@@ -206,6 +210,52 @@ class PlayerAudioFocus(
      * Guette le retour du mode audio normal, puis redemande le focus et relance.
      * Le mode audio est lisible sans autorisation, contrairement à l'état d'appel.
      */
+    /**
+     * Après LOSS « permanent » hors appel (Assistant / mic) : si le mode audio
+     * redevient normal et qu'aucun GAIN n'est arrivé, relancer quand même.
+     */
+    private fun watchAudioModeResume() {
+        if (callWatch != null) return
+        callWatchUntilMs = System.currentTimeMillis() + 12_000L
+        val task = object : Runnable {
+            override fun run() {
+                if (System.currentTimeMillis() > callWatchUntilMs) {
+                    AppLog.i("audio-focus", "reprise mode audio abandonnée")
+                    callWatch = null
+                    return
+                }
+                if (inCall() || !resumeOnGain) {
+                    handler.postDelayed(this, CALL_POLL_MS)
+                    return
+                }
+                // Mode normal + on attendait une reprise → rebind focus + play
+                val mode = runCatching { am.mode }.getOrDefault(AudioManager.MODE_NORMAL)
+                if (mode != AudioManager.MODE_NORMAL) {
+                    handler.postDelayed(this, CALL_POLL_MS)
+                    return
+                }
+                callWatch = null
+                val p = player() ?: return
+                AppLog.i("audio-focus", "mode audio normal → reprise post-Assistant")
+                unduck(p)
+                held = false
+                request = null
+                if (!requestIfNeeded()) return
+                if (!PlaybackResume.mayAutoPlay() && !isFocusDrivenPauseRecent(5_000L)) return
+                // Contourne un userPaused posé à tort par pause MediaSession.
+                PlaybackResume.noteUserPlay()
+                resumeOnGain = false
+                waitingTransientGain = false
+                runCatching {
+                    p.playWhenReady = true
+                    p.play()
+                }
+            }
+        }
+        callWatch = task
+        handler.postDelayed(task, CALL_POLL_MS)
+    }
+
     private fun watchCallEnd() {
         if (callWatch != null) return
         callWatchUntilMs = System.currentTimeMillis() + CALL_WATCH_MAX_MS
@@ -346,11 +396,23 @@ class PlayerAudioFocus(
         return ok
     }
 
+    /** Pause déclenchée par le focus (Assistant / duck) — pas une intention user. */
+    fun isFocusDrivenPauseRecent(withinMs: Long = 2_500L): Boolean {
+        if (ducked || waitingTransientGain || resumeOnGain) return true
+        if (focusPauseAtMs <= 0L) return false
+        return android.os.SystemClock.elapsedRealtime() - focusPauseAtMs < withinMs
+    }
+
     /**
      * Pause utilisateur : aucune reprise au prochain GAIN, même si un DELAYED
      * ou une fin d’appel était déjà armée.
+     * Ignoré si la pause vient juste du focus (évite de bloquer la reprise mic/Assistant).
      */
     fun cancelPendingResume() {
+        if (isFocusDrivenPauseRecent()) {
+            AppLog.i("audio-focus", "cancelPendingResume ignoré (pause focus / duck)")
+            return
+        }
         resumeOnGain = false
         waitingTransientGain = false
         pendingDelayedGain = false

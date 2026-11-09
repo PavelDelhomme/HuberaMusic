@@ -3082,6 +3082,10 @@ class PlaybackService : MediaSessionService() {
 
     private fun resolvedApiBase(): String = Holder.resolvedApiBase()
 
+    /** Pause récente due au focus (duck / Assistant) — pas une intention user. */
+    fun isFocusDrivenPauseRecent(): Boolean =
+        audioFocus?.isFocusDrivenPauseRecent() == true
+
     object Holder {
         @Volatile var player: ExoPlayer? = null
         @Volatile var service: PlaybackService? = null
@@ -3352,7 +3356,12 @@ private class YtmForwardingPlayer(
     }
 
     override fun pause() {
-        PlaybackResume.noteUserPause()
+        // Assistant / mic : MediaSession pause + focus LOSS. Ne pas verrouiller
+        // comme une pause utilisateur sinon le GAIN ne reprend jamais.
+        val focusPause = PlaybackService.Holder.service?.isFocusDrivenPauseRecent() == true
+        if (!focusPause) {
+            PlaybackResume.noteUserPause()
+        }
         super.pause()
     }
 

@@ -1889,7 +1889,12 @@ class PlayerController(
     /**
      * Même file déjà chargée dans Exo → seek sans rebuild (next / re-tap instantané).
      */
-    private fun trySeekSameQueue(player: Player, playable: List<TrackDto>, startIndex: Int): Boolean {
+    private fun trySeekSameQueue(
+        player: Player,
+        playable: List<TrackDto>,
+        startIndex: Int,
+        autoplay: Boolean = true,
+    ): Boolean {
         if (playable.isEmpty() || player.mediaItemCount == 0) return false
         val held = PlaybackService.Holder.queue
         if (held.size != playable.size) return false
@@ -1897,16 +1902,21 @@ class PlayerController(
         if (player.mediaItemCount != playable.size) return false
         val idx = startIndex.coerceIn(0, playable.lastIndex)
         if (player.getMediaItemAt(idx).mediaId != playable[idx].id) return false
-        userWantsPlaying = true
-        pendingAutoplay = true
+        userWantsPlaying = autoplay
+        pendingAutoplay = autoplay
         publishOptimistic(playable, idx)
+        // playWhenReady AVANT prepare/seek pour éviter un blip autoplay (restore notif).
+        player.playWhenReady = autoplay
         player.seekTo(idx, 0L)
         PlaybackService.Holder.service?.ensureCurrentIsLocalFile()
         if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
             player.prepare()
         }
-        player.playWhenReady = true
-        player.play()
+        if (autoplay) {
+            player.play()
+        } else {
+            player.pause()
+        }
         warmAround(playable, idx)
         syncFrom(player)
         return true
@@ -2011,7 +2021,7 @@ class PlayerController(
             return
         }
         // Seek sans rebuild si la file Exo est déjà celle-ci
-        if (trySeekSameQueue(player, window, idx) && startPositionMs <= 0L) {
+        if (trySeekSameQueue(player, window, idx, autoplay = autoplay) && startPositionMs <= 0L) {
             ensureAutoplayAhead()
             return
         }
@@ -2019,6 +2029,8 @@ class PlayerController(
         // Courant + proches d’abord → 1er son plus tôt ; reste de la fenêtre ensuite.
         val leadTo = (idx + 4).coerceAtMost(window.size)
         val lead = window.subList(idx, leadTo)
+        // playWhenReady AVANT prepare : sinon Exo reprend immédiatement (notif / restore).
+        player.playWhenReady = autoplay
         player.setMediaItems(lead.map { mediaItem(it) }, 0, pos)
         applyRepeatShuffle(player)
         player.prepare()

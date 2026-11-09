@@ -79,6 +79,7 @@ const PROBE_LOCK = join(ROOT, 'data', 'playback-probe.lock');
 const DASH_RELAY_FALLBACK = !/^(0|false|off)$/i.test(
   String(process.env.STREAM_DASH_RELAY_FALLBACK || '1').trim(),
 );
+// (repli DASH : voir branche isDashBrandBuffer dans handleStream — pas de downloadTrack synchrone)
 /** Attente max d’un .m4a progressif avant de relayer le DASH (début de titre). */
 const DASH_RELAY_DISK_WAIT_MS = Math.max(
   0,
@@ -3087,22 +3088,18 @@ export async function handleStream(req: Request, res: Response) {
       // Forcer le chemin progressif yt-dlp / disque.
       let relayedDash = false;
       if (!wantVideo && isDashBrandBuffer(firstBuf)) {
-        // Titre froid (pas de .m4a) : yt-dlp est souvent bot-bloqué / en timeout
-        // → l’ancien « rejet DASH » laissait Exo muet jusqu’à ~100 s (readTimeout 120 s)
-        // alors que les octets itag 140 étaient déjà là. Les épingles marchaient
-        // car déjà sur disque. On tente le progressif quelques secondes, sinon on
-        // RELAIE le DASH (lecture démarre) pendant que le téléchargement continue.
+        // Titre froid (pas de .m4a) : yt-dlp souvent KO → l’ancien rejet DASH
+        // laissait Exo muet ~100 s. Relayer immédiatement les octets itag 140
+        // déjà reçus (Android). Le progressif tourne en fond APRÈS la décision
+        // (évite tempête récursive downloadTrack ↔ stream).
         const canRelayDash =
           DASH_RELAY_FALLBACK &&
           !wantOffline &&
           !isWarmPrefetch &&
           isAndroidClient(req);
-        downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId, live: true }).catch(() => {
-          /* fond */
-        });
         if (canRelayDash) {
-          const diskWaitMs = audioRangeStart > 0 ? 400 : DASH_RELAY_DISK_WAIT_MS;
-          const late = await waitUntilDiskServable(videoId, diskWaitMs);
+          // Disque déjà prêt ? servir sans attendre longtemps.
+          const late = await waitUntilDiskServable(videoId, audioRangeStart > 0 ? 400 : 250);
           if (late) {
             try {
               await reader.cancel();
@@ -3113,7 +3110,17 @@ export async function handleStream(req: Request, res: Response) {
             return;
           }
           relayedDash = true;
-          console.warn(`[stream] DASH googlevideo ${videoId} → relais direct (progressif pas prêt)`);
+          console.warn(`[stream] DASH googlevideo ${videoId} → relais direct`);
+          setTimeout(() => {
+            downloadTrack(videoId, {
+              progressiveOnly: true,
+              preferProxies,
+              userId: streamUserId,
+              live: false,
+            }).catch(() => {
+              /* fond */
+            });
+          }, 50);
         } else {
           try {
             await reader.cancel();

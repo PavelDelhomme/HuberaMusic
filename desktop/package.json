@@ -1,8 +1,8 @@
 {
   "name": "plm-desktop",
-  "version": "1.3.412",
+  "version": "1.3.413",
   "private": true,
-  "description": "MHC desktop (shell Electron \u2192 PWA prod)",
+  "description": "MHC desktop (shell Electron → PWA prod)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
