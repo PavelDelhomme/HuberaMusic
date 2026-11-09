@@ -100,6 +100,8 @@ import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePa
 import { speculativePrewarm, fastStartStats, recentPlaybackFailures } from './media/fastStart.js';
 import { healTrackForEveryone, streamHealthHubStats } from './media/streamHealthHub.js';
 import { streamIncidentStats } from './media/streamIncident.js';
+import { userCasesOverview } from './platform/userCases.js';
+import { bugsOverview } from './platform/bugSources.js';
 import {
   scheduleUserTasteWarm,
   startGlobalTasteWarmScheduler,
@@ -1681,6 +1683,24 @@ app.post('/api/admin/heal-track', requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: String((err as Error).message || err) });
   }
+});
+
+/**
+ * User cases de chaque app Hubera (parcours Admin + Standard) + diagramme
+ * Mermaid prêt à rendre. Lu depuis `products/<app>/user-cases.json`.
+ */
+app.get('/api/admin/user-cases', requireAdmin, (_req, res) => {
+  res.json(userCasesOverview());
+});
+
+/**
+ * Bugs remontés : e-mails (Himalaya) + tâches Hubera Docs.
+ * `?limit=` borne le nombre d'entrées par source.
+ */
+app.get('/api/admin/bugs', requireAdmin, async (req, res) => {
+  const limit = Number(req.query.limit || 10);
+  const data = await bugsOverview({ limit });
+  res.json(data);
 });
 
 app.get('/api/admin/library-health', requireAdmin, async (_req, res) => {
