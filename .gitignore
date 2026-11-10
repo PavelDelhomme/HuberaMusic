@@ -54,6 +54,14 @@ scripts/proxy-steward/__pycache__/
 
 *.torrent
 
+# Identifiants de test multi-profils — JAMAIS commités (dépôt public !)
+hubera-users.json
+**/hubera-users.json
+
+# Artefacts locaux de test
+user-cases.json
+
+
 # Local lab dumps / accidental PDFs at repo root
 scripts/qa/*.xml
 /Hubera-*.pdf

@@ -3,7 +3,17 @@
  * Ne pas raccourcir les délais froid : yt-dlp prend ~28–40 s.
  */
 
-export const ANDROID_COLD_DISK_WAIT_MS = 28_000;
+/**
+ * Attente disque côté Android. Historiquement 28 s : l'utilisateur restait sur
+ * un écran « ça charge » pendant que le format se résolvait. Depuis le
+ * préchargement agressif (`fastStart.speculativePrewarm`), le titre est déjà
+ * chaud quand on le clique → 6 s suffisent, et le repli DASH/relais prend la
+ * suite sans silence prolongé. `ANDROID_COLD_DISK_WAIT_MS` pour ajuster.
+ */
+export const ANDROID_COLD_DISK_WAIT_MS = Math.max(
+  2_000,
+  Math.min(28_000, Number(process.env.ANDROID_COLD_DISK_WAIT_MS || 6_000) || 6_000),
+);
 export const GET_AUDIO_FORMAT_DEADLINE_MS = 40_000;
 export const LYRICS_FULL_WAIT_MS = 12_000;
 /** UA Exo / OkHttp — PLM historique + HuberaMusic actuel. */

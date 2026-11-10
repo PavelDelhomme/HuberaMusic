@@ -122,9 +122,28 @@ function formatCircuitOpen(videoId: string): boolean {
   return true;
 }
 
+/**
+ * Déclenche l'auto-heal global (disque partagé + mapping canonique + incident).
+ * Import dynamique : évite tout cycle stream.ts ↔ streamHealthHub.ts.
+ * Dédupliqué côté hub, donc un pic de 503 ne lance pas 200 réparations.
+ */
+function triggerGlobalHeal(videoId: string, detail: string): void {
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(String(videoId || ''))) return;
+  void import('./streamHealthHub.js')
+    .then(({ healTrackForEveryone }) =>
+      healTrackForEveryone(videoId, { reason: String(detail || 'stream KO').slice(0, 160) }),
+    )
+    .catch(() => {
+      /* best-effort : jamais bloquant pour la réponse client */
+    });
+}
+
 function sendStreamUnavailable(res: Response, videoId: string, detail: string): boolean {
   if (res.headersSent) return false;
   console.warn(`[stream] 410 skip ${videoId} (${detail.slice(0, 60)})`);
+  // Auto-heal global : le titre est réparé pour tous les comptes (disque/mapping)
+  // et l'incident est consigné (Docs + mail). Non bloquant pour la réponse client.
+  triggerGlobalHeal(videoId, detail);
   res.status(410).json({
     error: 'Impossible de streamer audio',
     code: 'VIDEO_UNAVAILABLE',
@@ -138,6 +157,8 @@ function sendStreamUnavailable(res: Response, videoId: string, detail: string): 
 function sendStreamRetryLater(res: Response, videoId: string, detail: string): boolean {
   if (res.headersSent) return false;
   console.warn(`[stream] 503 retry ${videoId} (${detail.slice(0, 60)})`);
+  // Idem 410 : on ne laisse pas l'utilisateur re-essayer indéfiniment, on répare.
+  triggerGlobalHeal(videoId, detail);
   res.status(503);
   res.setHeader('Retry-After', '2');
   res.setHeader('Cache-Control', 'no-store');

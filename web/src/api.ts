@@ -408,6 +408,56 @@ export const api = {
       { method: 'POST', body: JSON.stringify(task) },
     ),
   adminMailOutbox: () => req<{ mails: any[] }>('/api/admin/mail-outbox'),
+  /**
+   * User cases de chaque app Hubera (parcours Admin + Standard) + diagramme Mermaid.
+   * Agrégé côté API depuis `products/<app>/user-cases.json`.
+   */
+  adminUserCases: () =>
+    req<{
+      ok: boolean;
+      count: number;
+      productsDir: string;
+      apps: Array<{
+        app: string;
+        repo?: string;
+        version?: string;
+        cases: number;
+        admin: number;
+        standard: number;
+        error?: string | null;
+        mermaid: string;
+        userCases: Array<{
+          id: string;
+          title: string;
+          role: string;
+          flow?: string[];
+          expected?: string;
+          device?: string;
+        }>;
+      }>;
+    }>('/api/admin/user-cases'),
+  /** Bugs remontés par e-mail (Himalaya) et par Hubera Docs. */
+  adminBugs: (limit = 10) =>
+    req<{
+      ok: boolean;
+      mail: { ok: boolean; count: number; items: any[]; error?: string; query: string };
+      docs: { ok: boolean; count: number; items: any[]; error?: string; origin: string };
+    }>(`/api/admin/bugs?limit=${encodeURIComponent(String(limit))}`),
+  /** Santé du démarrage rapide (préchargement, auto-heal, incidents). */
+  adminFastStart: () =>
+    req<{
+      ok: boolean;
+      fastStart: any;
+      healthHub: any;
+      incidents: any;
+      failures: any[];
+    }>('/api/admin/fast-start'),
+  /** Réparation à la demande d'un titre pour tous les comptes. */
+  adminHealTrack: (videoId: string, opts?: { title?: string; artist?: string; reason?: string }) =>
+    req<{ ok: boolean; result?: any; error?: string }>('/api/admin/heal-track', {
+      method: 'POST',
+      body: JSON.stringify({ videoId, ...opts }),
+    }),
   adminSmtp: () => req<{ smtp: any; env: string; appUrl: string | null }>('/api/admin/smtp'),
   adminSmtpTest: (to?: string) =>
     req<{ ok: boolean; mode?: string; error?: string; config?: any; sent?: any }>(
