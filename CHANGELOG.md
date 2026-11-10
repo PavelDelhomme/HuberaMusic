@@ -3,9 +3,35 @@
 Toutes les évolutions notables de l'application. Format inspiré de
 [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions = `VERSION`.
 
-## [1.3.414] — 2026-11-09 — Démarrage instantané & auto-heal global
+## [1.3.414] — 2026-11-10 — Incident prod résolu + démarrage instantané & auto-heal global
+
+### 🔴 Incident de production (corrigé le 10/11)
+
+Le conteneur `ytmusic` était **`Up (unhealthy)` avec 26 redémarrages** : la prod
+tournait l'image `ytmusic:search-durable` (**build du 30/10**) sans le correctif
+`9ff0929` (1.3.413).
+
+- `RangeError: Maximum call stack size exceeded` en boucle dans `api/src/media/stream.ts`
+- `Health check exceeded timeout (5s)` × 5
+- `plm.delhomme.ovh/api/health` → timeout · `music.hubera.cloud/api/health` → 404
+
+**Cause** : dans `handleStream`, le repli DASH lançait `downloadTrack(...)` de façon
+synchrone alors que la réponse était déjà en cours → ré-entrée récursive →
+stack overflow → `PromiseRejectCallback` en boucle.
+
+**Correctif** : image `ytmusic:1.3.414` (depuis `dev`) +
+`docker-compose.override.yml` basculé + `docker compose up -d --no-deps --force-recreate`.
+Volume `ytmusic_ytmusic_data` (20,6 Go) **jamais touché**.
+
+| Indicateur | Avant | Après |
+|---|---|---|
+| Status | unhealthy | **healthy** |
+| Restarts | 26 | **0** |
+| RangeError | en boucle | **0** |
+| `/api/health` (2 domaines) | timeout / 404 | **200 / 200** |
 
 ### Ajouté
+
 - **`api/src/media/fastStart.ts`** — préchargement agressif et cache instantané :
   - `speculativePrewarm()` : dès qu'une liste est vue (recherche, album, playlist,
     file), les formats des N premiers titres sont résolus en arrière-plan et les
