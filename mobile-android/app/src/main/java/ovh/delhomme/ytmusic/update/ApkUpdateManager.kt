@@ -63,27 +63,38 @@ class ApkUpdateManager(
     private suspend fun fetchApkInfo(): ApkInfoResponse = withContext(Dispatchers.IO) {
         val pkg = context.packageName
         val bases = container.prodApiFallbacks()
+        val errors = java.util.Collections.synchronizedList(mutableListOf<String>())
         // Race parallèle (hosts morts ne bloquent plus 12–22 s en séquentiel).
-        coroutineScope {
+        // Important : la valeur du bloc coroutineScope doit être RENVOYÉE par la
+        // fonction. Avant, un `return@coroutineScope` était suivi d'un `throw`
+        // inconditionnel : la MAJ échouait donc TOUJOURS (« apk/info
+        // indisponible ») même quand la requête réussissait (HTTP 200).
+        val info = coroutineScope {
             val jobs = bases.map { base ->
                 async {
                     try {
                         fetchApkInfoFrom(base, pkg)
                     } catch (e: Exception) {
-                        AppLog.w("apk-update", "apk/info $base: ${e.message}")
+                        AppLog.w("apk-update", "apk/info $base: ${e::class.java.simpleName} ${e.message}")
+                        errors.add("$base: ${e.message}")
                         null
                     }
                 }
             }
+            var result: ApkInfoResponse? = null
             for (job in jobs) {
-                val info = job.await()
-                if (info != null) {
-                    jobs.forEach { it.cancel() }
-                    return@coroutineScope info
+                val got = job.await()
+                if (got != null) {
+                    result = got
+                    break
                 }
             }
+            jobs.forEach { runCatching { it.cancel() } }
+            result
         }
-        throw java.io.IOException("apk/info indisponible")
+        info ?: throw java.io.IOException(
+            "apk/info indisponible" + if (errors.isEmpty()) "" else " (${errors.joinToString("; ")})"
+        )
     }
 
     private suspend fun fetchApkInfoFrom(base: String, pkg: String): ApkInfoResponse {
@@ -105,11 +116,13 @@ class ApkUpdateManager(
             "&huberaAware=1" +
             "&clientPackage=${java.net.URLEncoder.encode(pkg, "UTF-8")}"
         val req = Request.Builder().url(url).get().build()
-        // Client court dédié OTA (évite readTimeout 45 s du client principal).
+        // Client dédié OTA : timeouts plus larges que 5 s — sur certains réseaux
+        // mobiles la requête /apk/info dépassait 5 s et provoquait un faux
+        // « apk/info indisponible » (toutes les tentatives partaient en timeout).
         val client = container.httpAuth.newBuilder()
-            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-            .callTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
             .build()
         client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code} $base")
