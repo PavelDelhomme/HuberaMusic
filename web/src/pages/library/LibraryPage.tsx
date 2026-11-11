@@ -28,12 +28,18 @@ function shuffleTracks(tracks: Track[]) {
   return copy;
 }
 
-/** File bornée : shuffle d’abord (aléatoire), puis slice 400 playable. */
+/**
+ * File biblio : shuffle d’abord, fenêtre RAM.
+ * Lancer avec sourceKind=playlist → pas de radio / similaires auto
+ * (userQueueEnd = longueur file ; autoplay suggestions coupées).
+ */
 function capPlayQueue(tracks: Track[], shuffle: boolean) {
   const playable = tracks.filter(isPlayableTrack);
   const ordered = shuffle ? shuffleTracks(playable) : playable;
   return ordered.slice(0, PLAY_QUEUE_CAP);
 }
+
+const LIB_QUEUE_OPTS = { sourceId: 'lib:songs', sourceKind: 'playlist' as const };
 
 function LibraryListSkeleton({ rows = 8 }: { rows?: number }) {
   return (
@@ -219,21 +225,23 @@ export function LibraryPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void playQueue(capPlayQueue(songs, false), 0)}
+                  onClick={() => void playQueue(capPlayQueue(songs, false), 0, LIB_QUEUE_OPTS)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-red px-5 py-2.5 text-sm font-medium"
                 >
                   <Play className="h-4 w-4 fill-white" /> Tout lire
                 </button>
                 <button
                   type="button"
-                  onClick={() => void playQueue(capPlayQueue(songs, true), 0)}
+                  onClick={() => void playQueue(capPlayQueue(songs, true), 0, LIB_QUEUE_OPTS)}
                   className="inline-flex items-center gap-2 rounded-full bg-yt-elevated px-5 py-2.5 text-sm font-medium text-yt-muted hover:text-white"
                 >
                   <Shuffle className="h-4 w-4" /> Aléatoire
                 </button>
               </div>
               {songs.length > PLAY_QUEUE_CAP && (
-                <p className="mb-3 text-xs text-yt-muted">File limitée à 400 titres pour rester fluide</p>
+                <p className="mb-3 text-xs text-yt-muted">
+                  File limitée à 400 titres (biblio seule, sans similaires). Relance Aléatoire pour la suite non entendue.
+                </p>
               )}
               <VirtualTrackList tracks={songs} showAlbum />
             </>

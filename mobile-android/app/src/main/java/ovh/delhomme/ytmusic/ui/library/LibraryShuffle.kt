@@ -39,7 +39,7 @@ suspend fun playLibraryShuffled(
         return@coroutineScope
     }
     val ctx = YtMusicApp.instance
-    val recent = ShuffleHeadStore.loadRecentPlayed(ctx, max = 400).toHashSet()
+    val recent = ShuffleHeadStore.loadRecentPlayed(ctx, max = 8_000).toHashSet()
     var warmIds = container.libraryHeadPrefetcher.cachedShuffleHeadIds()
     // Heads en parallèle — ne bloque pas le play plus de ~200 ms
     val headsJob = if (warmIds.isEmpty()) {
@@ -124,8 +124,10 @@ internal fun trueShuffleQueue(
     offlineIds: Set<String> = emptySet(),
 ): List<TrackDto> {
     if (playable.size <= 1) return playable
+    // Anti-répétition session : pas de déjà-entendu tant qu’il reste du frais.
+    // Seulement quand TOUTE la biblio de la session a été entendue → on re-mélange.
     val fresh = playable.filter { it.id !in recent }
-    val pool = if (fresh.size >= (playable.size / 4).coerceAtLeast(8)) fresh else playable
+    val pool = if (fresh.isNotEmpty()) fresh else playable
     val copy = pool.toMutableList()
     for (i in copy.lastIndex downTo 1) {
         val j = kotlin.random.Random.nextInt(i + 1)

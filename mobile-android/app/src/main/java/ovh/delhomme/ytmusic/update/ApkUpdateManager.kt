@@ -12,6 +12,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,53 +60,88 @@ class ApkUpdateManager(
         return created
     }
 
-    private suspend fun fetchApkInfo(): ApkInfoResponse {
+    private suspend fun fetchApkInfo(): ApkInfoResponse = withContext(Dispatchers.IO) {
         val pkg = context.packageName
-        var lastErr: Exception? = null
-        for (base in container.prodApiFallbacks()) {
-            try {
-                if (base == container.resolvedApiBase()) {
-                    val info = container.api.apkInfo(
-                        clientVersion = BuildConfig.VERSION_NAME,
-                        clientVersionCode = BuildConfig.VERSION_CODE,
-                        install = installId(),
-                        huberaAware = 1,
-                        clientPackage = pkg,
-                    )
-                    lastHubera = info.hubera?.message?.takeIf { it.isNotBlank() }
-                    return info
+        val bases = container.prodApiFallbacks()
+        val errors = java.util.Collections.synchronizedList(mutableListOf<String>())
+        // Race parallèle (hosts morts ne bloquent plus 12–22 s en séquentiel).
+        // Important : la valeur du bloc coroutineScope doit être RENVOYÉE par la
+        // fonction. Avant, un `return@coroutineScope` était suivi d'un `throw`
+        // inconditionnel : la MAJ échouait donc TOUJOURS (« apk/info
+        // indisponible ») même quand la requête réussissait (HTTP 200).
+        val info = coroutineScope {
+            val jobs = bases.map { base ->
+                async {
+                    try {
+                        fetchApkInfoFrom(base, pkg)
+                    } catch (e: Exception) {
+                        AppLog.w("apk-update", "apk/info $base: ${e::class.java.simpleName} ${e.message}")
+                        errors.add("$base: ${e.message}")
+                        null
+                    }
                 }
-                val url = "$base/api/deploy/apk/info" +
-                    "?clientVersion=${java.net.URLEncoder.encode(BuildConfig.VERSION_NAME, "UTF-8")}" +
-                    "&clientVersionCode=${BuildConfig.VERSION_CODE}" +
-                    "&install=${installId()}" +
-                    "&huberaAware=1" +
-                    "&clientPackage=${java.net.URLEncoder.encode(pkg, "UTF-8")}"
-                val req = Request.Builder().url(url).get().build()
-                container.httpAuth.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code} $base")
-                    val raw = resp.body?.string().orEmpty()
-                    val o = org.json.JSONObject(raw)
-                    val info = ApkInfoResponse(
-                        ready = o.optBoolean("ready"),
-                        versionName = o.optString("versionName").takeIf { it.isNotBlank() },
-                        versionCode = o.optInt("versionCode").takeIf { it > 0 },
-                        apiBaseUrl = o.optString("apiBaseUrl").takeIf { it.isNotBlank() },
-                        builtAt = o.optString("builtAt").takeIf { it.isNotBlank() },
-                        sizeBytes = o.optLong("sizeBytes").takeIf { it > 0 },
-                        downloadPath = o.optString("downloadPath").takeIf { it.isNotBlank() },
-                        downloadUrl = o.optString("downloadUrl").takeIf { it.isNotBlank() },
-                        packageName = o.optString("package").takeIf { it.isNotBlank() },
-                    )
-                    lastHubera = o.optJSONObject("hubera")?.optString("message")?.takeIf { it.isNotBlank() }
-                    return info
-                }
-            } catch (e: Exception) {
-                lastErr = e
-                AppLog.w("apk-update", "apk/info $base: ${e.message}")
             }
+            var result: ApkInfoResponse? = null
+            for (job in jobs) {
+                val got = job.await()
+                if (got != null) {
+                    result = got
+                    break
+                }
+            }
+            jobs.forEach { runCatching { it.cancel() } }
+            result
         }
-        throw lastErr ?: java.io.IOException("apk/info indisponible")
+        info ?: throw java.io.IOException(
+            "apk/info indisponible" + if (errors.isEmpty()) "" else " (${errors.joinToString("; ")})"
+        )
+    }
+
+    private suspend fun fetchApkInfoFrom(base: String, pkg: String): ApkInfoResponse {
+        if (base == container.resolvedApiBase()) {
+            val info = container.api.apkInfo(
+                clientVersion = BuildConfig.VERSION_NAME,
+                clientVersionCode = BuildConfig.VERSION_CODE,
+                install = installId(),
+                huberaAware = 1,
+                clientPackage = pkg,
+            )
+            lastHubera = info.hubera?.message?.takeIf { it.isNotBlank() }
+            return info
+        }
+        val url = "$base/api/deploy/apk/info" +
+            "?clientVersion=${java.net.URLEncoder.encode(BuildConfig.VERSION_NAME, "UTF-8")}" +
+            "&clientVersionCode=${BuildConfig.VERSION_CODE}" +
+            "&install=${installId()}" +
+            "&huberaAware=1" +
+            "&clientPackage=${java.net.URLEncoder.encode(pkg, "UTF-8")}"
+        val req = Request.Builder().url(url).get().build()
+        // Client dédié OTA : timeouts plus larges que 5 s — sur certains réseaux
+        // mobiles la requête /apk/info dépassait 5 s et provoquait un faux
+        // « apk/info indisponible » (toutes les tentatives partaient en timeout).
+        val client = container.httpAuth.newBuilder()
+            .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code} $base")
+            val raw = resp.body?.string().orEmpty()
+            val o = org.json.JSONObject(raw)
+            val info = ApkInfoResponse(
+                ready = o.optBoolean("ready"),
+                versionName = o.optString("versionName").takeIf { it.isNotBlank() },
+                versionCode = o.optInt("versionCode").takeIf { it > 0 },
+                apiBaseUrl = o.optString("apiBaseUrl").takeIf { it.isNotBlank() },
+                builtAt = o.optString("builtAt").takeIf { it.isNotBlank() },
+                sizeBytes = o.optLong("sizeBytes").takeIf { it > 0 },
+                downloadPath = o.optString("downloadPath").takeIf { it.isNotBlank() },
+                downloadUrl = o.optString("downloadUrl").takeIf { it.isNotBlank() },
+                packageName = o.optString("package").takeIf { it.isNotBlank() },
+            )
+            lastHubera = o.optJSONObject("hubera")?.optString("message")?.takeIf { it.isNotBlank() }
+            return info
+        }
     }
 
     fun lastHuberaMessage(): String? = lastHubera
@@ -627,7 +664,7 @@ class ApkUpdateManager(
             ),
         )
         try {
-            val result = withTimeout(22_000L) {
+            val result = withTimeout(8_000L) {
                 check(force = true, respectSnooze = false)
             }
             val remote = result.info?.versionCode ?: 0

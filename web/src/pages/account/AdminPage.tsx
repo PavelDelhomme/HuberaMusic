@@ -18,6 +18,7 @@ import {
 import { Link } from 'react-router-dom';
 
 import { docsTaskFromGroup, groupErrorSignatures } from './groupErrors';
+import { UserCasesPanel } from '../../components/admin/UserCasesPanel';
 
 function docsFailLabel(error?: string) {
   if (error === 'allowlist') return 'Hubera Docs refuse ce compte';
@@ -169,6 +170,20 @@ export function AdminPage() {
       </div>
 
       {err && <p className="mb-4 text-sm text-red-400">{err}</p>}
+
+      <section id="hubera-user-cases" className="mb-6 overflow-hidden rounded-2xl border border-yt-border bg-yt-surface">
+        <details>
+          <summary className="cursor-pointer list-none p-5 font-display text-lg font-semibold">
+            User cases &amp; bugs remontés
+            <span className="ml-2 text-xs font-normal text-yt-muted">
+              (parcours Admin / Utilisateur standard — Mermaid)
+            </span>
+          </summary>
+          <div className="border-t border-yt-border p-5">
+            <UserCasesPanel />
+          </div>
+        </details>
+      </section>
 
       <section className="mb-6 rounded-2xl border border-yt-border bg-yt-surface p-5">
         <h3 className="font-display text-lg font-semibold">Inscription & comptes</h3>

@@ -7,6 +7,7 @@ import { describe, it, before } from 'node:test';
 const dir = mkdtempSync(join(tmpdir(), 'hubera-playability-'));
 process.env.PLAYABILITY_DB_PATH = join(dir, 'p.db');
 process.env.SEARCH_FTS_PATH = join(dir, 'fts.db');
+process.env.PLAYABILITY_FRESH_ON_TRANSIENT = '0';
 
 const {
   closePlayabilityDb,

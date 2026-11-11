@@ -72,6 +72,20 @@ const YTDLP = join(ROOT, 'bin', 'yt-dlp');
 const CACHE_DIR = join(ROOT, 'data', 'cache');
 const PROBE_LOCK = join(ROOT, 'data', 'playback-probe.lock');
 
+/**
+ * Titre froid + yt-dlp KO : relayer le flux googlevideo ftyp=dash (itag 140) à Android
+ * plutôt que le rejeter (muet ~100 s). `STREAM_DASH_RELAY_FALLBACK=0` pour désactiver.
+ */
+const DASH_RELAY_FALLBACK = !/^(0|false|off)$/i.test(
+  String(process.env.STREAM_DASH_RELAY_FALLBACK || '1').trim(),
+);
+// (repli DASH : voir branche isDashBrandBuffer dans handleStream — pas de downloadTrack synchrone)
+/** Attente max d’un .m4a progressif avant de relayer le DASH (début de titre). */
+const DASH_RELAY_DISK_WAIT_MS = Math.max(
+  0,
+  Math.min(15_000, Number(process.env.STREAM_DASH_RELAY_DISK_WAIT_MS || 3_000) || 3_000),
+);
+
 /** Balayage bibliothèque en cours : pas de warm ni de yt-dlp à côté. */
 export function playbackProbeExclusive(): boolean {
   try {
@@ -108,9 +122,28 @@ function formatCircuitOpen(videoId: string): boolean {
   return true;
 }
 
+/**
+ * Déclenche l'auto-heal global (disque partagé + mapping canonique + incident).
+ * Import dynamique : évite tout cycle stream.ts ↔ streamHealthHub.ts.
+ * Dédupliqué côté hub, donc un pic de 503 ne lance pas 200 réparations.
+ */
+function triggerGlobalHeal(videoId: string, detail: string): void {
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(String(videoId || ''))) return;
+  void import('./streamHealthHub.js')
+    .then(({ healTrackForEveryone }) =>
+      healTrackForEveryone(videoId, { reason: String(detail || 'stream KO').slice(0, 160) }),
+    )
+    .catch(() => {
+      /* best-effort : jamais bloquant pour la réponse client */
+    });
+}
+
 function sendStreamUnavailable(res: Response, videoId: string, detail: string): boolean {
   if (res.headersSent) return false;
   console.warn(`[stream] 410 skip ${videoId} (${detail.slice(0, 60)})`);
+  // Auto-heal global : le titre est réparé pour tous les comptes (disque/mapping)
+  // et l'incident est consigné (Docs + mail). Non bloquant pour la réponse client.
+  triggerGlobalHeal(videoId, detail);
   res.status(410).json({
     error: 'Impossible de streamer audio',
     code: 'VIDEO_UNAVAILABLE',
@@ -124,6 +157,8 @@ function sendStreamUnavailable(res: Response, videoId: string, detail: string): 
 function sendStreamRetryLater(res: Response, videoId: string, detail: string): boolean {
   if (res.headersSent) return false;
   console.warn(`[stream] 503 retry ${videoId} (${detail.slice(0, 60)})`);
+  // Idem 410 : on ne laisse pas l'utilisateur re-essayer indéfiniment, on répare.
+  triggerGlobalHeal(videoId, detail);
   res.status(503);
   res.setHeader('Retry-After', '2');
   res.setHeader('Cache-Control', 'no-store');
@@ -931,17 +966,58 @@ export async function resolveProductionStream(videoId: string): Promise<{
   if (disk?.path) {
     return { url: `file://${disk.path}`, diskPath: disk.path };
   }
-  try {
-    const fmt = await Promise.race([
-      getAudioFormat(videoId, { live: true }),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('resolve-timeout')), 20_000)),
-    ]);
+  const pack = (fmt: {
+    url?: string | null;
+    viaProxy?: string | null;
+  } | null) => {
     if (!fmt?.url) return null;
     return {
       url: fmt.url,
       durationMs: durMsFromStreamUrl(fmt.url),
       viaProxy: fmt.viaProxy ?? null,
     };
+  };
+  try {
+    const fmt = await Promise.race([
+      getAudioFormat(videoId, { live: true }),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('resolve-timeout')), 14_000)),
+    ]);
+    const hit = pack(fmt);
+    if (hit) return hit;
+  } catch {
+    /* try fallbacks */
+  }
+  // Routes neuves (autre client / itag / relais) — sinon pins seuls marchent (cache disque).
+  try {
+    const { tryFreshAudioRoutes } = await import('./freshAudioRoutes.js');
+    const { attemptProductionFreshRoute, rememberFreshAudio } = await import(
+      './freshAudioRoutesLive.js'
+    );
+    const fresh = await Promise.race([
+      tryFreshAudioRoutes(videoId, attemptProductionFreshRoute, rememberFreshAudio),
+      new Promise<{ ok: false }>((r) => setTimeout(() => r({ ok: false }), 12_000)),
+    ]);
+    if (fresh.ok) {
+      const again = await Promise.race([
+        getAudioFormat(videoId, { live: true }),
+        new Promise<null>((r) => setTimeout(() => r(null), 6_000)),
+      ]);
+      const hit = pack(again);
+      if (hit) return hit;
+    }
+  } catch (err) {
+    console.warn(
+      '[stream] resolve fresh-routes',
+      videoId,
+      String((err as Error).message || err).slice(0, 100),
+    );
+  }
+  try {
+    const ytdlp = await Promise.race([
+      getAudioFormatViaYtDlpOnly(videoId, { live: true, preferProxies: true }),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('ytdlp-timeout')), 16_000)),
+    ]);
+    return pack(ytdlp);
   } catch {
     return null;
   }
@@ -3031,22 +3107,56 @@ export async function handleStream(req: Request, res: Response) {
       const firstBuf = Buffer.from(first.value);
       // DASH fragmenté → Exo stalle (403 mid-range / buf figé) → mails stall.
       // Forcer le chemin progressif yt-dlp / disque.
+      let relayedDash = false;
       if (!wantVideo && isDashBrandBuffer(firstBuf)) {
-        try {
-          await reader.cancel();
-        } catch {
-          /* ignore */
+        // Titre froid (pas de .m4a) : yt-dlp souvent KO → l’ancien rejet DASH
+        // laissait Exo muet ~100 s. Relayer immédiatement les octets itag 140
+        // déjà reçus (Android). Le progressif tourne en fond APRÈS la décision
+        // (évite tempête récursive downloadTrack ↔ stream).
+        const canRelayDash =
+          DASH_RELAY_FALLBACK &&
+          !wantOffline &&
+          !isWarmPrefetch &&
+          isAndroidClient(req);
+        if (canRelayDash) {
+          // Disque déjà prêt ? servir sans attendre longtemps.
+          const late = await waitUntilDiskServable(videoId, audioRangeStart > 0 ? 400 : 250);
+          if (late) {
+            try {
+              await reader.cancel();
+            } catch {
+              /* ignore */
+            }
+            await pipeDiskFile(req, res, late, videoId, 'disk-after-dash');
+            return;
+          }
+          relayedDash = true;
+          console.warn(`[stream] DASH googlevideo ${videoId} → relais direct`);
+          setTimeout(() => {
+            downloadTrack(videoId, {
+              progressiveOnly: true,
+              preferProxies,
+              userId: streamUserId,
+              live: false,
+            }).catch(() => {
+              /* fond */
+            });
+          }, 50);
+        } else {
+          try {
+            await reader.cancel();
+          } catch {
+            /* ignore */
+          }
+          invalidateStreamHead(videoId);
+          invalidateAudioFormat(videoId);
+          console.warn(`[stream] reject DASH googlevideo ${videoId} → progressif`);
+          throw new Error('upstream audio DASH (ftypdash)');
         }
-        invalidateStreamHead(videoId);
-        invalidateAudioFormat(videoId);
-        downloadTrack(videoId, { progressiveOnly: true, preferProxies, userId: streamUserId }).catch(() => {
-          /* fond */
-        });
-        console.warn(`[stream] reject DASH googlevideo ${videoId} → progressif`);
-        throw new Error('upstream audio DASH (ftypdash)');
       }
       if (res.headersSent) return;
-      noteStreamSource(res, 'relais googlevideo');
+      noteStreamSource(res, relayedDash ? 'relais googlevideo (DASH, repli)' : 'relais googlevideo');
+      if (relayedDash) res.setHeader('X-PLM-Stream-Cache', 'relay-dash');
       res.status(upstream.status);
       const ct = upstream.headers.get('content-type');
       const cr = upstream.headers.get('content-range');
@@ -3084,7 +3194,8 @@ export async function handleStream(req: Request, res: Response) {
             const tm = /\/(\d+)\s*$/.exec(cr);
             if (tm) totalSize = Number(tm[1]);
           }
-          putStreamHead(videoId, firstBuf, {
+          // Jamais de tête RAM DASH (tryServeRamHead la resservirait à froid).
+          if (!relayedDash) putStreamHead(videoId, firstBuf, {
             totalSize,
             contentType: ct || 'audio/mp4',
           });

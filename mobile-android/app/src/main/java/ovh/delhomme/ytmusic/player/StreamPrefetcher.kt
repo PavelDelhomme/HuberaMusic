@@ -653,7 +653,9 @@ object StreamPrefetcher {
 
     /** Titre courant en BUFFERING : relance format + tête (ne pas attendre 40 s). */
     fun kickStartCurrent(baseApi: String, trackId: String) {
-        if (trackId.length != 11 || isStreamDown() || isLocalOffline(trackId)) return
+        // Jamais bloqué par streamDown : c’est le titre que l’utilisateur écoute.
+        if (trackId.length != 11 || isLocalOffline(trackId)) return
+        markStreamOk()
         warmTrackFormatOnly(baseApi, trackId)
         val url = streamPrefetchUrl(baseApi, trackId)
         PlayerCache.prefetchHead(

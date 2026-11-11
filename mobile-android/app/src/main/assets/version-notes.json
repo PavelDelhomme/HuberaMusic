@@ -1,6 +1,65 @@
 {
-  "updatedAt": "2026-10-30T09:31:14+01:00",
+  "updatedAt": "2026-11-09T14:50:00+01:00",
   "versions": [
+    {
+      "version": "1.3.413",
+      "date": "2026-11-09",
+      "time": "14:50",
+      "at": "2026-11-09T14:50:00+01:00",
+      "title": "DASH froid + reprise mic + OTA rapide",
+      "notes": [
+        "Serveur : titres froids — relais DASH googlevideo si yt-dlp KO (plus de chargement ~100 s).",
+        "Reprise lecture après Assistant / micro Google (duck + focus).",
+        "Restore / notif : charge le titre sans autoplay parasite.",
+        "Compte : vérification de version OTA beaucoup plus rapide (hosts en parallèle)."
+      ]
+    },
+    {
+      "version": "1.3.412",
+      "date": "2026-11-09",
+      "time": "14:14",
+      "at": "2026-11-09T14:14:51+01:00",
+      "title": "Stats écoute + resolve stream renforcé",
+      "notes": [
+        "Compte : stats écoute aujourd’hui / 7 j / 30 j (GET /api/history/stats, sans push batterie).",
+        "« Ça n’a pas marché » : message clair si nouveau titre audio disponible ou non.",
+        "Serveur : resolve stream avec routes fraîches + yt-dlp après échec ; kickStart ignore streamDown."
+      ]
+    },
+    {
+      "version": "1.3.411",
+      "date": "2026-10-30",
+      "time": "17:09",
+      "at": "2026-10-30T17:09:27+01:00",
+      "title": "Heal auto continu (403 / no-stream)",
+      "notes": [
+        "Balayage jouabilité toutes les ~45 min sans intervention : d’abord d’autres routes audio (client/itag/relais), remplacement d’id seulement si la vidéo est vraiment morte.",
+        "Les 403 / LOGIN_REQUIRED / no-stream-url restent visibles et sont re-tentés au prochain passage — pas de faux « titre mort »."
+      ]
+    },
+    {
+      "version": "1.3.410",
+      "date": "2026-10-30",
+      "time": "13:51",
+      "at": "2026-10-30T13:51:08+01:00",
+      "title": "Ça n a pas marché → alternative",
+      "notes": [
+        "Menu titre : action « Ça n a pas marché » cherche une autre adresse (remplacement) et reprend la lecture.",
+        "API trackReplacement côté Android + remap like/biblio déjà en 1.3.409."
+      ]
+    },
+    {
+      "version": "1.3.409",
+      "date": "2026-10-30",
+      "time": "13:37",
+      "at": "2026-10-30T13:37:25+01:00",
+      "title": "Like / biblio / pin / DL sur IDs remplacés",
+      "notes": [
+        "Extended Mix Rekkt (et tout ID mort seed) : j’aime, bibliothèque, accès rapide et téléchargement ciblent l’original jouable.",
+        "Pin n’appelle plus getFullLibrary (timeout pendant un DL) — libraryContains léger.",
+        "Actions survivent à la fermeture du menu et à un téléchargement en cours."
+      ]
+    },
     {
       "version": "1.3.404",
       "date": "2026-10-30",
@@ -2762,5 +2821,28 @@
   "1.3.401": "Mails erreur : breadcrumbs+logs toujours (buffer hors-ligne + batch alert) · heal android.player 5xx · Next media keys 1.3.400.",
   "1.3.402": "Précédent : seuil hold 520ms (tap lent n’avale plus le skip) · politique prev testée (SkipQueuePolicy) · jamais restart si titre d’avant existe.",
   "1.3.403": "Laisse Nous Raver Extended/Radio → original jouable · soft version fallback · heal 5xx lance remplacement · seeds Rekkt.",
-  "1.3.404": "Préfixe chaud 2 suivants · preflight serveur ×3 · .m4a×2 au repos · roadmap cache+heal (pas YT direct à chaque lecture)."
+  "1.3.404": "Préfixe chaud 2 suivants · preflight serveur ×3 · .m4a×2 au repos · roadmap cache+heal (pas YT direct à chaque lecture).",
+  "1.3.409": {
+    "version": "1.3.409",
+    "date": "2026-10-30",
+    "time": "13:37",
+    "at": "2026-10-30T13:37:25+01:00",
+    "title": "Like / biblio / pin / DL sur IDs remplacés",
+    "notes": [
+      "Extended Mix Rekkt (et tout ID mort seed) : j’aime, bibliothèque, accès rapide et téléchargement ciblent l’original jouable.",
+      "Pin n’appelle plus getFullLibrary (timeout pendant un DL) — libraryContains léger.",
+      "Actions survivent à la fermeture du menu et à un téléchargement en cours."
+    ]
+  },
+  "1.3.410": {
+    "version": "1.3.410",
+    "date": "2026-10-30",
+    "time": "13:51",
+    "at": "2026-10-30T13:51:08+01:00",
+    "title": "Ça n a pas marché → alternative",
+    "notes": [
+      "Menu titre : action « Ça n a pas marché » cherche une autre adresse (remplacement) et reprend la lecture.",
+      "API trackReplacement côté Android + remap like/biblio déjà en 1.3.409."
+    ]
+  }
 }

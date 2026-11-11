@@ -1,10 +1,10 @@
 /**
  * Auto-heal stream : stall / prefetch miss / load_skip → re-warm format + disk.
- * Sur load_skip / stall répété : cherche aussi un ID de remplacement (vidéo morte).
+ * Sur load_skip / stall répété : réparation GLOBALE via `streamHealthHub`
+ * (disque partagé + remplacement canonique pour tous les comptes + incident Docs/mail).
  */
 import { enqueueStreamWarm, enqueueDiskWarm, bumpWarmPriority, enqueueListHeadWarm } from './stream.js';
-import { findReplacementId } from './trackReplacement.js';
-import { db, getTrackPayload } from '../library/db.js';
+import { db } from '../library/db.js';
 
 const lastHealAt = new Map<string, number>();
 const HEAL_COOLDOWN_MS = 2 * 60_000;
@@ -16,9 +16,6 @@ const lastEnsureAt = new Map<string, number>();
 /** 2e stall/prefetch du même id dans 90 s → ensure disque (plus seulement le format). */
 const stallHits = new Map<string, { n: number; at: number }>();
 const ESCALATE_WINDOW_MS = 90_000;
-/** Remplacement : plus fréquent sur load_skip (éviter skip sec). */
-const lastReplaceAt = new Map<string, number>();
-const REPLACE_COOLDOWN_MS = 3 * 60_000;
 
 const HEAL_KINDS = new Set([
   'android.player.stall',
@@ -144,66 +141,27 @@ export function healTrackFromTelemetry(opts: {
   enqueueDiskWarm([id]);
   enqueueListHeadWarm([id], { front: true });
 
-  // Remplacement : skip confirmé, vidéo morte, OU 5xx/timeout dur après ensure
-  // (sinon Extended Mix Rekkt restait en 5xx sans jamais basculer vers l’original).
-  const wantReplace =
-    kind === 'android.player.load_skip' ||
-    kind === 'android.player.early_end' ||
-    playerHard ||
-    /unavailable|VIDEO_UNAVAILABLE|private|removed/i.test(String(opts.message || ''));
-
-  // Pré-télécharge le .m4a intégral (OAuth remux / proxies) avant la prochaine écoute.
-  // Remplacement APRÈS ensure — sinon playable() × 6 saturaient getAudioFormat (stall Blue).
+  // Réparation centralisée : le hub met à jour le disque partagé + le mapping
+  // canonique pour TOUS les comptes, et consigne l'incident (Docs + mail).
+  // (Ancien chemin local supprimé : il ne remappait que la bibliothèque locale.)
   inFlightEnsure.add(id);
-  void import('./ensurePlayable.js')
-    .then(({ ensurePlayableOnDisk }) =>
-      ensurePlayableOnDisk(id, {
+  void import('./streamHealthHub.js')
+    .then(({ healTrackForEveryone }) =>
+      healTrackForEveryone(id, {
         userId: opts.userId,
-        waitMs: 70_000,
-        preferProxies: true,
-        allowReplace: wantReplace,
+        reason: `telemetry:${kind}`,
         title: extractMetaString(opts.meta, 'title'),
         artist: extractMetaString(opts.meta, 'artist'),
+        record: true,
       }),
     )
     .then((r) => {
       inFlightEnsure.delete(id);
       if (r?.ok) {
-        console.log(`[stream-heal] ensure OK ${id} → ${r.playId} via=${r.via} bytes=${r.bytes}`);
+        console.log(`[stream-heal] ensure OK ${id} → ${r.playId} via=${r.via}`);
         return;
       }
       if (r) console.warn(`[stream-heal] ensure KO ${id}: ${r.detail || r.via}`);
-      if (!wantReplace) return;
-      const lastR = lastReplaceAt.get(id) || 0;
-      if (Date.now() - lastR < REPLACE_COOLDOWN_MS) return;
-      lastReplaceAt.set(id, Date.now());
-      void (async () => {
-        try {
-          const payload = getTrackPayload(id) as {
-            title?: string;
-            artists?: Array<{ name?: string }>;
-          } | null;
-          const title = extractMetaString(opts.meta, 'title') || payload?.title;
-          const artist =
-            extractMetaString(opts.meta, 'artist') ||
-            payload?.artists?.map((a) => a?.name).filter(Boolean).join(', ');
-          const replacement = await findReplacementId(id, {
-            userId: opts.userId,
-            title,
-            artist,
-          });
-          if (replacement && replacement !== id) {
-            console.log(`[stream-heal] remplacement ${id} → ${replacement}`);
-            enqueueStreamWarm([replacement], opts.userId);
-            enqueueDiskWarm([replacement]);
-          }
-        } catch (err) {
-          console.warn(
-            `[stream-heal] replace KO ${id}:`,
-            String((err as Error).message || err).slice(0, 120),
-          );
-        }
-      })();
     })
     .catch(() => {
       inFlightEnsure.delete(id);

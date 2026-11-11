@@ -97,6 +97,11 @@ import {
 } from './reco/searchHits.js';
 import { upsertIndexedTracks } from './library/searchIndex.js';
 import { handleStream, handleStreamUrl, handleStreamWarm, downloadTrack, cachePath, resolveStreamUpstream, isStreamUpstreamAllowed, suspendBackgroundDiskWarm, replaceSearchWarm, enqueueListHeadWarm, enqueueNextDiskWarm, isPlaybackHot } from './media/stream.js';
+import { speculativePrewarm, fastStartStats, recentPlaybackFailures } from './media/fastStart.js';
+import { healTrackForEveryone, streamHealthHubStats } from './media/streamHealthHub.js';
+import { streamIncidentStats } from './media/streamIncident.js';
+import { userCasesOverview } from './platform/userCases.js';
+import { bugsOverview } from './platform/bugSources.js';
 import {
   scheduleUserTasteWarm,
   startGlobalTasteWarmScheduler,
@@ -218,6 +223,7 @@ import {
   listFollows,
   listListenEvents,
   listListenEventsDetailed,
+  listenStatsSummary,
   listPins,
   listSearchHistory,
   listWeights,
@@ -1640,6 +1646,63 @@ app.get('/api/admin/playback-trace', requireAdmin, (req, res) => {
   });
 });
 
+/**
+ * Santé du démarrage rapide : compteurs de préchargement, échecs récents,
+ * incidents Docs/mail. Permet au cockpit Hubera de voir si le pipeline
+ * « instantané » fonctionne, sans se connecter au VPS.
+ */
+app.get('/api/admin/fast-start', requireAdmin, (_req, res) => {
+  res.json({
+    ok: true,
+    fastStart: fastStartStats(),
+    healthHub: streamHealthHubStats(),
+    incidents: streamIncidentStats(),
+    failures: recentPlaybackFailures(40),
+  });
+});
+
+/**
+ * Réparation à la demande d'un titre, pour tout le monde.
+ * `POST /api/admin/heal-track` { videoId, title?, artist?, reason? }
+ */
+app.post('/api/admin/heal-track', requireAdmin, async (req, res) => {
+  const videoId = String(req.body?.videoId || req.body?.id || '').trim();
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+    res.status(400).json({ ok: false, error: 'videoId invalide' });
+    return;
+  }
+  try {
+    const out = await healTrackForEveryone(videoId, {
+      userId: req.userId,
+      title: typeof req.body?.title === 'string' ? req.body.title : undefined,
+      artist: typeof req.body?.artist === 'string' ? req.body.artist : undefined,
+      reason: String(req.body?.reason || 'admin'),
+      record: req.body?.record !== false,
+    });
+    res.json({ ok: Boolean(out?.ok), result: out });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+  }
+});
+
+/**
+ * User cases de chaque app Hubera (parcours Admin + Standard) + diagramme
+ * Mermaid prêt à rendre. Lu depuis `products/<app>/user-cases.json`.
+ */
+app.get('/api/admin/user-cases', requireAdmin, (_req, res) => {
+  res.json(userCasesOverview());
+});
+
+/**
+ * Bugs remontés : e-mails (Himalaya) + tâches Hubera Docs.
+ * `?limit=` borne le nombre d'entrées par source.
+ */
+app.get('/api/admin/bugs', requireAdmin, async (req, res) => {
+  const limit = Number(req.query.limit || 10);
+  const data = await bugsOverview({ limit });
+  res.json(data);
+});
+
 app.get('/api/admin/library-health', requireAdmin, async (_req, res) => {
   try {
     const { sharedCatalogStats } = await import('./library/sharedCatalog.js');
@@ -2330,6 +2393,9 @@ app.get('/api/search', accountRequired, async (req, res) => {
       const ahead = isPlaybackHot(90_000) ? 3 : 5;
       replaceSearchWarm(uniq.slice(0, ahead), req.userId!);
       ensurePlayableQueueAhead(uniq.slice(0, ahead), { userId: req.userId! });
+      // Préchargement agressif : la réponse HTTP est déjà partie, on chauffe
+      // toute la fenêtre visible (formats) + quelques .m4a pour un play instantané.
+      speculativePrewarm(uniq, { userId: req.userId!, source: 'search' });
     }
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -2498,7 +2564,14 @@ app.get('/api/track/:id/replacement', accountRequired, async (req, res) => {
     const { getReplacementId, findReplacementId } = await import('./media/trackReplacement.js');
     const known = getReplacementId(id);
     if (known) {
-      res.json({ ok: true, deadId: id, replacementId: known, cached: true });
+      res.json({
+        ok: true,
+        available: true,
+        deadId: id,
+        replacementId: known,
+        cached: true,
+        message: 'Autre adresse audio disponible — lecture possible',
+      });
       return;
     }
     const title = typeof req.query.title === 'string' ? req.query.title : undefined;
@@ -2512,12 +2585,25 @@ app.get('/api/track/:id/replacement', accountRequired, async (req, res) => {
       const { enqueueStreamWarm, enqueueDiskWarm } = await import('./media/stream.js');
       enqueueStreamWarm([replacement], uid);
       enqueueDiskWarm([replacement]);
-      res.json({ ok: true, deadId: id, replacementId: replacement, cached: false });
+      res.json({
+        ok: true,
+        available: true,
+        deadId: id,
+        replacementId: replacement,
+        cached: false,
+        message: 'Nouveau titre audio trouvé — lecture reprise',
+      });
       return;
     }
-    res.json({ ok: true, deadId: id, replacementId: null });
+    res.json({
+      ok: true,
+      available: false,
+      deadId: id,
+      replacementId: null,
+      message: 'Pas de nouveau titre audio pour l’instant',
+    });
   } catch (err) {
-    res.status(500).json({ ok: false, error: String((err as Error).message || err) });
+    res.status(500).json({ ok: false, available: false, error: String((err as Error).message || err) });
   }
 });
 
@@ -2623,6 +2709,11 @@ app.post('/api/history/entity', accountRequired, (req, res) => {
 
 app.get('/api/history/detailed', accountRequired, (req, res) => {
   res.json({ events: listListenEventsDetailed(req.userId!, 500) });
+});
+
+/** Stats écoute jour / 7 j / 30 j — agrégat serveur, appelé à l’ouverture Compte (pas de push). */
+app.get('/api/history/stats', accountRequired, (req, res) => {
+  res.json({ ok: true, ...listenStatsSummary(req.userId!) });
 });
 
 app.post('/api/listen', accountRequired, (req, res) => {

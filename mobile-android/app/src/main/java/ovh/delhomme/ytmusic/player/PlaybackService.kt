@@ -931,6 +931,12 @@ class PlaybackService : MediaSessionService() {
                 recoveringTrackId = ""
                 earlyEndRetries = 0
                 Holder.index = curIdx.coerceAtLeast(0)
+                // Anti-répétition aléatoire biblio : mémorise chaque titre réellement atteint.
+                Holder.queue.getOrNull(Holder.index)?.id?.takeIf { it.length == 11 }?.let { id ->
+                    runCatching {
+                        ovh.delhomme.ytmusic.data.ShuffleHeadStore.rememberPlayed(this@PlaybackService, listOf(id))
+                    }
+                }
             } else if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                 val naturalExoEnd =
                     snapPrevDur >= 45_000L &&
@@ -3076,6 +3082,10 @@ class PlaybackService : MediaSessionService() {
 
     private fun resolvedApiBase(): String = Holder.resolvedApiBase()
 
+    /** Pause récente due au focus (duck / Assistant) — pas une intention user. */
+    fun isFocusDrivenPauseRecent(): Boolean =
+        audioFocus?.isFocusDrivenPauseRecent() == true
+
     object Holder {
         @Volatile var player: ExoPlayer? = null
         @Volatile var service: PlaybackService? = null
@@ -3346,7 +3356,12 @@ private class YtmForwardingPlayer(
     }
 
     override fun pause() {
-        PlaybackResume.noteUserPause()
+        // Assistant / mic : MediaSession pause + focus LOSS. Ne pas verrouiller
+        // comme une pause utilisateur sinon le GAIN ne reprend jamais.
+        val focusPause = PlaybackService.Holder.service?.isFocusDrivenPauseRecent() == true
+        if (!focusPause) {
+            PlaybackResume.noteUserPause()
+        }
         super.pause()
     }
 

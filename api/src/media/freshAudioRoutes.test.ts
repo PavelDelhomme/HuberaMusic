@@ -22,7 +22,8 @@ describe('freshAudioRoutes', () => {
     assert.equal(isMissingAudioUrlFailure('resolve-timeout'), true);
     assert.equal(isMissingAudioUrlFailure('This video is unavailable'), false);
     assert.equal(isMissingAudioUrlFailure('private video'), false);
-    assert.equal(isMissingAudioUrlFailure('probe-timeout'), false);
+    assert.equal(isMissingAudioUrlFailure('probe-timeout'), true);
+    assert.equal(isMissingAudioUrlFailure('end-http-403'), true);
   });
 
   it('masque une URL googlevideo qui porte un jeton', () => {

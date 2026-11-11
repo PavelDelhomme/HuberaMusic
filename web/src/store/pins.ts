@@ -14,6 +14,8 @@ const PINS_CACHE_PREFIX = 'ytm_pins_cache_v2:';
 /** Ancienne clé globale (fuite inter-comptes) — à purger. */
 const LEGACY_PINS_CACHE_KEY = 'ytm_pins_cache_v1';
 const PINS_BOUND_USER_KEY = 'ytm_pins_bound_user_v1';
+/** Incrémenté à chaque mutation locale : un refresh démarré avant une mutation est ignoré. */
+let pinsMutationVersion = 0;
 
 function cacheKeyFor(userId: string) {
   return `${PINS_CACHE_PREFIX}${userId}`;
@@ -108,6 +110,7 @@ export const usePins = create<PinsState>((set, get) => ({
     clearPinsLocalCache();
   },
   refresh: async (userIdArg) => {
+    const versionAtStart = pinsMutationVersion;
     const userId = String(userIdArg || currentUserId() || '').trim();
     // Purge legacy globale dès qu’on peut (évite re-contamination)
     try {
@@ -126,10 +129,12 @@ export const usePins = create<PinsState>((set, get) => ({
       // Ne plus syncPins(cache) avant le GET : ça réécrivait les pins
       // retirés sur l’autre appareil / navigateur.
       const r = await api.pins();
+      if (versionAtStart !== pinsMutationVersion) return;
       const pins = dedupePinRows((r.pins || []) as PinRow[]);
       writePinsCache(userId, pins);
       set({ pins, loaded: true, boundUserId: userId });
     } catch {
+      if (versionAtStart !== pinsMutationVersion) return;
       const cached = sameUser ? dedupePinRows(readPinsCache(userId)) : [];
       set({ pins: cached, loaded: true, boundUserId: sameUser ? userId : null });
     }
@@ -139,14 +144,7 @@ export const usePins = create<PinsState>((set, get) => ({
     get().pins.find((p) => p.targetId === targetId || p.id === targetId)?.id || null,
   togglePin: async (item) => {
     const userId = currentUserId();
-    // Unpin par targetId (pas UUID) → purge song+video du même id côté API
-    if (get().isPinned(item.id)) {
-      const r = await api.removePin(item.id);
-      const pins = dedupePinRows((r.pins || []) as PinRow[]);
-      if (userId) writePinsCache(userId, pins);
-      set({ pins, loaded: true, boundUserId: userId || null });
-      return 'unpinned';
-    }
+    const wasPinned = get().isPinned(item.id);
     const pinType =
       item.type === 'video' || item.type === 'song' || !item.type ? 'song' : item.type;
     const payload = {
@@ -157,36 +155,56 @@ export const usePins = create<PinsState>((set, get) => ({
       artists: Array.isArray(item.artists) ? item.artists : [],
       thumbnails: Array.isArray(item.thumbnails) ? item.thumbnails : [],
     };
-    const r = await api.addPin({
-      kind: pinType,
-      targetId: item.id,
-      payload,
-      id: item.id,
-    });
-    const pins = dedupePinRows((r.pins || []) as PinRow[]);
-    if (userId) writePinsCache(userId, pins);
-    set({ pins, loaded: true, boundUserId: userId || null });
-    // Épingler ⇒ aussi en bibliothèque (cohérent accès rapide ↔ biblio)
+    const prev = get().pins;
+    pinsMutationVersion += 1;
+
+    // Optimiste : l'UI reflète tout de suite le toggle (bouton actif), sans attendre l'API.
+    const optimistic: PinRow[] = dedupePinRows(
+      wasPinned
+        ? prev.filter((p) => p.targetId !== item.id && p.id !== item.id)
+        : [{ id: item.id, kind: pinType, targetId: item.id, payload }, ...prev],
+    );
+    if (userId) writePinsCache(userId, optimistic);
+    set({ pins: optimistic, loaded: true, boundUserId: userId || null });
+
     try {
-      if (pinType === 'album') {
-        if (!useLibrary.getState().hasAlbum(item.id)) {
-          const saved = await api.saveAlbum(payload as Record<string, unknown>);
-          if (saved.library) useLibrary.getState().applyLibrary(saved.library);
-        }
-      } else if (pinType === 'song' || pinType === 'video' || !item.type) {
-        if (!useLibrary.getState().isInLibrary(item.id)) {
-          await useLibrary.getState().toggleLibrarySong(payload as Track);
-        }
-      } else if (pinType === 'artist') {
-        if (!useLibrary.getState().hasArtist(item.id)) {
-          const saved = await api.saveArtist(payload as Record<string, unknown>);
-          if (saved.library) useLibrary.getState().applyLibrary(saved.library);
-        }
-      }
+      // Unpin par targetId (pas UUID) → purge song+video du même id côté API
+      const r = wasPinned
+        ? await api.removePin(item.id)
+        : await api.addPin({ kind: pinType, targetId: item.id, payload, id: item.id });
+      const pins = dedupePinRows((r.pins || []) as PinRow[]);
+      if (userId) writePinsCache(userId, pins);
+      set({ pins, loaded: true, boundUserId: userId || null });
     } catch {
-      /* pin OK même si biblio échoue */
+      // Rollback sur échec réseau — on garde l'état précédent (pas de pin fantôme)
+      if (userId) writePinsCache(userId, prev);
+      set({ pins: prev, loaded: true, boundUserId: userId || null });
+      throw new Error('pin failed');
     }
-    return 'pinned';
+
+    // Épingler ⇒ aussi en bibliothèque (cohérent accès rapide ↔ biblio)
+    if (!wasPinned) {
+      try {
+        if (pinType === 'album') {
+          if (!useLibrary.getState().hasAlbum(item.id)) {
+            const saved = await api.saveAlbum(payload as Record<string, unknown>);
+            if (saved.library) useLibrary.getState().applyLibrary(saved.library);
+          }
+        } else if (pinType === 'song' || pinType === 'video' || !item.type) {
+          if (!useLibrary.getState().isInLibrary(item.id)) {
+            await useLibrary.getState().toggleLibrarySong(payload as Track);
+          }
+        } else if (pinType === 'artist') {
+          if (!useLibrary.getState().hasArtist(item.id)) {
+            const saved = await api.saveArtist(payload as Record<string, unknown>);
+            if (saved.library) useLibrary.getState().applyLibrary(saved.library);
+          }
+        }
+      } catch {
+        /* pin OK même si biblio échoue */
+      }
+    }
+    return wasPinned ? 'unpinned' : 'pinned';
   },
   reorderPins: async (orderedTargetIds) => {
     const userId = currentUserId();

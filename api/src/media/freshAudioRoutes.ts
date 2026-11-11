@@ -26,7 +26,7 @@ export const FRESH_ROUTE_PLAN: readonly FreshRouteSpec[] = [
 ];
 
 const MISSING_AUDIO_URL =
-  /LOGIN_REQUIRED|sign in to confirm|not a bot|no-stream-url|streaming data not available|format is not available|requested format|pas de format|empty stream url|getAudioFormat deadline|resolve-timeout|audio format indisponible|yt-dlp audio URL indisponible|yt-dlp format timeout/i;
+  /LOGIN_REQUIRED|sign in to confirm|not a bot|no-stream-url|streaming data not available|format is not available|requested format|pas de format|empty stream url|getAudioFormat deadline|resolve-timeout|audio format indisponible|yt-dlp audio URL indisponible|yt-dlp format timeout|end-http-403|end-http-401|http-403|http-401|probe-timeout/i;
 
 /** Vidéo réellement morte : le job quotidien cherche un autre id, pas une autre route. */
 const DEAD_VIDEO =
