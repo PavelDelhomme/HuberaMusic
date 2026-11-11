@@ -3,6 +3,27 @@
 Toutes les évolutions notables de l'application. Format inspiré de
 [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions = `VERSION`.
 
+## [1.3.416] — 2026-11-11 — Vérification de mise à jour réparée (« apk/info indisponible »)
+
+### 🔴 Correctif critique OTA
+La MAJ système échouait **toujours** (`apk/info indisponible`) même quand la
+requête serveur réussissait (HTTP 200). Cause : dans
+`ApkUpdateManager.fetchApkInfo`, le bloc `coroutineScope` se terminait par un
+`return@coroutineScope` **suivi d'un `throw IOException` inconditionnel** — la
+valeur de succès était jetée puis l'exception levée systématiquement.
+
+- la valeur du `coroutineScope` est désormais renvoyée par la fonction ;
+- timeouts client OTA élargis (connect 8 s / read 20 s / call 25 s) ;
+- journalise la cause par host en cas d'échec réel.
+
+Vérifié sur Nothing Phone (3a), Samsung S21 FE, BlackView : `ui_message`
+= « Application à jour — p+1.3.416 », `ui_phase` = `UpToDate`, aucune erreur.
+
+### ✅ Accès rapide (épingler / désépingler)
+Vérifié de bout en bout sur l'appareil : `POST /api/pins` → 200 (épingler),
+`DELETE /api/pins/<id>` → 200 (désépingler), indicateur de carte
+« Épinglé — retirer de l'accès rapide » affiché immédiatement.
+
 ## [1.3.414] — 2026-11-10 — Incident prod résolu + démarrage instantané & auto-heal global
 
 ### 🔴 Incident de production (corrigé le 10/11)
