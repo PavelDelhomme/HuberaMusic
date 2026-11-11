@@ -772,12 +772,15 @@ function schedulePrefetch(queue: Track[], queueIndex: number) {
           '',
       ));
   const loopOne = usePlayer.getState().repeat === 'one';
+  // Radio / artiste / mix : titres souvent « nouveaux » (pas encore en cache) → précharger plus loin
+  const sourceKind = usePlayer.getState().sourceKind;
+  const isRadioLike = sourceKind === 'radio' || sourceKind === 'artist' || sourceKind === 'mix';
   const durationsSec = playable.map((t) => trackDurationSeconds(t));
   // Pendant la lecture : peu de full-prefetch (évite de voler la bande du titre long)
   prefetchAround(ids, idx, {
-    ahead: saveData ? 4 : 8,
+    ahead: saveData ? 4 : isRadioLike ? 12 : 8,
     behind: 0,
-    fullAhead: saveData || loopOne ? 0 : 3,
+    fullAhead: saveData || loopOne ? 0 : isRadioLike ? 5 : 3,
     delayFullMs: saveData ? 4000 : 900,
     durationsSec,
     loopOne,
