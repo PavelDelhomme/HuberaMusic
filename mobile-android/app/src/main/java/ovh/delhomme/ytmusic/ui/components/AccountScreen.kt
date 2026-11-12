@@ -2,6 +2,7 @@ package ovh.delhomme.ytmusic.ui.components
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -49,7 +50,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import ovh.delhomme.ytmusic.ui.theme.HuberaTokens
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -379,6 +382,7 @@ fun AccountScreen(
             }
 
             // MAJ en haut : visible sur petits écrans sans scroller toute la liste
+            item { SettingsSectionTitle("Mise à jour") }
             item {
                 val accentRed = Color(0xFFE53935)
                 val phase = updateUi.phase
@@ -547,6 +551,7 @@ fun AccountScreen(
                 }
             }
 
+            item { SettingsSectionTitle("Assistance") }
             item {
                 AccountRow(
                     icon = { Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = null) },
@@ -571,6 +576,7 @@ fun AccountScreen(
                 )
             }
 
+            item { SettingsSectionTitle("Données & bibliothèque") }
             item {
                 AccountRow(
                     icon = { Icon(Icons.Default.History, contentDescription = null) },
@@ -595,6 +601,7 @@ fun AccountScreen(
                     onClick = onOpenRecoPrefs,
                 )
             }
+            item { SettingsSectionTitle("Compte & appareils") }
             if (onOpenYtmImport != null) {
                 item {
                     val linked = user?.ytmLinked == true || ytmLinked
@@ -716,6 +723,7 @@ fun AccountScreen(
                     }
                 }
             }
+            item { SettingsSectionTitle("Lecture") }
             item {
                 AccountRow(
                     icon = { Icon(Icons.Default.Tune, contentDescription = null) },
@@ -771,6 +779,7 @@ fun AccountScreen(
                 }
             }
 
+            item { SettingsSectionTitle("Compte") }
             item {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             }
@@ -843,22 +852,30 @@ private fun AccountRow(
     titleColor: Color = Color.Unspecified,
     onClick: () -> Unit,
 ) {
-    ListItem(
-        headlineContent = {
-            Text(
-                title,
-                color = if (titleColor == Color.Unspecified) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    titleColor
-                },
-            )
-        },
-        supportingContent = subtitle?.let { { Text(it) } },
-        leadingContent = icon,
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = HuberaTokens.cardShape,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)),
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = HuberaTokens.space4, vertical = HuberaTokens.space1)
             .clickable(onClick = onClick),
-    )
+    ) {
+        ListItem(
+            headlineContent = {
+                Text(
+                    title,
+                    color = if (titleColor == Color.Unspecified) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        titleColor
+                    },
+                )
+            },
+            supportingContent = subtitle?.let { { Text(it) } },
+            leadingContent = icon,
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
