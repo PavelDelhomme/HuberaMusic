@@ -182,6 +182,9 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     fun commitSearch(q: String) {
         val query = q.trim()
         if (query.length < 2) return
+        // Annule toute requête de suggestions en cours : sinon elle repopule la liste
+        // APRÈS l'appui sur « Rechercher » (les suggestions reviennent, retour utilisateur).
+        sugJob?.cancel()
         val nextRecent = listOf(query) + _state.value.recent.filter {
             !it.equals(query, ignoreCase = true)
         }
@@ -441,6 +444,8 @@ fun SearchScreen(
             title = "Recherche",
             onAccountClick = onOpenAccount,
         )
+        val keyboardCtl = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+        val focusMgr = androidx.compose.ui.platform.LocalFocusManager.current
         OutlinedTextField(
             value = state.query,
             onValueChange = vm::onQuery,
@@ -504,7 +509,13 @@ fun SearchScreen(
             shape = RoundedCornerShape(12.dp),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(
-                onSearch = { vm.commitSearch(state.query) },
+                onSearch = {
+                    // Recherche précise de CE qui est tapé : on ferme les suggestions
+                    // et le clavier (retour utilisateur : les suggestions restaient affichées).
+                    vm.commitSearch(state.query)
+                    focusMgr.clearFocus()
+                    keyboardCtl?.hide()
+                },
             ),
         )
         Row(
