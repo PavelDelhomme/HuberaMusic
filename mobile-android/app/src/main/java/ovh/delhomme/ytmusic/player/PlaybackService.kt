@@ -894,6 +894,13 @@ class PlaybackService : MediaSessionService() {
                         artist = t?.artistLine() ?: mediaItem?.mediaMetadata?.artist?.toString(),
                     )
                 }
+                // Titre courant : demander au serveur de préparer TOUT le fichier (disque)
+                // → flux continu sans coupure, même sur un titre jamais écouté (retour Paul).
+                if (!id.isNullOrBlank() && id.length == 11) {
+                    runCatching {
+                        StreamPrefetcher.requestServerDiskCache(Holder.resolvedApiBase(), id)
+                    }
+                }
             }
             val skipRecovery =
                 programmaticAdvance ||
@@ -1596,16 +1603,19 @@ class PlaybackService : MediaSessionService() {
         // maxBuffer très large = le titre entier est aspiré en une seule connexion dès le
         // départ. Une coupure data / échec DNS en milieu de morceau ne provoque alors plus
         // ni silence ni Range mid-fichier (que le serveur ne sait pas toujours servir).
+        // minBuffer 30 s : on démarre avec assez d'avance pour ne plus caler sur un
+        // titre froid (retour Paul : « ça reste parfois bloqué, ça charge au fur et à mesure »).
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs */ 15_000,
+                /* minBufferMs */ 30_000,
                 /* maxBufferMs */ 600_000,
                 // 350 ms faisait démarrer trop tôt : l’horloge avançait sans son → intro coupée.
-                /* bufferForPlaybackMs */ 1_500,
-                /* bufferForPlaybackAfterRebufferMs */ 1_500,
+                /* bufferForPlaybackMs */ 2_000,
+                /* bufferForPlaybackAfterRebufferMs */ 2_000,
             )
             .setPrioritizeTimeOverSizeThresholds(true)
-            .setTargetBufferBytes(24 * 1024 * 1024)
+            // 64 Mo : un titre entier (et même les 2 suivants) tient en mémoire.
+            .setTargetBufferBytes(64 * 1024 * 1024)
             .build()
 
         val mediaSourceFactory = DefaultMediaSourceFactory(this)
