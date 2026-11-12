@@ -1167,6 +1167,10 @@ private fun MainTabs(
         }
         if (!sessionHydrated) {
             sessionHydrated = true
+            // Garde-fou : si l'utilisateur lance une lecture pendant la restauration
+            // (réseau ~2-3 s), on n'écrase PAS sa file.
+            // Bug corrigé : « Accès rapide · Aléatoire » remplacé par l'ancienne file.
+            val hydrateEpoch = ovh.delhomme.ytmusic.player.PlaybackResume.userPlayEpoch
             val exoAlive = PlaybackService.Holder.player
             val serviceHasQueue = exoAlive != null && exoAlive.mediaItemCount > 0
             if (serviceHasQueue) {
@@ -1201,7 +1205,7 @@ private fun MainTabs(
                         local.queue.isEmpty() ||
                         remoteUpdated > localSaved + 2_000L
                     )
-                if (useRemote) {
+                if (useRemote && ovh.delhomme.ytmusic.player.PlaybackResume.userPlayEpoch == hydrateEpoch) {
                     val idx = when {
                         remoteCurrent != null -> remoteTracks.indexOfFirst { it.id == remoteCurrent.id }
                             .takeIf { it >= 0 } ?: (st?.queueIndex ?: 0)
@@ -1238,7 +1242,9 @@ private fun MainTabs(
                         "player",
                         "hydrate remote id=${remoteCurrent?.id} pos=$posMs play=false n=${remoteTracks.size}",
                     )
-                } else if (local != null && local.queue.isNotEmpty()) {
+                } else if (local != null && local.queue.isNotEmpty() &&
+                    ovh.delhomme.ytmusic.player.PlaybackResume.userPlayEpoch == hydrateEpoch
+                ) {
                     suppressSessionPublishUntil = System.currentTimeMillis() + 8_000L
                     player.restoreQueue(
                         tracks = local.queue,
@@ -1253,7 +1259,9 @@ private fun MainTabs(
                         "hydrate local id=${local.queue.getOrNull(local.queueIndex)?.id} " +
                             "pos=${local.positionMs} play=false n=${local.queue.size}",
                     )
-                } else if (remoteTracks.isNotEmpty()) {
+                } else if (remoteTracks.isNotEmpty() &&
+                    ovh.delhomme.ytmusic.player.PlaybackResume.userPlayEpoch == hydrateEpoch
+                ) {
                     val idx = (st?.queueIndex ?: 0).coerceIn(0, remoteTracks.lastIndex)
                     val posMs = ((st?.progress ?: 0.0) * 1000.0).toLong().coerceAtLeast(0L)
                     suppressSessionPublishUntil = System.currentTimeMillis() + 12_000L
