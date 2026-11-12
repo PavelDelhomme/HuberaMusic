@@ -679,70 +679,79 @@ object StreamPrefetcher {
     ) {
         if (isStreamDown() || !ovh.delhomme.ytmusic.data.NetworkMonitor.isOnline()) return
         if (!ignoreQuiet && isQuiet()) return
-        val nextId = queueIds.getOrNull(fromIndex + 1) ?: return
-        if (nextId.length != 11 || isLocalOffline(nextId)) return
-        val key = "next-play:$nextId"
-        synchronized(recent) {
-            val last = recent[key]
-            if (last != null && System.currentTimeMillis() - last < 3_500L) return
-        }
         if (!mayPrefetchUpcoming(queueIds.getOrNull(fromIndex).orEmpty())) return
-        // Déjà assez d’octets → marque prêt, pas de re-download
-        val saver = ovh.delhomme.ytmusic.data.BatterySaver.isActive()
+        // Fenêtre de préchargement PARALLÈLE : on chauffe +1, +2, +3 (pas seulement +1).
+        // Objectif : un « Suivant » ne doit jamais repartir à froid.
+        val window = 3
+        val upcoming = (1..window)
+            .mapNotNull { queueIds.getOrNull(fromIndex + it) }
+            .filter { it.length == 11 && !isLocalOffline(it) }
+            .distinct()
+        if (upcoming.isEmpty()) return
+        // 1) Warm serveur (format + tête disque) pour toute la fenêtre — un seul POST.
+        runCatching { warmBatch(baseApi, upcoming.take(MAX_WARM)) }
+        // 2) Têtes côté client, en parallèle, par ordre de proximité.
         val bytes = HEAD_3S
-        val already = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, bytes)
-        // 220 Ko ≈ 1 s : trop peu pour enchaîner. On ne s’arrête que si ~¾ de la tête cible est là.
-        if (already >= (bytes * 3 / 4).coerceAtLeast(700L * 1024L)) {
-            markHeadReady(nextId)
-            synchronized(recent) { recent[key] = System.currentTimeMillis() }
-            return
-        }
-        if (already >= 400L * 1024L) markHeadReady(nextId)
-        PlayerCache.pinTrack(nextId)
-        Thread {
-            try {
-                fun attempt(): Boolean {
-                    warmCurrentBlocking(baseApi, nextId, timeoutMs = 1_800L, wait = true)
-                    val url = streamPrefetchUrl(baseApi, nextId)
-                    PlayerCache.prefetchHead(
-                        YtMusicApp.instance,
-                        url,
-                        nextId,
-                        bytes,
-                        priorityNext = true,
-                    )
-                    Thread.sleep(700)
-                    val cached = PlayerCache.cachedBytes(YtMusicApp.instance, nextId, bytes)
-                    return cached >= (bytes / 6).coerceAtLeast(400L * 1024L)
-                }
-                var ok = attempt()
-                if (!ok) {
-                    // 2ᵉ essai (format/CDN froid) — auto-heal local
-                    Thread.sleep(400)
-                    ok = attempt()
-                }
-                if (ok) {
-                    markHeadReady(nextId)
-                    synchronized(recent) { recent[key] = System.currentTimeMillis() }
-                } else {
-                    // Signale au serveur pour re-warm disque/format (prochaine écoute)
-                    runCatching {
-                        ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
-                            level = "warn",
-                            kind = "android.player.prefetch_miss",
-                            message = "next head cold id=$nextId",
-                            meta = mapOf("trackId" to nextId, "role" to "queue_next"),
-                            force = false,
-                        )
-                    }
-                }
-            } catch (_: Exception) {
-                /* retry au prochain tick mid-track */
+        upcoming.forEach { id ->
+            val key = "next-play:$id"
+            synchronized(recent) {
+                val last = recent[key]
+                if (last != null && System.currentTimeMillis() - last < 3_500L) return@forEach
             }
-        }.apply {
-            name = "ytm-prefetch-next-warm"
-            isDaemon = true
-            start()
+            val already = PlayerCache.cachedBytes(YtMusicApp.instance, id, bytes)
+            // 220 Ko ≈ 1 s : trop peu pour enchaîner. On ne s'arrête que si ~¾ de la tête est là.
+            if (already >= (bytes * 3 / 4).coerceAtLeast(700L * 1024L)) {
+                markHeadReady(id)
+                synchronized(recent) { recent[key] = System.currentTimeMillis() }
+                return@forEach
+            }
+            if (already >= 400L * 1024L) markHeadReady(id)
+            PlayerCache.pinTrack(id)
+            Thread {
+                try {
+                    fun attempt(): Boolean {
+                        warmCurrentBlocking(baseApi, id, timeoutMs = 1_800L, wait = true)
+                        val url = streamPrefetchUrl(baseApi, id)
+                        PlayerCache.prefetchHead(
+                            YtMusicApp.instance,
+                            url,
+                            id,
+                            bytes,
+                            priorityNext = true,
+                        )
+                        Thread.sleep(700)
+                        val cached = PlayerCache.cachedBytes(YtMusicApp.instance, id, bytes)
+                        return cached >= (bytes / 6).coerceAtLeast(400L * 1024L)
+                    }
+                    var ok = attempt()
+                    if (!ok) {
+                        // 2ᵉ essai (format/CDN froid) — auto-heal local
+                        Thread.sleep(400)
+                        ok = attempt()
+                    }
+                    if (ok) {
+                        markHeadReady(id)
+                        synchronized(recent) { recent[key] = System.currentTimeMillis() }
+                    } else {
+                        // Signale au serveur pour re-warm disque/format (prochaine écoute)
+                        runCatching {
+                            ovh.delhomme.ytmusic.debug.TelemetryReporter.report(
+                                level = "warn",
+                                kind = "android.player.prefetch_miss",
+                                message = "next head cold id=$id",
+                                meta = mapOf("trackId" to id, "role" to "queue_next"),
+                                force = false,
+                            )
+                        }
+                    }
+                } catch (_: Exception) {
+                    /* retry au prochain tick mid-track */
+                }
+            }.apply {
+                name = "ytm-prefetch-next-warm"
+                isDaemon = true
+                start()
+            }
         }
     }
 
