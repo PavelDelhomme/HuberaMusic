@@ -1,6 +1,18 @@
 {
-  "updatedAt": "2026-11-12T08:50:00+01:00",
+  "updatedAt": "2026-11-12T08:30:00+01:00",
   "versions": [
+    {
+      "version": "1.3.419",
+      "date": "2026-11-12",
+      "time": "08:30",
+      "at": "2026-11-12T08:30:00+01:00",
+      "title": "Accès rapide · Aléatoire respecté",
+      "notes": [
+        "Accès rapide : « Aléatoire » joue bien un mélange de TOUTES tes musiques épinglées.",
+        "Corrigé : la restauration de session (à l'ouverture) écrasait parfois la file lancée — on n'entendait plus l'ancienne musique au lieu de tes épingles.",
+        "La file que tu lances gagne toujours sur la restauration automatique."
+      ]
+    },
     {
       "version": "1.3.418",
       "date": "2026-11-12",
