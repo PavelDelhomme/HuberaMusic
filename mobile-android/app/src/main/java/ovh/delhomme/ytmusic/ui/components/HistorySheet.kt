@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -136,16 +138,21 @@ private fun HistoryBody(
         loading = true
         runCatching {
             container.ensureFreshToken()
-            val detailed = runCatching { container.api.historyDetailed() }.getOrNull()
+            // 1) RAPIDE : la liste d'écoute s'affiche tout de suite (affichage progressif,
+            //    avant on attendait le détail complet → page lente à s'ouvrir).
             val hist = runCatching { container.api.history() }.getOrNull()
-            val lib = if (hist == null) {
-                runCatching { container.api.library() }.getOrNull()
+            if (hist != null) {
+                history = hist.history
+                entities = hist.entities
+                loading = false
             } else {
-                null
+                val lib = runCatching { container.api.library() }.getOrNull()
+                history = lib?.history.orEmpty()
+                entities = lib?.recentEntities.orEmpty()
             }
+            // 2) ENSUITE : le détail par événement (plus lourd) s'ajoute sans bloquer.
+            val detailed = runCatching { container.api.historyDetailed() }.getOrNull()
             events = detailed?.events.orEmpty()
-            history = hist?.history ?: lib?.history.orEmpty()
-            entities = hist?.entities ?: lib?.recentEntities.orEmpty()
         }
         loading = false
     }
@@ -156,15 +163,32 @@ private fun HistoryBody(
     val timeFmt = remember {
         SimpleDateFormat("HH:mm", Locale.FRENCH)
     }
-    val grouped = remember(events) {
+    // Barre de recherche dans l'historique (demande utilisateur).
+    var historyQuery by remember { mutableStateOf("") }
+    fun matchesQuery(t: TrackDto?): Boolean {
+        if (historyQuery.isBlank()) return true
+        if (t == null) return false
+        val artists = t.artists?.joinToString(" ") { it.name ?: "" } ?: ""
+        return t.title.contains(historyQuery, ignoreCase = true) ||
+            artists.contains(historyQuery, ignoreCase = true)
+    }
+    // Un seul affichage par titre : on garde l'écoute la plus récente.
+    // Avant : chaque écoute partielle créait une ligne → doublons dans l'historique.
+    val dedupedEvents = remember(events) {
         events
-            .filter { it.createdAt > 0L }
+            .filter { it.createdAt > 0L && it.track != null }
+            .sortedByDescending { it.createdAt }
+            .distinctBy { it.track?.id }
+    }
+    val grouped = remember(dedupedEvents, historyQuery) {
+        dedupedEvents
+            .filter { matchesQuery(it.track) }
             .groupBy { dayKey(it.createdAt) }
             .toList()
             .sortedByDescending { it.first }
     }
-    val playableFromEvents = remember(events) {
-        events.mapNotNull { it.track }.distinctBy { it.id }
+    val playableFromEvents = remember(dedupedEvents) {
+        dedupedEvents.mapNotNull { it.track }.distinctBy { it.id }
     }
 
     Column(modifier) {
@@ -189,6 +213,29 @@ private fun HistoryBody(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
         }
+        androidx.compose.material3.OutlinedTextField(
+            value = historyQuery,
+            onValueChange = { historyQuery = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 4.dp),
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium,
+            placeholder = {
+                Text(
+                    "Rechercher dans l'historique",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            leadingIcon = {
+                Icon(
+                    Icons.Filled.Search,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+            },
+        )
         when {
             loading -> {
                 Column(
