@@ -67,9 +67,19 @@ object PlaybackResume {
     /** Branchement service : annule une reprise focus déjà armée. */
     @Volatile var onUserPause: (() -> Unit)? = null
 
+    /**
+     * Incrémenté à chaque lecture lancée par l'utilisateur (`player.play`).
+     * Une restauration de session (hydrate) démarrée AVANT ne doit plus écraser
+     * la file après coup — sinon le « Accès rapide · Aléatoire » est remplacé
+     * par l'ancienne file (bug : on entend la musique d'avant).
+     */
+    @Volatile var userPlayEpoch: Long = 0L
+        private set
+
     fun noteUserPlay() {
         userPaused = false
         foregroundHeld = false
+        userPlayEpoch += 1
     }
 
     fun noteAudible() {
